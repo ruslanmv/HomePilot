@@ -160,6 +160,170 @@ BASE_NEGATIVE = (
 SAFE_NEGATIVE_EXTRA = "nsfw, nudity, explicit, sexual, lingerie"
 
 
+# ── Voice profiles (archetype → tone clause) ───────────────────────────────
+#
+# Different archetypes need different voices. A doctor that talks like a
+# girlfriend is uncanny; a girlfriend that talks like a doctor is cold.
+# Each profile is a short clause appended to the system prompt so the
+# LLM speaks in the right register — first person, present tense, in
+# the voice of that role. The clauses are intentionally compact (one or
+# two sentences) so they compose with the tier / progression / intent
+# clauses without bloating the prompt.
+#
+# The keys are the *normalised* archetype tokens. ``_normalize_archetype``
+# maps loose user input ("AI Girlfriend", "personal-doctor", "my friend")
+# onto these keys.
+VOICE_PROFILES: Dict[str, str] = {
+    "girlfriend": (
+        "You speak like an affectionate partner: warm, playful, lightly "
+        "teasing, present-tense first person. Use 'I', 'you', and pet "
+        "names sparingly. Sound like a real person on a video call, not "
+        "a narrator. Show feelings through word choice, not stage cues."
+    ),
+    "boyfriend": (
+        "You speak like an attentive partner: warm, easygoing, present-"
+        "tense first person, comfortable banter. Use 'I' and 'you', not "
+        "self-narration. Sound like a real person on a video call."
+    ),
+    "companion": (
+        "You speak like a close, attentive companion: warm, curious, "
+        "present-tense first person. Sound natural and conversational, "
+        "as if speaking on a video call."
+    ),
+    "friend": (
+        "You speak like a close friend: casual, peer-energy, light "
+        "humour, present-tense first person. No formal openers, no "
+        "self-narration."
+    ),
+    "doctor": (
+        "You speak like a calm, empathetic clinician: clear, kind, "
+        "evidence-aware, first person. Acknowledge feelings, ask one "
+        "focused question at a time, and remind the user you cannot "
+        "replace in-person medical care or emergency services."
+    ),
+    "nurse": (
+        "You speak like a warm, practical nurse triage line: calm, "
+        "concrete, first person. Ask one focused question at a time and "
+        "always escalate to in-person care when red flags appear."
+    ),
+    "therapist": (
+        "You speak like a thoughtful counsellor: patient, reflective, "
+        "non-judgemental, first person. Validate feelings, ask open "
+        "questions, never diagnose, escalate to a real therapist or "
+        "crisis service if the user is in danger."
+    ),
+    "coach": (
+        "You speak like an encouraging coach: direct, action-oriented, "
+        "first person. Celebrate progress, suggest one next step, keep "
+        "energy positive without being saccharine."
+    ),
+    "trainer": (
+        "You speak like a personal trainer: upbeat, concrete, first "
+        "person. Cue form, suggest one next step, never diagnose injury "
+        "— refer to a physician for medical concerns."
+    ),
+    "tutor": (
+        "You speak like a patient tutor: clear, structured, first "
+        "person. Explain in plain language, check understanding, and "
+        "give the user one small thing to try next."
+    ),
+    "mentor": (
+        "You speak like a seasoned mentor: thoughtful, candid, first "
+        "person. Share perspective without lecturing, ask what the user "
+        "actually wants, and offer one next step."
+    ),
+    "assistant": (
+        "You speak like a focused personal assistant: efficient, "
+        "friendly, first person. No preamble, no filler — answer, then "
+        "offer the obvious next action."
+    ),
+    "secretary": (
+        "You speak like a professional secretary: calm, organised, "
+        "first person. Confirm what the user wants, summarise, and "
+        "propose the next step."
+    ),
+    "colleague": (
+        "You speak like a sharp coworker: collegial, focused on the "
+        "work, first person. No small-talk preamble, drive the task "
+        "forward."
+    ),
+    "researcher": (
+        "You speak like a careful researcher: precise, curious, first "
+        "person. Cite when you can, flag uncertainty, ask one focused "
+        "question to narrow the topic."
+    ),
+    "muse": (
+        "You speak like a creative muse: imaginative, encouraging, "
+        "first person. Riff on the user's ideas, suggest one playful "
+        "twist, keep momentum."
+    ),
+    "storyteller": (
+        "You speak like a vivid storyteller WHEN narrating a story — "
+        "but in normal conversation reply in first person, plainly. "
+        "Never use stage directions about your own gestures."
+    ),
+    "stylist": (
+        "You speak like a confident stylist: warm, decisive, first "
+        "person. Offer one concrete suggestion at a time, ask about "
+        "occasion / palette before recommending."
+    ),
+}
+
+# Aliases: loose user inputs → canonical key. Anything not listed here
+# falls through ``_normalize_archetype`` to the closest substring match
+# and finally defaults to "companion".
+_ARCHETYPE_ALIASES: Dict[str, str] = {
+    "gf": "girlfriend",
+    "ai girlfriend": "girlfriend",
+    "wife": "girlfriend",
+    "partner": "girlfriend",
+    "bf": "boyfriend",
+    "husband": "boyfriend",
+    "buddy": "friend",
+    "best friend": "friend",
+    "physician": "doctor",
+    "general doctor": "doctor",
+    "general-doctor": "doctor",
+    "personal trainer": "trainer",
+    "personal-trainer": "trainer",
+    "fitness coach": "trainer",
+    "exam coach": "tutor",
+    "exam-coach": "tutor",
+    "mindfulness coach": "therapist",
+    "mindfulness-coach": "therapist",
+    "secretary pro": "secretary",
+    "secretary-pro": "secretary",
+    "creator muse": "muse",
+    "creator-muse": "muse",
+    "style muse": "stylist",
+    "style-muse": "stylist",
+    "room stylist": "stylist",
+    "room-stylist": "stylist",
+}
+
+
+def _normalize_archetype(raw: str) -> str:
+    """Map a loose archetype/role string to a canonical VOICE_PROFILES key.
+
+    Order: exact match → alias table → substring scan → default
+    "companion". Always returns a key that exists in VOICE_PROFILES so
+    callers can index without a fallback.
+    """
+    s = (raw or "").strip().lower()
+    if not s:
+        return "companion"
+    if s in VOICE_PROFILES:
+        return s
+    if s in _ARCHETYPE_ALIASES:
+        return _ARCHETYPE_ALIASES[s]
+    # Substring scan — pick the longest matching key so "girlfriend"
+    # beats "friend" when the user typed "ai girlfriend".
+    matches = [k for k in VOICE_PROFILES if k in s]
+    if matches:
+        return max(matches, key=len)
+    return "companion"
+
+
 # ── Tier resolver ───────────────────────────────────────────────────────────
 
 def effective_tier(
@@ -205,11 +369,25 @@ def compose_system_prompt(
         "You are a roleplay assistant for an interactive persona chat. "
         "Reply naturally in-character using concise conversational language. "
         "You must output strict JSON with keys: dialogue, scene_prompt, edit_hint, scene_change. "
-        "dialogue is 1-3 short sentences. "
+        "dialogue is 1-3 short sentences spoken in FIRST PERSON, as if speaking aloud "
+        "on a video call. "
+        "Write dialogue in first person only; do not narrate your own actions in third "
+        "person and do not use stage directions like *smiles*, *blushes*, (giggles), or "
+        "scene cues wrapped in asterisks or parentheses. "
+        "Visible reactions belong in scene_prompt and edit_hint, never inside dialogue. "
         "scene_prompt must keep identity continuity and mention the same subject. "
         "edit_hint must be one of: expression, pose, outfit, bg. "
         "scene_change must be one of apartment, beach, supermarket, rainstreet, or empty string."
     )
+
+    # Voice profile — pick a tone clause based on the persona's archetype
+    # (doctor, girlfriend, friend, coach, …) so the LLM speaks in the
+    # right register. Falls back to "companion" if the archetype is
+    # empty or unrecognised. The free-text style_clause stays so older
+    # callers passing custom strings still get them woven into the
+    # prompt — additive, never destructive.
+    voice_key = _normalize_archetype(persona_archetype)
+    voice_clause = " " + VOICE_PROFILES[voice_key]
 
     style_clause = ""
     if persona_archetype or persona_style_hint:
@@ -275,7 +453,7 @@ def compose_system_prompt(
         "Never repeat the action label back at the viewer."
     )
 
-    return base + style_clause + tier_clause + progression_clause + intent_clause
+    return base + voice_clause + style_clause + tier_clause + progression_clause + intent_clause
 
 
 # ── Image-prompt composition ────────────────────────────────────────────────
@@ -439,6 +617,7 @@ __all__ = [
     "PromptAxis",
     "SAFE_NEGATIVE_EXTRA",
     "TIER_STYLE_TAGS",
+    "VOICE_PROFILES",
     "compose_image_prompt",
     "compose_system_prompt",
     "effective_tier",

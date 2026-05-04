@@ -28,6 +28,7 @@ import datetime
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -667,6 +668,142 @@ def _stream_subprocess(cmd: list[str], name: str, label: str, **kwargs: Any) -> 
         print(f"[{name}/{label}] {line_stripped}", flush=True)
     proc.wait()
     return proc.returncode, output_lines
+
+
+def _run_install_cmd(
+    work_dir: Path,
+    install_cmd: str,
+    runtime: str,
+    status: Optional[ServerInstallStatus] = None,
+    name: str = "",
+) -> bool:
+    """Run a manifest-declared install_cmd in ``work_dir``.
+
+    Handles both Python (creates a .venv first if pyproject is present) and
+    Node (runs `npm ci`/`npm install`). Mirrors what `_install_python_deps`
+    does but driven by the persona's explicit install_cmd string instead
+    of auto-detection.
+
+    Strictly additive: only invoked when the persona's install manifest
+    carries an install_cmd. Legacy single-server clones with no manifest
+    keep using `_install_python_deps`.
+    """
+    import shlex
+    import sys
+
+    name = name or work_dir.name
+    ilog = install_logger
+    if status:
+        status.message = f"Running install_cmd ({runtime})..."
+        status.progress_pct = 35
+
+    cmd_str = install_cmd.strip()
+    ilog.info(name, "deps", f"runtime={runtime} install_cmd={cmd_str!r} cwd={work_dir}")
+
+    # For Python: prefer creating a venv first so the persona's deps don't
+    # pollute the backend env. Use the existing helper to keep the flow
+    # consistent with the legacy path.
+    if runtime == "python":
+        # Ensure a venv exists; the existing helper does the venv-create logic
+        # we want to reuse. It also runs pip install -e . / pip install -r
+        # requirements.txt. We then run the manifest install_cmd ON TOP via
+        # the venv's python so the operator's own pip extras land too.
+        deps_ok = _install_python_deps(work_dir, status=status)
+        if not deps_ok:
+            ilog.warning(name, "deps", "base python deps install reported issues; trying manifest install_cmd anyway")
+
+        # Replace leading "python " in the install_cmd with the venv's python.
+        venv_python = work_dir / ".venv" / "bin" / "python"
+        if venv_python.is_file() and cmd_str.startswith("python "):
+            cmd_list = [str(venv_python)] + shlex.split(cmd_str[len("python "):])
+        else:
+            cmd_list = shlex.split(cmd_str)
+        rc, _ = _stream_subprocess(cmd_list, name, "deps", cwd=str(work_dir))
+        return rc == 0
+
+    if runtime == "node":
+        cmd_list = shlex.split(cmd_str)
+        rc, _ = _stream_subprocess(cmd_list, name, "deps", cwd=str(work_dir))
+        return rc == 0
+
+    ilog.warning(name, "deps", f"unsupported runtime {runtime!r}; skipping install_cmd")
+    return False
+
+
+def _start_external_server_with_cmd(
+    work_dir: Path,
+    port: int,
+    server_name: str,
+    start_cmd_template: str,
+    runtime: str,
+    extra_env: Optional[Dict[str, str]] = None,
+    status: Optional[ServerInstallStatus] = None,
+) -> Optional[subprocess.Popen]:
+    """Spawn an external MCP server using the manifest's start_cmd template.
+
+    ``start_cmd_template`` may include ``{PORT}`` which is substituted at
+    spawn time. ``extra_env`` is merged on top of os.environ (used to inject
+    upstream URLs / bearer tokens). For Python runtimes, the venv's python
+    binary is preferred over the system one.
+
+    Strictly additive — when the manifest doesn't declare a start_cmd we
+    fall back to ``_start_external_server`` (the legacy auto-detect path).
+    """
+    import shlex
+    import sys
+
+    ilog = install_logger
+    if status:
+        status.phase = InstallPhase.STARTING
+        status.progress_pct = 50
+        status.message = f"Starting server on port {port}..."
+
+    cmd_str = start_cmd_template.replace("{PORT}", str(port))
+    cmd_list = shlex.split(cmd_str)
+
+    # Prefer the per-server venv for Python.
+    if runtime == "python" and cmd_list and cmd_list[0] == "python":
+        venv_python = work_dir / ".venv" / "bin" / "python"
+        if venv_python.is_file():
+            cmd_list[0] = str(venv_python)
+
+    # Build PYTHONPATH and base env.
+    env = {**os.environ}
+    if runtime == "python":
+        pythonpath_parts = [str(work_dir)]
+        src_dir = work_dir / "src"
+        if src_dir.is_dir():
+            pythonpath_parts.append(str(src_dir))
+        if env.get("PYTHONPATH"):
+            pythonpath_parts.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+
+    # Auto-populate .env from .env.example if missing — mirrors legacy path.
+    _auto_populate_env(work_dir, server_name, env)
+
+    if extra_env:
+        env.update(extra_env)
+        ilog.info(server_name, "start", f"injected env: {sorted(extra_env.keys())}")
+
+    log_dir = _community_external_dir() / "install_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stdout_log = log_dir / f"{server_name}.stdout.log"
+    stderr_log = log_dir / f"{server_name}.stderr.log"
+
+    try:
+        ilog.info(server_name, "start", f"Command: {' '.join(cmd_list)}")
+        ilog.info(server_name, "start", f"Working directory: {work_dir}")
+        stdout_f = open(stdout_log, "w", encoding="utf-8")
+        stderr_f = open(stderr_log, "w", encoding="utf-8")
+        proc = subprocess.Popen(
+            cmd_list, env=env, cwd=str(work_dir),
+            stdout=stdout_f, stderr=stderr_f,
+        )
+        ilog.info(server_name, "start", f"Process started (pid={proc.pid}, port={port})")
+        return proc
+    except Exception as exc:
+        ilog.error(server_name, "start", f"Failed to start process: {exc}")
+        return None
 
 
 def _install_python_deps(server_dir: Path, status: Optional[ServerInstallStatus] = None) -> bool:
@@ -1490,6 +1627,52 @@ async def install_community_bundle(
 # ── Full Install Pipeline ─────────────────────────────────────────────────
 
 
+async def _install_upstream_first(
+    upstream: Dict[str, Any],
+    parent_name: str,
+    forge_url: str,
+    auth_user: str,
+    auth_pass: str,
+    bearer_token: Optional[str],
+) -> ServerInstallStatus:
+    """Recursively install an upstream MCP toolkit before its dependent.
+
+    Used by personas like General Doctor whose adapter calls a separate
+    upstream service (medical-mcp-toolkit). The upstream block is the
+    same shape as a top-level install manifest. We synthesize a
+    server_info dict and call install_external_server recursively so
+    the same clone/install/start/register pipeline applies — including
+    idempotency: if the upstream is already running on its declared port,
+    no work is done.
+    """
+    ilog = install_logger
+    us_name = upstream.get("name") or f"{parent_name}-upstream"
+    ilog.info(parent_name, "upstream", f"Installing upstream {us_name} before {parent_name}")
+    upstream_info = {
+        "name": us_name,
+        "default_port": int(upstream.get("default_port") or 0),
+        "source": {
+            "type": "external",
+            "git": upstream.get("source_repo", ""),
+            "ref": upstream.get("source_ref", "main"),
+            "subdir": upstream.get("source_subdir", "") or "",
+            "registry_id": us_name,
+        },
+        "install": {
+            "runtime":     upstream.get("runtime", "python"),
+            "install_cmd": upstream.get("install_cmd", ""),
+            "start_cmd":   upstream.get("start_cmd", ""),
+            "health_url":  upstream.get("health_url", ""),
+            "default_port": upstream.get("default_port", 0),
+            "env_required": upstream.get("env_required") or [],
+        },
+    }
+    return await install_external_server(
+        upstream_info, forge_url, auth_user, auth_pass, bearer_token,
+        force_reinstall=False,
+    )
+
+
 async def install_external_server(
     server_info: Dict[str, Any],
     forge_url: str,
@@ -1506,6 +1689,22 @@ async def install_external_server(
     source = server_info.get("source", {})
     git_url = source.get("git", "")
     ref = source.get("ref", "master") or "master"
+    # NEW (additive): when a persona pack ships multiple servers in one repo
+    # they share a single shallow clone and identify each server by a
+    # subdirectory. Legacy callers (single-server repos) leave this empty
+    # and the existing code path runs unchanged.
+    subdir = (source.get("subdir") or "").strip("/")
+    # NEW (additive): manifest-driven install/start. The persona's
+    # dependencies/mcp_servers.json may carry an `install` block with
+    # explicit install_cmd / start_cmd / runtime. When present, the
+    # installer runs those commands verbatim instead of auto-detecting
+    # an entry point — works for both Python and Node packs.
+    install_manifest = server_info.get("install") or {}
+    manifest_install_cmd = (install_manifest.get("install_cmd") or "").strip()
+    manifest_start_cmd = (install_manifest.get("start_cmd") or "").strip()
+    manifest_runtime = (install_manifest.get("runtime") or "").strip()
+    manifest_env_required = list(install_manifest.get("env_required") or [])
+    manifest_upstream = install_manifest.get("upstream") or None
     ilog = install_logger
 
     status = ServerInstallStatus(
@@ -1560,11 +1759,35 @@ async def install_external_server(
         server_dir = _clone_server_from_git(git_url, name, ref=ref, status=status, force_reinstall=force_reinstall)
         status.install_path = str(server_dir)
 
-        # Step 2: Install Python dependencies
-        print(f"\n[{name}] Step 2/7: Installing Python dependencies", flush=True)
-        ilog.info(name, "deps", "Step 2/7: Installing Python dependencies")
+        # NEW (additive): if the persona pack declared a subdir, resolve the
+        # working directory to that subdir for install + start. Verified to
+        # exist post-clone so a typo in the manifest fails loudly instead of
+        # silently running install in the wrong place.
+        if subdir:
+            work_dir = server_dir / subdir
+            if not work_dir.is_dir():
+                ilog.error(name, "install", f"source.subdir '{subdir}' does not exist in clone {server_dir}")
+                status.phase = InstallPhase.FAILED
+                status.error = f"source.subdir '{subdir}' not found in cloned repo"
+                status.elapsed_ms = int((time.monotonic() - start_time) * 1000)
+                return status
+            ilog.info(name, "install", f"using subdir: {work_dir}")
+            status.install_path = str(work_dir)
+        else:
+            work_dir = server_dir
+
+        # Step 2: Install dependencies — manifest-driven when available,
+        # legacy auto-detect path otherwise.
+        print(f"\n[{name}] Step 2/7: Installing dependencies", flush=True)
+        ilog.info(name, "deps", "Step 2/7: Installing dependencies")
         status.progress_pct = 30
-        deps_ok = _install_python_deps(server_dir, status=status)
+        if manifest_install_cmd and manifest_runtime:
+            deps_ok = _run_install_cmd(
+                work_dir, manifest_install_cmd, manifest_runtime,
+                status=status, name=name,
+            )
+        else:
+            deps_ok = _install_python_deps(work_dir, status=status)
         if not deps_ok:
             ilog.warning(name, "deps", "Dependency install had issues, continuing anyway")
             print(f"[{name}] WARNING: Dependency install had issues, continuing anyway")
@@ -1578,7 +1801,41 @@ async def install_external_server(
         status.progress_pct = 45
         status.message = f"Starting on port {port}..."
 
-        proc = await _start_external_server(server_dir, port, name, status=status)
+        # Recursive upstream install (new): if the manifest declares an
+        # `upstream` block (e.g. mcp-general-doctor needs medical-mcp-toolkit),
+        # install + start it FIRST, then inject the upstream URL + any
+        # auto-generated bearer token into the dependent server's env.
+        upstream_extra_env: Dict[str, str] = {}
+        if manifest_upstream:
+            us_status = await _install_upstream_first(
+                manifest_upstream, parent_name=name,
+                forge_url=forge_url, auth_user=auth_user, auth_pass=auth_pass,
+                bearer_token=bearer_token,
+            )
+            if us_status.phase == InstallPhase.FAILED:
+                ilog.error(name, "upstream", f"upstream {manifest_upstream.get('name')} failed; aborting parent install")
+                status.phase = InstallPhase.FAILED
+                status.error = f"upstream {manifest_upstream.get('name')} failed: {us_status.error}"
+                status.elapsed_ms = int((time.monotonic() - start_time) * 1000)
+                return status
+            upstream_url = f"http://127.0.0.1:{us_status.port}"
+            ilog.info(name, "upstream", f"upstream up at {upstream_url}; injecting into env")
+            # Best-effort env mapping: convention is <NAME>_URL when there's
+            # a single upstream. The personas pack's general-doctor server
+            # reads MEDICAL_MCP_URL specifically, so set it explicitly when
+            # the upstream is named medical-mcp-toolkit.
+            upstream_extra_env["MEDICAL_MCP_URL"] = upstream_url
+            for k in (manifest_upstream.get("auto_generate_env") or []):
+                if k not in upstream_extra_env:
+                    upstream_extra_env[k] = secrets.token_urlsafe(32)
+
+        if manifest_start_cmd and manifest_runtime:
+            proc = _start_external_server_with_cmd(
+                work_dir, port, name, manifest_start_cmd,
+                manifest_runtime, extra_env=upstream_extra_env, status=status,
+            )
+        else:
+            proc = await _start_external_server(work_dir, port, name, status=status)
         if not proc:
             ilog.error(name, "start", "Failed to start server process — aborting")
             print(f"[{name}] FAILED to start server process — aborting")

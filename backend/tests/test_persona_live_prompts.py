@@ -109,6 +109,40 @@ def test_system_prompt_mentions_progression():
         assert "progression" in out.lower()
 
 
+def test_system_prompt_bans_stage_directions():
+    """Live persona dialogue must read like spoken words on a video
+    call, not a screenplay. The base prompt must explicitly forbid
+    third-person self-narration and *asterisk*/(parenthesis) cues."""
+    out = compose_system_prompt(tier="safe", allow_explicit=False).lower()
+    assert "first person" in out
+    assert "stage direction" in out
+    assert "asterisk" in out and "parenthes" in out
+
+
+@pytest.mark.parametrize("archetype,marker", [
+    ("girlfriend",          "affectionate partner"),
+    ("doctor",              "calm, empathetic clinician"),
+    ("friend",              "close friend"),
+    ("companion",           "close, attentive companion"),
+    ("personal-trainer",    "personal trainer"),       # alias → trainer
+    ("general-doctor",      "calm, empathetic clinician"),  # alias → doctor
+    ("AI Girlfriend",       "affectionate partner"),   # case-insensitive alias
+    ("",                    "close, attentive companion"),  # default
+    ("totally unknown role","close, attentive companion"),  # fallback
+])
+def test_system_prompt_voice_profile_picks_right_tone(archetype, marker):
+    """The voice clause must adapt to the persona's archetype — a
+    doctor must not greet like a girlfriend, and an unknown archetype
+    must fall back to the neutral "companion" voice instead of leaving
+    the LLM uncalibrated."""
+    out = compose_system_prompt(
+        tier="safe",
+        allow_explicit=False,
+        persona_archetype=archetype,
+    ).lower()
+    assert marker.lower() in out
+
+
 # ── compose_image_prompt ────────────────────────────────────────────────────
 
 def test_image_prompt_safe_contains_no_explicit_tokens():
