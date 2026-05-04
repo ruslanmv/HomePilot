@@ -1,0 +1,70 @@
+# Makefile.personas — shared-personas pack integration (additive).
+#
+# These personas are the official External Additive Personas for HomePilot:
+#   https://github.com/HomePilotAI/personas
+#
+# *** Production-safe contract ***
+#
+# This Makefile NEVER deletes or replaces existing entries in
+# docs/registry.json. The current production personas (Scarlett,
+# Atlas, and any future community submissions) are preserved verbatim.
+# 'install-personas' merges the additive pack into the existing items[]
+# array; 'uninstall-personas' removes ONLY the additive entries.
+#
+# Targets:
+#   install-personas       — clone/pull the pack, build, MERGE into docs/
+#   refresh-personas       — pull latest, rebuild, re-merge
+#   list-personas          — print what would be added without changing files
+#   uninstall-personas     — remove ONLY the additive personas; preserve
+#                            Scarlett / Atlas / community entries
+
+PERSONAS_REPO        ?= https://github.com/HomePilotAI/personas.git
+PERSONAS_BRANCH      ?= claude/review-homepilot-personas-N5gBZ
+PERSONAS_DIR         ?= .cache/personas
+PERSONAS_DOCS        ?= docs
+
+.PHONY: install-personas refresh-personas list-personas uninstall-personas
+
+install-personas: ## (shared) Install the External Additive Personas pack into the gallery (additive)
+	@echo "==> Cloning $(PERSONAS_REPO) (branch=$(PERSONAS_BRANCH))"
+	@if [ ! -d "$(PERSONAS_DIR)/.git" ]; then \
+	  mkdir -p "$$(dirname $(PERSONAS_DIR))" ; \
+	  git clone --branch "$(PERSONAS_BRANCH)" "$(PERSONAS_REPO)" "$(PERSONAS_DIR)" ; \
+	else \
+	  echo "==> $(PERSONAS_DIR) already cloned; pulling latest" ; \
+	  git -C "$(PERSONAS_DIR)" fetch --quiet origin "$(PERSONAS_BRANCH)" && \
+	  git -C "$(PERSONAS_DIR)" checkout "$(PERSONAS_BRANCH)" --quiet && \
+	  git -C "$(PERSONAS_DIR)" pull --ff-only --quiet ; \
+	fi
+	@echo "==> Building .hpersona packages + sha256 in $(PERSONAS_DIR)/dist/"
+	@$(MAKE) -C "$(PERSONAS_DIR)" install >/dev/null 2>&1 || \
+	  (echo "(make install in personas pack failed; is Pillow / npm installed?)" && exit 1)
+	@$(MAKE) -C "$(PERSONAS_DIR)" all
+	@echo "==> Syncing dist/ into $(PERSONAS_DOCS)/ (additive)"
+	@mkdir -p "$(PERSONAS_DOCS)/packages" "$(PERSONAS_DOCS)/previews"
+	@cp -R "$(PERSONAS_DIR)"/dist/packages/* "$(PERSONAS_DOCS)/packages/" || true
+	@cp -R "$(PERSONAS_DIR)"/dist/previews/* "$(PERSONAS_DOCS)/previews/" || true
+	@echo "==> Merging additive personas into $(PERSONAS_DOCS)/registry.json (preserves existing entries)"
+	@python3 scripts/merge_additive_registry.py \
+	  --gallery-registry "$(PERSONAS_DOCS)/registry.json" \
+	  --pack-registry "$(PERSONAS_DIR)/registry/registry.json"
+	@echo "==> Done. $(PERSONAS_DOCS)/gallery.html now lists the additive personas alongside existing entries."
+
+refresh-personas: ## (shared) Re-pull and re-merge the additive pack
+	@$(MAKE) install-personas
+
+list-personas: ## (shared) Print the personas that install-personas would ADD
+	@if [ -f "$(PERSONAS_DIR)/registry/registry.json" ]; then \
+	  python3 -c "import json; r=json.load(open('$(PERSONAS_DIR)/registry/registry.json')); \
+[print(f\"  {i['id']:25s}  {i['name']}  ({i['latest'].get('sha256','-')[:16]}...)\") for i in r['items']]" ; \
+	else \
+	  echo "(personas not cloned yet — run: make install-personas)" ; \
+	fi
+
+uninstall-personas: ## (shared) Remove only the additive personas; preserve existing entries
+	@echo "==> Removing additive personas from $(PERSONAS_DOCS)/registry.json (preserves Scarlett/Atlas/community)"
+	@python3 scripts/merge_additive_registry.py \
+	  --gallery-registry "$(PERSONAS_DOCS)/registry.json" \
+	  --pack-registry "$(PERSONAS_DIR)/registry/registry.json" \
+	  --remove
+	@echo "(packages + previews directories left in place; remove manually if needed)"
