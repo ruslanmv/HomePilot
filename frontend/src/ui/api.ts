@@ -1,6 +1,8 @@
 import axios from "axios";
 
 import { getDefaultBackendUrl } from "./lib/backendUrl";
+import { createClient } from "@homepilot/api-client";
+import { createComputeClient } from "@homepilot/compute-client";
 
 // Resolve at module load. Priority:
 //   1. VITE_API_URL build-time env (used in custom builds)
@@ -23,3 +25,18 @@ api.interceptors.request.use((config) => {
   if (k) config.headers["X-API-Key"] = k;
   return config;
 });
+
+// ── Shared, cross-platform clients (single source of truth) ────────────────
+// First M2-extract runtime import: the fetch-based @homepilot/api-client +
+// @homepilot/compute-client, wired with the SAME base URL and X-API-Key auth as
+// the axios `api` above. The axios instance is intentionally left untouched —
+// its 16 call sites rely on axios response semantics — and its call sites are
+// strangled onto `http` / `computeClient` one PR at a time. New code should use
+// these; they behave identically on web, desktop, and mobile.
+export const http = createClient({
+  baseUrl: API_URL,
+  tokenProvider: { getToken: () => getApiKey() || null },
+  authHeader: (key) => ({ "X-API-Key": key }),
+});
+
+export const computeClient = createComputeClient(http);

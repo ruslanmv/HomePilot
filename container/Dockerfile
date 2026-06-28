@@ -30,6 +30,11 @@ WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
+# Wave B monorepo: the frontend resolves @homepilot/* shared packages from
+# ../packages via build-time aliases (tsconfig paths + vite resolve.alias).
+# WORKDIR is /build, so ../packages must be present at /packages. These are
+# TS source, not npm deps — npm ci above is unchanged.
+COPY packages/ /packages/
 RUN npm run build
 
 # ============================================================

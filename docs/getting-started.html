@@ -187,6 +187,18 @@
       font-size: 12px; font-weight: 400; opacity: 0.7;
     }
 
+    /* ── Mobile row ── */
+    .mobile-heading {
+      margin: 44px 0 16px; font-size: 0.95rem; font-weight: 600;
+      color: var(--text-muted);
+    }
+    .mobile-grid {
+      grid-template-columns: repeat(2, 1fr);
+      max-width: 380px;
+    }
+    .platform-card.soon { opacity: 0.72; }
+    .platform-card.soon .platform-format { color: var(--accent-purple); }
+
     /* ── Steps ── */
     .steps-section { background: var(--bg-surface); padding: 88px 0; }
     .steps-section h2 {
@@ -421,6 +433,22 @@
           <span class="platform-size" id="size-deb"></span>
         </a>
       </div>
+
+      <h3 class="mobile-heading">Also on <span class="gradient-text">mobile</span></h3>
+      <div class="platform-grid mobile-grid">
+        <a href="https://github.com/ruslanmv/HomePilot/releases/latest" class="platform-card" id="card-android" aria-label="Download for Android">
+          <div class="platform-icon" aria-hidden="true">&#x1f916;</div>
+          <div class="platform-name">Android</div>
+          <div class="platform-format">.apk &middot; sideload</div>
+          <span class="platform-size" id="size-android"></span>
+        </a>
+        <a href="https://github.com/ruslanmv/HomePilot" target="_blank" rel="noopener" class="platform-card soon" id="card-ios" aria-label="HomePilot for iPhone — coming soon">
+          <div class="platform-icon" aria-hidden="true">&#x1f34f;</div>
+          <div class="platform-name">iPhone / iPad</div>
+          <div class="platform-format" id="ios-format">Coming soon</div>
+          <span class="platform-size"></span>
+        </a>
+      </div>
     </div>
   </section>
 
@@ -545,6 +573,9 @@
       var ua = navigator.userAgent || '';
       var p = navigator.platform || '';
       if (navigator.userAgentData && navigator.userAgentData.platform) p = navigator.userAgentData.platform;
+      // Mobile first — an Android UA also contains "Linux", so check it before desktop Linux.
+      if (/Android/i.test(ua)) return 'android';
+      if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
       if (/Win/i.test(p)) return 'windows';
       if (/Mac/i.test(p) || /Mac/i.test(ua)) return 'mac';
       if (/Linux/i.test(p) || /Linux/i.test(ua)) return 'linux';
@@ -554,13 +585,13 @@
     var os = detectOS();
 
     // Set primary download button label
-    var labels = { windows: 'Download for Windows', mac: 'Download for macOS', linux: 'Download for Linux' };
+    var labels = { windows: 'Download for Windows', mac: 'Download for macOS', linux: 'Download for Linux', android: 'Download for Android', ios: 'iPhone — coming soon' };
     var label = labels[os] || 'Download HomePilot';
     document.getElementById('download-label').textContent = label;
     document.getElementById('cta-download-label').textContent = label;
 
     // Highlight detected platform card
-    var cardMap = { windows: 'card-win', mac: 'card-mac', linux: 'card-linux-appimage' };
+    var cardMap = { windows: 'card-win', mac: 'card-mac', linux: 'card-linux-appimage', android: 'card-android', ios: 'card-ios' };
     var detectedCard = cardMap[os];
     if (detectedCard) {
       var el = document.getElementById(detectedCard);
@@ -605,7 +636,7 @@
 
           // ── Map assets by extension ──
           var assets = release.assets;
-          var map = { win: null, mac: null, appimage: null, deb: null };
+          var map = { win: null, mac: null, appimage: null, deb: null, android: null };
 
           assets.forEach(function (a) {
             var n = a.name.toLowerCase();
@@ -613,6 +644,7 @@
             else if (n.endsWith('.dmg')) map.mac = a;
             else if (n.endsWith('.appimage')) map.appimage = a;
             else if (n.endsWith('.deb')) map.deb = a;
+            else if (n.endsWith('.apk')) map.android = a;
           });
 
           // ── Update platform cards: href + file size ──
@@ -628,9 +660,10 @@
           setCard('card-mac',            'size-mac',      map.mac);
           setCard('card-linux-appimage', 'size-appimage', map.appimage);
           setCard('card-linux-deb',      'size-deb',      map.deb);
+          setCard('card-android',        'size-android',  map.android);
 
           // ── Update primary download button ──
-          var primaryMap = { windows: map.win, mac: map.mac, linux: map.appimage };
+          var primaryMap = { windows: map.win, mac: map.mac, linux: map.appimage, android: map.android };
           var primary = primaryMap[os];
           if (primary) {
             document.getElementById('download-btn').href = primary.browser_download_url;
@@ -648,6 +681,8 @@
             'Download HomePilot AppImage for Linux, ' + formatSize(map.appimage.size));
           if (map.deb) document.getElementById('card-linux-deb').setAttribute('aria-label',
             'Download HomePilot .deb for Ubuntu and Debian, ' + formatSize(map.deb.size));
+          if (map.android) document.getElementById('card-android').setAttribute('aria-label',
+            'Download HomePilot for Android, .apk, ' + formatSize(map.android.size));
         })
         .catch(function () {
           // API failed (rate limit, network) — keep fallback URLs pointing

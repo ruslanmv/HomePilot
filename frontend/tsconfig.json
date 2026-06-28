@@ -7,6 +7,9 @@
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@homepilot/*": ["../packages/*/src"]
+    }
   }
 }
