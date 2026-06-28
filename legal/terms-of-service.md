@@ -1,7 +1,12 @@
 # Project Usage Terms (Draft)
 
 ## 1. Nature of Project
-HomePilot is an open-source AI project. Some deployments may be hosted by maintainers or community operators.
+HomePilot is an open-source, local-first AI project: generation runs on hardware
+you control, and the optional OllaBridge Cloud control plane handles accounts,
+device pairing, and routing. Some deployments may be hosted by maintainers or
+community operators. For hosted instances the canonical Terms of Service at
+`/terms` on the OllaBridge Cloud deployment is authoritative; this document is
+the open-source project baseline.
 
 ## 2. Eligibility
 - Access is intended for adults (18+).

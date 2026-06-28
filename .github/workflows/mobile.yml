@@ -1,0 +1,192 @@
+name: "📱 Build Mobile Apps"
+
+# Mirrors desktop.yml: builds on a published Release (or manual dispatch) and
+# attaches the installer to that Release. Because both workflows trigger on
+# `release: published`, one tag → one Release holding desktop installers AND the
+# mobile APK together.
+#
+# v1 scope: Android only (a free, sideloadable .apk). iOS is a later batch —
+# Apple requires signing + TestFlight/App Store, so it can't be a free file here.
+
+on:
+  # CI build verification: run when the mobile app or this workflow changes on a
+  # dev branch. Produces the APK as an artifact (no Release) so the build is
+  # proven before it's wired to release:published on the default branch.
+  push:
+    branches:
+      - "claude/**"
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/mobile.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.0.0). Empty = app.json version."
+        required: false
+      create_release:
+        description: "Create a GitHub Release with the built APK"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mobile-build
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Java (Temurin 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      # ubuntu-latest ships the Android SDK + command-line tools (ANDROID_HOME
+      # set), which is all `gradlew assembleRelease` needs — no extra setup.
+
+      # Derive version from the release tag, manual input, or app.json.
+      - name: Derive version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            RAW="${GITHUB_REF#refs/tags/}"
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            RAW="${{ github.event.inputs.version }}"
+          else
+            RAW=""
+          fi
+          if [ -n "$RAW" ]; then
+            SEMVER="${RAW#v}"
+          else
+            SEMVER=$(node -p "require('./apps/mobile/app.json').expo.version")
+          fi
+          echo "version=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $SEMVER"
+
+      - name: Install dependencies
+        working-directory: apps/mobile
+        run: npm ci
+
+      # Inject version + a strictly-increasing versionCode (the CI run number).
+      - name: Set version
+        run: node apps/mobile/scripts/set-version.mjs "${{ steps.version.outputs.version }}" "${{ github.run_number }}"
+
+      # Branded icons (committed too, but regenerate to guarantee freshness).
+      - name: Generate icons
+        working-directory: apps/mobile
+        run: node scripts/generate-icon.mjs
+
+      # Generate the native android/ project (managed Expo app — not committed).
+      - name: Expo prebuild (Android)
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --no-install
+
+      # Decode the release keystore if the secret is set; otherwise the build
+      # falls back to debug signing (installable, testing only). The path is a
+      # Gradle property the signing config plugin reads.
+      - name: Configure signing
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "ORG_GRADLE_PROJECT_HP_STORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            echo "Release keystore decoded → release-signed APK"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret — building a DEBUG-signed APK (testing only). Add the keystore secrets for a release-signed build."
+          fi
+
+      - name: Build release APK
+        working-directory: apps/mobile/android
+        env:
+          ORG_GRADLE_PROJECT_HP_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_HP_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_HP_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p out
+          SRC="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          DEST="out/HomePilot-${{ steps.version.outputs.version }}-android.apk"
+          cp "$SRC" "$DEST"
+          ls -lh "$DEST"
+
+      # Prove the artifact is a real, installable Android package: inspect its
+      # manifest (package / version / SDK levels) and confirm it is signed.
+      - name: Verify APK is installable
+        shell: bash
+        run: |
+          set -e
+          APK=$(ls out/*.apk | head -1)
+          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)"
+          echo "build-tools: $BT"
+          echo "── aapt badging ──"
+          "${BT}aapt" dump badging "$APK" | grep -E "^package:|sdkVersion:|targetSdkVersion:|application-label:" || true
+          echo "── structure (must contain manifest + dex) ──"
+          unzip -l "$APK" | grep -E "AndroidManifest.xml|classes.dex"
+          echo "── signature ──"
+          if "${BT}apksigner" verify --print-certs "$APK"; then
+            echo "✅ APK is signed and installable"
+          else
+            echo "::error::APK signature verification failed"; exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HomePilot-android
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      # On a release event: attach the APK to the existing Release.
+      - name: Attach to existing release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.apk
+
+      # On manual dispatch: create a Release with the APK.
+      - name: Create release (manual build)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: HomePilot Mobile v${{ steps.version.outputs.version }}
+          body: |
+            ## HomePilot Mobile v${{ steps.version.outputs.version }}
+
+            ### Download
+
+            | Platform | File | Install |
+            |----------|------|---------|
+            | Android | `HomePilot-${{ steps.version.outputs.version }}-android.apk` | Enable "install unknown apps", then open the APK |
+            | iPhone / iPad | — | Coming soon |
+
+            Free · open-source · runs against your own GPU.
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: out/*.apk

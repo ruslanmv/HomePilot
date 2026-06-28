@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "HomePilot",
+    "slug": "homepilot",
+    "scheme": "homepilot",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
+    "platforms": ["ios", "android"],
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#09090b"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ruslanmv.homepilot"
+    },
+    "android": {
+      "package": "com.ruslanmv.homepilot",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#2563eb"
+      }
+    },
+    "plugins": ["./plugins/withAndroidReleaseSigning"]
+  }
+}

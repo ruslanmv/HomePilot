@@ -1,5 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// Wave B monorepo: the @homepilot/* shared packages live in ../packages and are
+// consumed as build-time source aliases (not npm workspace deps), so the
+// standalone frontend build/Docker image is unaffected except for copying
+// packages/ into the build context. Matches the tsconfig "paths" entry.
+const PACKAGES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../packages')
 
 // The Vite dev server runs on :3000 but the HomePilot backend lives on
 // :8000. Anything the frontend calls with a relative path must be
@@ -50,6 +58,9 @@ export default defineConfig({
   // the cleanup plan finishes removing the duplicate source tree. Once
   // the mirrors are gone this override becomes a no-op.
   resolve: {
+    alias: [
+      { find: /^@homepilot\/(.*)$/, replacement: `${PACKAGES_DIR}/$1/src` },
+    ],
     extensions: ['.tsx', '.ts', '.mts', '.jsx', '.js', '.mjs', '.json'],
   },
   server: {

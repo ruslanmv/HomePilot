@@ -14,6 +14,7 @@ CI note: requires network access to thispersondoesnotexist.com.
 """
 import io
 import json
+import os
 import struct
 import zipfile
 from pathlib import Path
@@ -44,8 +45,17 @@ def _can_reach_site() -> bool:
 # Test: Download from thispersondoesnotexist.com
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(
+    os.environ.get("SKIP_NETWORK_TESTS", "0") == "1",
+    reason="SKIP_NETWORK_TESTS=1",
+)
 class TestFaceDownload:
-    """Verify that thispersondoesnotexist.com returns valid StyleGAN2 faces."""
+    """Verify that thispersondoesnotexist.com returns valid StyleGAN2 faces.
+
+    Hits the live thispersondoesnotexist.com, which sits behind anti-bot
+    protection that can return an HTML challenge page (HTTP 200) instead of a
+    JPEG. CI sets ``SKIP_NETWORK_TESTS=1`` so the build never depends on a
+    third-party site; run locally without that env var to exercise it."""
 
     def test_site_returns_jpeg(self, tmp_path: Path):
         """The site should return a valid JPEG image."""

@@ -19,6 +19,10 @@ COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install --no-audit --no-fund 2>/dev/null
 
 COPY frontend/ ./
+# Wave B monorepo: frontend resolves @homepilot/* from ../packages via build-time
+# aliases. WORKDIR is /build, so ../packages must be at /packages. TS source,
+# not npm deps — the npm install above is unchanged.
+COPY packages/ /packages/
 ENV VITE_API_URL=""
 RUN npm run build && ls -la dist/
 

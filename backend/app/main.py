@@ -77,6 +77,7 @@ from .outpaint import router as outpaint_router
 
 # Capabilities module routes
 from .capabilities import router as capabilities_router
+from .compute.routes import router as compute_router
 
 # Agentic AI module routes (additive — zero changes to existing code)
 from .agentic.routes import router as agentic_router
@@ -173,6 +174,9 @@ app.include_router(outpaint_router)
 
 # Include Capabilities routes (/v1/capabilities)
 app.include_router(capabilities_router)
+# Compute status (Wave A / Batch 6): /compute/status, /compute/mode. Additive;
+# default mode is "local" so existing generation paths are unchanged.
+app.include_router(compute_router)
 
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)
@@ -313,6 +317,12 @@ app.include_router(user_profile_store_router)
 # Include Secure File Storage routes (/v1/files/upload, /files/{asset_id})
 from .files import router as files_router
 app.include_router(files_router)
+
+# Include Voice Session backend (MB2 — WS /v1/voice/session). Additive and
+# flag-gated (VOICE_BACKEND_ENABLED): the route rejects connections until
+# enabled, so this include is a no-op in prod until the feature is switched on.
+from .voice import router as voice_router
+app.include_router(voice_router)
 
 # Include media:// URI resolver (/media/resolve)
 from .media_resolver import router as media_router

@@ -85,8 +85,44 @@ IMAGE_MODEL = os.getenv("IMAGE_MODEL", "sdxl").strip()  # sdxl, flux-schnell, fl
 # Available video models
 VIDEO_MODEL = os.getenv("VIDEO_MODEL", "svd").strip()  # svd, wan-2.2, seedream
 
+# ── OllaBridge Cloud compute (Wave A — Batch 6, additive) ────────────────
+# Lets HomePilot route generation to a paired GPU via OllaBridge Cloud instead
+# of assuming a local GPU. The default "local" preserves today's behaviour
+# exactly — the ComputeProvider abstraction selects LocalComputeProvider and
+# nothing about the existing image/chat paths changes.
+#   local            — always use the local ComfyUI / LLM (today's behaviour)
+#   ollabridge_cloud — always route generation to OllaBridge Cloud
+#   auto             — local GPU when healthy, else a linked OllaBridge device
+HOMEPILOT_COMPUTE_MODE = os.getenv("HOMEPILOT_COMPUTE_MODE", "local").strip().lower()
+OLLABRIDGE_CLOUD_URL = os.getenv(
+    "OLLABRIDGE_CLOUD_URL", "https://ruslanmv-ollabridge.hf.space"
+).rstrip("/")
+OLLABRIDGE_CLOUD_TOKEN = os.getenv("OLLABRIDGE_CLOUD_TOKEN", "").strip()
+OLLABRIDGE_CLOUD_IMAGE_MODEL = os.getenv("OLLABRIDGE_CLOUD_IMAGE_MODEL", "flux-schnell").strip()
+OLLABRIDGE_CLOUD_VIDEO_MODEL = os.getenv("OLLABRIDGE_CLOUD_VIDEO_MODEL", "ltx-video").strip()
+OLLABRIDGE_CLOUD_TIMEOUT = float(os.getenv("OLLABRIDGE_CLOUD_TIMEOUT", "300"))
+
+# Cloud-GPU burst (MB6). In `auto` mode, when the local GPU is offline HomePilot
+# can burst to a paired cloud GPU. By default this works for everyone (current
+# behaviour preserved). Set COMPUTE_BURST_REQUIRES_PREMIUM=true to make the burst
+# a premium feature; PREMIUM_COMPUTE_ENABLED is the entitlement (a per-user check
+# replaces this global flag once billing exists). Never gates the local GPU.
+COMPUTE_BURST_REQUIRES_PREMIUM = os.getenv("COMPUTE_BURST_REQUIRES_PREMIUM", "false").lower() in ("1", "true", "yes")
+PREMIUM_COMPUTE_ENABLED = os.getenv("PREMIUM_COMPUTE_ENABLED", "false").lower() in ("1", "true", "yes")
+
 # NSFW Mode (enables uncensored generation)
 NSFW_MODE = os.getenv("NSFW_MODE", "false").lower() == "true"
+
+# ── Voice session backend (MB2 — additive, default off) ──────────────────────
+# WS /v1/voice/session orchestrates STT → LLM → TTS server-side so mobile and web
+# stay thin clients. Off by default; the route rejects connections until enabled.
+VOICE_BACKEND_ENABLED = os.getenv("VOICE_BACKEND_ENABLED", "false").lower() in ("1", "true", "yes")
+
+# Premium voice entitlement (MB5). When on AND a neural TTS endpoint is set
+# (TTS_BASE_URL), voice sessions use the low-latency neural provider; otherwise
+# they use local Piper. This is the seam where a per-user entitlement check
+# replaces the global flag once billing exists — never by removing free voice.
+PREMIUM_VOICE_ENABLED = os.getenv("PREMIUM_VOICE_ENABLED", "false").lower() in ("1", "true", "yes")
 
 # Edit Session Sidecar Service
 # The edit-session service runs as a sidecar on port 8010

@@ -1,5 +1,19 @@
 {
+  "name": "homepilot",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test"
+  },
   "devDependencies": {
-    "jest-environment-jsdom": "^30.3.0"
+    "jest-environment-jsdom": "^30.3.0",
+    "turbo": "^2.0.6",
+    "typescript": "^5.4.5"
   }
 }
