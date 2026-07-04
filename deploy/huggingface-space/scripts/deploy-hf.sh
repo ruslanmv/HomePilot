@@ -65,6 +65,10 @@ cp -R "$REPO_ROOT/backend/app" "$STAGE_DIR/backend/app"
 cp    "$REPO_ROOT/backend/requirements.txt" "$STAGE_DIR/backend/requirements.txt"
 # Ensure __init__.py exists
 touch "$STAGE_DIR/backend/app/__init__.py"
+# Strip Python bytecode caches — cp -R copies untracked __pycache__/*.pyc from
+# the working tree, and HF's pre-receive hook rejects binary .pyc files.
+find "$STAGE_DIR/backend" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE_DIR/backend" -name '*.pyc' -delete 2>/dev/null || true
 
 echo ">> copying frontend/"
 mkdir -p "$STAGE_DIR/frontend"
@@ -76,16 +80,45 @@ while IFS= read -r -d '' entry; do
   cp -R "$entry" "$STAGE_DIR/frontend/"
 done < <(find "$REPO_ROOT/frontend" -mindepth 1 -maxdepth 1 -print0)
 
+echo ">> copying packages/"
+# Wave B monorepo: the frontend build resolves @homepilot/* from ../packages
+# (Vite alias -> packages/*/src). The Dockerfile therefore does COPY packages/
+# /packages/, so packages/ must be present in the pushed Space bundle.
+mkdir -p "$STAGE_DIR/packages"
+if [[ -d "$REPO_ROOT/packages" ]]; then
+  while IFS= read -r -d '' entry; do
+    name="$(basename "$entry")"
+    case "$name" in
+      node_modules|dist|.turbo) continue ;;
+    esac
+    cp -R "$entry" "$STAGE_DIR/packages/"
+  done < <(find "$REPO_ROOT/packages" -mindepth 1 -maxdepth 1 -print0)
+fi
+
 echo ">> copying community/sample/"
 mkdir -p "$STAGE_DIR/community/sample"
 if [[ -d "$REPO_ROOT/community/sample" ]]; then
   cp -R "$REPO_ROOT/community/sample/"* "$STAGE_DIR/community/sample/" 2>/dev/null || true
 fi
 
+# Mirror persona thumbnails from the upstream gallery (the same Worker the
+# public web gallery uses) so the offline Space ships an exact copy of the
+# web source of truth. Best-effort: if the upstream is unreachable the staged
+# (committed) thumbnails are kept as the offline fallback and the deploy
+# continues.
+echo ">> syncing community thumbnails from upstream gallery"
+python3 "$SCRIPT_DIR/sync_gallery_assets.py" "$STAGE_DIR/community/sample" \
+  || echo ">> gallery sync skipped (non-fatal)"
+
 echo ">> copying chata-personas/"
 mkdir -p "$STAGE_DIR/deploy/huggingface-space/chata-personas"
 cp "$SPACE_DIR/chata-personas/"*.hpersona "$STAGE_DIR/deploy/huggingface-space/chata-personas/" 2>/dev/null || true
 cp "$SPACE_DIR/chata-personas/public_packs.json" "$STAGE_DIR/deploy/huggingface-space/chata-personas/" 2>/dev/null || true
+
+# Final safety sweep: never ship Python bytecode or OS cruft (HF rejects binaries)
+find "$STAGE_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE_DIR" -name '*.pyc' -delete 2>/dev/null || true
+find "$STAGE_DIR" -name '.DS_Store' -delete 2>/dev/null || true
 
 # Cache-bust
 echo "$(date -u +%s)" > "$STAGE_DIR/frontend/.cache-bust"
