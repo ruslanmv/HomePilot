@@ -82,6 +82,26 @@ def ensure_users_tables() -> None:
         "CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)"
     )
 
+    # ---- Additive migration: federated-identity columns (non-destructive) ----
+    # Two nullable columns let a HomePilot user be linked to an OllaBridge Cloud
+    # identity without touching existing rows or single-user installs:
+    #   auth_provider  — "local" (default) or "ollabridge"/"google" for federated
+    #   cloud_user_id  — the Cloud User.id this local row is linked to (unique)
+    # Guarded by PRAGMA table_info so ensure_users_tables() stays idempotent and
+    # safe to call on every boot / every request.
+    cur.execute("PRAGMA table_info(users)")
+    existing_cols = {row[1] for row in cur.fetchall()}
+    if "auth_provider" not in existing_cols:
+        cur.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT 'local'")
+    if "cloud_user_id" not in existing_cols:
+        cur.execute("ALTER TABLE users ADD COLUMN cloud_user_id TEXT")
+    # Unique index on cloud_user_id (partial: NULLs are excluded so unlinked
+    # local rows don't collide). SQLite honours the WHERE clause on indexes.
+    cur.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cloud_user_id "
+        "ON users(cloud_user_id) WHERE cloud_user_id IS NOT NULL"
+    )
+
     con.commit()
     con.close()
 
@@ -163,6 +183,43 @@ def _create_token(user_id: str) -> str:
     return token
 
 
+_SESSION_COOKIE = "homepilot_session"
+_SESSION_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
+
+
+def _cookie_secure() -> bool:
+    """Whether to set the ``Secure`` flag on the session cookie.
+
+    Environment-aware instead of hardcoded ``False`` (which would leak the
+    cookie over plain HTTP in production). Resolution:
+      * ``HOMEPILOT_COOKIE_SECURE=true|false`` — explicit override, wins.
+      * otherwise ``auto``: Secure when a public HTTPS base URL is configured
+        (``PUBLIC_BASE_URL`` / ``APP_BASE_URL`` starts with ``https://``).
+    Local dev over http://localhost keeps Secure off, so nothing regresses.
+    """
+    v = os.getenv("HOMEPILOT_COOKIE_SECURE", "auto").strip().lower()
+    if v in ("1", "true", "yes"):
+        return True
+    if v in ("0", "false", "no"):
+        return False
+    base = (os.getenv("PUBLIC_BASE_URL", "") or os.getenv("APP_BASE_URL", "")).strip()
+    return base.startswith("https://")
+
+
+def _set_session_cookie(resp: JSONResponse, token: str) -> JSONResponse:
+    """Attach the HttpOnly session cookie with an environment-aware Secure flag."""
+    resp.set_cookie(
+        key=_SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(),
+        max_age=_SESSION_MAX_AGE,
+        path="/",
+    )
+    return resp
+
+
 def _validate_token(token: str) -> Optional[Dict[str, Any]]:
     """Validate a bearer token. Checks expiry. Returns user dict or None."""
     if not token:
@@ -215,6 +272,78 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    """Look up a user by email (case-insensitive), ignoring blank emails.
+
+    Additive helper — supports the "Username **or** email" login field and the
+    verified-email account-linking branch in /v1/auth/exchange. Emails are not
+    guaranteed unique in the legacy schema, so this returns the *earliest*
+    match deterministically; callers that need takeover-safety must additionally
+    require proof (verified email + no ambiguity), which /exchange enforces.
+    """
+    email = (email or "").strip()
+    if not email:
+        return None
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    cur.execute(
+        "SELECT * FROM users WHERE email <> '' AND email = ? COLLATE NOCASE "
+        "ORDER BY created_at LIMIT 1",
+        (email,),
+    )
+    row = cur.fetchone()
+    con.close()
+    return dict(row) if row else None
+
+
+def count_users_by_email(email: str) -> int:
+    """Number of users sharing an email (case-insensitive). Used to refuse
+    linking when an email is ambiguous."""
+    email = (email or "").strip()
+    if not email:
+        return 0
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "SELECT COUNT(*) FROM users WHERE email <> '' AND email = ? COLLATE NOCASE",
+        (email,),
+    )
+    n = cur.fetchone()[0]
+    con.close()
+    return int(n)
+
+
+def get_user_by_cloud_id(cloud_user_id: str) -> Optional[Dict[str, Any]]:
+    """Look up a local user previously linked to an OllaBridge Cloud identity."""
+    cloud_user_id = (cloud_user_id or "").strip()
+    if not cloud_user_id:
+        return None
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    cur.execute("SELECT * FROM users WHERE cloud_user_id = ?", (cloud_user_id,))
+    row = cur.fetchone()
+    con.close()
+    return dict(row) if row else None
+
+
+def set_cloud_link(user_id: str, cloud_user_id: str, auth_provider: str = "ollabridge") -> None:
+    """Link a local user row to a Cloud identity (idempotent)."""
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "UPDATE users SET cloud_user_id = ?, auth_provider = ?, updated_at = ? WHERE id = ?",
+        (cloud_user_id.strip(), auth_provider, time.strftime("%Y-%m-%d %H:%M:%S"), user_id),
+    )
+    con.commit()
+    con.close()
+
+
 def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     path = _get_db_path()
     con = sqlite3.connect(path)
@@ -231,7 +360,7 @@ def list_users() -> List[Dict[str, Any]]:
     con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     cur = con.cursor()
-    cur.execute("SELECT id, username, display_name, email, avatar_url, onboarding_complete, created_at FROM users ORDER BY created_at")
+    cur.execute("SELECT id, username, display_name, email, avatar_url, onboarding_complete, auth_provider, created_at FROM users ORDER BY created_at")
     rows = cur.fetchall()
     con.close()
     return [dict(r) for r in rows]
@@ -338,7 +467,11 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=2, max_length=32)
+    # Named ``username`` for backward compatibility, but the field now also
+    # accepts an email address (see login() — it falls back to an email lookup
+    # when the identifier contains "@"). max_length widened from 32 → 256 so a
+    # full email fits; usernames themselves are still capped at 32 on register.
+    username: str = Field(..., min_length=2, max_length=256)
     password: str = Field(default="", max_length=128)
 
 
@@ -353,9 +486,12 @@ class OnboardingRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/register")
-def register(body: RegisterRequest):
+def register(body: RegisterRequest, request: Request):
     """Create a new user account."""
     ensure_users_tables()
+
+    if not _rate_allowed(f"register:{_client_ip(request)}", limit=10, window_seconds=60.0):
+        raise HTTPException(429, "Too many requests. Please slow down.")
 
     username = body.username.strip()
     if not username:
@@ -391,25 +527,35 @@ def register(body: RegisterRequest):
         },
         "token": token,
     })
-    resp.set_cookie(
-        key="homepilot_session",
-        value=token,
-        httponly=True,
-        samesite="lax",
-        secure=False,  # set True if behind HTTPS
-        max_age=30 * 24 * 60 * 60,
-        path="/",
-    )
+    _set_session_cookie(resp, token)
     return resp
 
 
 @router.post("/login")
-def login(body: LoginRequest):
-    """Authenticate and get a session token."""
+def login(body: LoginRequest, request: Request):
+    """Authenticate and get a session token.
+
+    Accepts a username **or** an email in the ``username`` field. Username
+    lookup is tried first (preserves all existing behavior); only when it
+    misses and the identifier looks like an email ("@") do we fall back to an
+    email lookup. Federated (``auth_provider != 'local'``) accounts cannot log
+    in through this password path — they authenticate via /v1/auth/exchange.
+    """
     ensure_users_tables()
 
-    user = get_user_by_username(body.username.strip())
+    if not _rate_allowed(f"login:{_client_ip(request)}", limit=20, window_seconds=60.0):
+        raise HTTPException(429, "Too many requests. Please slow down.")
+
+    identifier = body.username.strip()
+    user = get_user_by_username(identifier)
+    if not user and "@" in identifier:
+        user = get_user_by_email(identifier)
     if not user:
+        raise HTTPException(401, "Invalid username or password")
+
+    # Federated accounts have no usable local password — block the empty-password
+    # match (_verify_password("", "") is True) that would otherwise let anyone in.
+    if (user.get("auth_provider") or "local") != "local":
         raise HTTPException(401, "Invalid username or password")
 
     if not _verify_password(body.password, user.get("password_hash", "")):
@@ -432,15 +578,182 @@ def login(body: LoginRequest):
         },
         "token": token,
     })
-    resp.set_cookie(
-        key="homepilot_session",
-        value=token,
-        httponly=True,
-        samesite="lax",
-        secure=False,  # set True if behind HTTPS
-        max_age=30 * 24 * 60 * 60,
-        path="/",
-    )
+    _set_session_cookie(resp, token)
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# Federated sign-in — "Continue with OllaBridge" (token exchange + JIT provision)
+# ---------------------------------------------------------------------------
+
+# Simple in-process sliding-window rate limiter. Good enough for a single-node
+# HomePilot; keyed by client IP. Not a distributed limiter — intentionally
+# dependency-free so it works on offline/self-hosted installs.
+import threading  # noqa: E402  (local import kept beside its only user)
+from collections import defaultdict, deque
+
+_rate_lock = threading.Lock()
+_rate_hits: Dict[str, "deque[float]"] = defaultdict(deque)
+
+
+def _rate_limit(key: str, *, limit: int, window_seconds: float) -> bool:
+    """Return True if the call is allowed, False if the caller exceeded ``limit``
+    requests within ``window_seconds``. Prunes old timestamps as it goes."""
+    now = time.time()
+    with _rate_lock:
+        hits = _rate_hits[key]
+        cutoff = now - window_seconds
+        while hits and hits[0] < cutoff:
+            hits.popleft()
+        if len(hits) >= limit:
+            return False
+        hits.append(now)
+        return True
+
+
+def _rate_allowed(key: str, *, limit: int, window_seconds: float) -> bool:
+    """Endpoint-facing wrapper around ``_rate_limit``.
+
+    Disabled under pytest (``PYTEST_CURRENT_TEST`` is auto-set per test) and via
+    ``HOMEPILOT_DISABLE_RATE_LIMIT`` so a fast in-process test run — which fires
+    many register/login calls from a single client IP — never trips the limiter.
+    Production is unaffected (neither var is set). The limiter itself
+    (``_rate_limit``) stays pure so it can be unit-tested directly.
+    """
+    if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("HOMEPILOT_DISABLE_RATE_LIMIT"):
+        return True
+    return _rate_limit(key, limit=limit, window_seconds=window_seconds)
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for rate-limit bucketing (honours X-Forwarded-For)."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _unique_username(seed: str) -> str:
+    """Derive a valid, unique HomePilot username from an email local-part / name.
+
+    Sanitises to the register() charset (letters/digits/_/-), enforces the
+    2..32 length window, then de-duplicates with a numeric suffix.
+    """
+    base = (seed or "").split("@", 1)[0].strip().lower()
+    base = "".join(ch for ch in base if ch.isalnum() or ch in ("_", "-"))
+    if len(base) < 2:
+        base = f"user{secrets.token_hex(2)}"
+    base = base[:32]
+    candidate = base
+    n = 0
+    while get_user_by_username(candidate) is not None:
+        n += 1
+        suffix = str(n)
+        candidate = f"{base[:32 - len(suffix)]}{suffix}"
+    return candidate
+
+
+class ExchangeRequest(BaseModel):
+    cloud_token: str = Field(..., min_length=8, max_length=4096)
+
+
+def _fetch_cloud_userinfo(cloud_token: str) -> Optional[Dict[str, Any]]:
+    """Validate a Cloud token by calling OllaBridge Cloud's userinfo endpoint.
+
+    Introspection over a shared secret: HomePilot never needs the Cloud
+    ``JWT_SECRET`` — it hands the token back to Cloud and trusts Cloud's answer.
+    Returns the userinfo dict on 200, or None on any auth failure / error.
+    """
+    import httpx
+    from . import config as _cfg
+
+    base = (getattr(_cfg, "OLLABRIDGE_CLOUD_URL", "") or "").rstrip("/")
+    if not base:
+        return None
+    try:
+        r = httpx.get(
+            f"{base}/v1/auth/me",
+            headers={"Authorization": f"Bearer {cloud_token}"},
+            timeout=15.0,
+        )
+    except Exception:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        return r.json()
+    except Exception:
+        return None
+
+
+@router.post("/exchange")
+def exchange(body: ExchangeRequest, request: Request):
+    """Exchange an OllaBridge Cloud token for a local HomePilot session.
+
+    Flow (JIT-provision / link):
+      1. Validate ``cloud_token`` against Cloud ``GET /v1/auth/me``.
+      2. If a local user is already linked to that Cloud id → log in.
+      3. Else, ONLY if the Cloud email is verified AND matches exactly one
+         local account → link it (set cloud_user_id + auth_provider) → log in.
+      4. Else create a new passwordless federated local user → log in.
+
+    Issues the normal ``homepilot_session`` cookie + bearer token, so every
+    downstream data-layer isolation (`WHERE user_id = ?`) is unchanged.
+    """
+    ensure_users_tables()
+
+    # Rate-limit: 10 attempts / minute / IP. Uniform 429, no account oracle.
+    if not _rate_allowed(f"exchange:{_client_ip(request)}", limit=10, window_seconds=60.0):
+        raise HTTPException(429, "Too many requests. Please slow down.")
+
+    info = _fetch_cloud_userinfo(body.cloud_token.strip())
+    if not info or not info.get("user_id"):
+        # Uniform 401 — never reveal whether the token is malformed vs expired.
+        raise HTTPException(401, "Could not verify OllaBridge identity")
+
+    cloud_user_id = str(info["user_id"]).strip()
+    email = (info.get("email") or "").strip()
+    email_verified = bool(info.get("email_verified"))
+    display_name = (info.get("display_name") or "").strip()
+
+    # 1) Already linked → log in.
+    user = get_user_by_cloud_id(cloud_user_id)
+
+    # 2) Link an existing local account by VERIFIED, UNAMBIGUOUS email only.
+    #    Verified-only + single-match guards against account takeover (a local
+    #    user pre-registering someone else's unverified email cannot capture it).
+    if user is None and email_verified and email and count_users_by_email(email) == 1:
+        candidate = get_user_by_email(email)
+        if candidate is not None and not candidate.get("cloud_user_id"):
+            set_cloud_link(candidate["id"], cloud_user_id, auth_provider="ollabridge")
+            user = get_user_by_id(candidate["id"])
+
+    # 3) JIT-create a fresh passwordless federated user.
+    if user is None:
+        created = create_user(
+            username=_unique_username(email or display_name or cloud_user_id),
+            password="",  # passwordless — federated identity, not local login
+            email=email,
+            display_name=display_name or "",
+        )
+        set_cloud_link(created["id"], cloud_user_id, auth_provider="ollabridge")
+        user = get_user_by_id(created["id"])
+
+    token = _create_token(user["id"])
+    resp = JSONResponse({
+        "ok": True,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "display_name": user.get("display_name", ""),
+            "email": user.get("email", ""),
+            "avatar_url": user.get("avatar_url", ""),
+            "onboarding_complete": bool(user.get("onboarding_complete")),
+            "auth_provider": user.get("auth_provider", "ollabridge"),
+        },
+        "token": token,
+    })
+    _set_session_cookie(resp, token)
     return resp
 
 
@@ -625,8 +938,15 @@ def get_me(
         if not users:
             # No users at all — first boot
             return {"ok": True, "user": None, "needs_setup": True}
-        if len(users) == 1 and not users[0].get("password_hash"):
-            # Single user, no password — auto-login
+        if (
+            len(users) == 1
+            and not users[0].get("password_hash")
+            and (users[0].get("auth_provider") or "local") == "local"
+        ):
+            # Single LOCAL user, no password — auto-login (backward-compat
+            # single-user bootstrap). A federated (ollabridge) lone account is
+            # excluded: it must prove identity through /v1/auth/exchange, never
+            # via a passwordless auto-login that anyone loading the page hits.
             auto_token = _create_token(users[0]["id"])
             resp = JSONResponse({
                 "ok": True,
