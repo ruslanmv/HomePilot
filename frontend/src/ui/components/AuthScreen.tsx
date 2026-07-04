@@ -255,8 +255,17 @@ export default function AuthScreen({
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const cv: HTMLCanvasElement = canvas
+    // Only run the starfield where it belongs: large screens, motion allowed,
+    // and not in data-saver mode. On phones/tablets the animated right panel is
+    // hidden (CSS) AND the canvas is never initialized here — no GPU/battery
+    // cost, faster first paint. Matches the < 980px layout collapse below.
+    const bigScreen = window.matchMedia('(min-width: 980px)').matches
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const saveData = Boolean(
+      (navigator as unknown as { connection?: { saveData?: boolean } }).connection?.saveData,
+    )
+    if (!bigScreen || reduceMotion || saveData) return
+    const cv: HTMLCanvasElement = canvas
 
     function fit(c: HTMLCanvasElement) {
       const rect = c.getBoundingClientRect()
@@ -280,6 +289,7 @@ export default function AuthScreen({
     }))
     let frame = 0
     let raf = 0
+    let running = true
 
     function draw() {
       const { ctx, width, height } = state
@@ -321,15 +331,22 @@ export default function AuthScreen({
         ctx.fill()
         ctx.shadowBlur = 0
       }
-      if (!reduceMotion) raf = requestAnimationFrame(draw)
+      raf = running ? requestAnimationFrame(draw) : 0
     }
 
     function onResize() { state = fit(cv) }
+    // Stop drawing while the tab is backgrounded; resume on return.
+    function onVisibility() {
+      running = !document.hidden
+      if (running && !raf) raf = requestAnimationFrame(draw)
+    }
     window.addEventListener('resize', onResize)
+    document.addEventListener('visibilitychange', onVisibility)
     draw()
 
     return () => {
       window.removeEventListener('resize', onResize)
+      document.removeEventListener('visibilitychange', onVisibility)
       if (raf) cancelAnimationFrame(raf)
     }
   }, [])
@@ -471,8 +488,8 @@ export default function AuthScreen({
               </div>
 
               <div className="signup-link-row">
-                New to HomePilot?
-                <button type="button" id="openSignup" onClick={openSignup}>Create account</button>
+                New to this device?
+                <button type="button" id="openSignup" onClick={openSignup}>Create local account</button>
               </div>
             </form>
           </div>
@@ -548,8 +565,8 @@ export default function AuthScreen({
         <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="signupTitle">
           <header className="account-header">
             <div className="account-title">
-              <h2 id="signupTitle">Create Account</h2>
-              <p>Create a local HomePilot account. You can add a password now or keep it passwordless for a local-only setup.</p>
+              <h2 id="signupTitle">Create Local Account</h2>
+              <p>Create a local HomePilot account on this device. You can add a password now or keep it passwordless for a local-only setup.</p>
             </div>
             <button className="modal-close" type="button" aria-label="Close create account dialog" onClick={closeSignup}>
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
@@ -595,7 +612,7 @@ export default function AuthScreen({
 
             <div className="modal-actions">
               <button className="create-button" type="submit" disabled={suLoading}>
-                {suLoading ? 'Creating account…' : 'Create Account'}
+                {suLoading ? 'Creating account…' : 'Create Local Account'}
               </button>
               <p className="modal-footnote">
                 Local accounts stay on this HomePilot instance. For team identity and sync, use <strong>Continue with OllaBridge</strong>.
@@ -718,7 +735,7 @@ const CSS = `
 .hp-auth { --bg:#020307; --left:#080a0f; --ink:#f8fafc; --ink-2:rgba(226,232,240,.66);
   --cyan:#06b6d4; --blue:#3b82f6; --violet:#8b5cf6;
   --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --loop:14s;
+  --build:3.6s;
   position:fixed; inset:0; z-index:0; overflow:auto;
   background:var(--bg); color:var(--ink); font-family:var(--font); }
 .hp-auth *, .hp-auth *::before, .hp-auth *::after { box-sizing:border-box; }
@@ -778,13 +795,13 @@ const CSS = `
   letter-spacing:-.025em; overflow:hidden; transition:transform .26s ease, box-shadow .32s ease, filter .32s ease; }
 .hp-auth .primary::before { content:""; position:absolute; inset:-90%;
   background:linear-gradient(115deg, transparent 26%, rgba(255,255,255,.20), transparent 39%);
-  transform:translateX(-58%) rotate(8deg); animation:hpSoftShine 11s ease-in-out infinite; pointer-events:none; }
+  transform:translateX(-58%) rotate(8deg); animation:hpSoftShine 2.4s ease-out 1s both; pointer-events:none; }
 .hp-auth .primary:hover { transform:translateY(-1px); filter:saturate(1.04);
   box-shadow:0 24px 70px rgba(59,130,246,.22), 0 22px 68px rgba(139,92,246,.24), inset 0 1px 0 rgba(255,255,255,.25); }
 .hp-auth .primary:disabled { opacity:.7; cursor:wait; }
 .hp-auth .primary svg, .hp-auth .primary span { position:relative; z-index:1; }
 .hp-auth .primary svg { width:32px; height:32px; }
-@keyframes hpSoftShine { 0%,68% { transform:translateX(-62%) rotate(8deg); opacity:0;} 76% { opacity:1;} 92%,100% { transform:translateX(72%) rotate(8deg); opacity:0;} }
+@keyframes hpSoftShine { 0% { transform:translateX(-62%) rotate(8deg); opacity:0;} 18% { opacity:1;} 100% { transform:translateX(72%) rotate(8deg); opacity:0;} }
 
 .hp-auth .divider { display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:center;
   margin:28px 0 18px; color:rgba(148,163,184,.40); font-size:15px; }
@@ -845,68 +862,73 @@ const CSS = `
   background:linear-gradient(90deg, rgba(0,0,0,.38), transparent 16%); pointer-events:none; }
 .hp-auth #stars { position:absolute; inset:0; z-index:2; width:100%; height:100%; display:block; }
 
+/* ── One-shot build (enterprise clean): the house draws itself once, settles,
+   and HOLDS. No fade-out, no repeating cycle. Everything below runs a single
+   pass with fill-mode "both", ending in the final built state. ─────────────── */
 .hp-auth .stage { position:absolute; z-index:6; top:50%; left:52%; width:min(54vw,720px); height:min(54vw,720px);
   display:grid; place-items:center; transform:translate(-50%,-50%);
   filter:drop-shadow(0 0 18px rgba(6,182,212,.10)) drop-shadow(0 0 34px rgba(139,92,246,.12));
-  pointer-events:none; animation:hpStageFade var(--loop) linear infinite; }
-@keyframes hpStageFade { 0%{opacity:0;} 10%{opacity:1;} 72%{opacity:1;} 82%{opacity:0;} 100%{opacity:0;} }
-.hp-auth .stage svg { width:100%; height:100%; overflow:visible; animation:hpBreathe var(--loop) ease-in-out infinite; }
-@keyframes hpBreathe { 0%,24%{transform:scale(1);} 34%{transform:scale(1);} 48%{transform:scale(1.012);} 60%{transform:scale(1);} 68%{transform:scale(1.008);} 76%,100%{transform:scale(1);} }
+  pointer-events:none; opacity:0; animation:hpStageIn 700ms ease-out both; }
+@keyframes hpStageIn { from{opacity:0;} to{opacity:1;} }
+.hp-auth .stage svg { width:100%; height:100%; overflow:visible; }
 
+/* A single quiet energy sweep as the house draws, then gone — plays once. */
 .hp-auth .build-wave { position:absolute; z-index:4; top:50%; left:52%; width:min(68vw,920px); height:min(44vw,580px);
-  transform:translate(-50%,-50%); pointer-events:none; animation:hpWaveFrame var(--loop) linear infinite; }
+  transform:translate(-50%,-50%); pointer-events:none; }
 .hp-auth .build-wave::before { content:""; position:absolute; inset:0; border-radius:999px;
   background:radial-gradient(ellipse at 50% 50%, rgba(6,182,212,.14), rgba(59,130,246,.08) 30%, rgba(139,92,246,.05) 48%, transparent 70%);
-  filter:blur(30px); transform:scale(.68,.42); opacity:0; animation:hpWaveGlow var(--loop) linear infinite; }
+  filter:blur(30px); transform:scale(.68,.42); opacity:0; animation:hpWaveGlow var(--build) ease-out both; }
 .hp-auth .build-wave::after { content:""; position:absolute; left:6%; right:6%; top:48%; height:2px; border-radius:999px;
   background:linear-gradient(90deg, transparent, rgba(6,182,212,.56), rgba(59,130,246,.48), rgba(139,92,246,.42), transparent);
-  filter:blur(.2px); transform-origin:left center; transform:scaleX(0); opacity:0; animation:hpWaveSweep var(--loop) linear infinite; }
-@keyframes hpWaveFrame { 0%,3%{opacity:0;} 6%,18%{opacity:1;} 22%,100%{opacity:0;} }
-@keyframes hpWaveGlow { 0%,3%{opacity:0; transform:scale(.50,.28);} 8%{opacity:.28; transform:scale(.82,.46);} 14%{opacity:.44; transform:scale(.96,.54);} 22%{opacity:0; transform:scale(1.08,.60);} 100%{opacity:0; transform:scale(1.08,.60);} }
-@keyframes hpWaveSweep { 0%,4%{transform:scaleX(0); opacity:0;} 8%{opacity:.95;} 16%{transform:scaleX(1); opacity:.58;} 22%{transform:scaleX(1.06); opacity:0;} 100%{transform:scaleX(1.06); opacity:0;} }
+  filter:blur(.2px); transform-origin:left center; transform:scaleX(0); opacity:0; animation:hpWaveSweep var(--build) ease-out both; }
+@keyframes hpWaveGlow { 0%{opacity:0; transform:scale(.5,.28);} 22%{opacity:.32; transform:scale(.9,.5);} 48%{opacity:.16; transform:scale(1.02,.56);} 72%,100%{opacity:0; transform:scale(1.06,.6);} }
+@keyframes hpWaveSweep { 0%{transform:scaleX(0); opacity:0;} 14%{opacity:.85;} 44%{transform:scaleX(1); opacity:.45;} 64%,100%{transform:scaleX(1.04); opacity:0;} }
 
-.hp-auth .logo-house { stroke:url(#bigHpGrad); stroke-width:12; fill:none; stroke-linejoin:round; stroke-linecap:round; filter:url(#bigGlow); opacity:.88; }
-.hp-auth .logo-door { stroke:url(#bigHpGrad); stroke-width:8; fill:url(#bigFill); opacity:0; animation:hpDoorReveal var(--loop) linear infinite; }
-.hp-auth .trace { stroke-dasharray:900; stroke-dashoffset:900; opacity:0; animation:hpHouseBuild var(--loop) linear infinite; }
+/* House lines draw sequentially, then hold at full opacity. */
+.hp-auth .logo-house { stroke:url(#bigHpGrad); stroke-width:12; fill:none; stroke-linejoin:round; stroke-linecap:round; filter:url(#bigGlow); opacity:.9; }
+.hp-auth .logo-door { stroke:url(#bigHpGrad); stroke-width:8; fill:url(#bigFill); opacity:0; animation:hpDoorReveal var(--build) ease-out both; }
+.hp-auth .trace { stroke-dasharray:900; stroke-dashoffset:900; opacity:0; animation:hpHouseBuild var(--build) linear both; }
 .hp-auth .roof-a, .hp-auth .roof-b, .hp-auth .body-fixed { stroke-dasharray:380; stroke-dashoffset:380; opacity:0; }
-.hp-auth .roof-a { animation:hpLineBuildA var(--loop) linear infinite; }
-.hp-auth .roof-b { animation:hpLineBuildB var(--loop) linear infinite; }
-.hp-auth .body-fixed { stroke-dasharray:620; stroke-dashoffset:620; animation:hpLineBuildBody var(--loop) linear infinite; }
-@keyframes hpHouseBuild { 0%,6%{stroke-dashoffset:900; opacity:0;} 8%{opacity:.24;} 20%,72%{stroke-dashoffset:0; opacity:.92;} 82%,100%{stroke-dashoffset:0; opacity:0;} }
-@keyframes hpLineBuildA { 0%,8%{stroke-dashoffset:380; opacity:0;} 12%,72%{stroke-dashoffset:0; opacity:.90;} 82%,100%{stroke-dashoffset:0; opacity:0;} }
-@keyframes hpLineBuildB { 0%,10%{stroke-dashoffset:380; opacity:0;} 14%,72%{stroke-dashoffset:0; opacity:.90;} 82%,100%{stroke-dashoffset:0; opacity:0;} }
-@keyframes hpLineBuildBody { 0%,12%{stroke-dashoffset:620; opacity:0;} 18%,72%{stroke-dashoffset:0; opacity:.90;} 82%,100%{stroke-dashoffset:0; opacity:0;} }
-@keyframes hpDoorReveal { 0%,18%{opacity:0; transform:translateY(8px);} 24%,72%{opacity:.78; transform:translateY(0);} 82%,100%{opacity:0; transform:translateY(0);} }
+.hp-auth .roof-a { animation:hpLineBuildA var(--build) linear both; }
+.hp-auth .roof-b { animation:hpLineBuildB var(--build) linear both; }
+.hp-auth .body-fixed { stroke-dasharray:620; stroke-dashoffset:620; animation:hpLineBuildBody var(--build) linear both; }
+@keyframes hpHouseBuild { 0%{stroke-dashoffset:900; opacity:0;} 12%{opacity:.35;} 60%,100%{stroke-dashoffset:0; opacity:.9;} }
+@keyframes hpLineBuildA { 0%,8%{stroke-dashoffset:380; opacity:0;} 60%,100%{stroke-dashoffset:0; opacity:.9;} }
+@keyframes hpLineBuildB { 0%,12%{stroke-dashoffset:380; opacity:0;} 64%,100%{stroke-dashoffset:0; opacity:.9;} }
+@keyframes hpLineBuildBody { 0%,16%{stroke-dashoffset:620; opacity:0;} 68%,100%{stroke-dashoffset:0; opacity:.9;} }
+@keyframes hpDoorReveal { 0%,46%{opacity:0; transform:translateY(8px);} 70%,100%{opacity:.8; transform:translateY(0);} }
 
-.hp-auth .core-halo { opacity:0; transform-origin:200px 190px; animation:hpCoreAppear var(--loop) linear infinite; }
-.hp-auth .core-middle, .hp-auth .core-dot { opacity:0; transform-origin:200px 190px; animation:hpCoreDotAppear var(--loop) linear infinite; }
-@keyframes hpCoreAppear { 0%,18%{opacity:0; transform:scale(.52);} 24%{opacity:.44; transform:scale(1.18);} 30%,72%{opacity:.34; transform:scale(1);} 82%,100%{opacity:0; transform:scale(1);} }
-@keyframes hpCoreDotAppear { 0%,20%{opacity:0; transform:scale(.40);} 26%{opacity:.95; transform:scale(1.12);} 32%,72%{opacity:1; transform:scale(1);} 82%,100%{opacity:0; transform:scale(1);} }
+/* Core node lights up once and stays lit. */
+.hp-auth .core-halo { opacity:0; transform-origin:200px 190px; animation:hpCoreAppear var(--build) ease-out both; }
+.hp-auth .core-middle, .hp-auth .core-dot { opacity:0; transform-origin:200px 190px; animation:hpCoreDotAppear var(--build) ease-out both; }
+@keyframes hpCoreAppear { 0%,50%{opacity:0; transform:scale(.6);} 70%{opacity:.42; transform:scale(1.12);} 84%,100%{opacity:.34; transform:scale(1);} }
+@keyframes hpCoreDotAppear { 0%,54%{opacity:0; transform:scale(.5);} 74%{opacity:1; transform:scale(1.1);} 86%,100%{opacity:1; transform:scale(1);} }
 
-.hp-auth .wave { fill:none; stroke-linecap:round; opacity:0; stroke-dasharray:90 120; stroke-dashoffset:48; }
-.hp-auth .w1l, .hp-auth .w1r { animation:hpSignal1 var(--loop) linear infinite; }
-.hp-auth .w2l, .hp-auth .w2r { animation:hpSignal2 var(--loop) linear infinite; }
-.hp-auth .w3l, .hp-auth .w3r { animation:hpSignal3 var(--loop) linear infinite; }
-@keyframes hpSignal1 { 0%,22%{opacity:0; stroke-dasharray:1 120; stroke-dashoffset:48;} 30%{opacity:.54; stroke-dasharray:54 120; stroke-dashoffset:0;} 72%{opacity:.18; stroke-dasharray:54 120; stroke-dashoffset:0;} 82%,100%{opacity:0; stroke-dasharray:54 120; stroke-dashoffset:0;} }
-@keyframes hpSignal2 { 0%,24%{opacity:0; stroke-dasharray:1 120; stroke-dashoffset:48;} 32%{opacity:.42; stroke-dasharray:54 120; stroke-dashoffset:0;} 72%{opacity:.14; stroke-dasharray:54 120; stroke-dashoffset:0;} 82%,100%{opacity:0; stroke-dasharray:54 120; stroke-dashoffset:0;} }
-@keyframes hpSignal3 { 0%,26%{opacity:0; stroke-dasharray:1 120; stroke-dashoffset:48;} 34%{opacity:.32; stroke-dasharray:54 120; stroke-dashoffset:0;} 72%{opacity:.10; stroke-dasharray:54 120; stroke-dashoffset:0;} 82%,100%{opacity:0; stroke-dasharray:54 120; stroke-dashoffset:0;} }
+/* Signal arcs fade in once to a calm static level and hold (no pulsing). */
+.hp-auth .wave { fill:none; stroke-linecap:round; opacity:0; stroke-dasharray:54 120; stroke-dashoffset:0; }
+.hp-auth .w1l, .hp-auth .w1r { animation:hpSignal1 var(--build) ease-out both; }
+.hp-auth .w2l, .hp-auth .w2r { animation:hpSignal2 var(--build) ease-out both; }
+.hp-auth .w3l, .hp-auth .w3r { animation:hpSignal3 var(--build) ease-out both; }
+@keyframes hpSignal1 { 0%,60%{opacity:0;} 80%,100%{opacity:.2;} }
+@keyframes hpSignal2 { 0%,64%{opacity:0;} 84%,100%{opacity:.15;} }
+@keyframes hpSignal3 { 0%,68%{opacity:0;} 88%,100%{opacity:.1;} }
 
 .hp-auth .floor { position:absolute; z-index:5; left:12%; right:10%; bottom:14%; height:12%;
   background:radial-gradient(ellipse at center, rgba(6,182,212,.12), rgba(59,130,246,.10) 38%, rgba(139,92,246,.08) 56%, transparent 80%);
-  filter:blur(24px); opacity:0; pointer-events:none; animation:hpFloorReveal var(--loop) linear infinite; }
-@keyframes hpFloorReveal { 0%,16%{opacity:0; transform:scaleX(.82);} 24%,72%{opacity:.48; transform:scaleX(1);} 82%,100%{opacity:0; transform:scaleX(1);} }
+  filter:blur(24px); opacity:0; pointer-events:none; animation:hpFloorReveal var(--build) ease-out both; }
+@keyframes hpFloorReveal { 0%,42%{opacity:0; transform:scaleX(.85);} 64%,100%{opacity:.42; transform:scaleX(1);} }
 
 .hp-auth .chip { position:absolute; z-index:7; display:inline-flex; align-items:center; gap:9px; padding:10px 13px;
   border-radius:999px; border:1px solid rgba(255,255,255,.085); background:rgba(3,6,14,.28); color:rgba(226,232,240,.56);
   -webkit-backdrop-filter:blur(18px); backdrop-filter:blur(18px); font-size:13px; box-shadow:0 18px 58px rgba(0,0,0,.26); opacity:0; }
 .hp-auth .chip::before { content:""; width:7px; height:7px; border-radius:999px;
   background:linear-gradient(135deg, var(--cyan), var(--violet)); box-shadow:0 0 12px rgba(6,182,212,.42); }
-.hp-auth .c1 { left:12%; top:17%; animation:hpChip1 var(--loop) linear infinite; }
-.hp-auth .c2 { left:15%; bottom:22%; animation:hpChip2 var(--loop) linear infinite; }
-.hp-auth .c3 { right:12%; bottom:19%; animation:hpChip3 var(--loop) linear infinite; }
-@keyframes hpChip1 { 0%,28%{opacity:0; transform:translateY(8px);} 34%,72%{opacity:.92; transform:translateY(0);} 82%,100%{opacity:0; transform:translateY(0);} }
-@keyframes hpChip2 { 0%,30%{opacity:0; transform:translateY(8px);} 36%,72%{opacity:.92; transform:translateY(0);} 82%,100%{opacity:0; transform:translateY(0);} }
-@keyframes hpChip3 { 0%,32%{opacity:0; transform:translateY(8px);} 38%,72%{opacity:.92; transform:translateY(0);} 82%,100%{opacity:0; transform:translateY(0);} }
+.hp-auth .c1 { left:12%; top:17%; animation:hpChip1 var(--build) ease-out both; }
+.hp-auth .c2 { left:15%; bottom:22%; animation:hpChip2 var(--build) ease-out both; }
+.hp-auth .c3 { right:12%; bottom:19%; animation:hpChip3 var(--build) ease-out both; }
+@keyframes hpChip1 { 0%,66%{opacity:0; transform:translateY(8px);} 86%,100%{opacity:.92; transform:translateY(0);} }
+@keyframes hpChip2 { 0%,72%{opacity:0; transform:translateY(8px);} 90%,100%{opacity:.92; transform:translateY(0);} }
+@keyframes hpChip3 { 0%,78%{opacity:0; transform:translateY(8px);} 94%,100%{opacity:.92; transform:translateY(0);} }
 
 .hp-auth .noise { position:absolute; inset:0; z-index:8; pointer-events:none; opacity:.022;
   background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 320 320' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='320' height='320' filter='url(%23n)' opacity='.65'/%3E%3C/svg%3E");
@@ -967,24 +989,41 @@ const CSS = `
 .hp-auth .info-body a { color:#a78bfa; text-decoration:none; font-weight:650; }
 .hp-auth .info-body a:hover { text-decoration:underline; }
 
+/* Tablet + mobile (< 980px): fast, static, single-column login. The animated
+   right panel is hidden and the starfield canvas is never initialized (same
+   980px threshold as the canvas effect guard) — login-first, low battery, big
+   thumb targets. 100dvh (not 100vh) so mobile browser chrome can't clip it. */
 @media (max-width:980px) {
-  .hp-auth .page { grid-template-columns:1fr; }
-  .hp-auth .right { min-height:390px; order:-1; border-bottom:1px solid rgba(255,255,255,.06); }
-  .hp-auth .left { min-height:auto; border-right:0; padding:24px; }
-  .hp-auth .brand { width:205px; height:62px; }
-  .hp-auth .form { margin:46px auto 76px; transform:none; }
-  .hp-auth .pill { margin-bottom:34px; }
-  .hp-auth .stage { width:min(82vw,500px); height:min(82vw,500px); }
-  .hp-auth .build-wave { width:min(96vw,640px); height:260px; }
-  .hp-auth .chip { display:none; }
+  .hp-auth .page { display:block; min-height:100dvh; }
+  .hp-auth .right { display:none; }
+  .hp-auth .left {
+    min-height:100dvh; border-right:0;
+    padding:max(24px, env(safe-area-inset-top)) 22px max(28px, env(safe-area-inset-bottom));
+  }
+  .hp-auth .brand { width:200px; height:60px; }
+  .hp-auth .form { margin:30px auto 34px; transform:none; }
+  .hp-auth .pill { margin-bottom:28px; font-size:13px; }
+  .hp-auth h1 { font-size:clamp(34px, 9vw, 44px); }
+  .hp-auth .sub { margin:14px auto 30px; font-size:17px; }
+  /* WCAG 2.2 target sizing — 56px controls, >=44px tap links. */
+  .hp-auth .primary, .hp-auth .local { min-height:56px; }
+  .hp-auth .field input { height:56px; }
+  .hp-auth .linkbtn { min-height:44px; }
+
+  /* Create-account modal becomes a bottom sheet on phones/tablets. */
+  .hp-auth .account-modal { align-items:end; padding:0; }
+  .hp-auth .account-dialog {
+    width:100%; max-width:100%; max-height:92dvh;
+    border-radius:24px 24px 0 0; transform:translateY(100%);
+  }
+  .hp-auth .account-modal.is-open .account-dialog { transform:translateY(0); }
+  .hp-auth .account-form { padding-bottom:max(24px, env(safe-area-inset-bottom)); }
+  .hp-auth .create-button { min-height:56px; }
 }
 @media (max-width:520px) {
-  .hp-auth h1 { font-size:38px; }
-  .hp-auth .sub { font-size:18px; }
-  .hp-auth .primary { min-height:58px; font-size:16px; }
-  .hp-auth .field input { height:58px; }
-  .hp-auth .links { align-items:flex-start; flex-direction:column; }
-  .hp-auth .pill { font-size:13px; }
+  .hp-auth h1 { font-size:34px; }
+  .hp-auth .sub { font-size:16px; }
+  .hp-auth .links { align-items:flex-start; flex-direction:column; gap:12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .hp-auth *, .hp-auth *::before, .hp-auth *::after {

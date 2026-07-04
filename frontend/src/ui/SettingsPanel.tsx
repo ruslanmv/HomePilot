@@ -143,7 +143,9 @@ export type SettingsModelV2 = {
 // ─────────────────────────────────────────────────────────────────────────
 
 const INPUT_CLS =
-  "w-full h-10 bg-[#050505] border border-white/10 rounded-xl px-3 text-sm text-white " +
+  // 16px on mobile (text-base) prevents iOS Safari from auto-zooming on focus;
+  // 14px (text-sm) from sm: up keeps the dense desktop look.
+  "w-full h-11 sm:h-10 bg-[#050505] border border-white/10 rounded-xl px-3 text-base sm:text-sm text-white " +
   "placeholder:text-white/30 outline-none focus:border-[#9b5cff]/60 focus:ring-2 " +
   "focus:ring-[#9b5cff]/25 transition-colors [color-scheme:dark]";
 
@@ -1465,7 +1467,7 @@ export default function SettingsPanel({
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6 bg-black/65 backdrop-blur-[10px]"
+      className="fixed inset-0 z-[200] flex items-stretch sm:items-center justify-center p-0 sm:p-6 bg-black/65 backdrop-blur-[10px]"
       onMouseDown={requestClose}
     >
       <div
@@ -1473,10 +1475,10 @@ export default function SettingsPanel({
         aria-modal="true"
         aria-label="Enterprise Settings"
         onMouseDown={(e) => e.stopPropagation()}
-        className="relative flex flex-col w-[min(1120px,calc(100vw-32px))] h-[min(780px,calc(100vh-32px))] rounded-[18px] bg-[#111214] border border-white/10 shadow-[0_24px_80px_rgba(0,0,0,0.65)] overflow-hidden"
+        className="relative flex flex-col w-full h-[100dvh] rounded-none sm:w-[min(1120px,calc(100vw-32px))] sm:h-[min(780px,calc(100vh-32px))] sm:rounded-[18px] bg-[#111214] border border-white/10 shadow-[0_24px_80px_rgba(0,0,0,0.65)] overflow-hidden"
       >
         {/* Header */}
-        <header className="flex items-center justify-between gap-3 px-5 sm:px-6 py-4 border-b border-white/[0.08] shrink-0">
+        <header className="flex items-center justify-between gap-3 px-5 sm:px-6 py-4 pt-[max(1rem,env(safe-area-inset-top))] sm:pt-4 border-b border-white/[0.08] shrink-0">
           <div className="min-w-0">
             <h2 className="text-base font-semibold text-white">Enterprise Settings</h2>
             <p className="text-xs text-white/45 mt-0.5 hidden sm:block">
@@ -1582,33 +1584,37 @@ export default function SettingsPanel({
         </div>
 
         {/* Sticky footer */}
-        <footer className="flex items-center justify-between gap-3 px-5 sm:px-6 py-3.5 border-t border-white/[0.08] bg-[#141519] shrink-0">
-          <div className="flex items-center gap-2 text-xs text-white/45 min-w-0">
+        <footer className="flex items-center justify-end sm:justify-between gap-3 px-4 sm:px-6 py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:pb-3.5 border-t border-white/[0.08] bg-[#141519] shrink-0">
+          {/* Hint is desktop-only — on a phone it would squeeze the buttons and
+              clip "Save". */}
+          <div className="hidden sm:flex items-center gap-2 text-xs text-white/45 min-w-0">
             <Info size={14} className="shrink-0" />
             <span className="truncate">Changes apply after Save.</span>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
             <button
               type="button"
               onClick={handleReset}
               disabled={!dirty}
-              className="h-9 px-4 rounded-xl text-sm text-white/60 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+              className="h-10 sm:h-9 px-3.5 sm:px-4 rounded-xl text-sm text-white/60 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
             >
               Reset
             </button>
             <button
               type="button"
               onClick={requestClose}
-              className="h-9 px-4 rounded-xl text-sm text-white/70 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+              className="h-10 sm:h-9 px-3.5 sm:px-4 rounded-xl text-sm text-white/70 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="h-9 px-5 rounded-xl bg-[#9b5cff] hover:bg-[#a970ff] text-white text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#9b5cff]/75 focus-visible:ring-offset-2 focus-visible:ring-offset-[#141519]"
+              className="h-10 sm:h-9 px-4 sm:px-5 rounded-xl bg-[#9b5cff] hover:bg-[#a970ff] text-white text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#9b5cff]/75 focus-visible:ring-offset-2 focus-visible:ring-offset-[#141519]"
             >
-              Save Settings
+              {/* Short label on mobile so it never clips. */}
+              <span className="sm:hidden">Save</span>
+              <span className="hidden sm:inline">Save Settings</span>
             </button>
           </div>
         </footer>

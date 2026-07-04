@@ -1671,7 +1671,7 @@ function QueryBar({
                 aria-expanded={modeMenuOpen}
                 title="Expert mode selector"
               >
-                {CHAT_REASONING_OPTIONS.find((m) => m.id === chatReasoningMode)?.label ?? 'Persona'}
+                <span className="hidden sm:inline">{CHAT_REASONING_OPTIONS.find((m) => m.id === chatReasoningMode)?.label ?? 'Persona'}</span>
                 <ChevronDown size={14} className={`transition-transform ${modeMenuOpen ? 'rotate-180' : ''}`} />
               </button>
               {modeMenuOpen && modeMenuPos && typeof document !== 'undefined'
@@ -1777,14 +1777,25 @@ function QueryBar({
           </div>
         )}
 
-        {/* Textarea */}
-        <div className="ps-12 pe-72">
+        {/* Textarea — right padding is responsive: a phone-sized pill can't
+            afford 288px of reserved space (it crushed the field to a sliver and
+            made typing impossible on mobile), so reserve just enough on small
+            screens and the full amount from `sm:` up. */}
+        <div className="ps-12 pe-24 sm:pe-72">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onPaste={handlePaste}
+            aria-label="Message"
+            enterKeyHint="enter"
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              // Desktop: Enter sends (Shift+Enter = newline). Touch devices:
+              // Enter inserts a newline like ChatGPT/Claude — send via the
+              // button — so the soft keyboard's return key doesn't fire off
+              // half-typed messages.
+              const coarsePointer =
+                typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)')?.matches
+              if (e.key === 'Enter' && !e.shiftKey && !coarsePointer) {
                 e.preventDefault()
                 if (canSend) onSend()
               }

@@ -54,6 +54,15 @@ export AVATAR_SERVICE_URL=""
 export CORS_ORIGINS="*"
 export API_KEY=${API_KEY:-}
 
+# Interactive AI video / experience engine. Enable the section so its gallery
+# and new-project flow are available on the deployed Space (instead of the
+# "interactive backend isn't enabled" empty state). The authoring + planner
+# flow runs on the local Ollama model; interactive asset generation activates
+# automatically once a diffusion/inference provider is configured. Safe to
+# enable: the mount in app/main.py swallows import errors, so a not-yet-ready
+# subsystem can never crash the API. Honour an explicit override.
+export INTERACTIVE_ENABLED=${INTERACTIVE_ENABLED:-true}
+
 # ── 1. Start Ollama ─────────────────────────────────────
 echo "[1/4] Starting Ollama..."
 ollama serve &
@@ -208,5 +217,10 @@ if [ "${ENABLE_PROJECT_BOOTSTRAP:-true}" = "true" ] \
         done
     ) 2>&1 | tee -a /tmp/homepilot/data/bootstrap.log &
 fi
+
+# Point the interactive planner at whatever model actually resolved above
+# (the built-in default, llama3:8b, is never pulled on the Space). An explicit
+# INTERACTIVE_LLM_MODEL always wins.
+export INTERACTIVE_LLM_MODEL=${INTERACTIVE_LLM_MODEL:-$OLLAMA_MODEL}
 
 exec python3 /app/hf_wrapper.py
