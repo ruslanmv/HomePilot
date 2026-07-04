@@ -62,10 +62,39 @@ _REGISTRY_TTL = 120  # seconds
 # Local samples — bundled personas shipped with HomePilot
 # ---------------------------------------------------------------------------
 
-# Resolve path to community/sample/ relative to the project root.
-# The backend runs from backend/, so community/ is one level up.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # backend/app/ → backend/ → project root
-_SAMPLE_DIR = _PROJECT_ROOT / "community" / "sample"
+# Resolve path to community/sample/ — the bundled, always-on persona samples.
+#
+# The directory lives at different depths depending on how HomePilot is laid
+# out at runtime:
+#   • dev / monorepo:  <repo>/backend/app/community.py  → samples at
+#                      <repo>/community/sample           (parent^3)
+#   • HF Space image:  /app/app/community.py             → samples at
+#                      /app/community/sample             (parent^2)
+# A fixed number of ``.parent`` hops can't satisfy both, so probe a list of
+# candidate roots and pick the first that actually contains registry.json.
+# ``COMMUNITY_SAMPLE_DIR`` env var overrides everything.
+_HERE = Path(__file__).resolve()
+
+
+def _resolve_sample_dir() -> Path:
+    env_override = os.getenv("COMMUNITY_SAMPLE_DIR", "").strip()
+    candidates = []
+    if env_override:
+        candidates.append(Path(env_override))
+    candidates += [
+        _HERE.parent.parent.parent / "community" / "sample",  # dev: repo root
+        _HERE.parent.parent / "community" / "sample",          # HF image: /app
+        Path.cwd() / "community" / "sample",                    # cwd fallback
+    ]
+    for cand in candidates:
+        if (cand / "registry.json").is_file():
+            return cand
+    # Nothing found — return the dev-layout default (preserves prior behavior).
+    return _HERE.parent.parent.parent / "community" / "sample"
+
+
+_SAMPLE_DIR = _resolve_sample_dir()
+_PROJECT_ROOT = _SAMPLE_DIR.parent.parent  # kept for backward compatibility
 _SAMPLE_REGISTRY = _SAMPLE_DIR / "registry.json"
 
 # Short-name mapping: registry id → sample directory name

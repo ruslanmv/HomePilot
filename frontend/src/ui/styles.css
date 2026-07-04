@@ -43,6 +43,35 @@ font-feature-settings: "liga" 1, "calt" 1;
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 10px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
 
+/* -------------------------------------------------------------------------
+ * Native <select> dropdowns — dark theme (global)
+ *
+ * HomePilot renders on a near-black background with light text. The closed
+ * <select> control is styled dark via Tailwind, but the *open* native option
+ * popup defaults to the browser's light system colors — producing the
+ * white-background / white-or-invisible-text dropdowns reported across Model
+ * Management and every other page.
+ *
+ * `color-scheme: dark` tells the browser to paint the native control and its
+ * option popup with dark system colors (this is what actually fixes the popup
+ * list in Chromium/Firefox). The explicit option colors are a belt-and-braces
+ * fallback for engines that don't fully honor color-scheme. Applied globally
+ * so every native dropdown in the app inherits correct contrast.
+ * ---------------------------------------------------------------------- */
+select {
+  color-scheme: dark;
+}
+select option,
+select optgroup {
+  background-color: #14141c;
+  color: #f5f5f7;
+}
+select option:checked,
+select option:hover {
+  background-color: #2563eb;
+  color: #ffffff;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(2px); }
   to { opacity: 1; transform: translateY(0); }

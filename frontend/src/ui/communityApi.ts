@@ -42,6 +42,9 @@ export type CommunityStatusResponse = {
   url: string | null
   reachable?: boolean
   message?: string
+  mode?: string | null
+  /** Number of bundled local sample personas — always available offline. */
+  local_samples?: number
 }
 
 // ---------------------------------------------------------------------------

@@ -65,16 +65,44 @@ type CommunityGalleryProps = {
 }
 
 // ---------------------------------------------------------------------------
+// Preview URL resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the thumbnail URL for a community persona.
+ *
+ * Always prefer the backend proxy route `/community/preview/{id}/{version}`:
+ * the backend serves the bundled local asset first and transparently falls
+ * back to the remote gallery, so the frontend never depends on (or leaks) an
+ * external Worker/R2 URL that may be missing, stale, or blocked. Only when we
+ * can't build the proxy route (no id/version) do we fall back to the raw
+ * `preview_url` from the registry.
+ */
+function resolvePreviewUrl(
+  backendUrl: string,
+  item: CommunityPersonaItem,
+): string | undefined {
+  const version = item.latest?.version
+  if (item.id && version) {
+    const base = backendUrl.replace(/\/+$/, '')
+    return `${base}/community/preview/${encodeURIComponent(item.id)}/${encodeURIComponent(version)}`
+  }
+  return item.latest?.preview_url || undefined
+}
+
+// ---------------------------------------------------------------------------
 // Gallery Card
 // ---------------------------------------------------------------------------
 
 function GalleryCard({
   item,
+  previewUrl,
   installing,
   onInstall,
   onDetail,
 }: {
   item: CommunityPersonaItem
+  previewUrl?: string
   installing: boolean
   onInstall: () => void
   onDetail: () => void
@@ -90,13 +118,20 @@ function GalleryCard({
     <div className="relative w-full max-w-[340px] bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden hover:border-white/[0.16] transition-all group">
       {/* Preview */}
       <div className="relative aspect-[4/5] bg-black/20 overflow-hidden">
-        {item.latest?.preview_url ? (
+        {previewUrl ? (
           <img
-            src={item.latest.preview_url}
+            src={previewUrl}
             alt={item.name}
             loading="lazy"
             className="block w-full h-full object-cover"
             onError={(e) => {
+              if (import.meta.env.DEV) {
+                console.warn(
+                  `[CommunityGallery] preview failed for ${item.id}@${item.latest?.version}:`,
+                  previewUrl,
+                )
+              }
+              // Last-resort: hide the broken image so the initials placeholder shows.
               ;(e.target as HTMLImageElement).style.display = 'none'
             }}
           />
@@ -576,7 +611,13 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
         setGallery({ kind: 'not_configured' })
         return
       }
-      if (status.reachable === false) {
+      // The backend always merges bundled local sample personas into the
+      // registry, so they are available even when the remote gallery worker
+      // is unreachable (a flaky health check must NOT hide them). Only show
+      // the "unreachable" screen when the remote is down AND there are no
+      // local samples to fall back on.
+      const hasLocalSamples = (status.local_samples ?? 0) > 0
+      if (status.reachable === false && !hasLocalSamples) {
         setGallery({ kind: 'unreachable' })
         return
       }
@@ -806,9 +847,9 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
             onChange={(e) => { setTagFilter(e.target.value); setVisibleCount(PAGE_SIZE) }}
             className="px-3 py-2 rounded-lg bg-white/[0.06] border border-white/[0.08] text-sm text-white/70 outline-none focus:border-purple-500/50 transition-colors"
           >
-            <option value="" className="bg-white text-gray-900">All Tags</option>
+            <option value="">All Tags</option>
             {allTags.map((t) => (
-              <option key={t} value={t} className="bg-white text-gray-900">{t}</option>
+              <option key={t} value={t}>{t}</option>
             ))}
           </select>
         )}
@@ -849,6 +890,7 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
               <GalleryCard
                 key={item.id}
                 item={item}
+                previewUrl={resolvePreviewUrl(cleanUrl, item)}
                 installing={
                   (install.kind === 'downloading' || install.kind === 'previewing' || install.kind === 'installing')
                   && install.personaId === item.id
@@ -876,7 +918,7 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
         <DetailModal
           card={detail.card}
           item={detail.item}
-          previewUrl={detail.item.latest?.preview_url}
+          previewUrl={resolvePreviewUrl(cleanUrl, detail.item)}
           onClose={() => setDetail(null)}
           onInstall={() => handleInstall(detail.item)}
         />

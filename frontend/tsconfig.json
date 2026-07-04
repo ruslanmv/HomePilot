@@ -11,5 +11,14 @@
     "paths": {
       "@homepilot/*": ["../packages/*/src"]
     }
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "vitest.config.ts"
+  ]
 }
