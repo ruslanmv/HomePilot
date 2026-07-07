@@ -225,6 +225,13 @@ export default function AuthScreen({
         setObError(loginData.detail || 'Invalid OllaBridge email or password')
         return
       }
+      // Keep the Cloud token for OllaBridge features beyond sign-in — the
+      // Models tab uses it to sync models from the user's linked GPU nodes
+      // and to route inference through the relay to their own machine.
+      try {
+        localStorage.setItem('homepilot_cloud_token', loginData.token)
+        localStorage.setItem('homepilot_cloud_url', cloudUrl)
+      } catch { /* ignore */ }
       // 2) Exchange the Cloud token for a local HomePilot session (JIT-provision).
       const exRes = await fetch(`${backendUrl}/v1/auth/exchange`, {
         method: 'POST',

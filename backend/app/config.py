@@ -102,6 +102,31 @@ OLLABRIDGE_CLOUD_IMAGE_MODEL = os.getenv("OLLABRIDGE_CLOUD_IMAGE_MODEL", "flux-s
 OLLABRIDGE_CLOUD_VIDEO_MODEL = os.getenv("OLLABRIDGE_CLOUD_VIDEO_MODEL", "ltx-video").strip()
 OLLABRIDGE_CLOUD_TIMEOUT = float(os.getenv("OLLABRIDGE_CLOUD_TIMEOUT", "300"))
 
+# HomePilot edition — the two roles are fundamentally different:
+#   web   — a hosted/multi-tenant deployment (the Hugging Face Space). A pure
+#           *consumer*: it signs into OllaBridge Cloud and uses the user's
+#           linked machines. It must NOT run a provider sidecar or pretend the
+#           Space is the user's GPU.
+#   local — installed on the user's PC. A *consumer + provider*: it can expose
+#           its own GPU/models to the user's account through the OllaBridge
+#           Local sidecar (opt-in pairing).
+# Explicit HOMEPILOT_EDITION wins; otherwise a Space env var ⇒ web, else local.
+def _detect_edition() -> str:
+    v = os.getenv("HOMEPILOT_EDITION", "").strip().lower()
+    if v in ("web", "local"):
+        return v
+    if os.getenv("SPACE_ID") or os.getenv("HF_SPACE_ID") or os.getenv("SPACE_HOST"):
+        return "web"
+    return "local"
+
+
+HOMEPILOT_EDITION = _detect_edition()
+
+# Where the OllaBridge Local sidecar exposes its localhost-only gateway on a
+# provider (local-edition) machine. Used by the /v1/ollabridge/local/* status
+# probe. On the web edition there is no sidecar and this is ignored.
+OLLABRIDGE_LOCAL_URL = os.getenv("OLLABRIDGE_LOCAL_URL", "http://127.0.0.1:11435").rstrip("/")
+
 # Cloud-GPU burst (MB6). In `auto` mode, when the local GPU is offline HomePilot
 # can burst to a paired cloud GPU. By default this works for everyone (current
 # behaviour preserved). Set COMPUTE_BURST_REQUIRES_PREMIUM=true to make the burst

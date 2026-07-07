@@ -3,9 +3,20 @@ from __future__ import annotations
 
 import json
 import os
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Literal
 
 import httpx
+
+# Request-scoped provider credential (additive). The /chat endpoint sets this
+# from ChatIn.provider_api_key so that EVERY openai_compat call made while
+# serving that request (main generation, prompt refiners, etc.) authenticates
+# to the remote provider — e.g. the OllaBridge Cloud relay, which resolves the
+# bearer to a user and routes inference to that user's own GPU node. Using a
+# ContextVar avoids threading an api_key parameter through every orchestrator
+# call site; asyncio gives each request its own context, so no cross-request
+# leakage is possible. Empty string = no auth header (existing behavior).
+PROVIDER_API_KEY: ContextVar[str] = ContextVar("hp_provider_api_key", default="")
 
 
 import re
@@ -266,10 +277,16 @@ async def chat_openai_compat(
     max_tokens: int = 800,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    OpenAI-compatible chat/completions (vLLM, etc.)
+    OpenAI-compatible chat/completions (vLLM, OllaBridge Cloud relay, etc.)
     Returns OpenAI-style JSON with choices[0].message.content.
+
+    Auth: explicit ``api_key`` wins, else the request-scoped PROVIDER_API_KEY
+    contextvar (set by /chat from ChatIn.provider_api_key). When present it is
+    sent as a Bearer token — the OllaBridge Cloud relay resolves it to a user
+    and routes the completion to that user's own GPU node.
     """
     base = (base_url or LLM_BASE_URL).rstrip("/")
     mdl = (model or LLM_MODEL).strip()
@@ -281,9 +298,11 @@ async def chat_openai_compat(
         "temperature": float(temperature),
         "max_tokens": int(max_tokens),
     }
+    key = (api_key or PROVIDER_API_KEY.get() or "").strip()
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     async with httpx.AsyncClient(timeout=_timeout()) as client:
-        r = await client.post(url, json=payload)
+        r = await client.post(url, json=payload, headers=headers)
         r.raise_for_status()
         return r.json()
 

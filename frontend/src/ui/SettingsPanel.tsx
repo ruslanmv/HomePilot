@@ -18,8 +18,10 @@ import {
   Copy,
   Check,
   Loader2,
+  Cloud,
 } from "lucide-react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
+import OllaBridgeLink from "./components/OllaBridgeLink";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import TtsEngineSection from "./components/TtsEngineSection";
 // Side-effect import: registers the bundled TTS providers (web-speech-api,
@@ -284,6 +286,7 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 const SECTIONS = [
   { id: "general", label: "General", Icon: SettingsIcon },
   { id: "connection", label: "Connection", Icon: Link2 },
+  { id: "linking", label: "OllaBridge Link", Icon: Cloud },
   { id: "providers", label: "Providers", Icon: Server },
   { id: "models", label: "Models", Icon: Boxes },
   { id: "generation", label: "Generation", Icon: SlidersHorizontal },
@@ -1450,6 +1453,7 @@ export default function SettingsPanel({
     switch (activeSection) {
       case "general": return renderGeneral();
       case "connection": return renderConnection();
+      case "linking": return <OllaBridgeLink />;
       case "providers": return renderProviders();
       case "models": return renderModels();
       case "generation": return renderGeneration();

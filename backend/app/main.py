@@ -222,6 +222,18 @@ try:
 except Exception as _ix_err:  # noqa: BLE001
     print(f"[interactive] DISABLED due to import error: {_ix_err}")
 
+# --- OllaBridge Local (edition + provider sidecar) — ADDITIVE ----------------
+# GET /v1/edition + /v1/ollabridge/local/* — lets the frontend show the right
+# linking UX (web consumer vs local provider) and report/control the sidecar.
+# Same defensive pattern: import errors are logged and swallowed.
+try:
+    from .ollabridge_local import router as _ollabridge_local_router
+    from .config import HOMEPILOT_EDITION as _hp_edition
+    app.include_router(_ollabridge_local_router)
+    print(f"[ollabridge-local] mounted — edition={_hp_edition}")
+except Exception as _obl_err:  # noqa: BLE001
+    print(f"[ollabridge-local] DISABLED due to import error: {_obl_err}")
+
 # --- Persona call (/v1/persona-call/*) — ADDITIVE, FEATURE-FLAGGED -----------
 # Phone-call conversational dynamics + per-turn system suffix composer.
 # Off by default. Enable with ``PERSONA_CALL_ENABLED=true``. The module
@@ -748,6 +760,16 @@ class ChatIn(BaseModel):
     provider_model: Optional[str] = Field(
         None,
         description="Optional model override for the selected provider.",
+    )
+    provider_api_key: Optional[str] = Field(
+        None,
+        description=(
+            "Optional per-request bearer credential for the selected provider. "
+            "Used by 'Continue with OllaBridge' GPU-node routing: the frontend "
+            "sends the user's OllaBridge Cloud token so the relay resolves the "
+            "user and serves inference from their own linked GPU node. Never "
+            "stored server-side; applied only for the duration of the request."
+        ),
     )
     # Backwards-compatible fields for openai_compat (vLLM)
     llm_base_url: Optional[str] = Field(
@@ -4522,6 +4544,16 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
         pass  # Preserve legacy behavior in single-user mode
     except Exception as e:
         print(f"[CHAT] Warning: failed to bind conversation owner: {e}")
+
+    # OllaBridge GPU-node routing (additive): expose the caller's per-request
+    # provider credential to every openai_compat call made while serving this
+    # request (main generation + prompt refiners). Request-scoped contextvar —
+    # never persisted, no cross-request leakage under asyncio.
+    try:
+        from .llm import PROVIDER_API_KEY as _provider_key_ctx
+        _provider_key_ctx.set((inp.provider_api_key or "").strip())
+    except Exception:
+        pass  # additive — never let credential plumbing break chat
 
     # Debug: Log incoming parameters
     print(f"[CHAT ENDPOINT] imgModel received from frontend: '{inp.imgModel}' (type: {type(inp.imgModel).__name__ if inp.imgModel is not None else 'None'})")
