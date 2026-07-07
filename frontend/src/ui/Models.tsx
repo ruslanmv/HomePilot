@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink } from 'lucide-react'
+import OllaBridgeModels from './components/OllaBridgeModels'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -587,6 +588,10 @@ export default function ModelsView(props: ModelsParams) {
 
   const [modelType, setModelType] = useState<'chat' | 'multimodal' | 'image' | 'video' | 'edit' | 'enhance' | 'addons' | 'lora'>('chat')
   const [provider, setProvider] = useState<string>(props.providerChat || 'ollama')
+  // Latest provider for effects that only depend on [modelType] but must not
+  // clobber a manual OllaBridge selection when the user switches tabs.
+  const providerRef = React.useRef(provider)
+  React.useEffect(() => { providerRef.current = provider }, [provider])
 
   const defaultBaseUrl = useMemo(() => {
     if (modelType === 'chat') return props.baseUrlChat || ''
@@ -659,14 +664,18 @@ export default function ModelsView(props: ModelsParams) {
 
   // Filter providers based on model type
   const availableProviders = useMemo(() => {
+    // OllaBridge is a provider *class* available under EVERY Model Type — its
+    // models come from the user's linked HomePilot / GPU nodes (relay-synced),
+    // so web & mobile can use remote compute. Listed first as the hero option.
+    const ollabridge: Provider = { name: 'ollabridge', label: '☁️ OllaBridge (your nodes)', kind: modelType as any }
     if (modelType === 'chat') {
       // For chat: all providers EXCEPT comfyui and civitai
-      return providers.filter(p => p.name !== 'comfyui' && p.name !== 'civitai')
+      return [ollabridge, ...providers.filter(p => p.name !== 'comfyui' && p.name !== 'civitai')]
     } else if (modelType === 'multimodal') {
-      // Multimodal: only Ollama (vision models run locally)
-      return providers.filter(p => p.name === 'ollama')
+      // Multimodal: Ollama (vision models run locally) + OllaBridge nodes
+      return [ollabridge, ...providers.filter(p => p.name === 'ollama')]
     } else {
-      // For image/video/edit/enhance: comfyui + civitai (if experimental enabled)
+      // For image/video/edit/enhance/lora/addons: comfyui + civitai (if experimental) + OllaBridge
       const filtered = providers.filter(p => p.name === 'comfyui')
 
       // Add Civitai only for image/video (Civitai API only supports these types)
@@ -678,11 +687,14 @@ export default function ModelsView(props: ModelsParams) {
         })
       }
 
-      return filtered
+      return [ollabridge, ...filtered]
     }
   }, [providers, modelType, props.experimentalCivitai])
 
   useEffect(() => {
+    // Keep OllaBridge selected across Model Type tabs — it spans all types and
+    // its content is type-filtered, so don't reset it to a local provider.
+    if (providerRef.current === 'ollabridge') return
     // When modelType changes, update provider + baseUrl defaults
     if (modelType === 'chat') {
       // Switch to a chat provider (prefer the one from settings, or default to ollama)
@@ -761,7 +773,9 @@ export default function ModelsView(props: ModelsParams) {
     // Skip fetching installed models for remote API providers and Civitai
     // Remote providers: they're cloud services, not local installations
     // Civitai: download-only provider, models get installed to ComfyUI after download
-    const skipProviders = ['openai', 'claude', 'watsonx', 'civitai']
+    // OllaBridge renders its own relay-synced list; the local backend has no
+    // catalog for it, so skip the fetch (avoids a spurious error banner).
+    const skipProviders = ['openai', 'claude', 'watsonx', 'civitai', 'ollabridge']
 
     if (skipProviders.includes(provider)) {
       setInstalled([])
@@ -2057,8 +2071,16 @@ export default function ModelsView(props: ModelsParams) {
       )}
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-8 py-6 scrollbar-hide">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 scrollbar-hide">
         <div className="flex flex-col gap-4 max-w-7xl mx-auto">
+          {/* OllaBridge provider class — a special provider whose models are
+              synced from the user's linked HomePilot / GPU nodes (relay), shown
+              for whichever Model Type tab is active. When selected it replaces
+              the local catalog for this tab. */}
+          {provider === 'ollabridge' ? (
+            <OllaBridgeModels filterType={modelType} />
+          ) : (
+          <>
           {/* Error messages - hide for Civitai since it's download-only */}
           {installedError && provider !== 'civitai' ? (
             <div className={`rounded-xl border p-5 ${
@@ -3056,6 +3078,8 @@ export default function ModelsView(props: ModelsParams) {
                 </>
               )}
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

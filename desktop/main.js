@@ -212,13 +212,17 @@ function createTray() {
     {
       label: "Restart Container",
       click: async () => {
+        await docker.stopSidecar();
         await docker.stop();
         await startContainer();
       },
     },
     {
       label: "Stop Container",
-      click: () => docker.stop(),
+      click: async () => {
+        await docker.stopSidecar();
+        await docker.stop();
+      },
     },
     { type: "separator" },
     {
@@ -261,6 +265,23 @@ async function startContainer() {
     HOMEPILOT_LLM_BACKEND: store.get("llmBackend"),
   };
   await docker.start(envVars);
+
+  // OllaBridge Local provider sidecar — installed + running by default so this
+  // PC can become a private GPU node; pairing + sharing stay opt-in (driven from
+  // the OllaBridge Link tab / :11435/ui). Best-effort and non-fatal: HomePilot is
+  // fully usable if this is disabled or fails to start. Users can turn the sidecar
+  // off (store "ollabridgeSidecar" === false) and enable GPU generation
+  // advertisement (store "ollabridgeGenEnabled", default off).
+  if (store.get("ollabridgeSidecar") !== false) {
+    docker
+      .startSidecar({
+        cloudUrl: store.get("ollabridgeCloudUrl"),
+        genEnabled: store.get("ollabridgeGenEnabled") === true,
+      })
+      .catch(() => {
+        /* optional — never blocks HomePilot */
+      });
+  }
 }
 
 async function bootstrap() {
@@ -472,4 +493,6 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  // Best-effort: stop the optional OllaBridge Local sidecar on quit.
+  try { docker.stopSidecar(); } catch { /* ignore */ }
 });

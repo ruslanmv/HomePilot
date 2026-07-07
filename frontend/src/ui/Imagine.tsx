@@ -1315,7 +1315,7 @@ export default function ImagineView(props: ImagineParams) {
 
       {/* Game Mode Settings Panel */}
       {showGamePanel && gameMode && (
-        <div className="absolute top-20 right-6 z-30 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl w-80 backdrop-blur-xl">
+        <div className="absolute top-20 right-4 sm:right-6 z-30 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl w-80 max-w-[calc(100vw-2rem)] backdrop-blur-xl">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Gamepad2 size={16} className="text-purple-400" />
@@ -1439,7 +1439,7 @@ export default function ImagineView(props: ImagineParams) {
 
       {/* Advanced Settings Panel */}
       {showAdvancedSettings && (
-        <div className="absolute top-20 right-6 z-30 bg-black/95 border border-white/10 rounded-2xl shadow-2xl w-80 backdrop-blur-xl overflow-hidden">
+        <div className="absolute top-20 right-4 sm:right-6 z-30 bg-black/95 border border-white/10 rounded-2xl shadow-2xl w-80 max-w-[calc(100vw-2rem)] backdrop-blur-xl overflow-hidden">
           <div className="p-5 border-b border-white/10 flex items-center justify-between">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Settings2 size={16} />
@@ -2097,7 +2097,7 @@ export default function ImagineView(props: ImagineParams) {
           </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 flex min-h-0" onClick={(e) => e.stopPropagation()}>
+          <div className="flex-1 flex flex-col md:flex-row min-h-0" onClick={(e) => e.stopPropagation()}>
             {/* Hero Image Container - LARGER, fills more space */}
             <div className="flex-1 flex items-center justify-center p-2 relative group min-h-0 overflow-hidden">
               {selectedImage.url ? (
@@ -2177,7 +2177,7 @@ export default function ImagineView(props: ImagineParams) {
 
             {/* Details Panel - Slide in from right */}
             {showDetails && (
-              <div className="w-80 bg-[#0a0a0a] border-l border-white/10 flex flex-col animate-in slide-in-from-right duration-200">
+              <div className="w-full max-h-[45dvh] border-t md:w-80 md:max-h-none md:border-t-0 md:border-l bg-[#0a0a0a] border-white/10 flex flex-col animate-in slide-in-from-bottom md:slide-in-from-right duration-200">
                 <div className="p-4 border-b border-white/10">
                   <h3 className="text-sm font-bold text-white flex items-center gap-2">
                     <Wand2 size={14} className="text-white/60" />

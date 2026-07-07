@@ -35,6 +35,9 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
+### ☁️ OllaBridge Link — Use Your Home GPU From Anywhere
+Link a HomePilot on your high-end GPU PC to your OllaBridge account, and the web or mobile app can browse its models and run inference on that machine remotely — sign in with **Continue with OllaBridge** to auto-link, then manage nodes in **Settings → OllaBridge Link**. See [docs/OLLABRIDGE.md](docs/OLLABRIDGE.md).
+
 ### 🎬 Turn One Sentence Into an Interactive Video
 Just type an idea — like *"Train new sales reps on pricing tiers"* — and HomePilot creates a video where viewers can choose what happens next. It plans the story, generates the scenes (image or video), and lets you tweak everything before you hit **Play**. See [docs/INTERACTIVE.md](docs/INTERACTIVE.md).
 

@@ -281,6 +281,17 @@ function useEnterpriseCallRow(): boolean {
 }
 
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams'
+
+/**
+ * OllaBridge GPU-node routing: when the chat provider points at an OllaBridge
+ * relay (base URL ends in /ollama/v1), attach the user's Cloud token so the
+ * relay resolves the user and serves inference from THEIR linked GPU node.
+ * Returns undefined for every other provider — nothing else changes.
+ */
+function cloudProviderApiKey(baseUrl?: string): string | undefined {
+  if (!baseUrl || !baseUrl.includes('/ollama/v1')) return undefined
+  try { return localStorage.getItem('homepilot_cloud_token') || undefined } catch { return undefined }
+}
 type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy'
 
 const CHAT_REASONING_OPTIONS: Array<{
@@ -429,7 +440,9 @@ function NavItem({
       onClick={disabled ? undefined : onClick}
       aria-disabled={disabled || undefined}
       className={[
-        'group/menu-item relative',
+        // hp-nav-item: min 44px tall on coarse pointers (see styles.css) —
+        // WCAG touch target — while desktop keeps the dense 36px rows.
+        'hp-nav-item group/menu-item relative',
         'peer/menu-button flex items-center overflow-hidden rounded-xl text-left',
         'outline-none transition-all duration-150 select-none',
         collapsed
@@ -1301,6 +1314,12 @@ function Sidebar({
         </div>
       )}
 
+      {/* Scrollable middle: nav + recents together. The header stays on top and
+          the account/Settings/Logout footer stays pinned at the bottom, so on a
+          short mobile screen you can always scroll here to reach every nav item,
+          History, and the footer (previously the tall nav pushed the footer off
+          with no scroll). */}
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3">
       {/* Nav — single flat list, one divider before History */}
       <div className={collapsed ? 'flex flex-col gap-3' : 'flex flex-col gap-3 px-1.5'}>
         {/* Main modes (flat, no sub-groups) */}
@@ -1338,7 +1357,7 @@ function Sidebar({
 
       {/* Recents list (time-bucketed from conversations) — hidden when collapsed */}
       {!collapsed && (
-        <div className="flex-1 overflow-y-auto min-h-0 px-1.5 pt-1">
+        <div className="px-1.5 pt-1">
           <button
             type="button"
             className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
@@ -1355,10 +1374,10 @@ function Sidebar({
           />
         </div>
       )}
-      {collapsed && <div className="flex-1" />}
+      </div>{/* /scrollable middle (nav + recents) */}
 
-      {/* User footer */}
-      <div className={collapsed ? 'mt-auto flex justify-center pt-4 border-t border-white/5' : 'mt-auto px-2 pt-4 border-t border-white/5'}>
+      {/* User footer — pinned at the bottom, always reachable */}
+      <div className={collapsed ? 'shrink-0 flex justify-center pt-4 border-t border-white/5' : 'shrink-0 px-2 pt-4 border-t border-white/5'}>
         {collapsed ? (
           <button
             type="button"
@@ -2636,6 +2655,7 @@ export default function App() {
     if (isMobile) setMobileSidebarOpen(false)
   }, [mode, isMobile])
 
+
   const toggleSidebar = useCallback(() => {
     if (isMobile) {
       setMobileSidebarOpen((prev) => !prev)
@@ -2884,6 +2904,31 @@ export default function App() {
       ollaBridgeApiKey,
     }
   })
+
+  // OllaBridge GPU node: the Models tab dispatches this when the user taps
+  // "Use for Chat" on a model synced from one of their linked machines. Flip
+  // the chat provider to the relay and persist so it survives reload — the
+  // chat request then carries the user's Cloud token (see cloudProviderApiKey)
+  // and the relay routes inference to their own GPU node.
+  useEffect(() => {
+    function onUseGpuNode(e: Event) {
+      const d = (e as CustomEvent).detail || {}
+      if (!d.baseUrl || !d.model) return
+      setSettingsDraft((prev) => ({
+        ...prev,
+        providerChat: 'openai_compat',
+        baseUrlChat: d.baseUrl,
+        modelChat: d.model,
+      }))
+      try {
+        localStorage.setItem('homepilot_provider_chat', 'openai_compat')
+        localStorage.setItem('homepilot_base_url_chat', d.baseUrl)
+        localStorage.setItem('homepilot_model_chat', d.model)
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('homepilot:use-gpu-node', onUseGpuNode)
+    return () => window.removeEventListener('homepilot:use-gpu-node', onUseGpuNode)
+  }, [])
 
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -4236,6 +4281,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 provider: settingsDraft.providerChat,
                 provider_base_url: settingsDraft.baseUrlChat || undefined,
                 provider_model: settingsDraft.modelChat,
+                provider_api_key: cloudProviderApiKey(settingsDraft.baseUrlChat),
                 // Custom generation parameters (from settingsDraft)
                 textTemperature: settingsDraft.textTemperature,
                 // Voice mode: let backend enforce its own token cap for short spoken replies
@@ -4930,6 +4976,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             provider: settingsDraft.providerChat,
             provider_base_url: settingsDraft.baseUrlChat || undefined,
             provider_model: settingsDraft.modelChat,
+            provider_api_key: cloudProviderApiKey(settingsDraft.baseUrlChat),
 
             // Video generation parameters
             vidModel: settingsDraft.modelVideo,
@@ -5033,7 +5080,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
   )
 
   return (
-    <div className="flex h-screen bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
+    <div className="hp-app-shell flex bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
       {/* ── Mobile sidebar overlay ── */}
       {isMobile && mobileSidebarOpen && (
         <div
@@ -5045,7 +5092,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       <div
         className={
           isMobile
-            ? `fixed inset-y-0 left-0 z-50 transition-transform duration-200 ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
+            ? `fixed inset-y-0 left-0 z-50 transition-transform duration-200 pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
             : ''
         }
       >
@@ -5071,22 +5118,28 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         />
       </div>
 
+      {/* Mobile menu button — persistent, top-left, above every view (chat,
+          voice, imagine, …) so the nav drawer is always one tap away. Rendered
+          at the app-shell level (not inside <main>) at z-40 so full-screen views
+          and the composer/voice bar can never bury it. Hidden while the drawer
+          is open. Top-left is the industry-standard menu spot and stays clear of
+          the top-right gear/pencil actions. */}
+      {isMobile && !mobileSidebarOpen && (
+        <button
+          type="button"
+          onClick={() => setMobileSidebarOpen(true)}
+          className="fixed top-[max(0.6rem,env(safe-area-inset-top))] left-[max(0.6rem,env(safe-area-inset-left))] z-40 flex h-10 w-10 items-center justify-center rounded-xl bg-black/45 backdrop-blur-md border border-white/15 text-white/85 shadow-lg shadow-black/40 hover:bg-black/60 active:scale-95 transition-all"
+          aria-label="Open menu"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+      )}
+
       <main className="flex-1 flex flex-col relative min-w-0">
-        {/* Mobile hamburger — fixed bottom-left FAB to avoid header overlap */}
-        {isMobile && !mobileSidebarOpen && (
-          <button
-            type="button"
-            onClick={() => setMobileSidebarOpen(true)}
-            className="fixed bottom-6 left-4 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-[#1a1a2e] border border-white/15 text-white/80 shadow-lg shadow-black/50 hover:bg-[#252540] transition-colors"
-            aria-label="Open menu"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
-          </button>
-        )}
         {/* History Panel */}
         {showHistory && (
           <HistoryPanel

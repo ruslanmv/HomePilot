@@ -1121,7 +1121,7 @@ export default function AnimateView(props: AnimateParams) {
     <div className="flex flex-col h-full w-full bg-black text-white overflow-hidden relative">
       {/* Advanced Settings Panel (top-right) */}
       {showAdvancedSettings && (
-        <div className="absolute top-20 right-6 z-30 bg-black/95 border border-white/10 rounded-2xl shadow-2xl w-80 backdrop-blur-xl overflow-hidden">
+        <div className="absolute top-20 right-4 sm:right-6 z-30 bg-black/95 border border-white/10 rounded-2xl shadow-2xl w-80 max-w-[calc(100vw-2rem)] backdrop-blur-xl overflow-hidden">
           <div className="p-5 border-b border-white/10 flex items-center justify-between">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Settings2 size={16} />
@@ -1916,7 +1916,7 @@ export default function AnimateView(props: AnimateParams) {
           </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
+          <div className="flex-1 flex flex-col md:flex-row min-h-0" onClick={(e) => e.stopPropagation()}>
             {/* Hero Video Container - LARGER, fills more space */}
             <div className="flex-1 flex items-center justify-center p-2 relative group">
               {selectedVideo.videoUrl ? (
@@ -2036,7 +2036,7 @@ export default function AnimateView(props: AnimateParams) {
 
             {/* Details Panel - Slide in from right */}
             {showDetails && (
-              <div className="w-80 bg-[#0a0a0a] border-l border-white/10 flex flex-col animate-in slide-in-from-right duration-200">
+              <div className="w-full max-h-[45dvh] border-t md:w-80 md:max-h-none md:border-t-0 md:border-l bg-[#0a0a0a] border-white/10 flex flex-col animate-in slide-in-from-bottom md:slide-in-from-right duration-200">
                 <div className="p-4 border-b border-white/10">
                   <h3 className="text-sm font-bold text-white flex items-center gap-2">
                     <Film size={14} className="text-purple-400" />

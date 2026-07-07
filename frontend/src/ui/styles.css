@@ -16,6 +16,57 @@
 --hp-focus-ring: rgba(168, 85, 247, 0.55);
 }
 
+/* ── Mobile hygiene (Android Chrome / iOS Safari) ──────────────────────────
+   Global, low-risk defaults so every tab section behaves on touch devices. */
+html {
+  /* Stop iOS from inflating font sizes on orientation change. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+html, body, #root {
+  height: 100%;
+}
+body {
+  /* No pull-to-refresh / rubber-band fighting in-app scrollers, and no
+     accidental horizontal pan from any wide element. */
+  overscroll-behavior-y: none;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+button, [role="button"], a {
+  /* Kill the 300ms double-tap-zoom delay heuristics on interactive bits. */
+  touch-action: manipulation;
+}
+
+/* App shell height: 100dvh tracks mobile browser chrome (URL bar collapse),
+   unlike 100vh which leaves the composer hidden behind the toolbar. The vh
+   line is the fallback for engines without dvh. */
+.hp-app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Comfortable touch targets for the sidebar nav on coarse pointers only —
+   desktop keeps its dense 36px rows. */
+@media (pointer: coarse) {
+  .hp-nav-item {
+    min-height: 44px;
+  }
+
+  /* iOS Safari zooms the page when focusing any input below 16px. Force a
+     16px floor on touch devices across every tab section; desktop keeps its
+     denser type. max() preserves anything already larger. */
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  input[type="url"],
+  input[type="number"],
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
 /* Persona thumbnail utilities */
 .hp-persona-thumb {
   width: var(--hp-persona-thumb-lg);

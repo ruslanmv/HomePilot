@@ -20,6 +20,234 @@ OllaBridge acts as a unified gateway: applications connect to one URL, and OllaB
 
 ---
 
+## OllaBridge Link — Use Your Home GPU From Anywhere
+
+OllaBridge Link lets a HomePilot running on a machine with a **high-end GPU**
+serve its models to the HomePilot **web** and **mobile** apps, from anywhere.
+You browse and run those models remotely; the heavy inference stays on your own
+hardware. The app never talks to your PC directly — it asks **OllaBridge Cloud**,
+which relays the request to whichever of *your* machines is online (no public IP
+or port forwarding needed).
+
+### Two links, two variants
+
+| Variant | Link | Role | Purpose |
+|---|---|---|---|
+| **A — Account link** | web/mobile app ↔ OllaBridge Cloud | *consumer* | lets the app **see** your machines and route inference to them |
+| **B — Machine link** | remote HomePilot Local (GPU PC) ↔ OllaBridge Cloud | *provider* | makes that PC's **GPU + models** available to your account |
+
+Once both exist the connection is transitive — **Web → (A) → your Cloud account → (B) → your GPU node:**
+
+```
+                         OllaBridge Cloud (relay + identity)
+                                     ▲   ▲
+              Variant A: account     │   │   Variant B: machine
+              link (sign in)         │   │   link (device code)
+                                     │   │
+        ┌────────────────────────────┘   └────────────────────────────┐
+        │                                                              │
+ ┌──────┴───────┐                                              ┌───────┴────────┐
+ │  HomePilot   │                                              │  HomePilot     │
+ │  Web / Phone │  ── "run llama3 on my node" ──▶  Cloud  ──▶  │  Local (GPU PC)│
+ │  (consumer)  │  ◀──────── streamed reply ─────  relay  ◀──  │  (provider)    │
+ └──────────────┘                                              └────────────────┘
+        you, anywhere                                          your home/office GPU
+```
+
+The app sends a completion request to the Cloud; the Cloud recognises you
+(Variant A), finds your online machine (Variant B), forwards the job, and
+streams the answer back.
+
+### The simplest path
+
+**Variant A — link this device (usually zero extra steps).** If you signed in
+with **“Continue with OllaBridge”** on the login screen, the app is *already
+linked* (the account token is stored and reused). Otherwise open
+**Settings → OllaBridge Link → This device → Link account** and enter your
+OllaBridge email + password.
+
+**Variant B — add a GPU machine (one-time device-code pairing).** The standard
+"TV login" flow (OAuth 2.0 Device Authorization Grant, RFC 8628):
+
+```
+  GPU PC (HomePilot Local)                 You, in any browser
+  ────────────────────────                 ───────────────────
+  1. Connector shows a code:  ABCD-1234    3. Open  <cloud>/link
+  2. Polls the Cloud …          ───────▶   4. Type  ABCD-1234  → Confirm
+  6. Poll returns "approved" ✔             5. Cloud binds the PC to your account
+```
+
+From the app: **Settings → OllaBridge Link → Your GPU machines → Add a machine**
+opens the pairing page. After it's approved once, the machine reconnects on its
+own every boot. (See **Device Pairing (Auth Mode)** below for the underlying
+endpoints.)
+
+### What you get after linking
+
+- Machines listed in **Settings → OllaBridge Link → Your GPU machines** (name,
+  GPU, VRAM, online state) — from Cloud `GET /v1/devices`.
+- Their models appear in **Models** under a dedicated **“OllaBridge”** provider,
+  in every Model Type tab (chat, multimodal, image, edit, video, enhance, LoRA,
+  Add-ons); own-node models are badged **GPU node** — from Cloud
+  `GET /ollama/v1/models`.
+- On a chat/multimodal model, **Use for Chat** points the chat provider at the
+  relay; HomePilot attaches your account token as the request credential
+  (`provider_api_key`), so the relay resolves you and runs the job on your GPU.
+
+Everything is **additive and opt-in**: without an OllaBridge link, HomePilot
+uses its local providers (Ollama, ComfyUI, …) exactly as before.
+
+---
+
+## Two HomePilot editions
+
+The single most important distinction. HomePilot ships in two editions with
+**different roles**, and the app adapts its UI and behavior to which one it is:
+
+| | **HomePilot Web** | **HomePilot Local** |
+|---|---|---|
+| Where | Hugging Face Space / any hosted deploy | installed on your PC (desktop app) |
+| Role | **consumer / client** | **consumer + provider** |
+| Runs | frontend + backend | frontend + backend + ComfyUI/Ollama + **OllaBridge Local sidecar** |
+| GPU | none of its own | your GPU, shareable |
+| To OllaBridge Cloud | signs in, *uses* linked machines | *pairs* and *provides* its GPU |
+| Must **not** | run a provider sidecar, or pretend the Space is your GPU | — |
+
+> **The rule:** *HomePilot Web does not provide your GPU. HomePilot Local
+> provides your GPU through OllaBridge Local. OllaBridge Cloud connects them.*
+
+```
+  HomePilot Web (consumer)            OllaBridge Cloud            HomePilot Local (provider)
+  Hugging Face Space          identity · relay · registry        installed on your PC
+        │                         · policy · pairing                    │
+        │                               │                               ├─ HomePilot backend
+        └────── uses your linked PC ────┼──── your GPU node ◄───────────┼─ ComfyUI / Ollama / GPU
+                                        │                               └─ OllaBridge Local sidecar
+                                        └───────────────────────────────────┘  (dials out :11435)
+```
+
+### Edition detection
+
+Resolved by the backend at startup and exposed to the frontend:
+
+- Explicit **`HOMEPILOT_EDITION=web|local`** always wins.
+- Otherwise: a Space env var (`SPACE_ID` / `HF_SPACE_ID` / `SPACE_HOST`) ⇒ **web**;
+  else ⇒ **local**.
+
+```bash
+GET /v1/edition
+→ { "edition": "web", "is_web": true, "is_local": false,
+    "can_provide_gpu": false, "cloud_url": "https://ruslanmv-ollabridge.hf.space" }
+```
+
+The UI **fails safe to web** while loading, so provider/GPU controls never leak
+onto the hosted app.
+
+---
+
+## The OllaBridge Local sidecar (provider side)
+
+HomePilot Local turns your PC into a private GPU node by running the official
+**[OllaBridge](https://github.com/ruslanmv/ollabridge)** package (`ollabridge`,
+v0.1.5+, MIT) as a **sidecar**. HomePilot does **not** reimplement pairing,
+relay, or sharing — it delegates to OllaBridge, which already does all of it.
+
+What the sidecar provides:
+
+- An OpenAI-compatible gateway + **dashboard at `http://localhost:11435/ui`**.
+- A **node agent** that **dials OUT** to the Cloud relay
+  (`wss://…/relay/connect`) — no port forwarding, no VPN, no inbound ports.
+- **Device-code pairing** built in (`ollabridge-node cloud-pair`).
+- **Per-model sharing controls** (This PC / Cloud / per-app), **owner-only and
+  opt-in** by default.
+- (v0.1.5) **GPU generation over the tunnel** — advertise ComfyUI image/video
+  models and run routed jobs, opt-in via `OLLABRIDGE_NODE_GEN_ENABLED`. This is
+  what makes **all Model Types** (not just chat) show up remotely.
+- (v0.1.5) **Self-healing** Cloud connection (auto-reconnect with backoff).
+
+### HomePilot's status/probe endpoints
+
+The backend surfaces the sidecar state so the UI can show it. On the **web**
+edition these answer honestly with `available:false` (there is no sidecar).
+
+```bash
+GET  /v1/ollabridge/local/status
+→ { "edition":"local", "available":true, "installed":true, "running":true,
+    "cloud_url":"…", "local_url":"http://…:11435", "models": 7,
+    "share_scope":"owner_only" }
+
+GET  /v1/ollabridge/local/pair-url   → { "pair_url": "<cloud>/link", … }
+POST /v1/ollabridge/local/start|stop → lifecycle is owned by the desktop shell
+```
+
+### Desktop install behavior (Docker)
+
+The desktop app (`desktop/docker-manager.js`) runs both containers on a shared
+`homepilot-local` network:
+
+1. `homepilot-desktop` — with `HOMEPILOT_EDITION=local` and
+   `OLLABRIDGE_LOCAL_URL=http://ollabridge-local:11435`.
+2. `ollabridge-local` — image `ruslanmv/ollabridge:latest`, `ollabridge start`
+   on **:11435 bound to `127.0.0.1` only**, GPU shared, config persisted to the
+   `ollabridge-local-data` volume, wired to HomePilot's services.
+
+It is **installed + running by default**, but **best-effort and non-fatal** — if
+Docker or the image is unavailable, HomePilot Local runs exactly as before.
+Disable it entirely with the desktop store flag `ollabridgeSidecar = false`.
+
+### Security model — installed ≠ paired ≠ shared
+
+Three independent states; each requires explicit user action to advance:
+
+| State | Meaning | Default |
+|---|---|---|
+| **Installed** | the sidecar exists / runs on the PC | yes (opt-out) |
+| **Paired** | the PC is linked to your OllaBridge account | **no** — user approves |
+| **Shared** | specific models are reachable via the relay | **no** — user approves |
+
+After pairing, the safe default is **share scope = my account only**;
+org/community sharing stays off. This mirrors OllaBridge's local-first, no-
+telemetry-by-default posture.
+
+---
+
+## Configuration reference
+
+| Variable | Side | Default | Purpose |
+|---|---|---|---|
+| `HOMEPILOT_EDITION` | HomePilot | auto (`web` if Space, else `local`) | Force the edition |
+| `OLLABRIDGE_CLOUD_URL` | HomePilot + sidecar | `https://ruslanmv-ollabridge.hf.space` | Canonical Cloud base URL |
+| `OLLABRIDGE_CLOUD_TOKEN` | HomePilot | — | Token for cloud-compute (consumer burst) |
+| `OLLABRIDGE_LOCAL_URL` | HomePilot | `http://127.0.0.1:11435` | Where to probe the sidecar |
+| `OLLABRIDGE_NODE_GEN_ENABLED` | sidecar | `false` | Advertise GPU + run ComfyUI image/video jobs |
+| `OLLABRIDGE_COMFYUI_URL` | sidecar | `http://127.0.0.1:8188` | ComfyUI endpoint for generation |
+| `OLLABRIDGE_COMFYUI_WORKFLOWS_DIR` | sidecar | (bundled) | Workflow templates (flux/sdxl/ltx/wan) |
+| `OLLABRIDGE_HOMEPILOT_URL` | sidecar | `http://127.0.0.1:8001` | HomePilot backend the node serves |
+| `VITE_OLLABRIDGE_CLOUD_URL` | web build | (default above) | Frontend Cloud URL override |
+
+**Canonical production Cloud URL:** `https://ruslanmv-ollabridge.hf.space`
+(override per-deployment with the env vars above).
+
+---
+
+## Production readiness checklist
+
+- [ ] **Cloud**: `SHARING_TIERS_ENABLED=true` (enables `/v1/devices`), a strong
+      `JWT_SECRET` + `TOKEN_PEPPER`, and a **persistent** `DATABASE_URL` (the
+      default HF Space DB is ephemeral — users don't survive a rebuild).
+- [ ] **Cloud**: `/v1/auth/me` reachable; promote the shared-secret HS256 JWT to
+      asymmetric signing + JWKS before adding third-party relying parties.
+- [ ] **Web**: served over HTTPS so the `homepilot_session` cookie is `Secure`
+      (`HOMEPILOT_COOKIE_SECURE=auto` handles this); `edition` reports `web`.
+- [ ] **Local**: `edition` reports `local`; sidecar reachable at
+      `OLLABRIDGE_LOCAL_URL`; pairing persists across restarts (volume mounted).
+- [ ] **Local**: device-code pairing tested end-to-end; sharing defaults to
+      owner-only; GPU generation only advertised when intentionally enabled.
+- [ ] **Both**: sign-in → link → see device → run a remote job verified on a
+      real GPU machine (the desktop sidecar path needs a real Electron+Docker run).
+
+---
+
 ## Architecture
 
 ### System Topology
