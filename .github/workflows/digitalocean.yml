@@ -74,4 +74,4 @@ jobs:
           script: |
             cd /opt/homepilot
             sed -i 's|^HOMEPILOT_IMAGE=.*|HOMEPILOT_IMAGE=${{ needs.build.outputs.image_ref }}|' .env
-            ./deploy.sh
+            bash deploy.sh
