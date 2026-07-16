@@ -1,0 +1,132 @@
+:root {
+  --hp-notice-bg: #ffffff;
+  --hp-notice-text: #172033;
+  --hp-notice-muted: #5f6b7a;
+  --hp-notice-border: #dfe5ec;
+  --hp-notice-accent: #4f46e5;
+  --hp-notice-accent-hover: #4338ca;
+  --hp-notice-shadow: 0 24px 80px rgba(15, 23, 42, 0.24);
+}
+
+.hp-notice-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(6px);
+}
+
+.hp-notice-dialog {
+  width: min(560px, 100%);
+  max-height: min(720px, calc(100vh - 40px));
+  overflow: auto;
+  border: 1px solid var(--hp-notice-border);
+  border-radius: 18px;
+  background: var(--hp-notice-bg);
+  color: var(--hp-notice-text);
+  box-shadow: var(--hp-notice-shadow);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.hp-notice-body {
+  padding: 28px;
+}
+
+.hp-notice-eyebrow {
+  margin: 0 0 8px;
+  color: var(--hp-notice-accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hp-notice-title {
+  margin: 0;
+  font-size: clamp(1.45rem, 4vw, 2rem);
+  line-height: 1.15;
+}
+
+.hp-notice-copy {
+  margin: 16px 0 0;
+  color: var(--hp-notice-muted);
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+.hp-notice-list {
+  margin: 16px 0 0;
+  padding-left: 22px;
+  color: var(--hp-notice-muted);
+  line-height: 1.6;
+}
+
+.hp-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 18px 28px;
+  border-top: 1px solid var(--hp-notice-border);
+  background: #f8fafc;
+  border-radius: 0 0 18px 18px;
+}
+
+.hp-notice-button {
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.hp-notice-button:focus-visible {
+  outline: 3px solid rgba(79, 70, 229, 0.28);
+  outline-offset: 2px;
+}
+
+.hp-notice-button--primary {
+  background: var(--hp-notice-accent);
+  color: #ffffff;
+}
+
+.hp-notice-button--primary:hover {
+  background: var(--hp-notice-accent-hover);
+}
+
+.hp-notice-button--secondary {
+  border-color: var(--hp-notice-border);
+  background: #ffffff;
+  color: var(--hp-notice-text);
+}
+
+.hp-notice-fine-print {
+  margin: 14px 0 0;
+  color: var(--hp-notice-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hp-notice-bg: #111827;
+    --hp-notice-text: #f8fafc;
+    --hp-notice-muted: #cbd5e1;
+    --hp-notice-border: #334155;
+    --hp-notice-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  }
+
+  .hp-notice-actions {
+    background: #0f172a;
+  }
+
+  .hp-notice-button--secondary {
+    background: #1e293b;
+    color: #f8fafc;
+  }
+}
