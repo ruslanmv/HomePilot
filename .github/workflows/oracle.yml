@@ -150,35 +150,34 @@ jobs:
               sudo bash install.sh
             fi
 
-            # First-run .env, seeded from CI config. Generated inline (not copied
-            # from .env.example) so it does not depend on the dotfile being
-            # transferred. Never overwrite an existing .env — operator edits win.
-            if [ ! -f .env ]; then
-              echo "Creating .env from CI config..."
-              : "${HOMEPILOT_DOMAIN:?set the HOMEPILOT_DOMAIN variable on the oracle-production environment}"
-              : "${ACME_EMAIL:?set the ACME_EMAIL variable on the oracle-production environment}"
-              : "${API_KEY:?set the HOMEPILOT_API_KEY secret on the oracle-production environment}"
-              # Build .env line-by-line (no heredoc) so YAML block indentation
-              # can't corrupt the file or the terminator.
-              {
-                echo "HOMEPILOT_DOMAIN=${HOMEPILOT_DOMAIN}"
-                echo "ACME_EMAIL=${ACME_EMAIL}"
-                echo "HOMEPILOT_IMAGE=${IMAGE_REF}"
-                echo "HOMEPILOT_BIND_ADDRESS=127.0.0.1"
-                echo "API_KEY=${API_KEY}"
-                echo "HOMEPILOT_EDITION=web"
-                echo "PUBLIC_BASE_URL=https://${HOMEPILOT_DOMAIN}"
-                echo "HOMEPILOT_LLM_BACKEND=openai"
-                echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
-                echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
-                echo "INTERACTIVE_ENABLED=true"
-                echo "INTERACTIVE_PLAYBACK_LLM=false"
-                echo "INTERACTIVE_PLAYBACK_RENDER=false"
-              } | sudo tee .env >/dev/null
-            fi
-
-            # Always update to the freshly built image tag.
-            sudo sed -i "s|^HOMEPILOT_IMAGE=.*|HOMEPILOT_IMAGE=${IMAGE_REF}|" .env
+            # Write .env from CI config on EVERY run (CI is the source of
+            # truth), so a stale/placeholder value — e.g. a leftover
+            # API_KEY=replace-... from an earlier attempt — is self-healed
+            # instead of being kept forever. Generated inline (not copied from
+            # .env.example) so it doesn't depend on that dotfile being shipped.
+            # All persistent config belongs in the oracle-production
+            # environment, not in hand edits on the box.
+            echo "Writing .env from CI config..."
+            : "${HOMEPILOT_DOMAIN:?set the HOMEPILOT_DOMAIN variable on the oracle-production environment}"
+            : "${ACME_EMAIL:?set the ACME_EMAIL variable on the oracle-production environment}"
+            : "${API_KEY:?set the HOMEPILOT_API_KEY secret on the oracle-production environment}"
+            # Build .env line-by-line (no heredoc) so YAML block indentation
+            # can't corrupt the file or the terminator.
+            {
+              echo "HOMEPILOT_DOMAIN=${HOMEPILOT_DOMAIN}"
+              echo "ACME_EMAIL=${ACME_EMAIL}"
+              echo "HOMEPILOT_IMAGE=${IMAGE_REF}"
+              echo "HOMEPILOT_BIND_ADDRESS=127.0.0.1"
+              echo "API_KEY=${API_KEY}"
+              echo "HOMEPILOT_EDITION=web"
+              echo "PUBLIC_BASE_URL=https://${HOMEPILOT_DOMAIN}"
+              echo "HOMEPILOT_LLM_BACKEND=openai"
+              echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
+              echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
+              echo "INTERACTIVE_ENABLED=true"
+              echo "INTERACTIVE_PLAYBACK_LLM=false"
+              echo "INTERACTIVE_PLAYBACK_RENDER=false"
+            } | sudo tee .env >/dev/null
 
             # Run via sudo so it works before the docker-group membership added
             # by install.sh takes effect in a new login session.
