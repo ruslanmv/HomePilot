@@ -20,6 +20,11 @@ RUN git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git custom_nodes/C
       pip install -r custom_nodes/ComfyUI-Impact-Pack/requirements.txt; \
     fi
 
+# Small pure-Python deps imported directly by custom nodes: piexif (Impact-Pack)
+# and imageio-ffmpeg (VideoHelperSuite). Install explicitly so a partial
+# requirements.txt failure cannot leave the nodes un-importable.
+RUN pip install piexif imageio-ffmpeg
+
 # ComfyUI-InstantID — provides InstantIDFaceAnalysis / InstantIDModelLoader / ApplyInstantID nodes
 RUN git clone https://github.com/cubiq/ComfyUI_InstantID.git custom_nodes/ComfyUI-InstantID \
  && if [ -f custom_nodes/ComfyUI-InstantID/requirements.txt ]; then \
