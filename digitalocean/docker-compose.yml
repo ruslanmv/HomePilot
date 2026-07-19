@@ -1,0 +1,40 @@
+services:
+  homepilot:
+    image: ${HOMEPILOT_IMAGE:-ghcr.io/ruslanmv/homepilot-digitalocean:latest}
+    container_name: homepilot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${HOMEPILOT_BIND_ADDRESS:-127.0.0.1}:7860:7860"
+    volumes:
+      - homepilot-data:/home/user/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7860/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: homepilot-caddy
+    restart: unless-stopped
+    depends_on:
+      homepilot:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      HOMEPILOT_DOMAIN: ${HOMEPILOT_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  homepilot-data:
+  caddy-data:
+  caddy-config:

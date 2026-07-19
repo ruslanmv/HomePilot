@@ -1,0 +1,20 @@
+{$HOMEPILOT_DOMAIN} {
+  encode zstd gzip
+
+  reverse_proxy homepilot:7860 {
+    transport http {
+      read_timeout 5m
+      write_timeout 5m
+      dial_timeout 60s
+    }
+  }
+
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    Permissions-Policy "camera=(self), microphone=(self), geolocation=()"
+    -Server
+  }
+
+  tls {$ACME_EMAIL}
+}
