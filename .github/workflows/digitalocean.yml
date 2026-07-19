@@ -1,0 +1,77 @@
+name: DigitalOcean Web Deployment
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "digitalocean/**"
+      - "notifications/**"
+      - ".github/workflows/digitalocean.yml"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after publishing the image
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: digitalocean-production
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/homepilot-digitalocean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image_ref: ${{ steps.image.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: image
+        run: echo "ref=${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: digitalocean/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    if: github.event_name == 'push' || inputs.deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment: digitalocean-production
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.DO_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            cd /opt/homepilot
+            sed -i 's|^HOMEPILOT_IMAGE=.*|HOMEPILOT_IMAGE=${{ needs.build.outputs.image_ref }}|' .env
+            bash deploy.sh
