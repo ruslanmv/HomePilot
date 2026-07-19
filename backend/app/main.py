@@ -6,6 +6,7 @@ import os
 import subprocess
 import uuid as uuidlib
 import traceback
+import time
 from pathlib import Path, PurePath
 from typing import Any, Dict, List, Optional, Literal
 from urllib.parse import urlparse, parse_qs
@@ -35,6 +36,7 @@ from .config import (
     EDIT_SESSION_URL,
 )
 from .orchestrator import orchestrate, handle_request, clear_conversation_memory
+from .tracing import log_event, request_id_ctx
 from .providers import provider_info
 from .storage import init_db, list_conversations, get_messages, delete_image_url, delete_conversation
 from .migrations import run_migrations
@@ -156,6 +158,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_trace(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuidlib.uuid4())
+    token = request_id_ctx.set(request_id)
+    started = time.perf_counter()
+    log_event("http.request.start", method=request.method, path=request.url.path)
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        log_event(
+            "http.request.end",
+            method=request.method,
+            path=request.url.path,
+            status=response.status_code,
+            elapsed_ms=round((time.perf_counter() - started) * 1000),
+        )
+        return response
+    except Exception as exc:
+        log_event(
+            "http.request.error",
+            method=request.method,
+            path=request.url.path,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
+    finally:
+        request_id_ctx.reset(token)
 
 # Include Studio routes (/studio/*)
 app.include_router(studio_router)
@@ -4593,23 +4625,59 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     except Exception:
         pass  # additive — never let credential plumbing break chat
 
+    # Normalize chat model selection. Settings V2 sends the generic
+    # provider_model for all providers; keep the legacy ollama_model /
+    # llm_model aliases synchronized so downstream chat, voice, and prompt
+    # refinement paths switch models on the very next request.
+    provider = (inp.provider or "").strip() or None
+    provider_model = (inp.provider_model or "").strip() or None
+    ollama_model = (inp.ollama_model or "").strip() or None
+    llm_model = (inp.llm_model or "").strip() or None
+    if provider == "ollama" and provider_model:
+        ollama_model = provider_model
+    if provider == "openai_compat" and provider_model:
+        llm_model = provider_model
+
+    effective_project_id = inp.project_id
+    if (
+        not effective_project_id
+        and inp.personalityId
+        and inp.personalityId.startswith("persona:")
+    ):
+        effective_project_id = inp.personalityId.removeprefix("persona:")
+        log_event(
+            "persona.project.inferred",
+            personality_id=inp.personalityId,
+            project_id=effective_project_id,
+        )
+
+    log_event(
+        "chat.request",
+        mode=inp.mode,
+        conversation_id=inp.conversation_id,
+        project_id=effective_project_id,
+        personality_id=inp.personalityId,
+        provider=provider,
+        provider_model=provider_model,
+    )
+
     # Debug: Log incoming parameters
     print(f"[CHAT ENDPOINT] imgModel received from frontend: '{inp.imgModel}' (type: {type(inp.imgModel).__name__ if inp.imgModel is not None else 'None'})")
-    print(f"[CHAT ENDPOINT] project_id: {inp.project_id!r}, personalityId: {inp.personalityId!r}, ollama_model: {inp.ollama_model!r}")
+    print(f"[CHAT ENDPOINT] project_id: {effective_project_id!r}, raw_project_id: {inp.project_id!r}, personalityId: {inp.personalityId!r}, provider: {provider!r}, provider_model: {provider_model!r}, ollama_model: {ollama_model!r}, llm_model: {llm_model!r}")
 
     # Build payload for mode-aware handler
     payload = {
         "message": inp.message,
         "conversation_id": inp.conversation_id,
-        "project_id": inp.project_id,
+        "project_id": effective_project_id,
         "fun_mode": inp.fun_mode,
-        "provider": inp.provider,
+        "provider": provider,
         "ollama_base_url": inp.ollama_base_url,
-        "ollama_model": inp.ollama_model,
+        "ollama_model": ollama_model,
         "provider_base_url": inp.provider_base_url,
-        "provider_model": inp.provider_model,
+        "provider_model": provider_model,
         "llm_base_url": inp.llm_base_url,
-        "llm_model": inp.llm_model,
+        "llm_model": llm_model,
         "textTemperature": inp.textTemperature,
         "textMaxTokens": inp.textMaxTokens,
         "imgWidth": inp.imgWidth,
@@ -4668,10 +4736,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     # This prevents first-message race conditions where project_id hasn't
     # been set yet in localStorage but personalityId is already available.
     # ----------------------------
-    _photo_project_id = inp.project_id
-    if not _photo_project_id and inp.personalityId and inp.personalityId.startswith("persona:"):
-        _photo_project_id = inp.personalityId[len("persona:"):]
-        print(f"[CHAT ENDPOINT] photo-intent: inferred project_id={_photo_project_id!r} from personalityId")
+    _photo_project_id = effective_project_id
 
     # Helper: persist deterministic photo responses to conversation history
     # so outfit context is available for follow-up messages (e.g. "show me your back"
@@ -5122,6 +5187,14 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
 
     # Route through mode-aware handler
     out = await handle_request(mode=inp.mode, payload=payload)
+    log_event(
+        "chat.response",
+        mode=inp.mode,
+        conversation_id=out.get("conversation_id") if isinstance(out, dict) else None,
+        project_id=effective_project_id,
+        text_chars=len(str((out or {}).get("text") or "")) if isinstance(out, dict) else None,
+        media_present=bool((out or {}).get("media")) if isinstance(out, dict) else None,
+    )
 
     # T4 additive: feed user text into Memory V2 for cross-topology learning.
     # Non-blocking: failures are silently ignored. Only for chat/voice modes
@@ -5132,12 +5205,12 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
         _mem_mode = "v2"  # default to v2 when unset
     elif _mem_mode == "basic":
         _mem_mode = "v1"
-    if inp.project_id and inp.message and inp.mode in ("chat", "voice") and _mem_mode == "v2" and not inp.incognito:
+    if effective_project_id and inp.message and inp.mode in ("chat", "voice") and _mem_mode == "v2" and not inp.incognito:
         try:
             from .memory_v2 import get_memory_v2, ensure_v2_columns
             ensure_v2_columns()
             _uid = user["id"] if user else None
-            get_memory_v2().ingest_user_text(inp.project_id, inp.message, user_id=_uid)
+            get_memory_v2().ingest_user_text(effective_project_id, inp.message, user_id=_uid)
         except Exception:
             pass
     elif inp.incognito:

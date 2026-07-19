@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Literal
 
 import httpx
+
+from .tracing import log_event
 
 # Request-scoped provider credential (additive). The /chat endpoint sets this
 # from ChatIn.provider_api_key so that EVERY openai_compat call made while
@@ -42,6 +45,12 @@ def is_thinking_model(model_name: str) -> bool:
         return False
     lower = model_name.lower()
     return any(p in lower for p in THINKING_MODEL_PATTERNS)
+
+
+def _short_debug_text(value: Any, limit: int = 160) -> str:
+    """Single-line, bounded text for debug logs without dumping full prompts."""
+    text = str(value or "").replace("\n", " ").replace("\r", " ").strip()
+    return text[:limit] + ("…" if len(text) > limit else "")
 
 
 # Phrases that indicate leaked reasoning / self-instructions, NOT spoken dialogue.
@@ -426,19 +435,38 @@ async def chat_ollama(
       { model, messages: [{role, content}], stream: false, options: {...} }
     """
     base = (base_url or OLLAMA_BASE_URL).rstrip("/")
+    requested_model = (model or "").strip() or None
     mdl = (model or OLLAMA_MODEL).strip()
 
     url = f"{base}/api/chat"
+    request_messages = [{"role": m["role"], "content": m["content"]} for m in messages]
+    thinking_disabled = False
+    if is_thinking_model(mdl) and not response_format:
+        # Qwen3/R1-style local models can spend minutes in hidden reasoning for
+        # simple companion turns. Disable reasoning when the Ollama build/model
+        # supports it and also add the Qwen3 /no_think control token as a
+        # harmless prompt-level fallback for older servers. This keeps ordinary
+        # chat/voice turns responsive while preserving the user-selected model.
+        thinking_disabled = True
+        for m in reversed(request_messages):
+            if m.get("role") == "user" and isinstance(m.get("content"), str):
+                if "/no_think" not in m["content"].lower():
+                    m["content"] = f'{m["content"]}\n/no_think'
+                break
+
     payload = {
         "model": mdl,
-        "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
+        "messages": request_messages,
         "stream": False,
+        "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
         "options": {
             "temperature": float(temperature),
             # Ollama doesn't use max_tokens exactly the same way; keep best-effort:
             "num_predict": int(max_tokens),
         },
     }
+    if thinking_disabled:
+        payload["think"] = False
 
     # If supported by your Ollama build/model, this enforces JSON-only output at decode-time.
     # Values commonly supported: "json".
@@ -471,10 +499,64 @@ async def chat_ollama(
         # Ensure payload uses the final model name
         payload["model"] = mdl
 
+        prompt_chars = sum(len(str(m.get("content") or "")) for m in request_messages)
+        log_event(
+            "llm.request",
+            provider="ollama",
+            requested_model=requested_model,
+            selected_model=mdl,
+            base_url=base,
+            message_count=len(request_messages),
+            prompt_chars=prompt_chars,
+            max_tokens=max_tokens,
+            think=payload.get("think"),
+            keep_alive=payload.get("keep_alive"),
+        )
+        print(
+            "[OLLAMA] request model=%r base=%s messages=%d prompt_chars=%d "
+            "num_predict=%s think=%r keep_alive=%r last_user=%r"
+            % (
+                mdl,
+                base,
+                len(request_messages),
+                prompt_chars,
+                payload.get("options", {}).get("num_predict"),
+                payload.get("think"),
+                payload.get("keep_alive"),
+                _short_debug_text(next((m.get("content") for m in reversed(request_messages) if m.get("role") == "user"), "")),
+            )
+        )
+        started = time.perf_counter()
         try:
             r = await client.post(url, json=payload)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
             r.raise_for_status()
             data = r.json()
+            log_event(
+                "llm.response",
+                provider="ollama",
+                selected_model=mdl,
+                status=r.status_code,
+                elapsed_ms=elapsed_ms,
+                done_reason=data.get("done_reason"),
+                prompt_eval_count=data.get("prompt_eval_count"),
+                eval_count=data.get("eval_count"),
+            )
+            print(
+                "[OLLAMA] response model=%r status=%s elapsed_ms=%d done_reason=%r "
+                "load_ms=%s prompt_eval_count=%s prompt_eval_ms=%s eval_count=%s eval_ms=%s"
+                % (
+                    mdl,
+                    r.status_code,
+                    elapsed_ms,
+                    data.get("done_reason"),
+                    int(data.get("load_duration", 0) / 1_000_000) if data.get("load_duration") is not None else None,
+                    data.get("prompt_eval_count"),
+                    int(data.get("prompt_eval_duration", 0) / 1_000_000) if data.get("prompt_eval_duration") is not None else None,
+                    data.get("eval_count"),
+                    int(data.get("eval_duration", 0) / 1_000_000) if data.get("eval_duration") is not None else None,
+                )
+            )
         except httpx.HTTPStatusError as e:
             # Better error handling for 404 model not found
             if e.response.status_code == 404:
@@ -583,9 +665,23 @@ async def chat_ollama(
 
     # Debug logging when content is still empty
     if not content.strip():
-        print(f"[OLLAMA] WARNING: empty content. provider_raw keys: {list(data.keys())}")
+        log_event(
+            "llm.empty_content",
+            provider="ollama",
+            selected_model=mdl,
+            done_reason=data.get("done_reason"),
+            eval_count=data.get("eval_count"),
+            prompt_eval_count=data.get("prompt_eval_count"),
+        )
+        print(
+            "[OLLAMA] WARNING: empty content after normalization. "
+            f"done_reason={data.get('done_reason')!r} eval_count={data.get('eval_count')!r} "
+            f"prompt_eval_count={data.get('prompt_eval_count')!r} total_ms="
+            f"{int(data.get('total_duration', 0) / 1_000_000) if data.get('total_duration') is not None else None} "
+            f"raw_keys={list(data.keys())}"
+        )
         if isinstance(msg, dict):
-            print(f"[OLLAMA] message keys: {list(msg.keys())}")
+            print(f"[OLLAMA] message keys: {list(msg.keys())} content_preview={_short_debug_text(msg.get('content'))!r}")
 
     return {
         "choices": [{"message": {"content": content}}],

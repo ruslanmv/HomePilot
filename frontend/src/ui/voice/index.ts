@@ -45,6 +45,7 @@ export {
   getDefaultPersonality,
   getPersonalityById,
   LS_PERSONALITY_ID,
+  LS_VOICE_STYLE_ID,
 } from './personalities';
 
 // UI component exports
