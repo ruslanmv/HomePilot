@@ -21,12 +21,18 @@ services:
     # 404'd and the container never became healthy. Hitting :8000/health inside
     # the container avoids that mapping. start_period is generous because the
     # app is slow to import on the 1 OCPU Ampere shape.
+    # start_period is generous — during it, failing probes do NOT count as
+    # failures or toward "unhealthy", they just keep the container "starting".
+    # The app is slow to import on a single Ampere core. Total grace before
+    # "unhealthy" is start_period + retries*interval = 240 + 12*15 = 420s,
+    # comfortably under the deploy SSH step's 10m command timeout so a truly
+    # broken app still fails cleanly instead of hanging.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 180s
+      retries: 12
+      start_period: 240s
     logging:
       driver: json-file
       options:

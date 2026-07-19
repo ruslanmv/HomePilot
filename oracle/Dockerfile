@@ -27,7 +27,8 @@ RUN SV=/etc/supervisor/conf.d/supervisord.conf; \
     if [ -f "$SV" ]; then \
       awk '/^\[program:comfyui\]/{b=1} /^\[program:/ && $0 !~ /comfyui/{b=0} b && /^autostart=/{print "autostart=false"; next} {print}' "$SV" > "$SV.tmp" \
       && mv "$SV.tmp" "$SV" \
-      && echo "ComfyUI autostart disabled for the Oracle image."; \
+      && sed -i 's/--workers[[:space:]]\+[0-9]\+/--workers 1/' "$SV" \
+      && echo "Oracle image: ComfyUI autostart disabled; backend workers=1."; \
     else \
       echo "supervisord.conf not found at $SV — leaving base image untouched."; \
     fi
