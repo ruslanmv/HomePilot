@@ -1,0 +1,10 @@
+{
+  "_comment": "FROZEN CONTRACT — the 404 detail a client receives when it targets a persona that exists locally but is NOT published to the provider API (shared_api.enabled=false). The 'code' string persona_unpublished is what clients branch on. Private mirroring to the owner must never turn this into a success for external clients. Shape captured verbatim from _resolve_published_persona in openai_compat_endpoint.py.",
+  "error": {
+    "type": "model_not_available",
+    "code": "persona_unpublished",
+    "message": "Persona 'Private Financial Assistant' is not published to the shared API.",
+    "model": "persona:p2",
+    "available_models_hint": true
+  }
+}

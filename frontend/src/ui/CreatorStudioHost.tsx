@@ -4,9 +4,20 @@ import { useStudioStore } from "./studio/stores/studioStore";
 import { CreatorStudioEditor } from "./CreatorStudioEditor";
 import { detectArchitecture, getArchitectureLabel, getModelSettings, type AspectRatio } from "./modelPresets";
 
-type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9";
+// Keep in sync with backend/app/studio/models.py PlatformPreset - the two
+// declarations are independent (no shared package yet) and drift silently.
+type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9" | "social_1_1";
 type ContentRating = "sfw" | "mature";
 type AvailableModel = { id: string; name: string };
+
+/**
+ * Source Mode - how the story outline gets its narration:
+ * - topic: the AI invents narration from the short description (default)
+ * - script: the narration is segmented verbatim from a provided essay/script
+ */
+type SourceMode = "topic" | "script";
+
+type VisualStyle = "Cinematic" | "Digital Art" | "Anime" | "Technical / Editorial";
 
 /**
  * Mature Content Categories - determines the type of adult content
@@ -155,8 +166,14 @@ function CreatorStudioWizard({
   // Wizard fields
   const [goal, setGoal] = useState<"Entertain" | "Educate" | "Inspire">("Educate");
   const [tones, setTones] = useState<string[]>(["Documentary", "Calm"]);
-  const [visualStyle, setVisualStyle] = useState<"Cinematic" | "Digital Art" | "Anime">("Cinematic");
+  const [visualStyle, setVisualStyle] = useState<VisualStyle>("Cinematic");
   const [lockIdentity, setLockIdentity] = useState(true);
+
+  // Essay-to-video (script mode) fields - only used when sourceMode === "script"
+  const [sourceMode, setSourceMode] = useState<SourceMode>("topic");
+  const [scriptText, setScriptText] = useState("");
+  const [scriptUrl, setScriptUrl] = useState("");
+  const [existingAudioUrl, setExistingAudioUrl] = useState("");
 
   // Episode/scene configuration
   const [targetSceneCount, setTargetSceneCount] = useState(8);
@@ -309,7 +326,9 @@ function CreatorStudioWizard({
     // Also add mode:video or mode:slideshow for easy filtering and editor detection
     t.push(`mode:${projectType === "slideshow" ? "slideshow" : "video"}`);
     if (goal) t.push(`goal:${goal.toLowerCase()}`);
-    if (visualStyle) t.push(`visual:${visualStyle.toLowerCase().replaceAll(" ", "_")}`);
+    // Sanitize to a clean slug ("Technical / Editorial" -> "technical_editorial")
+    if (visualStyle) t.push(`visual:${visualStyle.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")}`);
+    if (sourceMode === "script") t.push("source:script");
     if (tones.length) t.push(...tones.map((x) => `tone:${x.toLowerCase().replaceAll(" ", "_")}`));
     if (lockIdentity) t.push("lock:identity");
     // Include episode configuration
@@ -328,11 +347,12 @@ function CreatorStudioWizard({
       t.push(`intensity:${intensityLevel.toFixed(2)}`);
     }
     return Array.from(new Set(t));
-  }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, enableVideoGeneration, selectedVideoModel, contentRating, matureCategory, intensityLevel]);
+  }, [projectType, goal, visualStyle, sourceMode, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, enableVideoGeneration, selectedVideoModel, contentRating, matureCategory, intensityLevel]);
 
   // Helper: Convert platform preset to aspect ratio for resolution lookup
   const platformToAspectRatio = React.useCallback((platform: PlatformPreset): AspectRatio => {
     if (platform === "shorts_9_16") return "9:16";
+    if (platform === "social_1_1") return "1:1";
     return "16:9"; // youtube_16_9 and slides_16_9 both use 16:9
   }, []);
 
@@ -384,6 +404,13 @@ function CreatorStudioWizard({
     }
   }
 
+  // Script mode always pairs with the Technical / Editorial style - an essay
+  // import shouldn't present Anime as a plausible choice.
+  function handleSourceModeSelect(mode: SourceMode) {
+    setSourceMode(mode);
+    if (mode === "script") setVisualStyle("Technical / Editorial");
+  }
+
   function toggleTone(t: string) {
     setTones((prev) => {
       const has = prev.includes(t);
@@ -414,6 +441,12 @@ function CreatorStudioWizard({
   async function handleGenerateOutline() {
     if (!title.trim()) {
       setError("Project name is required.");
+      setStep(1);
+      return;
+    }
+
+    if (sourceMode === "script" && !scriptText.trim() && !scriptUrl.trim()) {
+      setError("Script mode needs the essay: paste its text or provide its URL.");
       setStep(1);
       return;
     }
@@ -473,6 +506,15 @@ function CreatorStudioWizard({
         target_scenes: targetSceneCount,
         scene_duration: sceneDuration,
         ollama_model: selectedLLMModel || undefined,
+        // Essay-to-video (script mode): narration comes verbatim from the essay
+        source_mode: sourceMode,
+        ...(sourceMode === "script"
+          ? {
+              script_text: scriptText.trim() || undefined,
+              script_url: scriptUrl.trim() || undefined,
+              existing_audio_url: existingAudioUrl.trim() || undefined,
+            }
+          : {}),
       };
 
       const outlineRes = await fetch(outlineUrl, {
@@ -712,6 +754,68 @@ function CreatorStudioWizard({
                   />
                 </div>
 
+                {/* Script Source - essay-to-video (only for video projects) */}
+                <div className="mt-6">
+                  <label className="block text-xs font-medium text-[#aaa] mb-3">Script Source</label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormatCard
+                      icon="AI"
+                      title="Topic"
+                      sub="AI writes the script from your description"
+                      selected={sourceMode === "topic"}
+                      onClick={() => handleSourceModeSelect("topic")}
+                    />
+                    <FormatCard
+                      icon="Doc"
+                      title="Essay / Script"
+                      sub="Use your own words, segmented verbatim"
+                      selected={sourceMode === "script"}
+                      onClick={() => handleSourceModeSelect("script")}
+                    />
+                  </div>
+
+                  {sourceMode === "script" && (
+                    <div className="mt-4 space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-[#aaa] mb-2">Essay text (markdown)</label>
+                        <p className="text-xs text-[#777] mb-2">
+                          Paste the full essay. Its own sentences become the narration - the AI only plans the visuals, it never rewrites your words.
+                        </p>
+                        <textarea
+                          className="w-full px-3 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-sm font-mono outline-none focus:border-[#3ea6ff] resize-y"
+                          rows={8}
+                          placeholder={"---\ntitle: My Essay\n---\n\n## Section One\n\nThe essay's own words..."}
+                          value={scriptText}
+                          onChange={(e) => setScriptText(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[#aaa] mb-2">...or essay URL</label>
+                        <input
+                          type="url"
+                          className="w-full px-3 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-sm outline-none focus:border-[#3ea6ff]"
+                          placeholder="https://ruslanmv.com/blog/my-essay"
+                          value={scriptUrl}
+                          onChange={(e) => setScriptUrl(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[#aaa] mb-2">Existing narration audio URL (optional)</label>
+                        <p className="text-xs text-[#777] mb-2">
+                          If the essay already has narrated audio, link it here to reuse it instead of generating new speech.
+                        </p>
+                        <input
+                          type="url"
+                          className="w-full px-3 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-sm outline-none focus:border-[#3ea6ff]"
+                          placeholder="https://.../my-essay.mp3"
+                          value={existingAudioUrl}
+                          onChange={(e) => setExistingAudioUrl(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="mt-6">
                   <label className="block text-xs font-medium text-[#aaa] mb-3">Format</label>
                   <div className="grid grid-cols-3 gap-4">
@@ -807,29 +911,46 @@ function CreatorStudioWizard({
 
                 <div className="mt-6">
                   <label className="block text-xs font-medium text-[#aaa] mb-3">Style Preset</label>
-                  <div className="grid grid-cols-3 gap-4">
+                  {/* Script mode (essay import) always uses Technical / Editorial */}
+                  <div className={sourceMode === "script" ? "grid grid-cols-1 gap-4" : "grid grid-cols-2 gap-4"}>
+                    {sourceMode !== "script" && (
+                      <>
+                        <FormatCard
+                          icon="Camera"
+                          title="Cinematic"
+                          sub="High fidelity realism"
+                          selected={visualStyle === "Cinematic"}
+                          onClick={() => setVisualStyle("Cinematic")}
+                        />
+                        <FormatCard
+                          icon="Palette"
+                          title="Digital Art"
+                          sub="Stylized illustration"
+                          selected={visualStyle === "Digital Art"}
+                          onClick={() => setVisualStyle("Digital Art")}
+                        />
+                        <FormatCard
+                          icon="Star"
+                          title="Anime"
+                          sub="Japanese animation style"
+                          selected={visualStyle === "Anime"}
+                          onClick={() => setVisualStyle("Anime")}
+                        />
+                      </>
+                    )}
                     <FormatCard
-                      icon="Camera"
-                      title="Cinematic"
-                      sub="High fidelity realism"
-                      selected={visualStyle === "Cinematic"}
-                      onClick={() => setVisualStyle("Cinematic")}
-                    />
-                    <FormatCard
-                      icon="Palette"
-                      title="Digital Art"
-                      sub="Stylized illustration"
-                      selected={visualStyle === "Digital Art"}
-                      onClick={() => setVisualStyle("Digital Art")}
-                    />
-                    <FormatCard
-                      icon="Star"
-                      title="Anime"
-                      sub="Japanese animation style"
-                      selected={visualStyle === "Anime"}
-                      onClick={() => setVisualStyle("Anime")}
+                      icon="Doc"
+                      title="Technical / Editorial"
+                      sub="Calm, diagram-driven, documentary"
+                      selected={visualStyle === "Technical / Editorial"}
+                      onClick={() => setVisualStyle("Technical / Editorial")}
                     />
                   </div>
+                  {sourceMode === "script" && (
+                    <p className="mt-2 text-xs text-[#777]">
+                      Essay imports use the Technical / Editorial style so the result matches the essay's identity.
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-6">
@@ -1156,6 +1277,13 @@ function CreatorStudioWizard({
                   <ReviewLine label="Project Type" value={projectTypeToLabel(projectType)} />
                   <ReviewLine label="Title" value={title.trim() || "Untitled Project"} />
                   <ReviewLine label="Format" value={platformPresetToLabel(platformPreset)} />
+                  <ReviewLine
+                    label="Script Source"
+                    value={sourceMode === "script"
+                      ? `Essay / Script (${scriptText.trim() ? "pasted text" : scriptUrl.trim() || "no source yet"})${existingAudioUrl.trim() ? " + existing audio" : ""}`
+                      : "Topic (AI-written)"}
+                    color={sourceMode === "script" ? "text-[#3ea6ff]" : undefined}
+                  />
                   <ReviewLine label="Style" value={`${visualStyle} (${tones.length ? tones.join(", ") : "Default"})`} />
                   <ReviewLine
                     label="Episode Length"
@@ -1658,6 +1786,7 @@ function ReviewLine({
 function platformPresetToLabel(p: PlatformPreset) {
   if (p === "youtube_16_9") return "YouTube Video (16:9)";
   if (p === "shorts_9_16") return "YouTube Short (9:16)";
+  if (p === "social_1_1") return "Social Teaser (1:1)";
   return "Slides (16:9)";
 }
 

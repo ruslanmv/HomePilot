@@ -48,6 +48,14 @@ PlatformPreset = str  # Literal["youtube_16_9", "shorts_9_16", "slides_16_9"].
 
 
 @dataclass
+class WordTiming:
+    """One word and its scene-relative span, from forced alignment."""
+    word: str
+    start: float
+    end: float
+
+
+@dataclass
 class SceneInput:
     """A single scene, normalized for the renderer.
 
@@ -65,6 +73,10 @@ class SceneInput:
     video_path: Optional[str] = None
     audio_path: Optional[str] = None
     narration: str = ""
+    # Optional scene-relative word timestamps (word, start_sec, end_sec) from
+    # forced alignment. When present AND caption_mode="word", the renderer
+    # burns CapCut-style active-word captions instead of evenly-timed cues.
+    word_timings: Optional[List["WordTiming"]] = None
 
 
 @dataclass
@@ -208,6 +220,7 @@ def _per_scene_args(
     height: int,
     fps: int,
     scratch: Path,
+    fill_mode: str = "letterbox",
 ) -> tuple[list[str], list[str], str]:
     """Build ffmpeg input/filter args for a single scene.
 
@@ -217,17 +230,14 @@ def _per_scene_args(
     inputs: list[str] = []
     filters: list[str] = []
 
-    # Common video-side filter: scale + pad to canvas, fps lock, sar reset.
-    vf_chain = (
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
-        f"setsar=1,fps={fps},format=yuv420p"
-    )
+    # Video-side fill: letterbox (default) / cover / blur — see _video_fill_chain.
+    fill = _video_fill_chain(f"{scene.idx}:v", f"v{scene.idx}",
+                             width, height, fps, fill_mode)
 
     if scene.video_path:
         # Video clip: clamp duration and reformat to canvas.
         inputs += ["-t", f"{scene.duration_sec:.3f}", "-i", scene.video_path]
-        filters.append(f"[{scene.idx}:v]{vf_chain}[v{scene.idx}]")
+        filters.append(fill)
     elif scene.image_path:
         # Still image: loop into a clip of duration.
         inputs += [
@@ -235,7 +245,7 @@ def _per_scene_args(
             "-t", f"{scene.duration_sec:.3f}",
             "-i", scene.image_path,
         ]
-        filters.append(f"[{scene.idx}:v]{vf_chain}[v{scene.idx}]")
+        filters.append(fill)
     else:
         # No media: black frame of duration.
         inputs += [
@@ -277,6 +287,40 @@ def _audio_transform_chain(rate: float, pitch: float) -> Optional[str]:
 def _ass_escape(text: str) -> str:
     """Escape a string for embedding inside a libass SRT/ASS cue."""
     return (text or "").replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+
+
+def _subtitle_force_style(width: int, height: int) -> str:
+    """Premium, canvas-proportional burn-in caption style (libass force_style).
+
+    Top short-form channels use LARGE, bold, high-contrast captions sitting in
+    the safe zone above the platform's bottom UI. A fixed 28px looks tiny on a
+    1080x1920 Short, so size, outline, and vertical margin all scale with the
+    canvas and the aspect. BorderStyle=1 gives the clean bold-outline look
+    (no box) that reads on any background; Alignment=2 is bottom-centre.
+    """
+    shorts = height > width  # 9:16 / vertical
+    if shorts:
+        fontsize = max(56, round(height * 0.050))   # ~96px on 1920 tall
+        margin_v = round(height * 0.13)             # ~250px — above the Shorts UI
+        outline, shadow = 5, 2
+    else:
+        fontsize = max(30, round(height * 0.040))   # ~43px on 1080 tall
+        margin_v = round(height * 0.06)             # ~65px
+        outline, shadow = 3, 1
+    return (
+        f"Fontname=DejaVu Sans,Fontsize={fontsize},Bold=1,"
+        "PrimaryColour=&H00FFFFFF&,"      # white fill
+        "OutlineColour=&HE6000000&,"      # near-opaque black outline
+        "BackColour=&H66000000&,"
+        f"BorderStyle=1,Outline={outline},Shadow={shadow},"
+        f"Alignment=2,MarginV={margin_v},Spacing=0.4"
+    )
+
+
+def _subtitle_max_chars(width: int, height: int) -> int:
+    """Chars-per-line tuned to the aspect. Shorts run big fonts on a narrow
+    canvas, so lines must be short (~20) to avoid overflow; 16:9 fits ~42."""
+    return 20 if height > width else 42
 
 
 def _srt_timestamp(seconds: float) -> str:
@@ -333,6 +377,7 @@ def _write_srt_for_scene(
     srt_path: Path,
     *,
     start_offset: float = 0.0,
+    max_chars: int = 42,
 ) -> bool:
     """Write an SRT file whose cues span [0, duration_sec] for a single scene.
 
@@ -340,7 +385,7 @@ def _write_srt_for_scene(
     should be emitted — and the caller should not try to burn an empty
     subtitle file, which would fail).
     """
-    chunks = _split_narration_for_subtitles(narration)
+    chunks = _split_narration_for_subtitles(narration, max_chars=max_chars)
     if not chunks:
         return False
     dur = max(0.5, float(duration_sec or 5.0))
@@ -359,6 +404,164 @@ def _write_srt_for_scene(
         lines.append("")
     srt_path.write_text("\n".join(lines), encoding="utf-8")
     return True
+
+
+# ---------------------------------------------------------------------------
+# Word-level (CapCut / Submagic style) captions — ASS with active-word pop
+# ---------------------------------------------------------------------------
+
+# Default accent for the highlighted word (StyleKit ruslanmv-essays cyan
+# #00d4ff). ASS colour is &HAABBGGRR.
+_DEFAULT_ACCENT_ASS = "&H00FFD400"  # cyan (BB=FF, GG=D4, RR=00)
+
+
+def _ass_ts(seconds: float) -> str:
+    """ASS timestamp H:MM:SS.cc (centiseconds)."""
+    if seconds < 0:
+        seconds = 0.0
+    cs = int(round(seconds * 100))
+    h, cs = divmod(cs, 360000)
+    m, cs = divmod(cs, 6000)
+    s, cs = divmod(cs, 100)
+    return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _group_words(words: List["WordTiming"], max_chars: int,
+                 gap_sec: float = 0.6) -> List[List["WordTiming"]]:
+    """Group aligned words into short caption windows (read 1–3 words at a
+    time). Breaks on length or a silent gap so a window never spans a pause."""
+    windows: List[List[WordTiming]] = []
+    cur: List[WordTiming] = []
+    cur_len = 0
+    for w in words:
+        wl = len(w.word)
+        gap = cur and (w.start - cur[-1].end) > gap_sec
+        if cur and (cur_len + 1 + wl > max_chars or gap):
+            windows.append(cur)
+            cur, cur_len = [], 0
+        cur.append(w)
+        cur_len += (1 if cur_len else 0) + wl
+    if cur:
+        windows.append(cur)
+    return windows
+
+
+def _ass_style_line(width: int, height: int) -> str:
+    """A [V4+ Styles] line reusing the premium preset-aware sizing."""
+    shorts = height > width
+    fontsize = max(56, round(height * 0.050)) if shorts else max(30, round(height * 0.040))
+    margin_v = round(height * 0.13) if shorts else round(height * 0.06)
+    outline = 5 if shorts else 3
+    shadow = 2 if shorts else 1
+    # Format: Name,Font,Size,PrimaryC,SecondaryC,OutlineC,BackC,Bold,Italic,
+    #   Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,
+    #   Shadow,Alignment,ML,MR,MV,Encoding
+    return (
+        f"Style: Caption,DejaVu Sans,{fontsize},&H00FFFFFF,&H00FFFFFF,"
+        f"&HE6000000,&H66000000,1,0,0,0,100,100,0.4,0,1,{outline},{shadow},"
+        f"2,40,40,{margin_v},1"
+    )
+
+
+def write_ass_word_captions(
+    word_timings: List["WordTiming"],
+    ass_path: Path,
+    width: int,
+    height: int,
+    *,
+    duration_sec: float,
+    max_chars: int,
+    accent: str = _DEFAULT_ACCENT_ASS,
+) -> bool:
+    """Write a CapCut/Submagic-style ASS file: short word windows with the
+    currently-spoken word highlighted in the accent colour and popped ~10%.
+
+    Returns False when there are no usable timings (caller should fall back to
+    sentence cues). Deterministic — pixels follow the timestamps exactly.
+    """
+    words = [w for w in (word_timings or []) if (w.word or "").strip()]
+    if not words:
+        return False
+
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {width}\n"
+        f"PlayResY: {height}\n"
+        "WrapStyle: 2\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,"
+        "OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,"
+        "ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,"
+        "MarginR,MarginV,Encoding\n"
+        f"{_ass_style_line(width, height)}\n\n"
+        "[Events]\n"
+        "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
+    )
+
+    events: List[str] = []
+    for window in _group_words(words, max_chars):
+        for i, active in enumerate(window):
+            start = active.start
+            # Hold the last word of a window until the next word/window starts.
+            end = window[i + 1].start if i + 1 < len(window) else max(
+                active.end, active.start + 0.12)
+            if end <= start:
+                end = start + 0.08
+            parts = []
+            for j, w in enumerate(window):
+                txt = _ass_escape(w.word)
+                if j == i:
+                    parts.append(
+                        f"{{\\c{accent}\\fscx110\\fscy110}}{txt}{{\\r}}")
+                else:
+                    parts.append(txt)
+            text = " ".join(parts)
+            events.append(
+                f"Dialogue: 0,{_ass_ts(start)},{_ass_ts(end)},Caption,,0,0,0,,{text}")
+
+    ass_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Premium still fill — no black bars (blur background / cover crop)
+# ---------------------------------------------------------------------------
+
+def _video_fill_chain(in_label: str, out_label: str, width: int, height: int,
+                      fps: int, fill_mode: str) -> str:
+    """Return the ffmpeg filtergraph that fits a scene's video/image onto the
+    canvas for the chosen fill mode. All modes end with the same
+    setsar/fps/format normalization so the concat pipeline is unaffected.
+
+    - letterbox (default): scale-down + black pad (unchanged behavior).
+    - cover:               scale-up + centre-crop (fills, may crop edges).
+    - blur:                blurred, darkened full-bleed background behind the
+                           aspect-fit copy (no bars, nothing cropped).
+    """
+    norm = f"setsar=1,fps={fps},format=yuv420p"
+    mode = (fill_mode or "letterbox").lower()
+
+    if mode == "cover":
+        return (f"[{in_label}]scale={width}:{height}:"
+                f"force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},{norm}[{out_label}]")
+
+    if mode == "blur":
+        bg, fg = f"{out_label}_bg", f"{out_label}_fg"
+        return (
+            f"[{in_label}]split=2[{bg}][{fg}];"
+            f"[{bg}]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},boxblur=24:2,eq=brightness=-0.12[{bg}o];"
+            f"[{fg}]scale={width}:{height}:force_original_aspect_ratio=decrease[{fg}o];"
+            f"[{bg}o][{fg}o]overlay=(W-w)/2:(H-h)/2,{norm}[{out_label}]"
+        )
+
+    # letterbox (default, unchanged)
+    return (f"[{in_label}]scale={width}:{height}:"
+            f"force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"{norm}[{out_label}]")
 
 
 def _has_audio(path: str) -> bool:
@@ -398,6 +601,8 @@ def render_scenes(
     audio_rate: float = 1.0,
     audio_pitch: float = 1.0,
     subtitles: str = "none",
+    caption_mode: str = "sentence",
+    fill_mode: str = "letterbox",
 ) -> RenderResult:
     """Render a list of scenes into a single MP4 at ``output_path``.
 
@@ -464,35 +669,48 @@ def render_scenes(
             )
 
             inputs, filters, vlabel = _per_scene_args(
-                normalized, width, height, fps, scratch
+                normalized, width, height, fps, scratch, fill_mode=fill_mode
             )
 
-            # If subtitles are burning in, write a per-scene SRT into
-            # scratch and append a ``subtitles`` filter to the video chain.
-            # ffmpeg's subtitles filter uses libass under the hood. A
-            # sidecar .srt is also written next to the final MP4 below.
+            # If subtitles are burning in, write a per-scene subtitle file and
+            # append a libass filter to the video chain. A sidecar file is also
+            # written next to the final MP4 below so editors can re-style.
+            #   caption_mode="word" + scene word timings -> CapCut-style ASS
+            #                        with the active word highlighted.
+            #   otherwise            -> the sentence-chunk SRT (unchanged).
             if burn_subtitles and scene.narration:
-                srt_path = scratch / f"scene_{i:04d}.srt"
-                wrote = _write_srt_for_scene(
-                    scene.narration,
-                    normalized.duration_sec,
-                    srt_path,
-                )
-                if wrote:
+                max_chars = _subtitle_max_chars(width, height)
+                sub_path = None
+                use_ass = (caption_mode or "sentence").lower() == "word" \
+                    and bool(getattr(normalized, "word_timings", None))
+                if use_ass:
+                    ass_path = scratch / f"scene_{i:04d}.ass"
+                    if write_ass_word_captions(
+                        normalized.word_timings, ass_path, width, height,
+                        duration_sec=normalized.duration_sec, max_chars=max_chars,
+                    ):
+                        sub_path = ass_path
+                if sub_path is None:
+                    # Sentence fallback (also the default path).
+                    srt_path = scratch / f"scene_{i:04d}.srt"
+                    if _write_srt_for_scene(
+                        scene.narration, normalized.duration_sec, srt_path,
+                        max_chars=max_chars,
+                    ):
+                        sub_path = srt_path
+                if sub_path is not None:
                     # Escape the path for ffmpeg's filter-arg parser.
-                    esc = str(srt_path).replace("\\", "/").replace(":", r"\:")
-                    force_style = (
-                        "Fontname=DejaVu Sans,Fontsize=28,"
-                        "PrimaryColour=&H00FFFFFF&,"
-                        "OutlineColour=&H80000000&,"
-                        "BorderStyle=3,Outline=2,Shadow=0,MarginV=48"
-                    )
-                    # Replace the last video-chain step's output label so
-                    # the subtitle filter sits at the end of the pipeline.
-                    new_last = (
-                        f"[{vlabel}]subtitles='{esc}':"
-                        f"force_style='{force_style}'[{vlabel}_sub]"
-                    )
+                    esc = str(sub_path).replace("\\", "/").replace(":", r"\:")
+                    if sub_path.suffix == ".ass":
+                        # ASS carries its own styling; no force_style needed.
+                        new_last = f"[{vlabel}]subtitles='{esc}'[{vlabel}_sub]"
+                    else:
+                        # Premium, canvas-proportional style for SRT cues.
+                        force_style = _subtitle_force_style(width, height)
+                        new_last = (
+                            f"[{vlabel}]subtitles='{esc}':"
+                            f"force_style='{force_style}'[{vlabel}_sub]"
+                        )
                     filters.append(new_last)
                     vlabel = f"{vlabel}_sub"
 

@@ -73,6 +73,13 @@ wget -P models/unet/ https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve
 
 ## Video Generation Workflows
 
+All six workflows below exist as files in this directory today, and
+`backend/app/orchestrator.py` already routes to them by model-name substring
+(`ltx` → img2vid-ltx, `wan` → img2vid-wan, `mochi` → img2vid-mochi,
+`hunyuan` → img2vid-hunyuan, `cogvideo` → img2vid-cogvideo; anything else →
+img2vid/SVD). Selecting a model in the UI needs no code changes - only the
+model files below.
+
 ### img2vid.json (SVD - Default)
 **Required Models:**
 - `checkpoints/svd.safetensors`
@@ -83,29 +90,57 @@ wget -P models/unet/ https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve
 wget -P models/checkpoints/ https://huggingface.co/stabilityai/stable-video-diffusion-img2vid/resolve/main/svd.safetensors
 ```
 
-### img2vid-wan.json (WAN 2.2 - Uncensored Video) [PLANNED]
+### img2vid-wan.json (Wan 2.2 TI2V-5B)
+General-purpose T2V+I2V, Apache-2.0, the best quality-to-compute ratio of
+the set (~24GB VRAM; runs on an RTX 4090).
+
 **Required Models:**
-- `checkpoints/wan-2.2.safetensors` or `wanxian-2.2.safetensors`
+- `diffusion_models/wan2.2_ti2v_5B_fp16.safetensors`
+- `vae/wan_2.2_vae.safetensors`
+- `text_encoders/umt5_xxl_encoder_q4_k_m.gguf` (requires ComfyUI-GGUF)
+- `clip/open_clip_vit_h_14_text_encoder.safetensors`
 
-**Download:**
-```bash
-# Search for "Wanxian 2.2" or "WAN 2.2" on:
-# - https://civitai.com/
-# - https://huggingface.co/
-# Note: This workflow may need to be created based on the model's requirements
-```
+**Download:** official Wan 2.2 repo on Hugging Face (Wan-AI), or
+`POST /studio/models/manager/install` with `{"source": "huggingface", ...}`.
 
-### img2vid-seedream.json (Seedream - Uncensored Video) [PLANNED]
+### img2vid-ltx.json (LTX-Video)
+Fast draft passes before committing to a final render (12GB+ VRAM).
+Requires the ComfyUI-LTXVideo custom nodes.
+
 **Required Models:**
-- `checkpoints/seedream-4.0.safetensors` or newer
+- `checkpoints/ltx-video-2b-v0.9.1.safetensors`
 
-**Download:**
-```bash
-# Search for "Seedream" on:
-# - https://civitai.com/
-# - https://huggingface.co/
-# Note: This workflow may need to be created based on the model's requirements
-```
+### img2vid-hunyuan.json (HunyuanVideo)
+Occasional highest-quality hero shots (~14GB VRAM with GGUF offloading).
+Requires ComfyUI-GGUF.
+
+**Required Models:**
+- `unet/hunyuanvideo-q4_k_m.gguf`
+- `vae/hunyuan_video_vae_bf16.safetensors`
+- `clip/clip_l.safetensors`
+- `clip/llava_llama3_fp8_scaled.safetensors`
+
+### img2vid-mochi.json (Mochi 1)
+Apache-2.0; full quality needs high-end hardware (A100/H100 class) - the
+FP8 files below are the practical consumer-GPU variant.
+
+**Required Models:**
+- `diffusion_models/mochi_preview_dit_fp8_e4m3fn.safetensors`
+- `vae/mochi_vae.safetensors`
+- `clip/t5xxl_fp8_e4m3fn.safetensors`
+
+### img2vid-cogvideo.json (CogVideoX 1.5 5B I2V)
+Fallback for constrained hardware; softer output. Requires the
+ComfyUI-CogVideoXWrapper custom nodes.
+
+**Required Models:**
+- `diffusers/CogVideoX1.5-5B-I2V/` (diffusers snapshot directory)
+
+### Removed: img2vid-seedream.json
+A `seedream` entry used to appear in `available_video_models()` with no
+backing workflow file - selecting it errored. It was removed from the list;
+if a workflow lands later, register the model via the Studio Model Manager
+instead of re-adding it by hand.
 
 ## Quick Setup Guide
 
@@ -160,6 +195,11 @@ python main.py
 | Flux Dev | 16GB | 24GB |
 | Pony XL | 10GB | 12GB |
 | SVD (Video) | 12GB | 16GB |
+| LTX-Video | 12GB | 16GB |
+| HunyuanVideo (GGUF) | 14GB | 24GB |
+| Wan 2.2 TI2V-5B | 16GB | 24GB |
+| Mochi 1 (FP8) | 20GB | 24GB+ |
+| CogVideoX 1.5 5B | 10GB | 16GB |
 
 ## Optimization Tips
 
@@ -215,30 +255,34 @@ To customize workflows:
 
 ## Advanced: Adding Custom Models
 
-To add your own models:
+**Preferred: the Studio Model Manager** (`backend/app/studio/model_manager.py`).
+It downloads from Hugging Face (base checkpoints) or civitai.com (LoRAs /
+style layers), verifies hashes, checks the model's license against an
+allowlist, and registers the install into `data/installed_models.json` -
+which `available_image_models()`/`available_video_models()` read
+automatically. No hand-edits:
+
+```bash
+# queue an install (returns a job id to poll)
+curl -X POST http://localhost:8000/studio/models/manager/install \
+  -H 'Content-Type: application/json' \
+  -d '{"source": "huggingface", "repo_id": "black-forest-labs/FLUX.2-klein",
+       "filename": "flux2-klein.safetensors", "model_type": "image"}'
+
+curl http://localhost:8000/studio/models/manager/jobs/<job_id>
+```
+
+Video models need no orchestrator edits at all - routing is name-based
+(see the Video Generation Workflows section above). For a brand-new image
+architecture you may still need a matching `txt2img-*.json` workflow file.
+
+**Manual fallback** (what the manager automates):
 
 1. Download model to appropriate directory
-2. Create/modify workflow in ComfyUI web interface
-3. Export as API format
-4. Save to `comfyui/workflows/` with descriptive name
-5. Update `backend/app/providers.py` to add model to list:
-```python
-def available_image_models() -> List[str]:
-    return [
-        "sdxl",
-        "flux-schnell",
-        # ... existing models ...
-        "your-custom-model",  # Add your model here
-    ]
-```
-6. Update `backend/app/orchestrator.py` workflow_map:
-```python
-workflow_map = {
-    "sdxl": "txt2img",
-    # ... existing mappings ...
-    "your-custom-model": "txt2img-your-custom-model",
-}
-```
+2. Create/modify workflow in ComfyUI web interface, export API format,
+   save to `comfyui/workflows/` with a descriptive name
+3. Add an entry to `data/installed_models.json` (or, legacy path, edit the
+   base list in `backend/app/providers.py`)
 
 ## Support
 

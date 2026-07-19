@@ -58,6 +58,8 @@ class RenderJob:
     audio_rate: float = 1.0
     audio_pitch: float = 1.0
     subtitles: str = "none"
+    caption_mode: str = "sentence"   # "sentence" | "word" (CapCut-style)
+    fill_mode: str = "letterbox"     # "letterbox" | "cover" | "blur"
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -123,6 +125,8 @@ def submit_render(
     audio_rate: float = 1.0,
     audio_pitch: float = 1.0,
     subtitles: str = "none",
+    caption_mode: str = "sentence",
+    fill_mode: str = "letterbox",
 ) -> RenderJob:
     """Queue a render and return its job record. Worker thread starts immediately."""
     job_id = _new_job_id()
@@ -139,6 +143,8 @@ def submit_render(
         audio_rate=audio_rate,
         audio_pitch=audio_pitch,
         subtitles=subtitles,
+        caption_mode=caption_mode,
+        fill_mode=fill_mode,
     )
     _store(job)
 
@@ -183,6 +189,8 @@ def _run_job(job_id: str, scenes: List[SceneInput]) -> None:
             audio_rate=job.audio_rate,
             audio_pitch=job.audio_pitch,
             subtitles=job.subtitles,
+            caption_mode=job.caption_mode,
+            fill_mode=job.fill_mode,
         )
         _update(
             job_id,

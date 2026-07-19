@@ -1,0 +1,33 @@
+{
+  "_comment": "FROZEN CONTRACT — the exact shape POST /v1/chat/completions returns. Base body is OpenAI-compatible (id prefixed 'homepilot-', object 'chat.completion', choices[].message). The x_attachments and x_directives fields are HomePilot enrichments appended ONLY when enriched mode is active AND they are non-empty — an unenriched response must NOT contain these keys. The 3D Avatar response adapter reads exactly these field names.",
+  "id": "homepilot-a1b2c3d4e5f6",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "model": "persona:ruslan-assistant--63ea2100",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Here is the diagram you asked for."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  },
+  "x_attachments": [
+    {
+      "type": "image",
+      "name": "angle_front.png",
+      "url": "https://relay.example/artifacts/art_123",
+      "mime": "image/png"
+    }
+  ],
+  "x_directives": {
+    "avatar": {"expression": "smile"}
+  }
+}

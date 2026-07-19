@@ -15,7 +15,7 @@ from .models import CanvasSpec, ProjectType, StyleKit, TemplateDefinition
 
 def normalize_project_type(pt: str) -> ProjectType:
     """Normalize various project type inputs to canonical values."""
-    if pt in ("youtube_video", "youtube_short", "slides"):
+    if pt in ("youtube_video", "youtube_short", "slides", "social_teaser"):
         return pt  # type: ignore[return-value]
     aliases = {
         "video": "youtube_video",
@@ -24,6 +24,8 @@ def normalize_project_type(pt: str) -> ProjectType:
         "ppt": "slides",
         "pptx": "slides",
         "presentation": "slides",
+        "teaser": "social_teaser",
+        "social": "social_teaser",
     }
     return aliases.get(pt, "youtube_video")  # type: ignore[return-value]
 
@@ -32,6 +34,8 @@ def default_canvas(pt: ProjectType) -> CanvasSpec:
     """Get default canvas specification for a project type."""
     if pt == "youtube_short":
         return CanvasSpec(width=1080, height=1920, fps=30, safe_margin_pct=0.06)
+    if pt == "social_teaser":
+        return CanvasSpec(width=1080, height=1080, fps=30, safe_margin_pct=0.06)
     # youtube_video & slides default to 16:9
     return CanvasSpec(width=1920, height=1080, fps=30, safe_margin_pct=0.05)
 
@@ -96,6 +100,29 @@ STYLE_KITS: List[StyleKit] = [
         fonts={"heading": "Inter", "body": "Inter"},
         spacing={"base": 8, "xl": 24},
         motion={"transition": "fade", "duration": 0.45},
+    ),
+    StyleKit(
+        id="ruslanmv-essays",
+        name="RuslanMV Essays",
+        description="Calm, technical, diagram-driven. Matches the ruslanmv.com essay identity.",
+        palette={
+            "background": "#0a0a0a",
+            "text_primary": "#ffffff",
+            "text_secondary": "#94a3b8",
+            "accent_start": "#00d4ff",
+            "accent_mid": "#0f62fe",
+            "accent_end": "#8a3ffc",
+        },
+        fonts={"heading": "IBM Plex Sans", "body": "IBM Plex Sans", "mono": "IBM Plex Mono"},
+        spacing={"base": 8, "xl": 24},
+        motion={
+            "pace": "slow",
+            "transition": "fade",
+            "transitions": ["fade", "slide"],
+            "duration": 0.45,
+            "flashing": False,
+            "captions": "always_on",
+        },
     ),
 ]
 

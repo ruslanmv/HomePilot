@@ -111,6 +111,15 @@ def init_studio_db() -> None:
         cur.execute("ALTER TABLE studio_scenes ADD COLUMN video_url TEXT;")
         con.commit()
 
+    # Lightweight migration: renderer split for the essay-to-video pipeline.
+    # NULL renderer_kind means diffusion, exactly as before these columns.
+    if "renderer_kind" not in cols:
+        cur.execute("ALTER TABLE studio_scenes ADD COLUMN renderer_kind TEXT;")
+        con.commit()
+    if "scene_kind" not in cols:
+        cur.execute("ALTER TABLE studio_scenes ADD COLUMN scene_kind TEXT;")
+        con.commit()
+
     # Studio Projects table (professional projects)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS studio_projects (
@@ -461,8 +470,8 @@ def create_scene(video_id: str, inp: StudioSceneCreate) -> Optional[StudioScene]
     cur.execute("""
         INSERT INTO studio_scenes (
             id, video_id, idx, narration, image_prompt, negative_prompt,
-            status, duration_sec, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            status, duration_sec, renderer_kind, scene_kind, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         scene_id,
         video_id,
@@ -472,6 +481,8 @@ def create_scene(video_id: str, inp: StudioSceneCreate) -> Optional[StudioScene]
         inp.negativePrompt,
         "pending",
         inp.durationSec,
+        inp.rendererKind,
+        inp.sceneKind,
         now,
         now,
     ))
@@ -510,6 +521,8 @@ def _row_to_scene(row) -> StudioScene:
         videoUrl=row["video_url"] if "video_url" in row.keys() else None,
         audioUrl=row["audio_url"],
         status=row["status"],
+        rendererKind=row["renderer_kind"] if "renderer_kind" in row.keys() else None,
+        sceneKind=row["scene_kind"] if "scene_kind" in row.keys() else None,
         durationSec=row["duration_sec"],
         createdAt=row["created_at"],
         updatedAt=row["updated_at"],
@@ -551,6 +564,8 @@ def update_scene(scene_id: str, updates: StudioSceneUpdate) -> Optional[StudioSc
         "audioUrl": "audio_url",
         "status": "status",
         "durationSec": "duration_sec",
+        "rendererKind": "renderer_kind",
+        "sceneKind": "scene_kind",
     }
 
     # Snake_case field map (for frontend compatibility)
@@ -561,6 +576,8 @@ def update_scene(scene_id: str, updates: StudioSceneUpdate) -> Optional[StudioSc
         "image_prompt": "image_prompt",
         "negative_prompt": "negative_prompt",
         "duration_sec": "duration_sec",
+        "renderer_kind": "renderer_kind",
+        "scene_kind": "scene_kind",
     }
 
     con = _db()
@@ -618,6 +635,7 @@ def _project_type_to_preset(pt: str) -> str:
         "youtube_video": "youtube_16_9",
         "youtube_short": "shorts_9_16",
         "slides": "slides_16_9",
+        "social_teaser": "social_1_1",
     }
     return mapping.get(pt, "youtube_16_9")
 

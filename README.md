@@ -172,6 +172,8 @@ A professional content creation suite for YouTube creators, educators, and enter
 - **Scene Management** - Add, edit, delete, and reorder scenes
 - **TV Mode** - Cinematic fullscreen playback experience
 - **Export Options** - PDF storyboards, PPTX slides, and asset bundles
+- **Essay-to-Video Pipeline** - Import a ruslanmv.com essay (or any markdown script) and turn its own words, verbatim, into a full-length video, a Short, and a 1:1 teaser - hybrid diffusion + deterministic motion-graphic rendering, forced-alignment scene timing, and a one-click bridge into Creator Studio Pro
+- **Studio Model Manager** - Download image/video models from Hugging Face or civitai.com with hash verification and a license allowlist; installs register automatically, no hand-edits (see `docs/design/essay-to-video/`)
 
 ### 🤖 Agentic AI with MCP Context Forge
 Create intelligent **AI Agents** that can use tools, access knowledge bases, and take actions on your behalf:
@@ -718,3 +720,5 @@ Apache-2.0
   <br><br>
   <img src="assets/3d-avatar-pipeline.svg" alt="3D Avatar + HomePilot Pipeline" width="800" />
 </p>
+
+<p align="center"><sub>🎬 Turn your writing into a YouTube video, Short, and teaser — see <a href="docs/YOUTUBE.md">docs/YOUTUBE.md</a>.</sub></p>
