@@ -37,29 +37,56 @@ def available_providers() -> List[str]:
         "comfyui",
     ]
 
+def _registered_models(model_type: str) -> List[str]:
+    """Models installed via the Studio ModelManager (studio/model_manager.py).
+
+    The manager appends to a small JSON registry instead of editing this
+    file; reading it here makes downloads appear in the pickers without
+    hand-edits. Missing/invalid registry simply contributes nothing."""
+    import json
+    registry_path = os.getenv("MODEL_REGISTRY_PATH", "").strip()
+    path = Path(registry_path) if registry_path else (
+        Path(__file__).resolve().parents[1] / "data" / "installed_models.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            entries = json.load(fh)
+        return [e["id"] for e in entries
+                if isinstance(e, dict) and e.get("id") and e.get("model_type") == model_type]
+    except Exception:
+        return []
+
+
 def available_image_models() -> List[str]:
     """
     Returns list of available image generation models.
     These correspond to ComfyUI workflow files.
     """
-    return [
+    base = [
         "sdxl",           # Stable Diffusion XL (default)
         "flux-schnell",   # Flux Schnell (fast, uncensored)
         "flux-dev",       # Flux Dev (higher quality, uncensored)
         "pony-xl",        # Pony Diffusion XL (NSFW optimized)
         "sd15-uncensored",# SD 1.5 with uncensored checkpoint
     ]
+    return base + [m for m in _registered_models("image") if m not in base]
 
 def available_video_models() -> List[str]:
     """
     Returns list of available video generation models.
-    These correspond to ComfyUI workflow files.
+    These correspond to ComfyUI workflow files - every entry below has a
+    real img2vid-*.json workflow and matching name-based routing in
+    orchestrator.py. (seedream was removed: it never had a workflow file
+    and errored when selected.)
     """
-    return [
-        "svd",            # Stable Video Diffusion (default)
-        "wan-2.2",        # Wanxian 2.2 (uncensored)
-        "seedream",       # Seedream 4.0+ (uncensored)
+    base = [
+        "svd",                # Stable Video Diffusion (default)
+        "wan-2.2",            # Wan 2.2 (general-purpose T2V+I2V, Apache-2.0)
+        "ltx-video",          # LTX-Video (fast draft passes, 12GB+)
+        "hunyuan-video-1.5",  # HunyuanVideo (premium hero shots, ~14GB w/ offload)
+        "mochi-1",            # Mochi 1 (high-end hardware only)
+        "cogvideo-5b",        # CogVideoX-5B (constrained-hardware fallback)
     ]
+    return base + [m for m in _registered_models("video") if m not in base]
 
 def get_comfy_models_path() -> Path:
     """Get the path to ComfyUI models directory."""

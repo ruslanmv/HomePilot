@@ -113,6 +113,13 @@ export default function CreatorExportWizard({
   const [rate, setRate] = useState<number>(0.9)
   const [pitch, setPitch] = useState<number>(1.0)
   const [subtitlesBurnIn, setSubtitlesBurnIn] = useState<boolean>(true)
+  // Word-by-word (CapCut/Submagic) captions synced to the narration audio's
+  // real word timestamps. Additive; falls back to sentence cues per-scene
+  // when a scene has no alignment data.
+  const [wordCaptions, setWordCaptions] = useState<boolean>(false)
+  // Background fill for stills that aren't the target aspect. "blur" gives a
+  // premium full-bleed look (no black bars); "letterbox" is the safe default.
+  const [fillMode, setFillMode] = useState<'letterbox' | 'cover' | 'blur'>('letterbox')
   // Default: synthesize every scene that has narration text, even if an
   // audioUrl already exists. The user's invariant is "audio from all
   // scenes" at export time, so freshness beats speed by default.
@@ -328,6 +335,8 @@ export default function CreatorExportWizard({
               audio_rate: rate,
               audio_pitch: pitch,
               subtitles: subtitlesBurnIn ? 'burn_in' : 'none',
+              caption_mode: subtitlesBurnIn && wordCaptions ? 'word' : 'sentence',
+              fill_mode: fillMode,
             }),
           },
         )
@@ -355,7 +364,7 @@ export default function CreatorExportWizard({
         setJob({ id: '', status: 'error', progress: 0, error: msg, kind })
       }
     },
-    [backendUrl, videoId, kind, rate, pitch, subtitlesBurnIn, pollJob],
+    [backendUrl, videoId, kind, rate, pitch, subtitlesBurnIn, wordCaptions, fillMode, pollJob],
   )
 
   if (!open) return null
@@ -576,6 +585,32 @@ export default function CreatorExportWizard({
                 />
                 Burn subtitles into the video (from scene narration text)
               </label>
+
+              {subtitlesBurnIn ? (
+                <label className="flex items-center gap-2 text-sm text-white/80 cursor-pointer ml-6">
+                  <input
+                    type="checkbox"
+                    checked={wordCaptions}
+                    onChange={(e) => setWordCaptions(e.target.checked)}
+                    className="accent-cyan-400"
+                  />
+                  Word-by-word captions
+                  <span className="text-[11px] text-white/40">(synced to the audio — Shorts style)</span>
+                </label>
+              ) : null}
+
+              <div className="flex items-center gap-3 text-sm text-white/80">
+                <span>Background fill for stills</span>
+                <select
+                  value={fillMode}
+                  onChange={(e) => setFillMode(e.target.value as 'letterbox' | 'cover' | 'blur')}
+                  className="bg-white/10 border border-white/10 rounded-lg px-2 py-1 text-sm text-white/90 outline-none focus:border-cyan-400/50"
+                >
+                  <option value="letterbox">Letterbox (black bars)</option>
+                  <option value="cover">Cover (crop to fill)</option>
+                  <option value="blur">Blur fill (premium, no bars)</option>
+                </select>
+              </div>
 
               <label className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
                 <input

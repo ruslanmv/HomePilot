@@ -1,0 +1,20 @@
+{
+  "_comment": "FROZEN CONTRACT — the exact shape GET /v1/models returns to the 3D Avatar Chatbot and OpenAI SDK clients. Built-in personalities are listed as personality:<id>; personas are listed as persona:<alias>--<short8> ONLY when shared_api.enabled is true. Field names, the 'object' discriminators, and owned_by values must not change. See docs/design/ollabridge-cloud-mirror/ Phase 0.",
+  "object": "list",
+  "data": [
+    {
+      "id": "personality:assistant",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "homepilot-personality",
+      "name": "Assistant"
+    },
+    {
+      "id": "persona:ruslan-assistant--63ea2100",
+      "object": "model",
+      "created": 1700000000,
+      "owned_by": "homepilot-persona",
+      "name": "Ruslan Assistant"
+    }
+  ]
+}

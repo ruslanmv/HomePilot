@@ -18,8 +18,36 @@ from pydantic import BaseModel, Field
 # Type aliases for content governance
 ContentRating = Literal["sfw", "mature"]
 PolicyMode = Literal["youtube_safe", "restricted"]
-PlatformPreset = Literal["youtube_16_9", "shorts_9_16", "slides_16_9"]
+PlatformPreset = Literal["youtube_16_9", "shorts_9_16", "slides_16_9", "social_1_1"]
 VideoStatus = Literal["draft", "in_review", "approved", "archived"]
+
+# How the story outline gets its narration:
+#   topic  - the LLM invents narration from the project's logline (default, original behavior)
+#   script - narration is segmented verbatim from a provided essay/script (essay-to-video pipeline)
+SourceMode = Literal["topic", "script"]
+
+# Scene classification produced in script mode. Batch 0 only stores it;
+# the renderer split that consumes it arrives in a later batch.
+SceneKind = Literal["hero", "diagram", "quote", "proof", "cta", "transition"]
+
+# Which engine renders a scene's visuals (essay-to-video pipeline, Batch 1):
+#   diffusion      - ComfyUI txt2img/img2vid, exactly as today (also the
+#                    meaning of None/unset, so existing rows are untouched)
+#   motion_graphic - deterministic code-driven render; text-bearing scenes
+#                    go here because there is no sampling step between the
+#                    text and the pixels
+RendererKind = Literal["diffusion", "motion_graphic"]
+
+# Default renderer per scene kind. A default, not a hard rule - editable
+# per scene in the scene editor.
+SCENE_KIND_TO_RENDERER: Dict[str, RendererKind] = {
+    "hero": "diffusion",
+    "transition": "diffusion",
+    "diagram": "motion_graphic",
+    "proof": "motion_graphic",
+    "quote": "motion_graphic",
+    "cta": "motion_graphic",
+}
 
 
 class ProviderPolicy(BaseModel):
@@ -128,6 +156,10 @@ class StudioScene(BaseModel):
     # Generation status
     status: SceneStatus = "pending"
 
+    # Renderer selection (None means diffusion, exactly as before this field)
+    rendererKind: Optional[RendererKind] = None
+    sceneKind: Optional[SceneKind] = None
+
     # Timing
     durationSec: float = 5.0
     createdAt: float = 0.0
@@ -140,6 +172,8 @@ class StudioSceneCreate(BaseModel):
     imagePrompt: str = ""
     negativePrompt: str = ""
     durationSec: float = 5.0
+    rendererKind: Optional[RendererKind] = None
+    sceneKind: Optional[SceneKind] = None
 
 
 class StudioSceneUpdate(BaseModel):
@@ -152,6 +186,8 @@ class StudioSceneUpdate(BaseModel):
     audioUrl: Optional[str] = None
     status: Optional[SceneStatus] = None
     durationSec: Optional[float] = None
+    rendererKind: Optional[RendererKind] = None
+    sceneKind: Optional[SceneKind] = None
     # Snake_case aliases for frontend compatibility
     image_url: Optional[str] = None
     video_url: Optional[str] = None
@@ -159,13 +195,15 @@ class StudioSceneUpdate(BaseModel):
     image_prompt: Optional[str] = None
     negative_prompt: Optional[str] = None
     duration_sec: Optional[float] = None
+    renderer_kind: Optional[RendererKind] = None
+    scene_kind: Optional[SceneKind] = None
 
 
 # ============================================================================
 # Professional Project Models (Creator Studio Pro)
 # ============================================================================
 
-ProjectType = Literal["youtube_video", "youtube_short", "slides"]
+ProjectType = Literal["youtube_video", "youtube_short", "slides", "social_teaser"]
 
 
 class CanvasSpec(BaseModel):

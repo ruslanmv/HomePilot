@@ -26,6 +26,13 @@ SUCCESSFUL_DOWNLOADS=0
 SKIPPED_DOWNLOADS=0
 FAILED_DOWNLOADS=0
 
+# Hugging Face authentication
+# Some model providers (notably Black Forest Labs FLUX) gate files behind
+# license acceptance. Users can provide a token as HF_TOKEN/HUGGINGFACE_TOKEN,
+# or paste one into the interactive prompt when needed. The token is kept only
+# in this process and is never printed.
+HF_TOKEN="${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}"
+
 # Helper functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -41,6 +48,77 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+repo_from_hf_url() {
+    local url="$1"
+    if [[ "$url" == https://huggingface.co/*/resolve/* ]]; then
+        local repo="${url#https://huggingface.co/}"
+        repo="${repo%%/resolve/*}"
+        echo "$repo"
+    fi
+}
+
+is_gated_hf_url() {
+    local repo
+    repo="$(repo_from_hf_url "$1")"
+    case "$repo" in
+        black-forest-labs/FLUX.1-schnell|black-forest-labs/FLUX.1-dev)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+ensure_hf_token_for_url() {
+    local url="$1"
+    local repo
+
+    is_gated_hf_url "$url" || return 0
+    [[ -n "${HF_TOKEN:-}" ]] && return 0
+
+    repo="$(repo_from_hf_url "$url")"
+    log_warning "$repo is a gated Hugging Face model."
+    echo "  To download it during setup:"
+    echo "  1. Open: https://huggingface.co/$repo"
+    echo "  2. Log in and accept the model access/license terms."
+    echo "  3. Create a read token: https://huggingface.co/settings/tokens"
+    echo "  4. Paste the token below, or re-run with HF_TOKEN=hf_... make download-${PRESET}"
+
+    if [[ -t 0 && "${SKIP_CONFIRM:-}" != "1" ]]; then
+        read -r -s -p "Hugging Face token for gated models (leave blank to skip authenticated download): " HF_TOKEN
+        echo ""
+        if [[ -n "${HF_TOKEN:-}" ]]; then
+            export HF_TOKEN
+            log_info "Hugging Face token received for this installer session."
+        else
+            log_warning "No Hugging Face token provided; this download may fail with 401 Unauthorized."
+        fi
+    else
+        log_warning "Non-interactive mode: set HF_TOKEN or HUGGINGFACE_TOKEN before running this command."
+    fi
+}
+
+print_download_fix_hint() {
+    local url="$1"
+    local output_path="$2"
+    local description="$3"
+    local repo
+    repo="$(repo_from_hf_url "$url")"
+
+    if is_gated_hf_url "$url"; then
+        log_warning "Fix for $description: accept the Hugging Face terms and provide a token."
+        echo "  Model page: https://huggingface.co/$repo"
+        echo "  Token page: https://huggingface.co/settings/tokens"
+        echo "  Retry: HF_TOKEN=hf_your_token make download-${PRESET}"
+        echo "  Manual destination: $output_path"
+    elif [[ -n "$repo" ]]; then
+        log_warning "Fix for $description: verify that the Hugging Face file still exists."
+        echo "  Model page: https://huggingface.co/$repo/tree/main"
+        echo "  Manual destination: $output_path"
+    fi
 }
 
 # Check if a file exists and has non-zero size
@@ -67,6 +145,8 @@ download_file() {
         return 0
     fi
 
+    ensure_hf_token_for_url "$url"
+
     # Create directory if it doesn't exist
     mkdir -p "$(dirname "$output_path")"
 
@@ -79,12 +159,20 @@ download_file() {
     local attempt=1
 
     while [[ $attempt -le $retries ]]; do
-        if wget -c --progress=bar:force:noscroll \
-                --timeout=30 \
-                --tries=3 \
-                --no-check-certificate \
-                -O "$output_path" \
-                "$url" 2>&1; then
+        local wget_args=(
+            -c
+            --progress=bar:force:noscroll
+            --timeout=30
+            --tries=3
+            --no-check-certificate
+            -O "$output_path"
+        )
+
+        if [[ -n "${HF_TOKEN:-}" && "$url" == https://huggingface.co/* ]]; then
+            wget_args+=(--header="Authorization: Bearer ${HF_TOKEN}")
+        fi
+
+        if wget "${wget_args[@]}" "$url" 2>&1; then
 
             # Verify download
             if file_exists_and_valid "$output_path"; then
@@ -108,6 +196,7 @@ download_file() {
     done
 
     log_error "✗ Failed to download $description after $retries attempts"
+    print_download_fix_hint "$url" "$output_path" "$description"
     ((FAILED_DOWNLOADS++))
     return 1
 }
@@ -514,7 +603,7 @@ download_openpose_sdxl() {
     log_info "=== Downloading OpenPose ControlNet for SDXL (Pose-Guided Body Generation) ==="
 
     download_file \
-        "https://huggingface.co/thibaud/controlnet-openpose-sdxl-1.0/resolve/main/diffusion_pytorch_model.safetensors" \
+        "https://huggingface.co/dimitribarbot/controlnet-openpose-sdxl-1.0-safetensors/resolve/main/diffusion_pytorch_model.safetensors" \
         "${COMFY_MODELS_DIR}/controlnet/thibaud-openpose-sdxl-1.0/diffusion_pytorch_model.safetensors" \
         "OpenPose ControlNet SDXL (pose-guided avatar body generation)"
 
@@ -548,8 +637,9 @@ show_summary() {
     if [[ $FAILED_DOWNLOADS -gt 0 ]]; then
         log_warning "Some downloads failed. You may need to:"
         echo "  1. Check your internet connection"
-        echo "  2. Manually download failed models from HuggingFace or CivitAI"
-        echo "  3. Run this script again to retry"
+        echo "  2. For gated Hugging Face models, accept the provider terms and set HF_TOKEN"
+        echo "  3. Manually download failed models from HuggingFace or CivitAI"
+        echo "  4. Run this script again to retry"
         echo ""
     fi
 

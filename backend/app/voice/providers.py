@@ -92,6 +92,114 @@ class PiperTTSProvider(TTSProvider):
                 pass
 
 
+class KokoroTTSProvider(TTSProvider):
+    """Kokoro-82M local TTS (Apache-2.0) - the same model that already
+    narrates the ruslanmv.com essays, exposed as an in-app provider so
+    short-form variants of an essay stay in the same voice as the full
+    narration (essay-to-video pipeline, Batch 2).
+
+    Active only when the ``kokoro`` package is installed. Env:
+    ``KOKORO_VOICE_ID`` (default ``af_heart``) - pin this to the voice used
+    by the existing essay narration; ``KOKORO_LANG_CODE`` (default ``a``,
+    American English). Piper remains the default provider for every other
+    project type - see get_tts_provider(), which is unchanged."""
+
+    name = "kokoro"
+
+    def __init__(self) -> None:
+        self.voice = os.getenv("KOKORO_VOICE_ID", "af_heart").strip() or "af_heart"
+        self.lang_code = os.getenv("KOKORO_LANG_CODE", "a").strip() or "a"
+        self._pipeline = None
+
+    @property
+    def configured(self) -> bool:
+        try:
+            import kokoro  # noqa: F401
+            return True
+        except Exception:
+            return False
+
+    def _synth_sync(self, text: str) -> bytes | None:
+        import io
+        import wave as wave_mod
+
+        import numpy as np
+        from kokoro import KPipeline
+
+        if self._pipeline is None:
+            self._pipeline = KPipeline(lang_code=self.lang_code)
+
+        chunks: list = []
+        for _, _, audio in self._pipeline(text, voice=self.voice):
+            chunks.append(np.asarray(audio))
+        if not chunks:
+            return None
+
+        samples = np.concatenate(chunks)
+        pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
+        buf = io.BytesIO()
+        with wave_mod.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)  # Kokoro's native sample rate
+            wf.writeframes(pcm.tobytes())
+        return buf.getvalue()
+
+    async def synth(self, text: str) -> bytes | None:
+        if not text.strip() or not self.configured:
+            return None
+        try:
+            return await asyncio.to_thread(self._synth_sync, text)
+        except Exception:
+            return None
+
+
+class ChatterboxTTSProvider(TTSProvider):
+    """Chatterbox local TTS - opt-in alternative for punchier, more
+    expressive short-form delivery when Kokoro's documentary tone reads as
+    too dry (essay-to-video pipeline, Batch 2). Gated behind
+    ``CHATTERBOX_ENABLED=true`` on top of the package being installed,
+    because the model download is heavy."""
+
+    name = "chatterbox"
+
+    def __init__(self) -> None:
+        self.enabled = os.getenv("CHATTERBOX_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+        self._model = None
+
+    @property
+    def configured(self) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            import chatterbox  # noqa: F401
+            return True
+        except Exception:
+            return False
+
+    def _synth_sync(self, text: str) -> bytes | None:
+        import io
+
+        import torchaudio
+        from chatterbox.tts import ChatterboxTTS
+
+        if self._model is None:
+            self._model = ChatterboxTTS.from_pretrained(
+                device=os.getenv("CHATTERBOX_DEVICE", "cpu").strip() or "cpu")
+        wav = self._model.generate(text)
+        buf = io.BytesIO()
+        torchaudio.save(buf, wav, self._model.sr, format="wav")
+        return buf.getvalue()
+
+    async def synth(self, text: str) -> bytes | None:
+        if not text.strip() or not self.configured:
+            return None
+        try:
+            return await asyncio.to_thread(self._synth_sync, text)
+        except Exception:
+            return None
+
+
 class CloudNeuralTTSProvider(TTSProvider):
     """Premium, low-latency neural voice via an OpenAI-compatible ``/audio/speech``
     endpoint (OpenAI TTS, ElevenLabs-compatible gateways, …). Configured by env:
@@ -217,6 +325,28 @@ def get_tts_provider(premium: bool = False) -> TTSProvider:
     else gets local Piper, falling back to silent text-only. Quality is purely a
     server choice — the client never changes."""
     if premium:
+        neural = CloudNeuralTTSProvider()
+        if neural.configured:
+            return neural
+    piper = PiperTTSProvider()
+    return piper if piper.configured else NullTTSProvider()
+
+
+def get_tts_provider_by_name(name: str) -> TTSProvider:
+    """Explicit provider selection for flows that pin a voice - the essay
+    pipeline pins Kokoro so every variant of an essay matches the source
+    narration. Unknown/unconfigured names fall back exactly like
+    get_tts_provider() (which stays the default path everywhere else)."""
+    n = (name or "").strip().lower()
+    if n == "kokoro":
+        kokoro = KokoroTTSProvider()
+        if kokoro.configured:
+            return kokoro
+    elif n == "chatterbox":
+        chatterbox = ChatterboxTTSProvider()
+        if chatterbox.configured:
+            return chatterbox
+    elif n == "cloud-neural":
         neural = CloudNeuralTTSProvider()
         if neural.configured:
             return neural

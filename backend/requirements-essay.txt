@@ -1,0 +1,16 @@
+# Optional extras for the essay-to-video pipeline (Batches 0-4).
+# The pipeline runs WITHOUT any of these - each one upgrades a specific
+# stage (see docs/ESSAY_TO_VIDEO.md for the degradation table):
+#
+#   whisperx  -> word-accurate scene timing + caption timestamps
+#                (without it: proportional timing, still sentence-cut)
+#   kokoro    -> short-form TTS in the same voice as the essay narration
+#                (without it: no new TTS; full-length reuses existing audio)
+#
+# Both pull PyTorch - install on the GPU box, not in slim API containers.
+
+whisperx>=3.1
+kokoro>=0.9
+
+# Opt-in punchier short-form voice (also gated by CHATTERBOX_ENABLED=true):
+# chatterbox-tts>=0.1

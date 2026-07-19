@@ -234,6 +234,44 @@ try:
 except Exception as _obl_err:  # noqa: BLE001
     print(f"[ollabridge-local] DISABLED due to import error: {_obl_err}")
 
+# --- Node Manifest (/v1/node/manifest) — Phase 1 of the OllaBridge Cloud ------
+# Mirror. ADDITIVE, localhost-only, feature-flagged
+# (OLLABRIDGE_NODE_MANIFEST_ENABLED, default off). The endpoint itself 404s
+# when the flag is off, so mounting the router is always safe; it only reads
+# existing capability/model/persona/GPU sources.
+# Design: docs/design/ollabridge-cloud-mirror/README.md
+try:
+    from .node_manifest import router as _node_manifest_router
+    app.include_router(_node_manifest_router)
+    print("[node-manifest] mounted (localhost-only; enable with "
+          "OLLABRIDGE_NODE_MANIFEST_ENABLED=true)")
+except Exception as _nm_err:  # noqa: BLE001
+    print(f"[node-manifest] DISABLED due to import error: {_nm_err}")
+
+# --- Node RPC (/v1/node/rpc) — Phase 2 read-only mirror. ADDITIVE, ----------
+# localhost-only, feature-flagged (HOMEPILOT_MIRROR_RPC_ENABLED, default off).
+# Exposes a WHITELIST of named read-only operations (services/models/personas/
+# projects/workflows/safe-settings) - never an arbitrary localhost proxy.
+try:
+    from .node_rpc import router as _node_rpc_router
+    app.include_router(_node_rpc_router)
+    print("[node-rpc] mounted (localhost-only; enable with "
+          "HOMEPILOT_MIRROR_RPC_ENABLED=true)")
+except Exception as _nrpc_err:  # noqa: BLE001
+    print(f"[node-rpc] DISABLED due to import error: {_nrpc_err}")
+
+# --- Node Jobs (/v1/node/jobs, /v1/node/artifacts) — Phase 3 core -----------
+# execution. ADDITIVE, localhost-only, feature-flagged
+# (HOMEPILOT_MIRROR_JOBS_ENABLED, default off). Durable jobs for long-running
+# ops (chat/image/video) with progress + short-lived owner-scoped artifacts.
+try:
+    from .node_jobs import router as _node_jobs_router
+    app.include_router(_node_jobs_router)
+    print("[node-jobs] mounted (localhost-only; enable with "
+          "HOMEPILOT_MIRROR_JOBS_ENABLED=true)")
+except Exception as _njobs_err:  # noqa: BLE001
+    print(f"[node-jobs] DISABLED due to import error: {_njobs_err}")
+
 # --- Persona call (/v1/persona-call/*) — ADDITIVE, FEATURE-FLAGGED -----------
 # Phone-call conversational dynamics + per-turn system suffix composer.
 # Off by default. Enable with ``PERSONA_CALL_ENABLED=true``. The module

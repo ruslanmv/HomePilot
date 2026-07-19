@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import re
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from typing import Optional, Literal, List, Tuple
 from pydantic import BaseModel, Field
 
@@ -185,7 +185,7 @@ def _extract_partial_outline(text: str) -> Optional[dict]:
 
 from .models import (
     StudioVideoCreate, GenerationRequest, ExportRequest, StudioSceneCreate, StudioSceneUpdate,
-    StudioProjectCreate, AssetKind, TrackKind, AutosavePayload,
+    StudioProjectCreate, AssetKind, TrackKind, AutosavePayload, SourceMode,
 )
 from .repo import (
     list_videos, get_video, list_scenes, get_scene, create_scene, update_scene, delete_scene, update_video, delete_video,
@@ -939,11 +939,22 @@ def nsfw_image_info():
 # ============================================================================
 
 class GenerateOutlineRequest(BaseModel):
-    """Request to generate an AI-powered story outline."""
+    """Request to generate an AI-powered story outline.
+
+    source_mode="topic" (default) is the original behavior: the LLM invents
+    narration from the project's logline. source_mode="script" segments the
+    provided essay verbatim instead (essay-to-video pipeline, Batch 0); in
+    script mode the scene count comes from the essay's own structure, so
+    target_scenes is ignored.
+    """
     target_scenes: int = Field(8, ge=4, le=24)
     scene_duration: int = Field(5, ge=3, le=15)
     ollama_base_url: Optional[str] = None
     ollama_model: Optional[str] = None
+    source_mode: SourceMode = "topic"            # NEW - defaults preserve old behavior
+    script_text: Optional[str] = None            # NEW - full essay body (markdown or HTML)
+    script_url: Optional[str] = None             # NEW - essay URL to fetch instead of pasting
+    existing_audio_url: Optional[str] = None     # NEW - pre-narrated audio to reuse later
 
 
 class SceneOutline(BaseModel):
@@ -967,6 +978,164 @@ class StoryOutlineResponse(BaseModel):
     scenes: list
 
 
+async def _generate_script_outline(video_id: str, req: GenerateOutlineRequest, v) -> dict:
+    """
+    Script-mode outline (essay-to-video pipeline, Batch 0).
+
+    Segmentation is deterministic and the narration is the essay's own
+    sentences, verbatim. The LLM is only consulted for shot planning
+    (scene_kind + image prompts) and is skipped gracefully on any failure,
+    so this path works with no LLM available at all.
+    """
+    from ..llm import chat_ollama
+    from ..config import OLLAMA_BASE_URL, OLLAMA_MODEL
+    import json
+    from . import essay_import
+
+    try:
+        essay = essay_import.ingest(script_text=req.script_text, script_url=req.script_url)
+    except ValueError as e:
+        return {"ok": False, "error": "script_source_missing", "message": str(e)}
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": "essay_ingestion_failed",
+            "message": f"Could not ingest essay: {e}",
+            "hints": [
+                "Paste the essay markdown directly into script_text",
+                "Check the URL is reachable from the backend",
+            ],
+        }
+
+    if not essay.sections:
+        return {
+            "ok": False,
+            "error": "essay_empty",
+            "message": "No narratable sections found in the provided essay.",
+        }
+
+    # Visual style / LLM model come from the same project tags topic mode uses
+    tags = v.tags if hasattr(v, 'tags') and v.tags else []
+    visual_style = "technical editorial"
+    project_llm_model = None
+    for tag in tags:
+        if tag.startswith("visual:"):
+            visual_style = tag.replace("visual:", "").replace("_", " ").strip()
+        elif tag.startswith("llm:"):
+            project_llm_model = tag.replace("llm:", "")
+
+    scenes = essay_import.segment_essay(
+        essay,
+        default_duration_sec=float(req.scene_duration),
+        visual_style=visual_style,
+    )
+    negative = f"{DEFAULT_NEGATIVE_PROMPT}, {essay_import.TECHNICAL_EDITORIAL_NEGATIVE}"
+    for scene in scenes:
+        scene["negative_prompt"] = negative
+
+    # Best-effort LLM shot-planning pass; narration is immutable by design
+    base_url = req.ollama_base_url or OLLAMA_BASE_URL
+    model = req.ollama_model or project_llm_model or OLLAMA_MODEL
+    shot_plan_applied = 0
+    if model:
+        try:
+            system_prompt, user_prompt = essay_import.build_shot_planning_prompt(
+                essay, scenes, visual_style)
+            response = await chat_ollama(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                base_url=base_url,
+                model=model,
+                temperature=0.3,
+                max_tokens=max(2000, len(scenes) * 120),
+                response_format="json",
+            )
+            response_text = ""
+            if isinstance(response, dict):
+                choices = response.get("choices", [])
+                if choices:
+                    response_text = choices[0].get("message", {}).get("content", "")
+                if not response_text:
+                    response_text = response.get("content", "")
+            match = re.search(r'\{[\s\S]*\}', response_text or "")
+            if match:
+                shot_plan_applied = essay_import.apply_shot_plan(
+                    scenes, json.loads(match.group()))
+        except Exception as e:
+            print(f"[Outline] Script-mode shot planning skipped ({e}); using deterministic prompts")
+
+    headings = [s.heading for s in essay.sections if s.heading]
+    outline = {
+        "title": essay.title,
+        "logline": essay.subtitle or (v.logline or ""),
+        "visual_style": visual_style,
+        "tone": "documentary",
+        "source_mode": "script",
+        "story_arc": {
+            "beginning": headings[0] if headings else essay.title,
+            "rising_action": ", ".join(headings[1:-1][:3]) if len(headings) > 2 else "",
+            "climax": headings[len(headings) // 2] if headings else "",
+            "falling_action": headings[-2] if len(headings) > 1 else "",
+            "resolution": headings[-1] if headings else "",
+        },
+        "scenes": scenes,
+    }
+
+    existing_audio_url = req.existing_audio_url or essay.existing_audio_url
+
+    # Forced alignment (Batch 2): when the essay's narration audio exists,
+    # scene durations become the real span of their words in that audio
+    # instead of the flat scene_duration default. Strictly opt-in - no
+    # audio URL means Batch 0 behavior, untouched.
+    alignment_summary = None
+    if existing_audio_url:
+        try:
+            from . import alignment as alignment_mod
+            result = alignment_mod.align_from_url(existing_audio_url, scenes)
+            if result.ok:
+                applied = alignment_mod.apply_spans_to_scenes(scenes, result)
+                alignment_summary = {
+                    "method": result.method,
+                    "audio_duration_sec": result.audio_duration_sec,
+                    "scenes_timed": applied,
+                }
+                print(f"[Outline] Alignment ({result.method}): {applied} scenes timed "
+                      f"over {result.audio_duration_sec:.1f}s of audio")
+            else:
+                print(f"[Outline] Alignment skipped: {result.message}")
+        except Exception as e:
+            print(f"[Outline] Alignment failed ({e}); keeping default durations")
+            result = None
+
+    # update_video replaces metadata wholesale, so merge with what's there
+    metadata = dict(v.metadata) if hasattr(v, 'metadata') and v.metadata else {}
+    metadata["story_outline"] = outline
+    metadata["essay_source"] = essay.model_dump()
+    if existing_audio_url:
+        metadata["existing_audio_url"] = existing_audio_url
+    if alignment_summary:
+        # Word timestamps + spans persist here so Batch 4 can materialize
+        # CaptionSegment rows without re-running alignment.
+        metadata["alignment"] = result.model_dump()
+    update_video(video_id, metadata=metadata)
+
+    print(f"[Outline] Script mode: {len(scenes)} scenes from {len(essay.sections)} sections"
+          f" (shot plan applied to {shot_plan_applied})")
+
+    return {
+        "ok": True,
+        "outline": outline,
+        "model_used": model or None,
+        "source_mode": "script",
+        "scene_count": len(scenes),
+        "shot_plan_applied": shot_plan_applied,
+        "existing_audio_url": existing_audio_url,
+        "alignment": alignment_summary,
+    }
+
+
 @router.post("/videos/{video_id}/generate-outline")
 async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
     """
@@ -982,6 +1151,11 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
     v = get_video(video_id)
     if not v:
         raise HTTPException(status_code=404, detail="Video not found")
+
+    # Script mode (essay-to-video): segment the provided essay verbatim
+    # instead of inventing narration. Topic mode below is untouched.
+    if req.source_mode == "script":
+        return await _generate_script_outline(video_id, req, v)
 
     # Extract tags from project
     tags = v.tags if hasattr(v, 'tags') and v.tags else []
@@ -1583,12 +1757,20 @@ async def generate_scene_from_outline(
 
     scene_plan = scenes[scene_index]
 
-    # Create the scene from the outline - use centralized default negative prompt
+    # Create the scene from the outline - use centralized default negative prompt.
+    # renderer_kind/scene_kind only exist on script-mode outlines; topic-mode
+    # plans yield None here, which means diffusion exactly as before.
+    _valid_renderers = ("diffusion", "motion_graphic")
+    _valid_kinds = ("hero", "diagram", "quote", "proof", "cta", "transition")
     scene = create_scene(video_id, StudioSceneCreate(
         narration=scene_plan.get("narration", ""),
         imagePrompt=scene_plan.get("image_prompt", ""),
         negativePrompt=scene_plan.get("negative_prompt", DEFAULT_NEGATIVE_PROMPT),
         durationSec=scene_plan.get("duration_sec", 5.0),
+        rendererKind=(scene_plan.get("renderer_kind")
+                      if scene_plan.get("renderer_kind") in _valid_renderers else None),
+        sceneKind=(scene_plan.get("scene_kind")
+                   if scene_plan.get("scene_kind") in _valid_kinds else None),
     ))
 
     if not scene:
@@ -1600,6 +1782,489 @@ async def generate_scene_from_outline(
         "from_outline": True,
         "scene_plan": scene_plan,
     }
+
+
+# ============================================================================
+# Motion-graphic rendering (essay-to-video pipeline, Batch 1)
+# ============================================================================
+
+@router.post("/videos/{video_id}/scenes/{scene_id}/render-motion-graphic")
+def render_motion_graphic_scene(video_id: str, scene_id: str, request: Request):
+    """
+    Deterministically render a motion_graphic scene from its structured
+    content (StyleKit colors, exact narration text, safe-margin layout).
+    The diffusion path is untouched; scenes whose rendererKind is not
+    motion_graphic are refused so nothing gets re-routed by accident.
+    """
+    from . import motion_graphics
+
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+    scene = get_scene(scene_id)
+    if not scene or scene.videoId != video_id:
+        raise HTTPException(status_code=404, detail="Scene not found")
+
+    if scene.rendererKind != "motion_graphic":
+        return {
+            "ok": False,
+            "reason": "wrong_renderer",
+            "message": "Scene is not marked rendererKind=motion_graphic; use the diffusion path.",
+        }
+
+    metadata = v.metadata if hasattr(v, 'metadata') and v.metadata else {}
+
+    # Title: prefer the outline entry's section title for this narration
+    title = v.title
+    outline = metadata.get("story_outline") or {}
+    for plan in outline.get("scenes", []):
+        if plan.get("narration") and plan["narration"] == scene.narration:
+            title = plan.get("title") or title
+            break
+
+    links: list = []
+    essay_source = metadata.get("essay_source") or {}
+    if scene.sceneKind == "cta":
+        links = list(essay_source.get("source_links") or [])[:4]
+
+    try:
+        filename = motion_graphics.render_scene_still(
+            scene_id=scene.id,
+            kind=scene.sceneKind or "quote",
+            title=title,
+            narration=scene.narration or "",
+            platform_preset=v.platformPreset,
+            links=links,
+        )
+    except Exception as e:
+        update_scene(scene_id, StudioSceneUpdate(status="error"))
+        return {"ok": False, "reason": "render_failed", "message": str(e)}
+
+    image_url = f"{str(request.base_url).rstrip('/')}/studio/motion-graphics/{filename}"
+    updated = update_scene(scene_id, StudioSceneUpdate(imageUrl=image_url, status="ready"))
+
+    return {
+        "ok": True,
+        "scene": updated.model_dump() if updated else None,
+        "image_url": image_url,
+        "renderer": "motion_graphic",
+    }
+
+
+# ============================================================================
+# Essay pipeline file store (Batch 4) - condensed audio, promoted assets
+# ============================================================================
+
+def _studio_files_dir() -> "Path":
+    from pathlib import Path as _Path
+    base = os.getenv("STUDIO_FILES_DIR", "").strip()
+    p = _Path(base) if base else _Path(__file__).resolve().parents[2] / "data" / "studio_files"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+_STUDIO_FILE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+\.(png|wav|mp3|json|md|srt)$")
+
+_STUDIO_FILE_MIME = {
+    ".png": "image/png", ".wav": "audio/wav", ".mp3": "audio/mpeg",
+    ".json": "application/json", ".md": "text/markdown", ".srt": "text/plain",
+}
+
+
+@router.get("/files/essay-pipeline/{filename}")
+def get_essay_pipeline_file(filename: str):
+    """Serve essay-pipeline artifacts (condensed TTS audio, promoted source
+    snapshots). Strict name allowlist; no path traversal."""
+    if not _STUDIO_FILE_NAME_RE.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = _studio_files_dir() / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    ext = "." + filename.rsplit(".", 1)[1]
+    return FileResponse(path, media_type=_STUDIO_FILE_MIME.get(ext, "application/octet-stream"),
+                        headers={"Cache-Control": "private, max-age=3600"})
+
+
+# ============================================================================
+# Condensed script for Shorts / teasers (Batch 4)
+# ============================================================================
+
+class CondensedScriptRequest(BaseModel):
+    """Build the short-form beat selection from the imported essay. The
+    beats are verbatim segments (selection, never generation); audio is
+    synthesized with the pinned essay voice so every format matches the
+    full-length narration."""
+    max_beats: int = Field(6, ge=2, le=10)
+    scene_duration: int = Field(5, ge=3, le=15)
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+    synthesize_audio: bool = True
+    tts_provider: str = "kokoro"
+
+
+@router.post("/videos/{video_id}/condensed-script")
+async def build_condensed_script(video_id: str, req: CondensedScriptRequest, request: Request):
+    from ..llm import chat_ollama
+    from ..config import OLLAMA_BASE_URL, OLLAMA_MODEL
+    import json
+    from . import essay_import
+
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    metadata = dict(v.metadata) if hasattr(v, 'metadata') and v.metadata else {}
+    essay_data = metadata.get("essay_source")
+    if not essay_data:
+        return {"ok": False, "error": "no_essay_source",
+                "message": "This project has no imported essay - run generate-outline "
+                           "with source_mode=script first."}
+
+    essay = essay_import.EssaySource(**essay_data)
+    beats = essay_import.condense_essay(essay, max_beats=req.max_beats,
+                                        default_duration_sec=float(req.scene_duration))
+    selection_method = "deterministic"
+
+    # Optional LLM refinement - it may only pick beat numbers, never write text
+    model = req.ollama_model or OLLAMA_MODEL
+    if model:
+        try:
+            all_beats = essay_import.segment_essay(essay, float(req.scene_duration))
+            system_prompt, user_prompt = essay_import.build_condense_prompt(
+                all_beats, req.max_beats)
+            response = await chat_ollama(
+                messages=[{"role": "system", "content": system_prompt},
+                          {"role": "user", "content": user_prompt}],
+                base_url=req.ollama_base_url or OLLAMA_BASE_URL,
+                model=model, temperature=0.3, max_tokens=400,
+                response_format="json",
+            )
+            text = ""
+            if isinstance(response, dict):
+                choices = response.get("choices", [])
+                if choices:
+                    text = choices[0].get("message", {}).get("content", "")
+            match = re.search(r'\{[\s\S]*\}', text or "")
+            if match:
+                refined = essay_import.apply_condense_selection(
+                    all_beats, json.loads(match.group()), req.max_beats)
+                if refined:
+                    beats, selection_method = refined, "llm"
+        except Exception as e:
+            print(f"[Condense] LLM selection skipped ({e}); keeping deterministic pick")
+
+    # New, shorter audio in the SAME voice as the full narration (Kokoro
+    # pinned via KOKORO_VOICE_ID; Chatterbox opt-in). Piper stays the
+    # default for everything outside this pipeline.
+    audio_url = None
+    tts_provider_used = None
+    if req.synthesize_audio:
+        from ..voice.providers import get_tts_provider_by_name
+        provider = get_tts_provider_by_name(req.tts_provider)
+        if provider.name not in ("null",):
+            narration = " ".join(b["narration"] for b in beats)
+            audio_bytes = await provider.synth(narration)
+            if audio_bytes:
+                filename = f"condensed-{video_id}.{provider.audio_format}"
+                (_studio_files_dir() / filename).write_bytes(audio_bytes)
+                audio_url = (f"{str(request.base_url).rstrip('/')}"
+                             f"/studio/files/essay-pipeline/{filename}")
+                tts_provider_used = provider.name
+
+    condensed = {
+        "beats": beats,
+        "selection_method": selection_method,
+        "tts_provider": tts_provider_used,
+        "audio_url": audio_url,
+    }
+    metadata["condensed_script"] = condensed
+    update_video(video_id, metadata=metadata)
+
+    return {"ok": True, "condensed": condensed, "beat_count": len(beats)}
+
+
+# ============================================================================
+# The bridge: AI Generation Studio -> Creator Studio Pro (Batch 4)
+# ============================================================================
+
+class PromoteToProjectRequest(BaseModel):
+    """Materialize a StudioProject from a StudioVideo using entirely
+    existing Pro models. This single endpoint is the whole bridge."""
+    title: Optional[str] = None
+    style_kit_id: str = "ruslanmv-essays"
+    formats: List[str] = Field(
+        default_factory=lambda: ["youtube_16_9", "shorts_9_16", "social_1_1"])
+
+
+_PRESET_TO_PROJECT_TYPE = {
+    "youtube_16_9": "youtube_video",
+    "shorts_9_16": "youtube_short",
+    "slides_16_9": "slides",
+    "social_1_1": "social_teaser",
+}
+
+
+@router.post("/videos/{video_id}/promote-to-project")
+def promote_to_project(video_id: str, req: PromoteToProjectRequest, request: Request):
+    """
+    Take a StudioVideo + its scenes (finished or in progress) and land them
+    in Creator Studio Pro: one project, a canvas per target format, the
+    ruslanmv-essays style kit, asset/audio rows for the source material,
+    and CaptionSegment rows from the persisted alignment - all through the
+    existing, unmodified Pro models and repo functions.
+    """
+    import json
+    from .library import default_canvas, get_style_kit, normalize_project_type
+    from . import alignment as alignment_mod
+
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    scenes = list_scenes(video_id)
+    metadata = v.metadata if hasattr(v, 'metadata') and v.metadata else {}
+    outline = metadata.get("story_outline") or {}
+    essay_data = metadata.get("essay_source") or {}
+    alignment_data = metadata.get("alignment")
+    existing_audio_url = metadata.get("existing_audio_url")
+
+    style_kit_id = req.style_kit_id if get_style_kit(req.style_kit_id) else None
+
+    project = create_project(StudioProjectCreate(
+        title=req.title or v.title,
+        description=(v.logline or "")[:500],
+        tags=list(v.tags or []) + ["promoted:essay-pipeline", f"source_video:{video_id}"],
+        projectType=_PRESET_TO_PROJECT_TYPE.get(v.platformPreset, "youtube_video"),
+        styleKitId=style_kit_id,
+        targetDurationSec=v.targetDurationSec,
+        contentRating=v.contentRating,
+        policyMode=v.policyMode,
+    ))
+
+    # Assets: the essay source snapshot (written to the pipeline file store)
+    # and the original narration audio (referenced by URL).
+    assets_created = 0
+    if essay_data:
+        filename = f"essay-source-{video_id}.json"
+        payload = json.dumps(essay_data, indent=2).encode("utf-8")
+        (_studio_files_dir() / filename).write_bytes(payload)
+        url = f"{str(request.base_url).rstrip('/')}/studio/files/essay-pipeline/{filename}"
+        if create_asset(project.id, "other", filename, "application/json",
+                        len(payload), url):
+            assets_created += 1
+    if existing_audio_url:
+        if create_asset(project.id, "audio",
+                        existing_audio_url.rsplit("/", 1)[-1][:120] or "narration",
+                        "audio/mpeg", 0, existing_audio_url):
+            assets_created += 1
+
+    # Audio track: the full-length voiceover (reused essay narration)
+    tracks_created = 0
+    audio_duration = None
+    if alignment_data:
+        audio_duration = alignment_data.get("audio_duration_sec")
+    if existing_audio_url:
+        if create_audio_track(project.id, "voiceover", url=existing_audio_url,
+                              start_sec=0.0, end_sec=audio_duration):
+            tracks_created += 1
+
+    # Captions from the persisted alignment - no re-run of WhisperX
+    captions_created = 0
+    if alignment_data:
+        try:
+            result = alignment_mod.AlignmentResult(**alignment_data)
+            cues = alignment_mod.caption_cues(result, outline.get("scenes", []))
+            for cue in cues:
+                if create_caption(project.id, cue.start_sec, cue.end_sec, cue.text):
+                    captions_created += 1
+        except Exception as e:
+            print(f"[Promote] Caption materialization skipped: {e}")
+
+    # Initial version snapshot: scenes, one canvas per requested format, and
+    # the per-scene aspect plan (motion_graphic reflows via safe_margin_pct;
+    # diffusion regenerates natively per aspect instead of cropping).
+    canvases = {}
+    for preset in req.formats:
+        pt = normalize_project_type(_PRESET_TO_PROJECT_TYPE.get(preset, "youtube_video"))
+        canvases[preset] = default_canvas(pt).model_dump()
+    aspect_plan = {
+        str(s.idx): ("reflow" if s.rendererKind == "motion_graphic"
+                     else "regenerate_native")
+        for s in scenes
+    }
+    version = create_version(project.id, state={
+        "source_video_id": video_id,
+        "canvases": canvases,
+        "scenes": [s.model_dump() for s in scenes],
+        "aspect_plan": aspect_plan,
+        "condensed_script": metadata.get("condensed_script"),
+        "style_kit_id": style_kit_id,
+    }, label="promoted-from-video")
+
+    return {
+        "ok": True,
+        "project": project.model_dump(),
+        "version_id": version.id if version else None,
+        "canvases": canvases,
+        "counts": {
+            "scenes": len(scenes),
+            "assets": assets_created,
+            "audio_tracks": tracks_created,
+            "captions": captions_created,
+        },
+    }
+
+
+# ============================================================================
+# Model Manager (essay-to-video pipeline, Batch 3)
+# ============================================================================
+
+class ModelInstallRequest(BaseModel):
+    """Install a model via the manager. source='huggingface' needs
+    repo_id+filename (base checkpoints, rule 2); source='civitai' needs
+    version_id (style layers/LoRAs)."""
+    source: Literal["huggingface", "civitai"]
+    repo_id: Optional[str] = None
+    filename: Optional[str] = None
+    version_id: Optional[int] = None
+    model_type: Literal["image", "video", "lora"] = "image"
+    subdir: Optional[str] = None
+    workflow: str = ""
+
+
+@router.get("/models/manager/status")
+def model_manager_status():
+    """Installed models, the essay pipeline's filtered pickers, and the
+    license allowlist (so the UI can show why something is blocked)."""
+    from . import model_manager as mm
+
+    return {
+        "ok": True,
+        "installed": [m.model_dump() for m in mm.ModelManager().installed()],
+        "essay_pipeline": {
+            "image": mm.essay_pipeline_models("image"),
+            "video": mm.essay_pipeline_models("video"),
+        },
+        "license_allowlist": [row.model_dump() for row in mm.LICENSE_ALLOWLIST],
+        "source_preference": os.getenv("MODEL_SOURCE_PREFERENCE", "huggingface_first"),
+    }
+
+
+@router.get("/models/manager/search")
+async def model_manager_search(query: str = Query(..., min_length=2),
+                               model_type: str = Query("image")):
+    """SFW-only search against civitai.com (never civitai.red)."""
+    from . import model_manager as mm
+
+    try:
+        results = await mm.ModelManager().search_civitai(query, model_type=model_type)
+    except Exception as e:
+        return {"ok": False, "error": "civitai_search_failed", "message": str(e)}
+    return {"ok": True, "results": [r.model_dump() for r in results]}
+
+
+@router.post("/models/manager/install", status_code=202)
+def model_manager_install(req: ModelInstallRequest):
+    """Queue a model download+register. License resolution happens inside
+    the job and unlicensed models fail it - poll the job for the outcome."""
+    from . import model_manager as mm
+
+    if req.source == "huggingface":
+        if not req.repo_id or not req.filename:
+            raise HTTPException(status_code=400,
+                                detail="huggingface install needs repo_id and filename")
+        job = mm.submit_install(
+            "huggingface", repo_id=req.repo_id, filename=req.filename,
+            model_type=req.model_type, subdir=req.subdir or "checkpoints",
+            workflow=req.workflow)
+    else:
+        if not req.version_id:
+            raise HTTPException(status_code=400,
+                                detail="civitai install needs version_id")
+        job = mm.submit_install(
+            "civitai", version_id=req.version_id,
+            model_type=req.model_type, subdir=req.subdir or "loras",
+            workflow=req.workflow)
+    return job
+
+
+@router.get("/models/manager/jobs/{job_id}")
+def model_manager_job(job_id: str):
+    from . import model_manager as mm
+
+    job = mm.get_install_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Install job not found")
+    return job
+
+
+# ============================================================================
+# Essay-video bundles: one-shot (re)installs + GPU-tuned presets
+# ============================================================================
+
+@router.get("/models/manager/bundles")
+def list_model_bundles():
+    """Every essay-video bundle with its components, real disk cost from
+    the catalog, install status, validation problems (if any), and the
+    high/ultra generation presets for the target GPU."""
+    from . import bundles as bundles_mod
+
+    out = []
+    for bundle in bundles_mod.list_bundles():
+        out.append({
+            **bundle.model_dump(),
+            "problems": bundles_mod.validate_bundle(bundle),
+            "install_status": bundles_mod.bundle_install_status(bundle),
+        })
+    return {"ok": True, "bundles": out}
+
+
+@router.get("/models/manager/bundles/{bundle_id}")
+def get_model_bundle(bundle_id: str):
+    from . import bundles as bundles_mod
+
+    bundle = bundles_mod.get_bundle(bundle_id)
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Unknown bundle")
+    return {
+        "ok": True,
+        **bundle.model_dump(),
+        "problems": bundles_mod.validate_bundle(bundle),
+        "install_status": bundles_mod.bundle_install_status(bundle),
+        "install_plan": [" ".join(cmd) for cmd in bundles_mod.install_plan(bundle)],
+    }
+
+
+@router.post("/models/manager/bundles/{bundle_id}/install", status_code=202)
+def install_model_bundle(bundle_id: str):
+    """Queue a full bundle (re)install. Reinstall-safe: the underlying
+    catalog installer skips files already on disk, so this doubles as a
+    repair command. Poll GET /models/manager/jobs/{job_id}."""
+    from . import bundles as bundles_mod
+
+    try:
+        return bundles_mod.submit_bundle_install(bundle_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+_MOTION_GRAPHIC_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+\.png$")
+
+
+@router.get("/motion-graphics/{filename}")
+def get_motion_graphic_file(filename: str):
+    """Serve a rendered motion-graphic still (PNG only, no path traversal)."""
+    from . import motion_graphics
+
+    if not _MOTION_GRAPHIC_NAME_RE.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = motion_graphics.output_dir() / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path, media_type="image/png",
+                        headers={"Cache-Control": "private, max-age=3600"})
 
 
 @router.post("/videos/{video_id}/scenes/generate-continuation")
@@ -2378,6 +3043,17 @@ class VideoMp4ExportRequest(BaseModel):
     # burned into the video via ffmpeg's libass subtitle filter. A sidecar
     # .srt is always written alongside the MP4 when subtitles != "none".
     subtitles: Literal["burn_in", "none"] = "none"
+    # Caption timing (additive, default preserves current behavior):
+    #   "sentence" - evenly-timed sentence chunks (unchanged).
+    #   "word"     - CapCut/Submagic active-word captions from the persisted
+    #                WhisperX word timestamps; falls back to sentence per-scene
+    #                when a scene has no timings.
+    caption_mode: Literal["sentence", "word"] = "sentence"
+    # Still fill (additive, default preserves current behavior):
+    #   "letterbox" - scale-down + black pad (unchanged).
+    #   "cover"     - scale-up + centre-crop (no bars, may crop edges).
+    #   "blur"      - blurred full-bleed background behind the aspect-fit image.
+    fill_mode: Literal["letterbox", "cover", "blur"] = "letterbox"
 
 
 @router.post("/videos/{video_id}/export/mp4", status_code=202)
@@ -2409,6 +3085,15 @@ def video_export_mp4(
     if not scenes:
         raise HTTPException(status_code=400, detail="Video has no scenes to render")
 
+    # Word-level captions (caption_mode="word"): slice the persisted WhisperX
+    # word timestamps (Batch 2, metadata.alignment) into per-scene, scene-
+    # relative timings using each outline scene's audio_start/end offsets.
+    # Absent alignment -> no timings -> the renderer falls back to sentence
+    # cues, so this is purely additive.
+    scene_word_timings: dict = {}
+    if req.caption_mode == "word":
+        scene_word_timings = _slice_scene_word_timings(video, scenes)
+
     # Translate StudioScene records into the renderer's SceneInput shape.
     # ``narration`` is the source text for subtitles; it is the same field
     # the Piper WASM wizard used to synthesize the uploaded audioUrl.
@@ -2420,6 +3105,7 @@ def video_export_mp4(
             video_path=s.videoUrl,
             audio_path=s.audioUrl,
             narration=s.narration or "",
+            word_timings=scene_word_timings.get(i),
         )
         for i, s in enumerate(scenes)
     ]
@@ -2439,8 +3125,50 @@ def video_export_mp4(
         audio_rate=audio_rate,
         audio_pitch=audio_pitch,
         subtitles=req.subtitles,
+        caption_mode=req.caption_mode,
+        fill_mode=req.fill_mode,
     )
     return job.to_dict()
+
+
+def _slice_scene_word_timings(video, scenes) -> dict:
+    """Map scene index -> list[WordTiming] (scene-relative) from the persisted
+    alignment. Matches outline scenes to StudioScenes by narration; uses each
+    outline scene's audio_start_sec/audio_end_sec to window the global words.
+    Returns {} when there is no alignment to work from."""
+    from .render_mp4 import WordTiming
+
+    metadata = video.metadata if hasattr(video, 'metadata') and video.metadata else {}
+    alignment = metadata.get("alignment") or {}
+    words = alignment.get("words") or []
+    outline_scenes = (metadata.get("story_outline") or {}).get("scenes") or []
+    if not words or not outline_scenes:
+        return {}
+
+    # Outline scene lookup by exact narration (Batch 0 guarantees verbatim).
+    by_narration = {
+        (o.get("narration") or "").strip(): o
+        for o in outline_scenes
+        if o.get("audio_start_sec") is not None
+    }
+
+    out: dict = {}
+    for i, s in enumerate(scenes):
+        plan = by_narration.get((s.narration or "").strip())
+        if not plan:
+            continue
+        start = float(plan.get("audio_start_sec") or 0.0)
+        end = float(plan.get("audio_end_sec") or start)
+        wt = [
+            WordTiming(word=str(w.get("word", "")),
+                       start=max(0.0, float(w.get("start", 0.0)) - start),
+                       end=max(0.0, float(w.get("end", 0.0)) - start))
+            for w in words
+            if start <= float(w.get("start", 0.0)) < end
+        ]
+        if wt:
+            out[i] = wt
+    return out
 
 
 # ----------------------------------------------------------------------------

@@ -44,8 +44,12 @@ import CreatorExportWizard from "./components/CreatorExportWizard";
 
 // Types
 type SceneStatus = "pending" | "generating" | "ready" | "error";
-type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9";
+// Keep in sync with backend/app/studio/models.py PlatformPreset
+type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9" | "social_1_1";
 type ContentRating = "sfw" | "mature";
+
+// Renderer split (essay-to-video pipeline): null means diffusion, as before
+type RendererKind = "diffusion" | "motion_graphic";
 
 type Scene = {
   id: string;
@@ -58,6 +62,8 @@ type Scene = {
   videoUrl: string | null;
   audioUrl: string | null;
   status: SceneStatus;
+  rendererKind: RendererKind | null;
+  sceneKind: string | null;
   durationSec: number;
   createdAt: number;
   updatedAt: number;
@@ -177,6 +183,7 @@ export function CreatorStudioEditor({
   const [editNarration, setEditNarration] = useState("");
   const [editImagePrompt, setEditImagePrompt] = useState("");
   const [editNegativePrompt, setEditNegativePrompt] = useState("");
+  const [editRendererKind, setEditRendererKind] = useState<RendererKind | null>(null);
   const [isSavingScene, setIsSavingScene] = useState(false);
 
   // Model selection state
@@ -330,6 +337,8 @@ export function CreatorStudioEditor({
       videoUrl: raw.videoUrl ?? raw.video_url ?? null,
       audioUrl: raw.audioUrl ?? raw.audio_url ?? null,
       status: raw.status ?? "pending",
+      rendererKind: raw.rendererKind ?? raw.renderer_kind ?? null,
+      sceneKind: raw.sceneKind ?? raw.scene_kind ?? null,
       durationSec: raw.durationSec ?? raw.duration_sec ?? 5,
       createdAt: raw.createdAt ?? raw.created_at ?? 0,
       updatedAt: raw.updatedAt ?? raw.updated_at ?? 0,
@@ -350,6 +359,8 @@ export function CreatorStudioEditor({
     if ("imagePrompt" in out) out.image_prompt = out.imagePrompt;
     if ("negativePrompt" in out) out.negative_prompt = out.negativePrompt;
     if ("durationSec" in out) out.duration_sec = out.durationSec;
+    if ("rendererKind" in out) out.renderer_kind = out.rendererKind;
+    if ("sceneKind" in out) out.scene_kind = out.sceneKind;
     return out;
   }, []);
 
@@ -458,6 +469,7 @@ export function CreatorStudioEditor({
     setEditNarration(scene.narration || "");
     setEditImagePrompt(scene.imagePrompt || "");
     setEditNegativePrompt(scene.negativePrompt || "");
+    setEditRendererKind(scene.rendererKind ?? null);
     setShowSceneEditor(true);
   }, []);
 
@@ -471,12 +483,23 @@ export function CreatorStudioEditor({
         narration: editNarration,
         imagePrompt: editImagePrompt,
         negativePrompt: editNegativePrompt,
+        // Renderer is only patched when it actually changed, so scenes
+        // without the field keep behaving exactly as before.
+        ...(editRendererKind !== (editingScene.rendererKind ?? null)
+          ? { rendererKind: editRendererKind, renderer_kind: editRendererKind }
+          : {}),
       });
 
       setScenes((prev) =>
         prev.map((s) =>
           s.id === editingScene.id
-            ? { ...s, narration: editNarration, imagePrompt: editImagePrompt, negativePrompt: editNegativePrompt }
+            ? {
+                ...s,
+                narration: editNarration,
+                imagePrompt: editImagePrompt,
+                negativePrompt: editNegativePrompt,
+                rendererKind: editRendererKind,
+              }
             : s
         )
       );
@@ -489,7 +512,7 @@ export function CreatorStudioEditor({
     } finally {
       setIsSavingScene(false);
     }
-  }, [editingScene, editNarration, editImagePrompt, editNegativePrompt, projectId, patchApi]);
+  }, [editingScene, editNarration, editImagePrompt, editNegativePrompt, editRendererKind, projectId, patchApi]);
 
   // Parse tags from project
   const parseTagsFromProject = useCallback((proj: Project) => {
@@ -894,14 +917,34 @@ export function CreatorStudioEditor({
       console.log('[CreatorStudioEditor] Generating image for scene:', sceneId);
 
       try {
+        const scene = scenes.find(s => s.id === sceneId);
+
+        // Motion-graphic scenes render deterministically on the backend
+        // (exact text, StyleKit colors) - they never go through diffusion.
+        if (scene?.rendererKind === 'motion_graphic') {
+          const data = await postApi<{ ok: boolean; image_url?: string; message?: string }>(
+            `/studio/videos/${projectId}/scenes/${sceneId}/render-motion-graphic`,
+            {}
+          );
+          if (data?.ok && data.image_url) {
+            console.log('[CreatorStudioEditor] Motion graphic rendered:', data.image_url);
+            setScenes((prev) =>
+              prev.map((s) =>
+                s.id === sceneId ? { ...s, imageUrl: data.image_url!, status: 'ready' as SceneStatus } : s
+              )
+            );
+            setLastSaved(new Date());
+          } else {
+            console.warn('[CreatorStudioEditor] Motion graphic render failed:', data?.message);
+          }
+          return;
+        }
+
         const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
 
         // Apply generation parameters if enabled
         const effectiveSteps = genParams.enabled ? genParams.steps : imageSteps;
         const effectiveCfg = genParams.enabled ? genParams.cfgScale : imageCfg;
-
-        // Get scene-level negative prompt if available
-        const scene = scenes.find(s => s.id === sceneId);
         const sceneNeg = scene?.negativePrompt || "";
         const combinedNegativePrompt = (genParams.enabled && genParams.useCustomNegativePrompt && genParams.customNegativePrompt.trim())
           ? [sceneNeg, genParams.customNegativePrompt.trim()].filter(Boolean).join(", ")
@@ -2414,6 +2457,42 @@ export function CreatorStudioEditor({
                   rows={2}
                   placeholder="Elements to avoid in the image..."
                 />
+              </div>
+
+              {/* Renderer (essay-to-video pipeline) */}
+              <div>
+                <label className="text-sm font-medium text-white/70 mb-2 block">
+                  Renderer
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditRendererKind(editRendererKind === 'motion_graphic' ? 'diffusion' : editRendererKind)}
+                    className={[
+                      "px-4 py-2 rounded-xl text-sm border transition-colors",
+                      editRendererKind !== 'motion_graphic'
+                        ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
+                        : "border-white/10 bg-black/40 text-white/50 hover:bg-white/5",
+                    ].join(" ")}
+                  >
+                    AI Image (diffusion)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditRendererKind('motion_graphic')}
+                    className={[
+                      "px-4 py-2 rounded-xl text-sm border transition-colors",
+                      editRendererKind === 'motion_graphic'
+                        ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-300"
+                        : "border-white/10 bg-black/40 text-white/50 hover:bg-white/5",
+                    ].join(" ")}
+                  >
+                    Motion Graphic (exact text)
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-white/40">
+                  Motion Graphic renders deterministically from the narration text - labels and numbers can never be misspelled. Best for diagrams, quotes, data, and CTAs.
+                </p>
               </div>
 
               {/* Model Selection */}
