@@ -23,7 +23,9 @@ Free eligible shape:
 
 Other Always Free details:
 
-- **Image:** Canonical **Ubuntu 24.04**.
+- **Image:** **Oracle Linux 9** (default on the A1 shape, SSH user `opc`) or
+  **Ubuntu** (SSH user `ubuntu`). `install.sh` detects the OS and configures
+  Docker + the host firewall for either — no manual edits needed.
 - **Boot/block storage:** stays within the 200 GB Always Free block volume total.
 - **Public IP:** assign one (reserve it if you want it to survive instance
   recreation), and create a DNS **A record** pointing your domain at it.
@@ -42,7 +44,8 @@ OCI blocks inbound traffic in **two** places — both must allow TCP 80 and 443:
    Security List, and add **Ingress** rules:
    - Source `0.0.0.0/0`, IP protocol TCP, destination port **80**
    - Source `0.0.0.0/0`, IP protocol TCP, destination port **443**
-2. **Host firewall (iptables):** handled by `install.sh` below.
+2. **Host firewall:** handled by `install.sh` below — `firewalld` on Oracle
+   Linux, `iptables` on Ubuntu.
 
 ## 2. Bootstrap the instance
 
@@ -51,13 +54,23 @@ Clone the repository or copy this directory to the instance, then run:
 ```bash
 sudo bash oracle/install.sh
 sudo cp -R oracle /opt/homepilot
-sudo chown -R "$USER":"$USER" /opt/homepilot
 cd /opt/homepilot
 cp .env.example .env
 ```
 
-`install.sh` installs Docker, opens ports 80/443 in the host iptables (Oracle's
-Ubuntu images ship a default REJECT rule), and persists them across reboots.
+`install.sh` is OS-aware. It:
+
+- installs Docker (dnf on Oracle Linux, apt on Ubuntu);
+- opens ports 80/443 (firewalld on Oracle Linux, iptables on Ubuntu) and
+  persists them across reboots;
+- creates a **4 GB swap file** so pulls/spikes don't OOM-kill the app on the
+  small shapes (override with `SWAP_SIZE=2G`, or `SWAP_SIZE=0` to skip);
+- adds the deploy user (the account that ran `sudo`, e.g. `opc`) to the
+  `docker` group and gives it `/opt/homepilot`, so no `chown`/`sudo` is needed.
+
+> After `install.sh` adds you to the `docker` group, **open a new SSH session**
+> before running `deploy.sh` so the group membership takes effect. (GitHub
+> Actions reconnects on every run, so it is unaffected.)
 
 Edit `.env`, set the domain and API credentials, and generate the application
 API key:
@@ -67,14 +80,6 @@ openssl rand -hex 32
 ```
 
 Do not expose HomePilot with an empty `API_KEY`.
-
-> On the 1 GB `E2.1.Micro` shape, add a swap file first so builds/pulls don't
-> get OOM-killed:
-> ```bash
-> sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
-> sudo mkswap /swapfile && sudo swapon /swapfile
-> echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-> ```
 
 ## 3. Deploy
 
@@ -99,9 +104,11 @@ ghcr.io/<repository-owner>/homepilot-oracle:<commit-sha>
 
 Configure the `oracle-production` GitHub environment with:
 
-- `ORACLE_HOST`: instance public IP or hostname
-- `ORACLE_USER`: SSH user with permission to run Docker (e.g. `ubuntu`)
-- `ORACLE_SSH_PRIVATE_KEY`: private deployment key
+- `ORACLE_HOST`: instance public IP or hostname (e.g. `193.122.156.100`)
+- `ORACLE_USER`: SSH user with permission to run Docker — `opc` on Oracle
+  Linux, `ubuntu` on Ubuntu (added to the `docker` group by `install.sh`)
+- `ORACLE_SSH_PRIVATE_KEY`: private deployment key (full PEM, matching a public
+  key in the instance's `~/.ssh/authorized_keys`)
 - `ORACLE_SSH_PORT`: optional; defaults to 22
 
 The server must already contain `/opt/homepilot`, `docker-compose.yml`,
@@ -171,6 +178,20 @@ docker run --rm \
 
 The exact Docker volume prefix depends on the Compose project directory. Confirm
 it with `docker volume ls` before backing up.
+
+### Resource limits
+
+`docker-compose.yml` caps the app at **5 GB RAM** (`mem_limit`) with a 7 GB
+RAM+swap ceiling (`memswap_limit`) and Caddy at **256 MB**, sized for the
+1 OCPU / 6 GB `A1.Flex`. Container logs are rotated (3 × 10 MB) so they can't
+fill the boot volume. On a larger shape, raise them in `.env` without editing
+the compose file:
+
+```bash
+HOMEPILOT_MEM_LIMIT=20g
+HOMEPILOT_MEMSWAP_LIMIT=24g
+CADDY_MEM_LIMIT=512m
+```
 
 ## Notice behavior
 

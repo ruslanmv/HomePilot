@@ -9,12 +9,23 @@ services:
       - "${HOMEPILOT_BIND_ADDRESS:-127.0.0.1}:7860:7860"
     volumes:
       - homepilot-data:/home/user/app/data
+    # Tuned for VM.Standard.A1.Flex 1 OCPU / 6 GB. Leave ~1 GB for the OS and
+    # Caddy; the swap file created by install.sh absorbs short spikes above the
+    # RAM limit instead of the kernel OOM-killing the app. Override with
+    # HOMEPILOT_MEM_LIMIT / HOMEPILOT_MEMSWAP_LIMIT for larger shapes.
+    mem_limit: ${HOMEPILOT_MEM_LIMIT:-5g}
+    memswap_limit: ${HOMEPILOT_MEMSWAP_LIMIT:-7g}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:7860/api/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   caddy:
     image: caddy:2-alpine
@@ -33,6 +44,12 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    mem_limit: ${CADDY_MEM_LIMIT:-256m}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   homepilot-data:

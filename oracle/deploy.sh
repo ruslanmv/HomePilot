@@ -27,4 +27,9 @@ docker compose pull
 docker compose up -d --remove-orphans
 docker compose ps
 
+# Reclaim disk on the small Always Free boot volume: drop the now-dangling
+# image layers left behind by the pull above. Safe — only untagged images that
+# nothing references are removed; the running :sha/:latest images are kept.
+docker image prune -f >/dev/null 2>&1 || true
+
 echo "HomePilot deployment requested for https://${HOMEPILOT_DOMAIN}"
