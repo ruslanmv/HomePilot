@@ -28,6 +28,24 @@ from .availability import enabled_modes
 from .licensing import LicenseDenied, enforce_license
 from .placeholder import generate_placeholder_faces
 from .schemas import AvatarGenerateRequest, AvatarGenerateResponse, AvatarResult
+
+
+def _current_comfyui_url() -> str:
+    """Return the live ComfyUI URL from runtime settings/env, not frozen import config."""
+    try:
+        from ..runtime_config import read_runtime_config
+        runtime_url = (read_runtime_config().get("COMFY_BASE_URL") or "").strip()
+        if runtime_url:
+            return runtime_url.rstrip("/")
+    except Exception:
+        pass
+
+    import os
+    return (
+        os.getenv("COMFYUI_URL")
+        or os.getenv("COMFY_BASE_URL")
+        or CFG.comfyui_url
+    ).rstrip("/")
 from ..services.comfyui.client import ComfyUIUnavailable
 from ..services.comfyui.workflows import run_avatar_workflow
 
@@ -42,7 +60,7 @@ async def generate(req: AvatarGenerateRequest) -> AvatarGenerateResponse:
     """Generate avatar images based on the requested mode."""
     _log.info(
         "[AvatarGen] mode=%s count=%d seed=%s avatar_service_url=%s comfyui_url=%s",
-        req.mode, req.count, req.seed, CFG.avatar_service_url, CFG.comfyui_url,
+        req.mode, req.count, req.seed, CFG.avatar_service_url, _current_comfyui_url(),
     )
 
     if not CFG.enabled:
@@ -81,7 +99,7 @@ async def generate(req: AvatarGenerateRequest) -> AvatarGenerateResponse:
     if req.mode in ("studio_reference", "studio_faceswap", "creative"):
         try:
             results = await run_avatar_workflow(
-                comfyui_base_url=CFG.comfyui_url,
+                comfyui_base_url=_current_comfyui_url(),
                 mode=req.mode,
                 prompt=req.prompt or "",
                 reference_image_url=req.reference_image_url,
@@ -188,10 +206,11 @@ async def _fallback_comfyui_or_placeholder(
     """Fallback chain: ComfyUI creative mode → built-in placeholder."""
     from ..services.comfyui.client import comfyui_healthy
 
-    comfy_ok = comfyui_healthy(CFG.comfyui_url)
+    comfyui_url = _current_comfyui_url()
+    comfy_ok = comfyui_healthy(comfyui_url)
     _log.info(
         "[AvatarGen] Step 3: ComfyUI fallback (reason=%s, comfyui_healthy=%s, url=%s)",
-        reason, comfy_ok, CFG.comfyui_url,
+        reason, comfy_ok, comfyui_url,
     )
 
     if comfy_ok:
@@ -205,7 +224,7 @@ async def _fallback_comfyui_or_placeholder(
             )
             _log.info("[AvatarGen] Generating via ComfyUI creative mode (prompt length=%d)", len(prompt))
             results = await run_avatar_workflow(
-                comfyui_base_url=CFG.comfyui_url,
+                comfyui_base_url=comfyui_url,
                 mode="creative",
                 prompt=prompt,
                 reference_image_url=None,

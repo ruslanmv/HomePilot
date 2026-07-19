@@ -314,16 +314,19 @@ function toThinkingMode(mode: ChatReasoningMode): 'auto' | 'fast' | 'think' | 'h
   return mode
 }
 
-const EXPERT_CHAT_ENABLED = String((import.meta as any)?.env?.VITE_EXPERT_CHAT_ENABLED ?? 'false') === 'true'
+const EXPERT_CHAT_ENABLED = String((import.meta as any)?.env?.VITE_EXPERT_CHAT_ENABLED ?? 'true') === 'true'
 
 // Picking 'persona' keeps the legacy personas backend exactly as today.
 // Picking Fast/Expert/Heavy/Beta explicitly opts into the Expert backend —
 // industry-standard pattern (Grok, Claude, ChatGPT all let the user switch
 // model mid-conversation). Voice is always legacy; the selector is never
 // rendered outside chat.
-function canUseExpertInContext(mode: Mode, chatReasoningMode: ChatReasoningMode, _projectType?: string): boolean {
+function canUseExpertInContext(mode: Mode, chatReasoningMode: ChatReasoningMode, projectType?: string): boolean {
   if (!EXPERT_CHAT_ENABLED) return false
   if (mode !== 'chat') return false
+  // .hpersona/persona projects must always use the persona/project chat path so
+  // persona_agent settings, appearance, inventory, and memory are injected.
+  if (projectType === 'persona') return false
   return chatReasoningMode !== 'persona'
 }
 type Provider = 'backend' | 'ollama'
@@ -1485,6 +1488,7 @@ function QueryBar({
   chatReasoningMode = 'persona',
   onChatReasoningModeChange,
   showChatReasoningSelector = false,
+  allowPersonaMode = false,
 }: {
   centered: boolean
   input: string
@@ -1500,6 +1504,7 @@ function QueryBar({
   chatReasoningMode?: ChatReasoningMode
   onChatReasoningModeChange?: (mode: ChatReasoningMode) => void
   showChatReasoningSelector?: boolean
+  allowPersonaMode?: boolean
 }) {
   // ---- Drag-and-drop image support ----
   const [isDragging, setIsDragging] = useState(false)
@@ -1708,6 +1713,7 @@ function QueryBar({
                 >
                   {CHAT_REASONING_OPTIONS.map((opt) => {
                     const selected = chatReasoningMode === opt.id
+                    const personaUnavailable = opt.id === 'persona' && !allowPersonaMode
                     const Icon = opt.icon
                     return (
                       <button
@@ -1715,12 +1721,15 @@ function QueryBar({
                         type="button"
                         role="menuitemradio"
                         aria-checked={selected}
+                        disabled={personaUnavailable}
                         onClick={() => {
+                          if (personaUnavailable) return
                           onChatReasoningModeChange(opt.id)
                           setModeMenuOpen(false)
                         }}
                         className={[
                           'w-full text-left rounded-xl px-3 py-2.5 transition-colors flex items-start gap-3',
+                          personaUnavailable ? 'opacity-45 cursor-not-allowed' : '',
                           selected ? 'bg-white/10' : 'hover:bg-white/10',
                         ].join(' ')}
                       >
@@ -1729,7 +1738,7 @@ function QueryBar({
                         </span>
                         <span className="flex-1 min-w-0">
                           <span className="text-sm font-semibold text-white">{opt.label}</span>
-                          <span className="block text-xs text-white/60 mt-0.5">{opt.description}</span>
+                          <span className="block text-xs text-white/60 mt-0.5">{personaUnavailable ? 'Open a persona project to use Persona mode' : opt.description}</span>
                         </span>
                         {selected ? <Check size={16} className="text-white/80 shrink-0 mt-0.5" /> : null}
                       </button>
@@ -1849,6 +1858,7 @@ function EmptyState({
   chatReasoningMode,
   onChatReasoningModeChange,
   showChatReasoningSelector,
+  allowPersonaMode,
 }: {
   mode: Mode
   input: string
@@ -1862,6 +1872,7 @@ function EmptyState({
   chatReasoningMode: ChatReasoningMode
   onChatReasoningModeChange: (mode: ChatReasoningMode) => void
   showChatReasoningSelector: boolean
+  allowPersonaMode: boolean
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-6">
@@ -1894,6 +1905,7 @@ function EmptyState({
           chatReasoningMode={chatReasoningMode}
           onChatReasoningModeChange={onChatReasoningModeChange}
           showChatReasoningSelector={showChatReasoningSelector}
+          allowPersonaMode={allowPersonaMode}
         />
       </div>
     </div>
@@ -1966,6 +1978,7 @@ function ChatState({
   chatReasoningMode,
   onChatReasoningModeChange,
   showChatReasoningSelector,
+  allowPersonaMode,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -1990,6 +2003,7 @@ function ChatState({
   chatReasoningMode: ChatReasoningMode
   onChatReasoningModeChange: (mode: ChatReasoningMode) => void
   showChatReasoningSelector: boolean
+  allowPersonaMode: boolean
 }) {
   const { copied, copy } = useCopyMessage()
   const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
@@ -2319,6 +2333,7 @@ function ChatState({
             chatReasoningMode={chatReasoningMode}
             onChatReasoningModeChange={onChatReasoningModeChange}
             showChatReasoningSelector={showChatReasoningSelector}
+            allowPersonaMode={allowPersonaMode}
           />
         </div>
         <div className="text-center text-[11px] text-[#444] pt-3 font-medium">
@@ -2573,15 +2588,16 @@ export default function App() {
   const [chatReasoningMode, setChatReasoningMode] = useState<ChatReasoningMode>(() => {
     const saved = localStorage.getItem('homepilot_chat_reasoning_mode') as string | null
     // Migrate older persisted values to current set.
-    if (saved === 'auto') return 'persona'
+    if (saved === 'auto') return 'fast'
     // 'beta' was a UI-only placeholder that mapped to the same think pipeline as Expert.
     if (saved === 'beta') return 'expert'
     if (saved && CHAT_REASONING_OPTIONS.some((m) => m.id === saved)) return saved as ChatReasoningMode
-    return 'persona'
+    return 'fast'
   })
   useEffect(() => {
     localStorage.setItem('homepilot_chat_reasoning_mode', chatReasoningMode)
   }, [chatReasoningMode])
+
 
   // Route messages and conversation ID based on mode (Voice is ephemeral like Alexa/Grok)
   const messages = mode === 'voice' ? voiceMessages : chatMessages
@@ -2689,10 +2705,24 @@ export default function App() {
     persona_agent?: Record<string, any>
     persona_appearance?: Record<string, any>
   } | null>(null)
+
+  useEffect(() => {
+    if (mode !== 'chat') return
+    if (currentProject?.project_type === 'persona') {
+      // Persona mode is valid only when an actual persona project is open.
+      if (chatReasoningMode !== 'persona') setChatReasoningMode('persona')
+      localStorage.setItem('homepilot_personality_id', `persona:${currentProject.id}`)
+      return
+    }
+    // Landing/no-project chat must not inherit the last loaded persona identity.
+    if (chatReasoningMode === 'persona') setChatReasoningMode('fast')
+    localStorage.removeItem('homepilot_personality_id')
+  }, [mode, currentProject?.id, currentProject?.project_type, chatReasoningMode])
+
   // Industry pattern (Grok, Claude, ChatGPT): selector is always visible in
   // chat so users can switch model/strategy mid-conversation. Default is
-  // 'Persona' which routes to the legacy backend — persona projects remain
-  // on their existing pipeline unless the user explicitly picks another mode.
+  // 'Fast' on the no-project landing page. Persona mode is only enabled
+  // when an actual persona project is open so stale persona identities do not leak.
   // Voice never shows the selector by design.
   const showChatReasoningSelector = EXPERT_CHAT_ENABLED && mode === 'chat'
 
@@ -2930,6 +2960,14 @@ export default function App() {
     return () => window.removeEventListener('homepilot:use-gpu-node', onUseGpuNode)
   }, [])
 
+
+  const currentChatSelection = useCallback(() => {
+    const providerChat = localStorage.getItem('homepilot_provider_chat') || settingsDraft.providerChat || 'ollama'
+    const modelChat = localStorage.getItem('homepilot_model_chat') || settingsDraft.modelChat || ''
+    const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || settingsDraft.baseUrlChat || ''
+    return { providerChat, modelChat, baseUrlChat }
+  }, [settingsDraft.providerChat, settingsDraft.modelChat, settingsDraft.baseUrlChat])
+
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -3145,6 +3183,10 @@ export default function App() {
   // and carrying persona context over produced 502s + character bleed.
   const handleChatReasoningModeChange = useCallback(
     (next: ChatReasoningMode) => {
+      if (next === 'persona' && currentProject?.project_type !== 'persona') {
+        setChatReasoningMode('fast')
+        return
+      }
       const leavingPersonaForExpert =
         next !== 'persona' &&
         currentProject?.project_type === 'persona'
@@ -3775,6 +3817,8 @@ export default function App() {
         }
       }
 
+      const chatSelection = currentChatSelection()
+
       // Get voice personality system prompt for voice mode
       // Wraps with brevity instruction for natural spoken conversation
       let voiceSystemPrompt: string | undefined = undefined
@@ -3832,9 +3876,9 @@ export default function App() {
                   message: trimmed,
                   conversation_id: conversationId,
                   project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
-                  provider: settingsDraft.providerChat,
-                  provider_base_url: settingsDraft.baseUrlChat || undefined,
-                  provider_model: settingsDraft.modelChat,
+                  provider: chatSelection.providerChat,
+                  provider_base_url: chatSelection.baseUrlChat || undefined,
+                  provider_model: chatSelection.modelChat,
                   temperature: settingsDraft.textTemperature ?? 0.7,
                   max_tokens: settingsDraft.textMaxTokens ?? 900,
                   vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -3953,9 +3997,9 @@ export default function App() {
                   project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
                   fun_mode: settings.funMode,
                   mode,
-                  provider: settingsDraft.providerChat,
-                  provider_base_url: settingsDraft.baseUrlChat || undefined,
-                  provider_model: settingsDraft.modelChat,
+                  provider: chatSelection.providerChat,
+                  provider_base_url: chatSelection.baseUrlChat || undefined,
+                  provider_model: chatSelection.modelChat,
                   textTemperature: settingsDraft.textTemperature,
                   textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                   nsfwMode: settingsDraft.nsfwMode,
@@ -4210,9 +4254,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               message: requestText,
               conversation_id: conversationId,
               project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
-              provider: settingsDraft.providerChat,
-              provider_base_url: settingsDraft.baseUrlChat || undefined,
-              provider_model: settingsDraft.modelChat,
+              provider: chatSelection.providerChat,
+              provider_base_url: chatSelection.baseUrlChat || undefined,
+              provider_model: chatSelection.modelChat,
               temperature: settingsDraft.textTemperature ?? 0.7,
               max_tokens: mode === 'voice' ? 300 : (settingsDraft.textMaxTokens ?? 900),
               vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -4278,10 +4322,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 fun_mode: settings.funMode,
                 mode,
                 // Use Enterprise Settings V2 provider/model/base_url
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
-                provider_api_key: cloudProviderApiKey(settingsDraft.baseUrlChat),
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
+                provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
                 // Custom generation parameters (from settingsDraft)
                 textTemperature: settingsDraft.textTemperature,
                 // Voice mode: let backend enforce its own token cap for short spoken replies
@@ -4307,11 +4351,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 voiceSystemPrompt,
                 // Backend personality agent id — needed for personality-aware
                 // image generation (inject visual style + conversation context)
-                personalityId: localStorage.getItem('homepilot_personality_id') || undefined,
+                personalityId: currentProject?.project_type === 'persona' ? `persona:${currentProject.id}` : undefined,
                 // Chat model identity for prompt refinement fallback
                 // (backend needs this separately from provider_model which may be image model)
-                ollama_model: settingsDraft.providerChat === 'ollama' ? settingsDraft.modelChat : undefined,
-                llm_model: settingsDraft.providerChat === 'openai_compat' ? settingsDraft.modelChat : undefined,
+                ollama_model: chatSelection.providerChat === 'ollama' ? chatSelection.modelChat : undefined,
+                llm_model: chatSelection.providerChat === 'openai_compat' ? chatSelection.modelChat : undefined,
               },
               authHeaders
             )
@@ -4387,6 +4431,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       settingsDraft,
       pendingFile,
       pendingPreviewUrl,
+      currentChatSelection,
     ]
   )
 
@@ -4402,6 +4447,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       )
 
       const { requestText, mode: retryMode, projectId, multimodal } = failed.retry
+      const chatSelection = currentChatSelection()
 
       // Multimodal retry: re-call /v1/multimodal/analyze with the stored image URL
       // Respects the topology that was active when the original request was made.
@@ -4418,9 +4464,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 message: multimodal.userPrompt || requestText,
                 conversation_id: conversationId,
                 project_id: projectId,
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
                 temperature: settingsDraft.textTemperature ?? 0.7,
                 max_tokens: settingsDraft.textMaxTokens ?? 900,
                 vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -4510,9 +4556,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 project_id: currentProjectId,
                 fun_mode: settings.funMode,
                 mode: retryMode,
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
                 textTemperature: settingsDraft.textTemperature,
                 textMaxTokens: retryMode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                 nsfwMode: settingsDraft.nsfwMode,
@@ -4577,9 +4623,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             project_id: projectId,
             fun_mode: settings.funMode,
             mode: retryMode,
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
+            provider: chatSelection.providerChat,
+            provider_base_url: chatSelection.baseUrlChat || undefined,
+            provider_model: chatSelection.modelChat,
             textTemperature: settingsDraft.textTemperature,
             textMaxTokens: retryMode === 'voice' ? undefined : settingsDraft.textMaxTokens,
             imgWidth: settingsDraft.imgWidth,
@@ -4615,7 +4661,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         )
       }
     },
-    [authHeaders, conversationId, messages, settings.backendUrl, settings.funMode, settingsDraft]
+    [authHeaders, conversationId, messages, settings.backendUrl, settings.funMode, settingsDraft, currentChatSelection]
   )
 
   // TTS for assistant responses (speak-once pattern). Fires when
@@ -4672,6 +4718,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
   const uploadAndSend = useCallback(
     async (file: File) => {
+      const chatSelection = currentChatSelection()
       setShowSettings(false)
 
       // ── Multimodal path: chat/voice mode image upload ──────────────
@@ -4739,9 +4786,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 message: userPrompt || `Analyze this image: ${file.name}`,
                 conversation_id: conversationId,
                 project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
                 temperature: settingsDraft.textTemperature ?? 0.7,
                 max_tokens: settingsDraft.textMaxTokens ?? 900,
                 vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -4859,9 +4906,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
                 fun_mode: settings.funMode,
                 mode,
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
                 textTemperature: settingsDraft.textTemperature,
                 textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                 nsfwMode: settingsDraft.nsfwMode,
@@ -4973,10 +5020,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             fun_mode: settings.funMode,
             mode: intent,
             // Use Enterprise Settings V2 provider/model/base_url
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
-            provider_api_key: cloudProviderApiKey(settingsDraft.baseUrlChat),
+            provider: chatSelection.providerChat,
+            provider_base_url: chatSelection.baseUrlChat || undefined,
+            provider_model: chatSelection.modelChat,
+            provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
 
             // Video generation parameters
             vidModel: settingsDraft.modelVideo,
@@ -5021,6 +5068,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       settings.backendUrl,
       settings.funMode,
       settingsDraft,
+      currentChatSelection,
     ]
   )
 
@@ -5761,6 +5809,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               chatReasoningMode={chatReasoningMode}
               onChatReasoningModeChange={handleChatReasoningModeChange}
               showChatReasoningSelector={showChatReasoningSelector}
+              allowPersonaMode={currentProject?.project_type === 'persona'}
             />
           ) : (
             <ChatState
@@ -5785,6 +5834,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               chatReasoningMode={chatReasoningMode}
               onChatReasoningModeChange={handleChatReasoningModeChange}
               showChatReasoningSelector={showChatReasoningSelector}
+              allowPersonaMode={currentProject?.project_type === 'persona'}
             />
           )
         ) : messages.length === 0 && currentProject ? (
@@ -5850,6 +5900,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             chatReasoningMode={chatReasoningMode}
             onChatReasoningModeChange={handleChatReasoningModeChange}
             showChatReasoningSelector={showChatReasoningSelector}
+            allowPersonaMode={currentProject?.project_type === 'persona'}
           />
         ) : (
           <ChatState
@@ -5874,6 +5925,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             chatReasoningMode={chatReasoningMode}
             onChatReasoningModeChange={handleChatReasoningModeChange}
             showChatReasoningSelector={showChatReasoningSelector}
+            allowPersonaMode={currentProject?.project_type === 'persona'}
           />
         )}
       </main>
