@@ -5350,13 +5350,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     )
                     if (convData.ok && convData.messages && convData.messages.length > 0) {
                       setChatMessages(
-                        convData.messages.map((m, idx) => ({
-                          id: `restored-${idx}`,
-                          role: m.role as 'user' | 'assistant',
-                          text: m.content,
-                          animate: false,
-                          media: m.media || undefined,
-                        }))
+                        convData.messages.map((m, idx) => {
+                          const h = hydratePersistedMessageMedia(m.media)
+                          return {
+                            id: `restored-${idx}`,
+                            role: m.role as 'user' | 'assistant',
+                            text: m.content,
+                            animate: false,
+                            media: h.media,
+                            ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+                          }
+                        })
                       )
                     } else {
                       setChatMessages([])
@@ -5409,13 +5413,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       authHeaders
                     )
                     if (convData.ok && convData.messages && convData.messages.length > 0) {
-                      const restored = convData.messages.map((m, idx) => ({
-                        id: `restored-${idx}`,
-                        role: m.role as 'user' | 'assistant',
-                        text: m.content,
-                        animate: false,
-                        media: m.media || undefined,
-                      }))
+                      const restored = convData.messages.map((m, idx) => {
+                        const h = hydratePersistedMessageMedia(m.media)
+                        return {
+                          id: `restored-${idx}`,
+                          role: m.role as 'user' | 'assistant',
+                          text: m.content,
+                          animate: false,
+                          media: h.media,
+                          ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+                        }
+                      })
                       setVoiceMessages(restored)
                       // Mark last message as spoken so TTS doesn't replay history
                       lastSpokenMessageIdRef.current = restored[restored.length - 1].id

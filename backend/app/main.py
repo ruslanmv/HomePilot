@@ -4741,13 +4741,23 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     # Helper: persist deterministic photo responses to conversation history
     # so outfit context is available for follow-up messages (e.g. "show me your back"
     # after "show me your lingerie" should know lingerie was the last outfit shown).
-    def _persist_photo_response(cid_: str | None, user_msg: str, assistant_text: str, project_id: str | None = None) -> None:
+    def _persist_photo_response(
+        cid_: str | None,
+        user_msg: str,
+        assistant_text: str,
+        project_id: str | None = None,
+        media: dict | None = None,
+    ) -> None:
         if not cid_:
             return
         try:
             from .storage import add_message
             add_message(cid_, "user", user_msg, project_id=project_id or "")
-            add_message(cid_, "assistant", assistant_text, project_id=project_id or "")
+            # Persist the resolved photo URLs alongside the text so the
+            # images survive a conversation reload. Without media here the
+            # deterministic photo-intent fast path shows images live but
+            # loses them on reload (text-only history).
+            add_message(cid_, "assistant", assistant_text, media=media, project_id=project_id or "")
         except Exception as _e:
             print(f"[CHAT ENDPOINT] photo-intent: failed to persist history: {_e}")
 
@@ -4964,7 +4974,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
 
                     if _vp_media:
                         print(f"[CHAT ENDPOINT] photo-intent: returning {_detected_angle or 'all'} angle of '{_target_label}' for project {_photo_project_id}")
-                        _persist_photo_response(cid, inp.message, _angle_text, _photo_project_id)
+                        _persist_photo_response(cid, inp.message, _angle_text, _photo_project_id, _vp_media)
                         return JSONResponse(
                             status_code=200,
                             content={
@@ -5008,7 +5018,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                             else:
                                 _fb_text = f"Here's my {_fb_label}!"
                             print(f"[CHAT ENDPOINT] photo-intent: no view_pack, returning fallback for angle={_detected_angle} outfit='{_target_label}' project={_photo_project_id}")
-                            _persist_photo_response(cid, inp.message, _fb_text, _photo_project_id)
+                            _persist_photo_response(cid, inp.message, _fb_text, _photo_project_id, {"images": [_fallback_url]})
                             return JSONResponse(
                                 status_code=200,
                                 content={
@@ -5039,7 +5049,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                         urls_to_show = all_urls
                         text = "Here are all my photos!"
                         print(f"[CHAT ENDPOINT] photo-intent: returning ALL {len(all_urls)} photos for project {_photo_project_id}")
-                    _persist_photo_response(cid, inp.message, text, _photo_project_id)
+                    _persist_photo_response(cid, inp.message, text, _photo_project_id, {"images": urls_to_show})
                     return JSONResponse(
                         status_code=200,
                         content={
@@ -5056,7 +5066,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                     if 0 <= idx_0 < len(all_urls):
                         photo_url = all_urls[idx_0]
                         print(f"[CHAT ENDPOINT] photo-intent: returning photo {requested_num} of {len(all_urls)} for project {_photo_project_id}")
-                        _persist_photo_response(cid, inp.message, f"Here's photo {requested_num}!", _photo_project_id)
+                        _persist_photo_response(cid, inp.message, f"Here's photo {requested_num}!", _photo_project_id, {"images": [photo_url]})
                         return JSONResponse(
                             status_code=200,
                             content={
@@ -5084,7 +5094,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                 _is_photo_intent._counters[_photo_project_id] = ctr + 1  # type: ignore[attr-defined]
                 print(f"[CHAT ENDPOINT] photo-intent: returning photo {ctr % len(all_urls) + 1} of {len(all_urls)} for project {_photo_project_id}")
                 text = "Here's my photo!" if ctr == 0 else "Here's another one!"
-                _persist_photo_response(cid, inp.message, text, _photo_project_id)
+                _persist_photo_response(cid, inp.message, text, _photo_project_id, {"images": [photo_url]})
                 return JSONResponse(
                     status_code=200,
                     content={
