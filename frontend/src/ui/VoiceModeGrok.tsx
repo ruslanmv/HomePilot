@@ -57,6 +57,7 @@ import {
   getDefaultPersonality,
   getPersonalityById,
   LS_PERSONALITY_ID,
+  LS_VOICE_STYLE_ID,
 } from './voice/personalities';
 import { User } from 'lucide-react';
 import {
@@ -758,7 +759,37 @@ function VoiceLightbox({ src, onClose }: { src: string; onClose: () => void }) {
   );
 }
 
+
+function resolvePersonalitySelection(id?: string | null): PersonalityDef | undefined {
+  if (!id) return undefined;
+  if (id.startsWith('persona:')) {
+    try {
+      const cached = localStorage.getItem(LS_PERSONA_CACHE);
+      if (cached) {
+        const personas = JSON.parse(cached) as Array<{ id: string; label: string; role: string; tone: string; system_prompt: string }>;
+        const projId = id.slice('persona:'.length);
+        const persona = personas.find((p) => p.id === projId);
+        if (persona) {
+          return {
+            id,
+            label: persona.label,
+            icon: User,
+            prompt: persona.system_prompt || '',
+            isPersona: true,
+            personaSystemPrompt: persona.system_prompt,
+            personaTone: persona.tone,
+            personaRole: persona.role,
+          };
+        }
+      }
+    } catch { /* fall through */ }
+    return undefined;
+  }
+  return getPersonalityById(id as any);
+}
+
 interface VoiceModeGrokProps {
+  activePersonalityId?: string | null;
   onSendText: (text: string) => void;
   onClose?: () => void;
   onNewChat?: () => void;
@@ -769,6 +800,7 @@ interface VoiceModeGrokProps {
 }
 
 export default function VoiceModeGrok({
+  activePersonalityId,
   onSendText,
   onClose,
   onNewChat,
@@ -810,34 +842,14 @@ export default function VoiceModeGrok({
 
   const [activePersonality, setActivePersonality] = useState<PersonalityDef>(() => {
     if (typeof window !== 'undefined') {
-      const savedId = localStorage.getItem(LS_PERSONALITY_ID);
-      if (savedId) {
-        // Restore persona selection from cache
-        if (savedId.startsWith('persona:')) {
-          try {
-            const cached = localStorage.getItem(LS_PERSONA_CACHE);
-            if (cached) {
-              const personas = JSON.parse(cached) as Array<{ id: string; label: string; role: string; tone: string; system_prompt: string }>;
-              const projId = savedId.slice('persona:'.length);
-              const persona = personas.find((p) => p.id === projId);
-              if (persona) {
-                return {
-                  id: savedId,
-                  label: persona.label,
-                  icon: User,
-                  prompt: persona.system_prompt || '',
-                  isPersona: true,
-                  personaSystemPrompt: persona.system_prompt,
-                  personaTone: persona.tone,
-                  personaRole: persona.role,
-                };
-              }
-            }
-          } catch { /* fall through to default */ }
-        }
-        const personality = getPersonalityById(savedId as any);
-        if (personality) return personality;
-      }
+      const explicitPersona = resolvePersonalitySelection(activePersonalityId);
+      if (explicitPersona) return explicitPersona;
+
+      const savedStyleId = localStorage.getItem(LS_VOICE_STYLE_ID);
+      const legacyId = localStorage.getItem(LS_PERSONALITY_ID);
+      const legacyBuiltInId = legacyId && !legacyId.startsWith('persona:') ? legacyId : null;
+      const personality = resolvePersonalitySelection(savedStyleId || legacyBuiltInId);
+      if (personality && !personality.isPersona) return personality;
     }
     return getDefaultPersonality();
   });
@@ -936,6 +948,19 @@ export default function VoiceModeGrok({
     }
   }, [activeVoice, speed]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const next = resolvePersonalitySelection(activePersonalityId);
+    if (next && next.id !== activePersonality.id) {
+      setActivePersonality(next);
+    } else if (!activePersonalityId && activePersonality.isPersona) {
+      const savedStyleId = localStorage.getItem(LS_VOICE_STYLE_ID);
+      const legacyId = localStorage.getItem(LS_PERSONALITY_ID);
+      const legacyBuiltInId = legacyId && !legacyId.startsWith('persona:') ? legacyId : null;
+      setActivePersonality(resolvePersonalitySelection(savedStyleId || legacyBuiltInId) || getDefaultPersonality());
+    }
+  }, [activePersonality.id, activePersonality.isPersona, activePersonalityId]);
+
   // Track previous personality to detect mid-session switches
   const prevPersonalityRef = useRef<string>(activePersonality.id);
 
@@ -943,7 +968,13 @@ export default function VoiceModeGrok({
   // A personality change is an identity boundary — the new persona should
   // start with a fresh conversation (no stale history from the old identity).
   useEffect(() => {
-    localStorage.setItem(LS_PERSONALITY_ID, activePersonality.id);
+    if (activePersonality.isPersona) {
+      localStorage.setItem(LS_PERSONALITY_ID, activePersonality.id);
+    } else {
+      localStorage.setItem(LS_VOICE_STYLE_ID, activePersonality.id);
+      const legacyId = localStorage.getItem(LS_PERSONALITY_ID);
+      if (legacyId?.startsWith('persona:')) localStorage.removeItem(LS_PERSONALITY_ID);
+    }
 
     const prev = prevPersonalityRef.current;
     if (prev && prev !== activePersonality.id) {

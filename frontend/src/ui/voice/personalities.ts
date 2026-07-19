@@ -178,3 +178,4 @@ export function getPersonalityById(id: PersonalityId): PersonalityDef | undefine
 
 // localStorage key
 export const LS_PERSONALITY_ID = 'homepilot_personality_id';
+export const LS_VOICE_STYLE_ID = 'homepilot_voice_style_id';
