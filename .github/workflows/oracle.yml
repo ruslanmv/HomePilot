@@ -70,6 +70,31 @@ jobs:
     runs-on: ubuntu-latest
     environment: oracle-production
     steps:
+      # Fail early with an actionable message instead of appleboy/ssh-action's
+      # cryptic "missing server host" when a secret is absent. The three below
+      # must be set as Environment secrets on 'oracle-production'
+      # (Settings → Environments → oracle-production → Environment secrets).
+      - name: Verify deployment secrets
+        env:
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+          ORACLE_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [[ -z "$ORACLE_HOST" ]] && missing+=("ORACLE_HOST")
+          [[ -z "$ORACLE_USER" ]] && missing+=("ORACLE_USER")
+          [[ -z "$ORACLE_SSH_PRIVATE_KEY" ]] && missing+=("ORACLE_SSH_PRIVATE_KEY")
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing required secret(s) in the 'oracle-production' environment: ${missing[*]}"
+            echo "Add them under Settings → Environments → oracle-production → Environment secrets:"
+            echo "  ORACLE_HOST             = the instance public IP (e.g. 193.122.156.100)"
+            echo "  ORACLE_USER             = SSH user (opc on Oracle Linux, ubuntu on Ubuntu)"
+            echo "  ORACLE_SSH_PRIVATE_KEY  = full private key PEM matching authorized_keys"
+            echo "  ORACLE_SSH_PORT         = optional; defaults to 22"
+            exit 1
+          fi
+          echo "All required Oracle deployment secrets are present."
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
