@@ -102,14 +102,26 @@ and publishes it as:
 ghcr.io/<repository-owner>/homepilot-oracle:<commit-sha>
 ```
 
-Configure the `oracle-production` GitHub environment with:
+Configure the `oracle-production` GitHub environment (Settings → Environments →
+`oracle-production`). Host/user/port are non-sensitive, so they are
+**environment variables**; only the key is an **environment secret**:
+
+**Variables** (Environment variables):
 
 - `ORACLE_HOST`: instance public IP or hostname (e.g. `193.122.156.100`)
 - `ORACLE_USER`: SSH user with permission to run Docker — `opc` on Oracle
   Linux, `ubuntu` on Ubuntu (added to the `docker` group by `install.sh`)
+- `ORACLE_SSH_PORT`: optional; defaults to 22
+
+**Secret** (Environment secret):
+
 - `ORACLE_SSH_PRIVATE_KEY`: private deployment key (full PEM, matching a public
   key in the instance's `~/.ssh/authorized_keys`)
-- `ORACLE_SSH_PORT`: optional; defaults to 22
+
+> The workflow reads host/user/port via `vars.*` and the key via `secrets.*`.
+> Putting `ORACLE_HOST`/`ORACLE_USER` under *Secrets* instead of *Variables*
+> (or vice-versa for the key) leaves the value empty at deploy time and
+> surfaces as `missing server host`.
 
 The server must already contain `/opt/homepilot`, `docker-compose.yml`,
 `Caddyfile`, `deploy.sh`, and a completed `.env`.
