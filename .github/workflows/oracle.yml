@@ -73,28 +73,32 @@ jobs:
       - uses: actions/checkout@v4
 
       # Fail early with an actionable message instead of appleboy/ssh-action's
-      # cryptic "missing server host" when config is absent. On the
-      # 'oracle-production' environment configure:
-      #   Variables : ORACLE_HOST, ORACLE_USER, ORACLE_SSH_PORT (optional),
-      #               HOMEPILOT_DOMAIN, ACME_EMAIL
-      #   Secrets   : ORACLE_SSH_PRIVATE_KEY, HOMEPILOT_API_KEY
-      # Host/user/domain are non-sensitive so they live as Environment
-      # *variables* (vars.*); the private key and API key are *secrets*.
+      # cryptic "missing server host" when config is absent. Each value is read
+      # as `vars.X || secrets.X`, so it works whether you stored it as an
+      # Environment *variable* or an Environment *secret* on 'oracle-production'.
+      # Required: ORACLE_HOST, ORACLE_USER, ORACLE_SSH_PRIVATE_KEY,
+      #           HOMEPILOT_DOMAIN, ACME_EMAIL, and HOMEPILOT_API_KEY (or API_KEY).
       - name: Verify deployment config
         env:
-          ORACLE_HOST: ${{ vars.ORACLE_HOST }}
-          ORACLE_USER: ${{ vars.ORACLE_USER }}
+          ORACLE_HOST: ${{ vars.ORACLE_HOST || secrets.ORACLE_HOST }}
+          ORACLE_USER: ${{ vars.ORACLE_USER || secrets.ORACLE_USER }}
           ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          HOMEPILOT_DOMAIN: ${{ vars.HOMEPILOT_DOMAIN || secrets.HOMEPILOT_DOMAIN }}
+          ACME_EMAIL: ${{ vars.ACME_EMAIL || secrets.ACME_EMAIL }}
+          API_KEY: ${{ secrets.HOMEPILOT_API_KEY || secrets.API_KEY }}
         run: |
           missing=()
-          [[ -z "$ORACLE_HOST" ]] && missing+=("ORACLE_HOST (variable)")
-          [[ -z "$ORACLE_USER" ]] && missing+=("ORACLE_USER (variable)")
+          [[ -z "$ORACLE_HOST" ]] && missing+=("ORACLE_HOST")
+          [[ -z "$ORACLE_USER" ]] && missing+=("ORACLE_USER")
           [[ -z "$ORACLE_SSH_PRIVATE_KEY" ]] && missing+=("ORACLE_SSH_PRIVATE_KEY (secret)")
+          [[ -z "$HOMEPILOT_DOMAIN" ]] && missing+=("HOMEPILOT_DOMAIN")
+          [[ -z "$ACME_EMAIL" ]] && missing+=("ACME_EMAIL")
+          [[ -z "$API_KEY" ]] && missing+=("HOMEPILOT_API_KEY (secret)")
           if (( ${#missing[@]} )); then
             echo "::error::Missing required config on the 'oracle-production' environment: ${missing[*]}"
-            echo "Settings → Environments → oracle-production:"
-            echo "  Variables:  ORACLE_HOST, ORACLE_USER, ORACLE_SSH_PORT (optional)"
-            echo "  Secrets:    ORACLE_SSH_PRIVATE_KEY"
+            echo "Add each as an Environment variable OR secret (either works):"
+            echo "  ORACLE_HOST, ORACLE_USER, HOMEPILOT_DOMAIN, ACME_EMAIL"
+            echo "  ORACLE_SSH_PRIVATE_KEY (secret), HOMEPILOT_API_KEY (secret)"
             exit 1
           fi
           echo "All required Oracle deployment config is present."
@@ -104,10 +108,10 @@ jobs:
       - name: Upload deployment files
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ vars.ORACLE_HOST }}
-          username: ${{ vars.ORACLE_USER }}
+          host: ${{ vars.ORACLE_HOST || secrets.ORACLE_HOST }}
+          username: ${{ vars.ORACLE_USER || secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
-          port: ${{ vars.ORACLE_SSH_PORT || 22 }}
+          port: ${{ vars.ORACLE_SSH_PORT || secrets.ORACLE_SSH_PORT || 22 }}
           # Copy the whole directory (not oracle/*) so the .env.example dotfile
           # is included; strip the leading "oracle/" path component.
           source: "oracle"
@@ -123,16 +127,16 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           IMAGE_REF: ${{ needs.build.outputs.image_ref }}
-          HOMEPILOT_DOMAIN: ${{ vars.HOMEPILOT_DOMAIN }}
-          ACME_EMAIL: ${{ vars.ACME_EMAIL }}
-          API_KEY: ${{ secrets.HOMEPILOT_API_KEY }}
+          HOMEPILOT_DOMAIN: ${{ vars.HOMEPILOT_DOMAIN || secrets.HOMEPILOT_DOMAIN }}
+          ACME_EMAIL: ${{ vars.ACME_EMAIL || secrets.ACME_EMAIL }}
+          API_KEY: ${{ secrets.HOMEPILOT_API_KEY || secrets.API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
-          host: ${{ vars.ORACLE_HOST }}
-          username: ${{ vars.ORACLE_USER }}
+          host: ${{ vars.ORACLE_HOST || secrets.ORACLE_HOST }}
+          username: ${{ vars.ORACLE_USER || secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
-          port: ${{ vars.ORACLE_SSH_PORT || 22 }}
+          port: ${{ vars.ORACLE_SSH_PORT || secrets.ORACLE_SSH_PORT || 22 }}
           envs: IMAGE_REF,HOMEPILOT_DOMAIN,ACME_EMAIL,API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY
           script_stop: true
           script: |
