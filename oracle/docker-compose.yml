@@ -15,12 +15,18 @@ services:
     # HOMEPILOT_MEM_LIMIT / HOMEPILOT_MEMSWAP_LIMIT for larger shapes.
     mem_limit: ${HOMEPILOT_MEM_LIMIT:-5g}
     memswap_limit: ${HOMEPILOT_MEMSWAP_LIMIT:-7g}
+    # Probe the backend's real health endpoint directly on :8000. The in-image
+    # nginx (on :7860) maps /api/health -> backend /api/health, which does not
+    # exist (the backend serves /health), so the old :7860/api/health probe
+    # 404'd and the container never became healthy. Hitting :8000/health inside
+    # the container avoids that mapping. start_period is generous because the
+    # app is slow to import on the 1 OCPU Ampere shape.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:7860/api/health"]
-      interval: 30s
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 180s
     logging:
       driver: json-file
       options:
