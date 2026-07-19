@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
@@ -1776,7 +1777,17 @@ async def orchestrate(
             return {"conversation_id": cid, "text": text, "media": None}
 
     # --- Normal chat ---
-    history = get_recent(cid, limit=24)
+    # Keep the hot chat path lean. Long histories make local Ollama models
+    # re-process ever-growing prompts every turn and can turn the 2nd/3rd
+    # question into multi-minute waits on laptop GPUs. Persist full history in
+    # storage, but send only the recent window needed for conversational
+    # continuity. Override with CHAT_HISTORY_LIMIT for deployments that need
+    # deeper context.
+    try:
+        chat_history_limit = max(2, min(24, int(os.getenv("CHAT_HISTORY_LIMIT", "8"))))
+    except Exception:
+        chat_history_limit = 8
+    history = get_recent(cid, limit=chat_history_limit)
 
     # ================================================================
     # PERSONALITY AGENT SYSTEM (backend-authoritative)
@@ -1987,6 +1998,17 @@ async def orchestrate(
     else:
         effective_max_tokens = default_max_tokens
 
+    prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
+    trace_id = str(cid or uuid.uuid4())[:8]
+    print(
+        f"[CHAT TRACE {trace_id}] llm_start provider={prov!r} model={provider_model!r} "
+        f"base_url={provider_base_url!r} messages={len(messages)} history={len(history)} "
+        f"prompt_chars={prompt_chars} max_tokens={effective_max_tokens} "
+        f"temperature={(text_temperature if text_temperature is not None else (0.9 if fun_mode else 0.7))} "
+        f"voice={is_voice_mode} project_id={_project_id_for_session!r} personality={bool(personality_agent)}"
+    )
+    llm_started = time.perf_counter()
+
     try:
         out = await llm_chat(
             messages,
@@ -1997,10 +2019,20 @@ async def orchestrate(
             model=provider_model,
         )
     except Exception as e:
+        llm_elapsed_ms = int((time.perf_counter() - llm_started) * 1000)
+        print(f"[CHAT TRACE {trace_id}] llm_error elapsed_ms={llm_elapsed_ms} error={type(e).__name__}: {e}")
         # Don't crash the API; return a stable response
         err = f"LLM error ({prov}): {str(e)}"
         add_message(cid, "assistant", err)
         return {"conversation_id": cid, "text": err, "media": None}
+
+    llm_elapsed_ms = int((time.perf_counter() - llm_started) * 1000)
+    raw_msg = ((out.get("choices") or [{}])[0].get("message", {}) if isinstance(out, dict) else {})
+    raw_content = str(raw_msg.get("content") or "")
+    print(
+        f"[CHAT TRACE {trace_id}] llm_done elapsed_ms={llm_elapsed_ms} "
+        f"raw_content_len={len(raw_content)} raw_preview={raw_content[:120]!r}"
+    )
 
     # Robust parsing — strip any leaked <think> tags from thinking models
     text = (
@@ -2054,6 +2086,7 @@ async def orchestrate(
     except Exception:
         pass
 
+    print(f"[CHAT TRACE {trace_id}] assistant_final len={len(text or '')} preview={str(text or '')[:120]!r} media={bool(text_media)}")
     add_message(cid, "assistant", text, media=text_media)
 
     # Additive: Memory V2 ingestion after response (persona projects only)

@@ -4593,9 +4593,22 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     except Exception:
         pass  # additive — never let credential plumbing break chat
 
+    # Normalize chat model selection. Settings V2 sends the generic
+    # provider_model for all providers; keep the legacy ollama_model /
+    # llm_model aliases synchronized so downstream chat, voice, and prompt
+    # refinement paths switch models on the very next request.
+    provider = (inp.provider or "").strip() or None
+    provider_model = (inp.provider_model or "").strip() or None
+    ollama_model = (inp.ollama_model or "").strip() or None
+    llm_model = (inp.llm_model or "").strip() or None
+    if provider == "ollama" and provider_model:
+        ollama_model = provider_model
+    if provider == "openai_compat" and provider_model:
+        llm_model = provider_model
+
     # Debug: Log incoming parameters
     print(f"[CHAT ENDPOINT] imgModel received from frontend: '{inp.imgModel}' (type: {type(inp.imgModel).__name__ if inp.imgModel is not None else 'None'})")
-    print(f"[CHAT ENDPOINT] project_id: {inp.project_id!r}, personalityId: {inp.personalityId!r}, ollama_model: {inp.ollama_model!r}")
+    print(f"[CHAT ENDPOINT] project_id: {inp.project_id!r}, personalityId: {inp.personalityId!r}, provider: {provider!r}, provider_model: {provider_model!r}, ollama_model: {ollama_model!r}, llm_model: {llm_model!r}")
 
     # Build payload for mode-aware handler
     payload = {
@@ -4603,13 +4616,13 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
         "conversation_id": inp.conversation_id,
         "project_id": inp.project_id,
         "fun_mode": inp.fun_mode,
-        "provider": inp.provider,
+        "provider": provider,
         "ollama_base_url": inp.ollama_base_url,
-        "ollama_model": inp.ollama_model,
+        "ollama_model": ollama_model,
         "provider_base_url": inp.provider_base_url,
-        "provider_model": inp.provider_model,
+        "provider_model": provider_model,
         "llm_base_url": inp.llm_base_url,
-        "llm_model": inp.llm_model,
+        "llm_model": llm_model,
         "textTemperature": inp.textTemperature,
         "textMaxTokens": inp.textMaxTokens,
         "imgWidth": inp.imgWidth,

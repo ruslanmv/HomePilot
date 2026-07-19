@@ -314,16 +314,19 @@ function toThinkingMode(mode: ChatReasoningMode): 'auto' | 'fast' | 'think' | 'h
   return mode
 }
 
-const EXPERT_CHAT_ENABLED = String((import.meta as any)?.env?.VITE_EXPERT_CHAT_ENABLED ?? 'false') === 'true'
+const EXPERT_CHAT_ENABLED = String((import.meta as any)?.env?.VITE_EXPERT_CHAT_ENABLED ?? 'true') === 'true'
 
 // Picking 'persona' keeps the legacy personas backend exactly as today.
 // Picking Fast/Expert/Heavy/Beta explicitly opts into the Expert backend —
 // industry-standard pattern (Grok, Claude, ChatGPT all let the user switch
 // model mid-conversation). Voice is always legacy; the selector is never
 // rendered outside chat.
-function canUseExpertInContext(mode: Mode, chatReasoningMode: ChatReasoningMode, _projectType?: string): boolean {
+function canUseExpertInContext(mode: Mode, chatReasoningMode: ChatReasoningMode, projectType?: string): boolean {
   if (!EXPERT_CHAT_ENABLED) return false
   if (mode !== 'chat') return false
+  // .hpersona/persona projects must always use the persona/project chat path so
+  // persona_agent settings, appearance, inventory, and memory are injected.
+  if (projectType === 'persona') return false
   return chatReasoningMode !== 'persona'
 }
 type Provider = 'backend' | 'ollama'
@@ -2930,6 +2933,14 @@ export default function App() {
     return () => window.removeEventListener('homepilot:use-gpu-node', onUseGpuNode)
   }, [])
 
+
+  const currentChatSelection = useCallback(() => {
+    const providerChat = localStorage.getItem('homepilot_provider_chat') || settingsDraft.providerChat || 'ollama'
+    const modelChat = localStorage.getItem('homepilot_model_chat') || settingsDraft.modelChat || ''
+    const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || settingsDraft.baseUrlChat || ''
+    return { providerChat, modelChat, baseUrlChat }
+  }, [settingsDraft.providerChat, settingsDraft.modelChat, settingsDraft.baseUrlChat])
+
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -3775,6 +3786,8 @@ export default function App() {
         }
       }
 
+      const chatSelection = currentChatSelection()
+
       // Get voice personality system prompt for voice mode
       // Wraps with brevity instruction for natural spoken conversation
       let voiceSystemPrompt: string | undefined = undefined
@@ -3832,9 +3845,9 @@ export default function App() {
                   message: trimmed,
                   conversation_id: conversationId,
                   project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
-                  provider: settingsDraft.providerChat,
-                  provider_base_url: settingsDraft.baseUrlChat || undefined,
-                  provider_model: settingsDraft.modelChat,
+                  provider: chatSelection.providerChat,
+                  provider_base_url: chatSelection.baseUrlChat || undefined,
+                  provider_model: chatSelection.modelChat,
                   temperature: settingsDraft.textTemperature ?? 0.7,
                   max_tokens: settingsDraft.textMaxTokens ?? 900,
                   vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -3953,9 +3966,9 @@ export default function App() {
                   project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
                   fun_mode: settings.funMode,
                   mode,
-                  provider: settingsDraft.providerChat,
-                  provider_base_url: settingsDraft.baseUrlChat || undefined,
-                  provider_model: settingsDraft.modelChat,
+                  provider: chatSelection.providerChat,
+                  provider_base_url: chatSelection.baseUrlChat || undefined,
+                  provider_model: chatSelection.modelChat,
                   textTemperature: settingsDraft.textTemperature,
                   textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                   nsfwMode: settingsDraft.nsfwMode,
@@ -4210,9 +4223,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               message: requestText,
               conversation_id: conversationId,
               project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
-              provider: settingsDraft.providerChat,
-              provider_base_url: settingsDraft.baseUrlChat || undefined,
-              provider_model: settingsDraft.modelChat,
+              provider: chatSelection.providerChat,
+              provider_base_url: chatSelection.baseUrlChat || undefined,
+              provider_model: chatSelection.modelChat,
               temperature: settingsDraft.textTemperature ?? 0.7,
               max_tokens: mode === 'voice' ? 300 : (settingsDraft.textMaxTokens ?? 900),
               vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -4278,10 +4291,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 fun_mode: settings.funMode,
                 mode,
                 // Use Enterprise Settings V2 provider/model/base_url
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
-                provider_api_key: cloudProviderApiKey(settingsDraft.baseUrlChat),
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
+                provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
                 // Custom generation parameters (from settingsDraft)
                 textTemperature: settingsDraft.textTemperature,
                 // Voice mode: let backend enforce its own token cap for short spoken replies
@@ -4310,8 +4323,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 personalityId: localStorage.getItem('homepilot_personality_id') || undefined,
                 // Chat model identity for prompt refinement fallback
                 // (backend needs this separately from provider_model which may be image model)
-                ollama_model: settingsDraft.providerChat === 'ollama' ? settingsDraft.modelChat : undefined,
-                llm_model: settingsDraft.providerChat === 'openai_compat' ? settingsDraft.modelChat : undefined,
+                ollama_model: chatSelection.providerChat === 'ollama' ? chatSelection.modelChat : undefined,
+                llm_model: chatSelection.providerChat === 'openai_compat' ? chatSelection.modelChat : undefined,
               },
               authHeaders
             )
@@ -4387,6 +4400,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       settingsDraft,
       pendingFile,
       pendingPreviewUrl,
+      currentChatSelection,
     ]
   )
 
@@ -4402,6 +4416,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       )
 
       const { requestText, mode: retryMode, projectId, multimodal } = failed.retry
+      const chatSelection = currentChatSelection()
 
       // Multimodal retry: re-call /v1/multimodal/analyze with the stored image URL
       // Respects the topology that was active when the original request was made.
@@ -4418,9 +4433,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 message: multimodal.userPrompt || requestText,
                 conversation_id: conversationId,
                 project_id: projectId,
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
                 temperature: settingsDraft.textTemperature ?? 0.7,
                 max_tokens: settingsDraft.textMaxTokens ?? 900,
                 vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -4510,9 +4525,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 project_id: currentProjectId,
                 fun_mode: settings.funMode,
                 mode: retryMode,
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
                 textTemperature: settingsDraft.textTemperature,
                 textMaxTokens: retryMode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                 nsfwMode: settingsDraft.nsfwMode,
@@ -4577,9 +4592,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             project_id: projectId,
             fun_mode: settings.funMode,
             mode: retryMode,
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
+            provider: chatSelection.providerChat,
+            provider_base_url: chatSelection.baseUrlChat || undefined,
+            provider_model: chatSelection.modelChat,
             textTemperature: settingsDraft.textTemperature,
             textMaxTokens: retryMode === 'voice' ? undefined : settingsDraft.textMaxTokens,
             imgWidth: settingsDraft.imgWidth,
@@ -4615,7 +4630,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         )
       }
     },
-    [authHeaders, conversationId, messages, settings.backendUrl, settings.funMode, settingsDraft]
+    [authHeaders, conversationId, messages, settings.backendUrl, settings.funMode, settingsDraft, currentChatSelection]
   )
 
   // TTS for assistant responses (speak-once pattern). Fires when
@@ -4672,6 +4687,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
   const uploadAndSend = useCallback(
     async (file: File) => {
+      const chatSelection = currentChatSelection()
       setShowSettings(false)
 
       // ── Multimodal path: chat/voice mode image upload ──────────────
@@ -4739,9 +4755,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 message: userPrompt || `Analyze this image: ${file.name}`,
                 conversation_id: conversationId,
                 project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
                 temperature: settingsDraft.textTemperature ?? 0.7,
                 max_tokens: settingsDraft.textMaxTokens ?? 900,
                 vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -4859,9 +4875,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
                 fun_mode: settings.funMode,
                 mode,
-                provider: settingsDraft.providerChat,
-                provider_base_url: settingsDraft.baseUrlChat || undefined,
-                provider_model: settingsDraft.modelChat,
+                provider: chatSelection.providerChat,
+                provider_base_url: chatSelection.baseUrlChat || undefined,
+                provider_model: chatSelection.modelChat,
                 textTemperature: settingsDraft.textTemperature,
                 textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                 nsfwMode: settingsDraft.nsfwMode,
@@ -4973,10 +4989,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             fun_mode: settings.funMode,
             mode: intent,
             // Use Enterprise Settings V2 provider/model/base_url
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
-            provider_api_key: cloudProviderApiKey(settingsDraft.baseUrlChat),
+            provider: chatSelection.providerChat,
+            provider_base_url: chatSelection.baseUrlChat || undefined,
+            provider_model: chatSelection.modelChat,
+            provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
 
             // Video generation parameters
             vidModel: settingsDraft.modelVideo,
@@ -5021,6 +5037,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       settings.backendUrl,
       settings.funMode,
       settingsDraft,
+      currentChatSelection,
     ]
   )
 

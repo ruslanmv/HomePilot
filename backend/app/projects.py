@@ -799,6 +799,18 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
     conversation_id = payload.get("conversation_id", "")
     project_id = payload.get("project_id", "default")
     provider = payload.get("provider", "openai_compat")
+    provider_base_url = payload.get("provider_base_url")
+    provider_model = payload.get("provider_model")
+    if not provider_base_url:
+        if provider == "ollama":
+            provider_base_url = payload.get("ollama_base_url")
+        elif provider == "openai_compat":
+            provider_base_url = payload.get("llm_base_url")
+    if not provider_model:
+        if provider == "ollama":
+            provider_model = payload.get("ollama_model")
+        elif provider == "openai_compat":
+            provider_model = payload.get("llm_model")
     user_id = payload.get("user_id")
 
     if not message:
@@ -813,8 +825,14 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
     # 1. Add user message to storage (tagged with project_id for history)
     add_message(conversation_id, "user", message, project_id=project_id)
 
-    # 2. Get recent conversation history
-    history = get_recent(conversation_id, limit=24)
+    # 2. Get recent conversation history. Keep project/persona chats responsive on
+    # local models; the full transcript remains persisted in storage.
+    try:
+        import os as _os
+        chat_history_limit = max(2, min(24, int(_os.getenv("CHAT_HISTORY_LIMIT", "8"))))
+    except Exception:
+        chat_history_limit = 8
+    history = get_recent(conversation_id, limit=chat_history_limit)
 
     # 3. Load Project Context
     project_data = get_project_by_id(project_id)
@@ -1326,14 +1344,31 @@ You have access to the project's context. When relevant context from the knowled
 
     try:
         # 5c. Call LLM
+        import time as _time
+        _trace_id = str(conversation_id or project_id or "project")[:8]
+        _prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
+        print(
+            f"[PROJECT CHAT {_trace_id}] llm_start project_id={project_id!r} "
+            f"provider={provider!r} model={provider_model!r} base_url={provider_base_url!r} "
+            f"messages={len(messages)} history={len(history)} prompt_chars={_prompt_chars} "
+            f"max_tokens={300 if is_voice else 900} is_persona={bool(is_persona)}"
+        )
+        _llm_started = _time.perf_counter()
         response = await llm_chat(
             messages,
             provider=provider,
             temperature=0.7,
-            max_tokens=300 if is_voice else 900
+            max_tokens=300 if is_voice else 900,
+            base_url=provider_base_url,
+            model=provider_model,
         )
+        _elapsed_ms = int((_time.perf_counter() - _llm_started) * 1000)
 
         text = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+        print(
+            f"[PROJECT CHAT {_trace_id}] llm_done elapsed_ms={_elapsed_ms} "
+            f"raw_len={len(text or '')} raw_preview={str(text or '')[:120]!r}"
+        )
         text = text.strip() or "Could not generate response."
 
         # 6. Resolve [show:Label] tags, media:// refs, and <start_of_image>
@@ -1520,6 +1555,7 @@ You have access to the project's context. When relevant context from the knowled
                     pass
 
         # 7. Add assistant message to storage (tagged with project_id)
+        print(f"[PROJECT CHAT {_trace_id}] assistant_final len={len(text or '')} preview={str(text or '')[:120]!r} media={bool(text_media)}")
         add_message(conversation_id, "assistant", text, media=text_media, project_id=project_id)
 
         # 8. Save last conversation_id on the project so it can be restored

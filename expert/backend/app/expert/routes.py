@@ -122,6 +122,16 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
         mode = "think"
         strategy = "expert-thinking"
 
+    trace_id = (req.session_id or "expert")[:8]
+    history_chars = sum(len(m.content or "") for m in req.history)
+    print(
+        f"[EXPERT CHAT {trace_id}] start requested_mode={req.thinking_mode!r} "
+        f"resolved_mode={mode!r} strategy={strategy!r} provider={provider!r} "
+        f"model={req.model!r} complexity={complexity} history={len(req.history)} "
+        f"history_chars={history_chars} query_chars={len(req.query or '')} "
+        f"max_tokens={max_tokens} temperature={temperature}"
+    )
+
     try:
         # ── heavy pipeline ────────────────────────────────────────────────────
         if mode == "heavy":
@@ -129,6 +139,11 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
                 req.query, provider,
                 history=[m.model_dump() for m in req.history],
                 model=req.model, temperature=temperature, max_tokens=max_tokens,
+            )
+            print(
+                f"[EXPERT CHAT {trace_id}] done mode=heavy provider={result.get('provider', provider)!r} "
+                f"elapsed_ms={int((time.perf_counter() - started) * 1000)} "
+                f"answer_len={len(result.get('final_answer') or '')} fallback={bool(result.get('fallback_applied', False))}"
             )
             return ExpertChatResponse(
                 content=result["final_answer"],
@@ -150,6 +165,11 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
                 history=[m.model_dump() for m in req.history],
                 model=req.model, temperature=temperature, max_tokens=max_tokens,
                 with_critique=req.with_critique,
+            )
+            print(
+                f"[EXPERT CHAT {trace_id}] done mode=think provider={result.get('provider', provider)!r} "
+                f"elapsed_ms={int((time.perf_counter() - started) * 1000)} "
+                f"answer_len={len(result.get('final_answer') or '')} fallback={bool(result.get('fallback_applied', False))}"
             )
             return ExpertChatResponse(
                 content=result["final_answer"],
@@ -183,6 +203,11 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
         if isinstance(meta.get("notice"), str) and meta["notice"]:
             notices.append(meta["notice"])
 
+        print(
+            f"[EXPERT CHAT {trace_id}] done mode=fast provider={raw.get('provider', provider)!r} "
+            f"model={raw.get('model')!r} elapsed_ms={int((time.perf_counter() - started) * 1000)} "
+            f"answer_len={len(content or '')} fallback={bool(meta.get('fallback_applied', False))}"
+        )
         return ExpertChatResponse(
             content=content,
             provider_used=raw.get("provider", provider),
@@ -197,6 +222,7 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
         )
 
     except Exception as exc:
+        print(f"[EXPERT CHAT {trace_id}] error mode={mode!r} provider={provider!r} error={type(exc).__name__}: {exc}")
         logger.error("Expert chat failed (mode=%s): %s", mode, exc, exc_info=True)
         raise HTTPException(status_code=502, detail=f"Expert pipeline error: {exc}")
 
