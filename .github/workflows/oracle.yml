@@ -126,12 +126,14 @@ jobs:
           HOMEPILOT_DOMAIN: ${{ vars.HOMEPILOT_DOMAIN }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           API_KEY: ${{ secrets.HOMEPILOT_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
           host: ${{ vars.ORACLE_HOST }}
           username: ${{ vars.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
           port: ${{ vars.ORACLE_SSH_PORT || 22 }}
-          envs: IMAGE_REF,HOMEPILOT_DOMAIN,ACME_EMAIL,API_KEY
+          envs: IMAGE_REF,HOMEPILOT_DOMAIN,ACME_EMAIL,API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY
           script_stop: true
           script: |
             set -Eeuo pipefail
@@ -148,15 +150,31 @@ jobs:
               sudo bash install.sh
             fi
 
-            # First-run .env from the example, seeded from CI config. Never
-            # overwrite an existing .env — operator edits win on later runs.
+            # First-run .env, seeded from CI config. Generated inline (not copied
+            # from .env.example) so it does not depend on the dotfile being
+            # transferred. Never overwrite an existing .env — operator edits win.
             if [ ! -f .env ]; then
-              echo "Creating .env from .env.example..."
-              sudo cp .env.example .env
-              [ -n "${HOMEPILOT_DOMAIN:-}" ] && sudo sed -i "s|^HOMEPILOT_DOMAIN=.*|HOMEPILOT_DOMAIN=${HOMEPILOT_DOMAIN}|" .env
-              [ -n "${HOMEPILOT_DOMAIN:-}" ] && sudo sed -i "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=https://${HOMEPILOT_DOMAIN}|" .env
-              [ -n "${ACME_EMAIL:-}" ]       && sudo sed -i "s|^ACME_EMAIL=.*|ACME_EMAIL=${ACME_EMAIL}|" .env
-              [ -n "${API_KEY:-}" ]          && sudo sed -i "s|^API_KEY=.*|API_KEY=${API_KEY}|" .env
+              echo "Creating .env from CI config..."
+              : "${HOMEPILOT_DOMAIN:?set the HOMEPILOT_DOMAIN variable on the oracle-production environment}"
+              : "${ACME_EMAIL:?set the ACME_EMAIL variable on the oracle-production environment}"
+              : "${API_KEY:?set the HOMEPILOT_API_KEY secret on the oracle-production environment}"
+              # Build .env line-by-line (no heredoc) so YAML block indentation
+              # can't corrupt the file or the terminator.
+              {
+                echo "HOMEPILOT_DOMAIN=${HOMEPILOT_DOMAIN}"
+                echo "ACME_EMAIL=${ACME_EMAIL}"
+                echo "HOMEPILOT_IMAGE=${IMAGE_REF}"
+                echo "HOMEPILOT_BIND_ADDRESS=127.0.0.1"
+                echo "API_KEY=${API_KEY}"
+                echo "HOMEPILOT_EDITION=web"
+                echo "PUBLIC_BASE_URL=https://${HOMEPILOT_DOMAIN}"
+                echo "HOMEPILOT_LLM_BACKEND=openai"
+                echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
+                echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
+                echo "INTERACTIVE_ENABLED=true"
+                echo "INTERACTIVE_PLAYBACK_LLM=false"
+                echo "INTERACTIVE_PLAYBACK_RENDER=false"
+              } | sudo tee .env >/dev/null
             fi
 
             # Always update to the freshly built image tag.
