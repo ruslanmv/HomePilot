@@ -70,13 +70,16 @@ jobs:
     runs-on: ubuntu-latest
     environment: oracle-production
     steps:
+      - uses: actions/checkout@v4
+
       # Fail early with an actionable message instead of appleboy/ssh-action's
       # cryptic "missing server host" when config is absent. On the
       # 'oracle-production' environment configure:
-      #   Variables : ORACLE_HOST, ORACLE_USER, ORACLE_SSH_PORT (optional)
-      #   Secret    : ORACLE_SSH_PRIVATE_KEY
-      # Host/user are non-sensitive so they live as Environment *variables*
-      # (vars.*); only the private key is a *secret* (secrets.*).
+      #   Variables : ORACLE_HOST, ORACLE_USER, ORACLE_SSH_PORT (optional),
+      #               HOMEPILOT_DOMAIN, ACME_EMAIL
+      #   Secrets   : ORACLE_SSH_PRIVATE_KEY, HOMEPILOT_API_KEY
+      # Host/user/domain are non-sensitive so they live as Environment
+      # *variables* (vars.*); the private key and API key are *secrets*.
       - name: Verify deployment config
         env:
           ORACLE_HOST: ${{ vars.ORACLE_HOST }}
@@ -90,25 +93,75 @@ jobs:
           if (( ${#missing[@]} )); then
             echo "::error::Missing required config on the 'oracle-production' environment: ${missing[*]}"
             echo "Settings → Environments → oracle-production:"
-            echo "  Variables:"
-            echo "    ORACLE_HOST     = the instance public IP (e.g. 193.122.156.100)"
-            echo "    ORACLE_USER     = SSH user (opc on Oracle Linux, ubuntu on Ubuntu)"
-            echo "    ORACLE_SSH_PORT = optional; defaults to 22"
-            echo "  Secrets:"
-            echo "    ORACLE_SSH_PRIVATE_KEY = full private key PEM matching authorized_keys"
+            echo "  Variables:  ORACLE_HOST, ORACLE_USER, ORACLE_SSH_PORT (optional)"
+            echo "  Secrets:    ORACLE_SSH_PRIVATE_KEY"
             exit 1
           fi
           echo "All required Oracle deployment config is present."
 
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.0
+      # Copy the deployment files to a user-writable staging dir. /opt is
+      # root-owned, so we land in $HOME here and sudo-move into place next.
+      - name: Upload deployment files
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ vars.ORACLE_HOST }}
           username: ${{ vars.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
           port: ${{ vars.ORACLE_SSH_PORT || 22 }}
+          # Copy the whole directory (not oracle/*) so the .env.example dotfile
+          # is included; strip the leading "oracle/" path component.
+          source: "oracle"
+          target: "homepilot-deploy"
+          strip_components: 1
+          overwrite: true
+
+      # Idempotent bootstrap + deploy. Works on a bare instance: creates
+      # /opt/homepilot, installs Docker/swap/firewall on first run, seeds
+      # .env from CI config the first time (preserved on later runs), then
+      # updates the image tag and (re)starts the stack.
+      - name: Bootstrap and deploy
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+          HOMEPILOT_DOMAIN: ${{ vars.HOMEPILOT_DOMAIN }}
+          ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+          API_KEY: ${{ secrets.HOMEPILOT_API_KEY }}
+        with:
+          host: ${{ vars.ORACLE_HOST }}
+          username: ${{ vars.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          port: ${{ vars.ORACLE_SSH_PORT || 22 }}
+          envs: IMAGE_REF,HOMEPILOT_DOMAIN,ACME_EMAIL,API_KEY
           script_stop: true
           script: |
+            set -Eeuo pipefail
+            SRC="$HOME/homepilot-deploy"
+
+            # Place the deployment files under /opt/homepilot (root-owned).
+            sudo install -d -m 0755 /opt/homepilot
+            sudo cp -R "$SRC"/. /opt/homepilot/
             cd /opt/homepilot
-            sed -i 's|^HOMEPILOT_IMAGE=.*|HOMEPILOT_IMAGE=${{ needs.build.outputs.image_ref }}|' .env
-            bash deploy.sh
+
+            # First-run bootstrap: Docker, firewall, swap (install.sh is idempotent).
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "Docker not found — bootstrapping the instance..."
+              sudo bash install.sh
+            fi
+
+            # First-run .env from the example, seeded from CI config. Never
+            # overwrite an existing .env — operator edits win on later runs.
+            if [ ! -f .env ]; then
+              echo "Creating .env from .env.example..."
+              sudo cp .env.example .env
+              [ -n "${HOMEPILOT_DOMAIN:-}" ] && sudo sed -i "s|^HOMEPILOT_DOMAIN=.*|HOMEPILOT_DOMAIN=${HOMEPILOT_DOMAIN}|" .env
+              [ -n "${HOMEPILOT_DOMAIN:-}" ] && sudo sed -i "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=https://${HOMEPILOT_DOMAIN}|" .env
+              [ -n "${ACME_EMAIL:-}" ]       && sudo sed -i "s|^ACME_EMAIL=.*|ACME_EMAIL=${ACME_EMAIL}|" .env
+              [ -n "${API_KEY:-}" ]          && sudo sed -i "s|^API_KEY=.*|API_KEY=${API_KEY}|" .env
+            fi
+
+            # Always update to the freshly built image tag.
+            sudo sed -i "s|^HOMEPILOT_IMAGE=.*|HOMEPILOT_IMAGE=${IMAGE_REF}|" .env
+
+            # Run via sudo so it works before the docker-group membership added
+            # by install.sh takes effect in a new login session.
+            sudo bash deploy.sh
