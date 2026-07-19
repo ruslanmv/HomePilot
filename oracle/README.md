@@ -103,28 +103,49 @@ ghcr.io/<repository-owner>/homepilot-oracle:<commit-sha>
 ```
 
 Configure the `oracle-production` GitHub environment (Settings → Environments →
-`oracle-production`). Host/user/port are non-sensitive, so they are
-**environment variables**; only the key is an **environment secret**:
+`oracle-production`). Non-sensitive values are **environment variables**;
+credentials are **environment secrets**:
 
 **Variables** (Environment variables):
 
 - `ORACLE_HOST`: instance public IP or hostname (e.g. `193.122.156.100`)
-- `ORACLE_USER`: SSH user with permission to run Docker — `opc` on Oracle
-  Linux, `ubuntu` on Ubuntu (added to the `docker` group by `install.sh`)
+- `ORACLE_USER`: SSH user with permission to run Docker + `sudo` — `opc` on
+  Oracle Linux, `ubuntu` on Ubuntu
 - `ORACLE_SSH_PORT`: optional; defaults to 22
+- `HOMEPILOT_DOMAIN`: public hostname with a DNS A record → the instance IP
+  (used to seed `.env` on first deploy)
+- `ACME_EMAIL`: email for Let's Encrypt certificate registration
 
-**Secret** (Environment secret):
+**Secrets** (Environment secrets):
 
 - `ORACLE_SSH_PRIVATE_KEY`: private deployment key (full PEM, matching a public
   key in the instance's `~/.ssh/authorized_keys`)
+- `HOMEPILOT_API_KEY`: application API key (`openssl rand -hex 32`)
 
-> The workflow reads host/user/port via `vars.*` and the key via `secrets.*`.
-> Putting `ORACLE_HOST`/`ORACLE_USER` under *Secrets* instead of *Variables*
-> (or vice-versa for the key) leaves the value empty at deploy time and
-> surfaces as `missing server host`.
+> The workflow reads host/user/port/domain via `vars.*` and the key/API key via
+> `secrets.*`. Putting `ORACLE_HOST`/`ORACLE_USER` under *Secrets* instead of
+> *Variables* (or vice-versa for the key) leaves the value empty at deploy time
+> and surfaces as `missing server host`.
 
-The server must already contain `/opt/homepilot`, `docker-compose.yml`,
-`Caddyfile`, `deploy.sh`, and a completed `.env`.
+### Zero-touch bootstrap
+
+The `deploy` job is **self-bootstrapping** — it works against a bare instance,
+so the manual steps in sections 2–3 above are optional. On each run it:
+
+1. copies `oracle/` to the instance (staged in `$HOME`, then `sudo`-moved to
+   `/opt/homepilot`);
+2. runs `install.sh` on first deploy if Docker is absent (also creates swap and
+   opens the host firewall);
+3. creates `.env` from `.env.example` the first time, seeding it from
+   `HOMEPILOT_DOMAIN` / `ACME_EMAIL` / `HOMEPILOT_API_KEY` — an existing `.env`
+   is never overwritten, so operator edits survive;
+4. points `HOMEPILOT_IMAGE` at the freshly built tag and runs `deploy.sh` via
+   `sudo` (so it works before the new `docker` group membership takes effect).
+
+You still must, once, in the OCI console: open **TCP 22, 80, 443** ingress on
+the subnet Security List / NSG, and create a **DNS A record** for
+`HOMEPILOT_DOMAIN` pointing at the instance IP — Caddy cannot obtain an HTTPS
+certificate for an IP address, only for a real domain.
 
 Make the GHCR package public, or authenticate Docker on the instance with a
 read-only GitHub Packages token before deployment.
