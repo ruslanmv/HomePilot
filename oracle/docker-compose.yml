@@ -1,6 +1,6 @@
 services:
   homepilot:
-    image: ${HOMEPILOT_IMAGE:-ghcr.io/ruslanmv/homepilot-digitalocean:latest}
+    image: ${HOMEPILOT_IMAGE:-ghcr.io/ruslanmv/homepilot-oracle:latest}
     container_name: homepilot
     restart: unless-stopped
     env_file:

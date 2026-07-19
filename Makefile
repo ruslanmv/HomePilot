@@ -116,14 +116,29 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "  Installing ComfyUI-Impact-Pack for face restore nodes..."
 	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-Impact-Pack" ]; then \
 		mkdir -p ComfyUI/custom_nodes && \
-		if git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack 2>/dev/null && \
-		   ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt >/dev/null 2>&1; then \
-			echo "  ✓ ComfyUI-Impact-Pack installed"; \
-		else \
-			echo "    (optional: Impact-Pack install skipped)"; \
-		fi; \
+		git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack 2>/dev/null \
+			|| echo "    (optional: Impact-Pack clone skipped)"; \
 	else \
-		echo "  ✓ ComfyUI-Impact-Pack already installed"; \
+		echo "  ✓ ComfyUI-Impact-Pack already present"; \
+	fi
+	@# Always (re)install the node requirements — the clone above is skipped when the
+	@# directory already exists, so gating the dependency install on the clone left
+	@# nodes present but un-importable (e.g. ModuleNotFoundError: No module named 'piexif').
+	@if [ -f "ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt" ]; then \
+		if ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt >/dev/null 2>&1; then \
+			echo "  ✓ ComfyUI-Impact-Pack dependencies installed"; \
+		else \
+			echo "    (warning: some Impact-Pack requirements failed to install)"; \
+		fi; \
+	fi
+	@echo "  Installing common custom-node dependencies (piexif, imageio-ffmpeg)..."
+	@# piexif is imported directly by Impact-Pack; imageio-ffmpeg by VideoHelperSuite.
+	@# Install them explicitly so a partial requirements.txt failure cannot leave the
+	@# nodes broken ("No module named 'piexif'" / "Failed to import imageio_ffmpeg").
+	@if ComfyUI/.venv/bin/pip install piexif imageio-ffmpeg >/dev/null 2>&1; then \
+		echo "  ✓ piexif + imageio-ffmpeg installed"; \
+	else \
+		echo "    (optional: piexif/imageio-ffmpeg install skipped)"; \
 	fi
 	@echo "  Installing Ultralytics (needed for UltralyticsDetectorProvider)..."
 	@if ComfyUI/.venv/bin/pip install -U ultralytics >/dev/null 2>&1; then \
