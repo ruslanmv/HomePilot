@@ -221,6 +221,16 @@ app.include_router(teams_router)
 from .teams.bridge_routes import router as teams_bridge_router
 app.include_router(teams_bridge_router)
 
+# Container log streaming (/api/spaces/<owner>/<repo>/logs/{run,build}) —
+# ADDITIVE, READ-ONLY. HF Spaces–style SSE log access for remote debugging,
+# gated by the shared API key or a logged-in session. Wrapped so a failure to
+# import this optional feature never takes the app down.
+try:
+    from .logs_api import router as logs_router
+    app.include_router(logs_router)
+except Exception as _e:  # pragma: no cover - defensive
+    print(f"[logs_api] disabled: {_e}")
+
 # --- Voice call (/v1/voice-call/*) — ADDITIVE, FEATURE-FLAGGED ---------------
 # Fully off by default. Enable with ``VOICE_CALL_ENABLED=true``. If anything
 # in the voice_call module raises on import (bad migration, missing dep, …)
