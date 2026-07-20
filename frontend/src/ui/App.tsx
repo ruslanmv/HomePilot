@@ -40,6 +40,9 @@ import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
 import { ComputerStatusPill } from './account/ComputerStatusPill'
+// Remote-LLM chat routing (Batch 5) — resolves the cloud-relay target when a
+// remote computer is selected; null (local path unchanged) otherwise.
+import { useRemoteChatTarget } from './account/useRemoteChatTarget'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
@@ -2961,7 +2964,22 @@ export default function App() {
   }, [])
 
 
+  // Batch 5: transparent remote-LLM routing. When the Account & Computers flag
+  // is on and the user picked an online remote computer, this resolves the cloud
+  // relay target for that node's chat model; otherwise it's null. Held in a ref
+  // so the synchronous currentChatSelection() below can read the latest value.
+  const remoteChatTarget = useRemoteChatTarget()
+  const remoteChatTargetRef = useRef(remoteChatTarget)
+  useEffect(() => { remoteChatTargetRef.current = remoteChatTarget }, [remoteChatTarget])
+
   const currentChatSelection = useCallback(() => {
+    // If a remote computer is selected, swap the target to the cloud relay bound
+    // to that node's model (same wire shape as "Use for Chat"). The cloud token
+    // is attached downstream by cloudProviderApiKey() for /ollama/v1 base URLs.
+    const remote = remoteChatTargetRef.current
+    if (remote) {
+      return { providerChat: 'openai_compat', modelChat: remote.model, baseUrlChat: remote.baseUrl }
+    }
     const providerChat = localStorage.getItem('homepilot_provider_chat') || settingsDraft.providerChat || 'ollama'
     const modelChat = localStorage.getItem('homepilot_model_chat') || settingsDraft.modelChat || ''
     const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || settingsDraft.baseUrlChat || ''
@@ -3879,6 +3897,7 @@ export default function App() {
                   provider: chatSelection.providerChat,
                   provider_base_url: chatSelection.baseUrlChat || undefined,
                   provider_model: chatSelection.modelChat,
+                  provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
                   temperature: settingsDraft.textTemperature ?? 0.7,
                   max_tokens: settingsDraft.textMaxTokens ?? 900,
                   vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -4000,6 +4019,7 @@ export default function App() {
                   provider: chatSelection.providerChat,
                   provider_base_url: chatSelection.baseUrlChat || undefined,
                   provider_model: chatSelection.modelChat,
+                  provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
                   textTemperature: settingsDraft.textTemperature,
                   textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                   nsfwMode: settingsDraft.nsfwMode,
@@ -4261,6 +4281,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               provider: chatSelection.providerChat,
               provider_base_url: chatSelection.baseUrlChat || undefined,
               provider_model: chatSelection.modelChat,
+              provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
               temperature: settingsDraft.textTemperature ?? 0.7,
               max_tokens: mode === 'voice' ? 300 : (settingsDraft.textMaxTokens ?? 900),
               vision_provider: settingsDraft.providerMultimodal || 'ollama',
