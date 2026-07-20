@@ -175,6 +175,13 @@ jobs:
               echo "API_KEY=${API_KEY}"
               echo "HOMEPILOT_EDITION=web"
               echo "PUBLIC_BASE_URL=https://${HOMEPILOT_DOMAIN}"
+              # Point storage at the mounted, writable volume. In Docker the app
+              # otherwise defaults its data root to /app/data (root-owned, not
+              # writable by the 'user' account), so the backend crash-loops on
+              # startup with PermissionError creating /app/data/uploads. This
+              # image mounts homepilot-data at /home/user/app/data.
+              echo "DATA_DIR=/home/user/app/data"
+              echo "OUTPUT_DIR=/home/user/app/data/outputs"
               echo "HOMEPILOT_LLM_BACKEND=openai"
               echo "OPENAI_API_KEY=${OPENAI_API_KEY:-}"
               echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}"
