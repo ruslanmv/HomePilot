@@ -231,6 +231,18 @@ try:
 except Exception as _e:  # pragma: no cover - defensive
     print(f"[logs_api] disabled: {_e}")
 
+# Account Mirror BFF proxy (/v1/account/mirror/*) — ADDITIVE, FEATURE-FLAGGED
+# (HOMEPILOT_MIRROR_BFF_ENABLED). Same-origin, server-mediated path to the
+# OllaBridge Cloud mirror so the browser never holds cloud tokens or relay URLs.
+# Off by default → router not mounted; import guarded so it can never break boot.
+try:
+    from . import mirror_proxy as _mirror_proxy
+    if _mirror_proxy.is_enabled():
+        app.include_router(_mirror_proxy.router)
+        print("[mirror-bff] mounted /v1/account/mirror/*")
+except Exception as _e:  # pragma: no cover - defensive
+    print(f"[mirror-bff] disabled: {_e}")
+
 # --- Voice call (/v1/voice-call/*) — ADDITIVE, FEATURE-FLAGGED ---------------
 # Fully off by default. Enable with ``VOICE_CALL_ENABLED=true``. If anything
 # in the voice_call module raises on import (bad migration, missing dep, …)
