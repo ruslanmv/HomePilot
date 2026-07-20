@@ -22,6 +22,9 @@ import {
 } from "lucide-react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
 import OllaBridgeLink from "./components/OllaBridgeLink";
+// Account & Computers (Batch 3) — ADDITIVE, feature-flagged.
+import AccountComputers from "./account/AccountComputers";
+import { isAccountsUxEnabled } from "./account/featureFlags";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import TtsEngineSection from "./components/TtsEngineSection";
 // Side-effect import: registers the bundled TTS providers (web-speech-api,
@@ -286,6 +289,10 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 const SECTIONS = [
   { id: "general", label: "General", Icon: SettingsIcon },
   { id: "connection", label: "Connection", Icon: Link2 },
+  // Account & Computers (Batch 3). Shown in place of "OllaBridge Link" only when
+  // the feature flag is on; otherwise it is filtered out and behavior is
+  // unchanged. See `visibleSections` below.
+  { id: "account", label: "Account & Computers", Icon: Cloud },
   { id: "linking", label: "OllaBridge Link", Icon: Cloud },
   { id: "providers", label: "Providers", Icon: Server },
   { id: "models", label: "Models", Icon: Boxes },
@@ -418,6 +425,19 @@ export default function SettingsPanel({
 
   // ── Enterprise modal shell state ───────────────────────────────────────
   const [activeSection, setActiveSection] = useState<SectionId>("connection");
+
+  // Sidebar sections, adjusted for the Account & Computers flag (Batch 3):
+  //  - flag OFF: hide "account" → today's list, unchanged.
+  //  - flag ON : hide "OllaBridge Link" from the primary nav (still reachable
+  //    from Advanced, not deleted) and relabel "OllaBridge API" → "API Access".
+  const accountsUx = isAccountsUxEnabled();
+  const visibleSections = React.useMemo(
+    () =>
+      SECTIONS.filter((s) => (accountsUx ? s.id !== "linking" : s.id !== "account")).map((s) =>
+        accountsUx && s.id === "ollabridge" ? { ...s, label: "API Access" } : s,
+      ),
+    [accountsUx],
+  );
   const [showApiKey, setShowApiKey] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -1422,6 +1442,17 @@ export default function SettingsPanel({
         description="Experimental and developer options. Change with care."
         icon={<FlaskConical size={16} />}
       >
+        {accountsUx && (
+          <Row label="OllaBridge Link (diagnostics)" description="Low-level account link, relay, and pairing details. Superseded by Account & Computers.">
+            <button
+              type="button"
+              onClick={() => setActiveSection("linking")}
+              className="text-[11px] px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70"
+            >
+              Open OllaBridge Link
+            </button>
+          </Row>
+        )}
         <Row label="Experimental: Civitai" description="Enable Civitai model downloads (image/video only).">
           <Toggle label="Experimental Civitai" tone="blue" checked={!!value.experimentalCivitai} onChange={(v) => commit({ ...value, experimentalCivitai: v })} />
         </Row>
@@ -1453,6 +1484,7 @@ export default function SettingsPanel({
     switch (activeSection) {
       case "general": return renderGeneral();
       case "connection": return renderConnection();
+      case "account": return <AccountComputers />;
       case "linking": return <OllaBridgeLink />;
       case "providers": return renderProviders();
       case "models": return renderModels();
@@ -1513,7 +1545,7 @@ export default function SettingsPanel({
             aria-label="Settings sections"
             className="hidden md:flex md:flex-col gap-1 w-56 shrink-0 p-3 border-r border-white/[0.08] bg-[#17181a] overflow-y-auto"
           >
-            {SECTIONS.map(({ id, label, Icon }) => {
+            {visibleSections.map(({ id, label, Icon }) => {
               const active = activeSection === id;
               return (
                 <button
@@ -1543,7 +1575,7 @@ export default function SettingsPanel({
             aria-label="Settings sections"
             className="md:hidden flex gap-1.5 overflow-x-auto px-3 py-2 border-b border-white/[0.08] bg-[#17181a] shrink-0"
           >
-            {SECTIONS.map(({ id, label, Icon }) => {
+            {visibleSections.map(({ id, label, Icon }) => {
               const active = activeSection === id;
               return (
                 <button
