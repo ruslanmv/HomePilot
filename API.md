@@ -192,3 +192,44 @@
 | `/civitai/search` | POST | Search Civitai model registry |
 | `/models/install` | POST | Install model from Civitai |
 | `/models/delete` | POST | Remove installed model |
+
+---
+
+## Logs API (Hugging Face Spaces–style, SSE)
+
+Read-only, additive log streaming for remote debugging — mirrors HF Spaces'
+`/api/spaces/<owner>/<repo>/logs/{run,build}`. Streams the container's
+supervisor logs over Server-Sent Events. **Never writes or mutates anything.**
+
+**Auth:** shared `API_KEY` (via `Authorization: Bearer <key>` or `X-API-Key`),
+a logged-in HomePilot session (JWT / `homepilot_session` cookie), or a
+same-machine request. Fail-closed for anonymous remote callers.
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/spaces/{owner}/{repo}/logs` | GET | List available log streams + sizes |
+| `/api/spaces/{owner}/{repo}/logs/{stream}` | GET | Stream a log over SSE |
+
+**Streams:** `run` (live app logs), `build` (container boot/supervisord),
+`backend`, `backend-stdout`, `nginx`, `comfyui`, `supervisord`.
+
+**Query params:** `tail` (initial lines, default 200), `follow` (`tail -f`,
+default `true`), `format` (`json` HF-style default, or `raw`), `token`
+(alternative to the header — handy for browser `EventSource`).
+
+```bash
+# live application (run) logs
+curl -N -H "Authorization: Bearer $HP_TOKEN" \
+  "https://homepilot.ruslanmv.com/api/spaces/ruslanmv/HomePilot/logs/run"
+
+# container boot (build) logs
+curl -N -H "Authorization: Bearer $HP_TOKEN" \
+  "https://homepilot.ruslanmv.com/api/spaces/ruslanmv/HomePilot/logs/build"
+
+# just the last 500 lines, no follow, plain text
+curl -H "Authorization: Bearer $HP_TOKEN" \
+  "https://homepilot.ruslanmv.com/api/spaces/ruslanmv/HomePilot/logs/run?follow=false&tail=500&format=raw"
+```
+
+The log directory is `HOMEPILOT_LOG_DIR` (default `/var/log/supervisor`), so
+desktop/self-hosted installs can point it at their own log path.
