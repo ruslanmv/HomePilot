@@ -37,6 +37,9 @@ import {
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
+// Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
+// Account & Computers flag is off, so the header is unchanged by default.
+import { ComputerStatusPill } from './account/ComputerStatusPill'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
@@ -2054,6 +2057,9 @@ function ChatState({
           not a styling of the header. */}
       <div className="fixed top-3 right-5 z-50">
         <div className="relative flex items-center gap-2">
+          {/* Live computer/presence pill (Batch 4). Null unless the Account &
+              Computers flag is on and a computer exists. */}
+          <ComputerStatusPill />
           {onStartCall && (() => {
             return (
               <button
