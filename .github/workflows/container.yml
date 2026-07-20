@@ -2,7 +2,9 @@ name: "\U0001F4E6 Publish Container (GHCR)"
 
 on:
   push:
-    branches: [main]
+    # This repo's default branch is `master` (there is no `main`), so the base
+    # image was never rebuilt and deployments served a stale frontend/backend.
+    branches: [master, main]
     paths:
       - "container/**"
       - "backend/**"
