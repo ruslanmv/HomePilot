@@ -231,6 +231,18 @@ try:
 except Exception as _e:  # pragma: no cover - defensive
     print(f"[logs_api] disabled: {_e}")
 
+# Account Mirror BFF proxy (/v1/account/mirror/*) — ADDITIVE, FEATURE-FLAGGED
+# (HOMEPILOT_MIRROR_BFF_ENABLED). Same-origin, server-mediated path to the
+# OllaBridge Cloud mirror so the browser never holds cloud tokens or relay URLs.
+# Off by default → router not mounted; import guarded so it can never break boot.
+try:
+    from . import mirror_proxy as _mirror_proxy
+    if _mirror_proxy.is_enabled():
+        app.include_router(_mirror_proxy.router)
+        print("[mirror-bff] mounted /v1/account/mirror/*")
+except Exception as _e:  # pragma: no cover - defensive
+    print(f"[mirror-bff] disabled: {_e}")
+
 # --- Voice call (/v1/voice-call/*) — ADDITIVE, FEATURE-FLAGGED ---------------
 # Fully off by default. Enable with ``VOICE_CALL_ENABLED=true``. If anything
 # in the voice_call module raises on import (bad migration, missing dep, …)
@@ -4631,7 +4643,26 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     # never persisted, no cross-request leakage under asyncio.
     try:
         from .llm import PROVIDER_API_KEY as _provider_key_ctx
-        _provider_key_ctx.set((inp.provider_api_key or "").strip())
+        _pk = (inp.provider_api_key or "").strip()
+        # Batch 7 (BFF session): if the browser did NOT send a key but this is a
+        # cloud-relay target (openai_compat @ .../ollama/v1), inject the caller's
+        # server-side cloud token so the browser never has to hold it. Flagged +
+        # additive; falls through to whatever the client sent when off.
+        if not _pk:
+            try:
+                from .mirror_proxy import bff_session_enabled
+                if (
+                    bff_session_enabled()
+                    and (inp.provider or "").strip() == "openai_compat"
+                    and "/ollama/v1" in (inp.provider_base_url or "")
+                ):
+                    _u = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+                    if _u:
+                        from .cloud_tokens import get_cloud_token
+                        _pk = (get_cloud_token(_u["id"]) or "").strip()
+            except Exception:
+                pass
+        _provider_key_ctx.set(_pk)
     except Exception:
         pass  # additive — never let credential plumbing break chat
 

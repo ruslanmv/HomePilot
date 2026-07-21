@@ -3,6 +3,13 @@ import ReactDOM from 'react-dom/client'
 import App from './ui/App'
 import AuthGate from './ui/components/AuthGate'
 import LegalPage from './ui/components/LegalPage'
+// Account & Computers spine (Batch 2) — ADDITIVE. The providers render children
+// unchanged and do NO network unless the feature flag is on; the dev panel
+// renders null unless the mirror debug flag is on. Zero behavior change by default.
+import { HomePilotAccountProvider } from './ui/account/HomePilotAccountProvider'
+import { ComputerProvider } from './ui/account/ComputerContext'
+import { MirrorDevPanel } from './ui/account/MirrorDevPanel'
+import { RemoteOfflineBanner } from './ui/account/RemoteOfflineBanner'
 import './ui/styles.css'
 
 // Public, pre-auth legal pages. These are reached by full navigation (the login
@@ -18,7 +25,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <LegalPage kind={legalKind} />
     ) : (
       <AuthGate>
-        <App />
+        <HomePilotAccountProvider>
+          <ComputerProvider>
+            <App />
+            <RemoteOfflineBanner />
+            <MirrorDevPanel />
+          </ComputerProvider>
+        </HomePilotAccountProvider>
       </AuthGate>
     )}
   </React.StrictMode>,

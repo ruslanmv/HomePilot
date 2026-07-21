@@ -22,6 +22,7 @@
  * so nothing leaks into the rest of the app.
  */
 import React, { useEffect, useRef, useState } from 'react'
+import { isBffSessionEnabled } from '../account/featureFlags'
 import type { AuthUser, RecentUser } from './AuthGate'
 
 interface AuthScreenProps {
@@ -229,7 +230,10 @@ export default function AuthScreen({
       // Models tab uses it to sync models from the user's linked GPU nodes
       // and to route inference through the relay to their own machine.
       try {
-        localStorage.setItem('homepilot_cloud_token', loginData.token)
+        // Batch 7 (BFF): when the backend holds the cloud token server-side we
+        // no longer persist it in the browser — the exchange POST below still
+        // hands it to the backend. The (non-secret) cloud URL is kept.
+        if (!isBffSessionEnabled()) localStorage.setItem('homepilot_cloud_token', loginData.token)
         localStorage.setItem('homepilot_cloud_url', cloudUrl)
       } catch { /* ignore */ }
       // 2) Exchange the Cloud token for a local HomePilot session (JIT-provision).

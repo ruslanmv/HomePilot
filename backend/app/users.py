@@ -739,6 +739,18 @@ def exchange(body: ExchangeRequest, request: Request):
         set_cloud_link(created["id"], cloud_user_id, auth_provider="ollabridge")
         user = get_user_by_id(created["id"])
 
+    # Batch 7 (BFF session): persist the validated cloud token server-side so
+    # the browser never has to hold it. Gated by HOMEPILOT_BFF_SESSION_ENABLED;
+    # additive and best-effort — never break login on a storage hiccup.
+    try:
+        from .mirror_proxy import bff_session_enabled, register_cloud_token
+        if bff_session_enabled():
+            from .cloud_tokens import set_cloud_token
+            set_cloud_token(user["id"], body.cloud_token.strip())
+            register_cloud_token(user["id"], body.cloud_token.strip())
+    except Exception:
+        pass
+
     token = _create_token(user["id"])
     resp = JSONResponse({
         "ok": True,
@@ -762,6 +774,16 @@ def logout(authorization: str = Header(default="")):
     """Invalidate the current session token."""
     token = authorization.replace("Bearer ", "").strip()
     if token:
+        # Batch 7: also drop the server-side cloud token for this user on logout.
+        try:
+            _u = _validate_token(token)
+            if _u:
+                from .cloud_tokens import clear_cloud_token
+                from .mirror_proxy import clear_cloud_token as _clear_registry
+                clear_cloud_token(_u["id"])
+                _clear_registry(_u["id"])
+        except Exception:
+            pass
         _invalidate_token(token)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie("homepilot_session", path="/")
