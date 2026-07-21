@@ -22,6 +22,7 @@
  * zero prop-drilling into the existing Models plumbing.
  */
 import React, { useCallback, useEffect, useState } from 'react'
+import { isBffSessionEnabled } from '../account/featureFlags'
 import { Cloud, Cpu, Loader2, LogOut, RefreshCw, Zap } from 'lucide-react'
 
 const LS_CLOUD_TOKEN = 'homepilot_cloud_token'
@@ -152,7 +153,9 @@ export default function OllaBridgeModels({ filterType }: { filterType?: string }
         return
       }
       try {
-        localStorage.setItem(LS_CLOUD_TOKEN, data.token)
+        // Batch 7 (BFF): the token lives in this component's memory for the
+        // session; when BFF is on we no longer persist it in browser storage.
+        if (!isBffSessionEnabled()) localStorage.setItem(LS_CLOUD_TOKEN, data.token)
         localStorage.setItem(LS_CLOUD_URL, cloudUrl)
       } catch { /* ignore */ }
       setToken(data.token)

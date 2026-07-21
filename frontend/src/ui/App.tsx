@@ -37,6 +37,17 @@ import {
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
+// Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
+// Account & Computers flag is off, so the header is unchanged by default.
+import { ComputerStatusPill } from './account/ComputerStatusPill'
+// Remote-LLM chat routing (Batch 5) — resolves the cloud-relay target when a
+// remote computer is selected; null (local path unchanged) otherwise.
+// Batch 6 adds useSelectedOfflineNode — a pinned-but-offline computer, used to
+// block silent Web-CPU fallback.
+import { useRemoteChatTarget, useSelectedOfflineNode } from './account/useRemoteChatTarget'
+// BFF session flag (Batch 7) — when on, the browser stops sending the cloud
+// token; the backend injects it server-side.
+import { isBffSessionEnabled } from './account/featureFlags'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
@@ -291,6 +302,9 @@ type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'anim
  */
 function cloudProviderApiKey(baseUrl?: string): string | undefined {
   if (!baseUrl || !baseUrl.includes('/ollama/v1')) return undefined
+  // Batch 7 (BFF): when the backend holds the cloud token server-side it injects
+  // it into the relay call; the browser sends nothing. Off → legacy behavior.
+  if (isBffSessionEnabled()) return undefined
   try { return localStorage.getItem('homepilot_cloud_token') || undefined } catch { return undefined }
 }
 type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy'
@@ -2054,6 +2068,9 @@ function ChatState({
           not a styling of the header. */}
       <div className="fixed top-3 right-5 z-50">
         <div className="relative flex items-center gap-2">
+          {/* Live computer/presence pill (Batch 4). Null unless the Account &
+              Computers flag is on and a computer exists. */}
+          <ComputerStatusPill />
           {onStartCall && (() => {
             return (
               <button
@@ -2955,7 +2972,35 @@ export default function App() {
   }, [])
 
 
+  // Batch 5: transparent remote-LLM routing. When the Account & Computers flag
+  // is on and the user picked an online remote computer, this resolves the cloud
+  // relay target for that node's chat model; otherwise it's null. Held in a ref
+  // so the synchronous currentChatSelection() below can read the latest value.
+  const remoteChatTarget = useRemoteChatTarget()
+  const remoteChatTargetRef = useRef(remoteChatTarget)
+  useEffect(() => { remoteChatTargetRef.current = remoteChatTarget }, [remoteChatTarget])
+
+  // Batch 6: a pinned computer that is offline. When set, sends are blocked
+  // rather than silently downgraded to Web CPU. Held in a ref for the send guard.
+  const selectedOfflineNode = useSelectedOfflineNode()
+  const selectedOfflineNodeRef = useRef(selectedOfflineNode)
+  useEffect(() => { selectedOfflineNodeRef.current = selectedOfflineNode }, [selectedOfflineNode])
+
+  // Troubleshoot in the offline banner asks to open settings.
+  useEffect(() => {
+    const onOpen = () => setShowSettings(true)
+    window.addEventListener('homepilot:open-settings', onOpen)
+    return () => window.removeEventListener('homepilot:open-settings', onOpen)
+  }, [setShowSettings])
+
   const currentChatSelection = useCallback(() => {
+    // If a remote computer is selected, swap the target to the cloud relay bound
+    // to that node's model (same wire shape as "Use for Chat"). The cloud token
+    // is attached downstream by cloudProviderApiKey() for /ollama/v1 base URLs.
+    const remote = remoteChatTargetRef.current
+    if (remote) {
+      return { providerChat: 'openai_compat', modelChat: remote.model, baseUrlChat: remote.baseUrl }
+    }
     const providerChat = localStorage.getItem('homepilot_provider_chat') || settingsDraft.providerChat || 'ollama'
     const modelChat = localStorage.getItem('homepilot_model_chat') || settingsDraft.modelChat || ''
     const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || settingsDraft.baseUrlChat || ''
@@ -3697,6 +3742,14 @@ export default function App() {
       const trimmed = rawText.trim()
       if (!trimmed) return
 
+      // Batch 6: honest offline. If the user pinned a specific computer that is
+      // offline, do NOT silently run on Web CPU — block the send and surface the
+      // offline banner (which explains + offers Troubleshoot / Notify / Automatic).
+      if (selectedOfflineNodeRef.current) {
+        window.dispatchEvent(new CustomEvent('homepilot:remote-offline-nudge'))
+        return
+      }
+
       setShowSettings(false)
 
       // user-visible message stays as typed; request uses mode prefixes
@@ -3873,6 +3926,7 @@ export default function App() {
                   provider: chatSelection.providerChat,
                   provider_base_url: chatSelection.baseUrlChat || undefined,
                   provider_model: chatSelection.modelChat,
+                  provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
                   temperature: settingsDraft.textTemperature ?? 0.7,
                   max_tokens: settingsDraft.textMaxTokens ?? 900,
                   vision_provider: settingsDraft.providerMultimodal || 'ollama',
@@ -3994,6 +4048,7 @@ export default function App() {
                   provider: chatSelection.providerChat,
                   provider_base_url: chatSelection.baseUrlChat || undefined,
                   provider_model: chatSelection.modelChat,
+                  provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
                   textTemperature: settingsDraft.textTemperature,
                   textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                   nsfwMode: settingsDraft.nsfwMode,
@@ -4255,6 +4310,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               provider: chatSelection.providerChat,
               provider_base_url: chatSelection.baseUrlChat || undefined,
               provider_model: chatSelection.modelChat,
+              provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
               temperature: settingsDraft.textTemperature ?? 0.7,
               max_tokens: mode === 'voice' ? 300 : (settingsDraft.textMaxTokens ?? 900),
               vision_provider: settingsDraft.providerMultimodal || 'ollama',

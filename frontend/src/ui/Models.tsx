@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink } from 'lucide-react'
 import OllaBridgeModels from './components/OllaBridgeModels'
+import { isAccountsUxEnabled } from './account/featureFlags'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -2077,7 +2078,7 @@ export default function ModelsView(props: ModelsParams) {
               synced from the user's linked HomePilot / GPU nodes (relay), shown
               for whichever Model Type tab is active. When selected it replaces
               the local catalog for this tab. */}
-          {provider === 'ollabridge' ? (
+          {provider === 'ollabridge' && !isAccountsUxEnabled() ? (
             <OllaBridgeModels filterType={modelType} />
           ) : (
           <>

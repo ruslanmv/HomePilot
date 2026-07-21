@@ -20,6 +20,7 @@
  * the Cloud directly (CORS open), stores only the token in localStorage.
  */
 import React, { useCallback, useEffect, useState } from 'react'
+import { isBffSessionEnabled } from '../account/featureFlags'
 import { Cloud, Cpu, Download, ExternalLink, Loader2, LogOut, MonitorSmartphone, Plus, RefreshCw, Server, ShieldCheck } from 'lucide-react'
 import { getCloudToken, getCloudUrl } from './OllaBridgeModels'
 import { getEdition, type EditionInfo } from '../lib/edition'
@@ -114,7 +115,9 @@ export default function OllaBridgeLink() {
       const data = await r.json().catch(() => ({}))
       if (!r.ok || !data.token) { setError(data.detail || 'Invalid OllaBridge email or password'); return }
       try {
-        localStorage.setItem('homepilot_cloud_token', data.token)
+        // Batch 7 (BFF): don't persist the cloud token in the browser when the
+        // backend holds it server-side. The cloud URL (non-secret) is kept.
+        if (!isBffSessionEnabled()) localStorage.setItem('homepilot_cloud_token', data.token)
         localStorage.setItem('homepilot_cloud_url', cloudUrl)
       } catch { /* ignore */ }
       setToken(data.token); setPw('')

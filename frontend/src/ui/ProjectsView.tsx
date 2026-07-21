@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { resolveFileUrl } from './resolveFileUrl';
+// Remote projects (Batch 9) — ADDITIVE; renders null when the Account &
+// Computers flag is off, so the Projects page is unchanged by default.
+import { RemoteProjects } from './account/RemoteProjects';
 import {
   FolderKanban,
   Plus,
@@ -2082,6 +2085,9 @@ export default function ProjectsView({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
+        {/* Batch 9: projects stored on the account's other computers.
+            Self-gates on the Account & Computers flag (null when off). */}
+        {activeTab === 'My Projects' && <RemoteProjects />}
         {activeTab === 'My Projects' && (
           <>
             {projects.length === 0 ? (
