@@ -29,6 +29,23 @@ export function isAccountsUxEnabled(): boolean {
 }
 
 /**
+ * BFF session (Batch 7). When on, the browser stops storing/sending the cloud
+ * token — the HomePilot Web backend holds it server-side (keyed to the session)
+ * and injects it into cloud-relay calls. Enable via `VITE_BFF_SESSION=1` or
+ * `localStorage.homepilot_bff_session = '1'`. Must be paired with the backend
+ * flag HOMEPILOT_BFF_SESSION_ENABLED. Off by default (strangler).
+ */
+export function isBffSessionEnabled(): boolean {
+  try {
+    const env = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_BFF_SESSION
+    if (env === '1' || env === 'true') return true
+  } catch {
+    /* import.meta not available */
+  }
+  return lsGet('homepilot_bff_session') === '1'
+}
+
+/**
  * Dev-only visibility for the mirror debug panel. Enable with `?mirrorDebug=1`
  * in the URL or `localStorage.homepilot_mirror_debug = '1'`.
  */

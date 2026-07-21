@@ -45,6 +45,9 @@ import { ComputerStatusPill } from './account/ComputerStatusPill'
 // Batch 6 adds useSelectedOfflineNode — a pinned-but-offline computer, used to
 // block silent Web-CPU fallback.
 import { useRemoteChatTarget, useSelectedOfflineNode } from './account/useRemoteChatTarget'
+// BFF session flag (Batch 7) — when on, the browser stops sending the cloud
+// token; the backend injects it server-side.
+import { isBffSessionEnabled } from './account/featureFlags'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
@@ -299,6 +302,9 @@ type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'anim
  */
 function cloudProviderApiKey(baseUrl?: string): string | undefined {
   if (!baseUrl || !baseUrl.includes('/ollama/v1')) return undefined
+  // Batch 7 (BFF): when the backend holds the cloud token server-side it injects
+  // it into the relay call; the browser sends nothing. Off → legacy behavior.
+  if (isBffSessionEnabled()) return undefined
   try { return localStorage.getItem('homepilot_cloud_token') || undefined } catch { return undefined }
 }
 type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy'

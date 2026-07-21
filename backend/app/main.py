@@ -4643,7 +4643,26 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     # never persisted, no cross-request leakage under asyncio.
     try:
         from .llm import PROVIDER_API_KEY as _provider_key_ctx
-        _provider_key_ctx.set((inp.provider_api_key or "").strip())
+        _pk = (inp.provider_api_key or "").strip()
+        # Batch 7 (BFF session): if the browser did NOT send a key but this is a
+        # cloud-relay target (openai_compat @ .../ollama/v1), inject the caller's
+        # server-side cloud token so the browser never has to hold it. Flagged +
+        # additive; falls through to whatever the client sent when off.
+        if not _pk:
+            try:
+                from .mirror_proxy import bff_session_enabled
+                if (
+                    bff_session_enabled()
+                    and (inp.provider or "").strip() == "openai_compat"
+                    and "/ollama/v1" in (inp.provider_base_url or "")
+                ):
+                    _u = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+                    if _u:
+                        from .cloud_tokens import get_cloud_token
+                        _pk = (get_cloud_token(_u["id"]) or "").strip()
+            except Exception:
+                pass
+        _provider_key_ctx.set(_pk)
     except Exception:
         pass  # additive — never let credential plumbing break chat
 

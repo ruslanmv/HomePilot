@@ -92,6 +92,14 @@ def is_enabled() -> bool:
     }
 
 
+def bff_session_enabled() -> bool:
+    """Batch 7 (BFF session): store the cloud token server-side and inject it
+    into cloud-relay calls, so the browser never holds it. Off by default."""
+    return os.getenv("HOMEPILOT_BFF_SESSION_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Per-user cloud credential registry — the Batch-7 BFF seam.
 #
@@ -139,6 +147,14 @@ def _resolve_cloud_credentials(user: Optional[Dict[str, Any]]) -> Tuple[str, str
     if user and user.get("id"):
         with _registry_lock:
             token = _USER_CLOUD_TOKENS.get(str(user["id"]))
+        # Batch 7: fall back to the server-side per-user token store (survives
+        # restarts). In-memory registry stays a fast path.
+        if not token:
+            try:
+                from .cloud_tokens import get_cloud_token
+                token = get_cloud_token(str(user["id"]))
+            except Exception:
+                token = None
     if not token:
         token = (getattr(_cfg, "OLLABRIDGE_CLOUD_TOKEN", "") or "").strip() or None
     if not token:
