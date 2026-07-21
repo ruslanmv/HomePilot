@@ -9,6 +9,7 @@ import LegalPage from './ui/components/LegalPage'
 import { HomePilotAccountProvider } from './ui/account/HomePilotAccountProvider'
 import { ComputerProvider } from './ui/account/ComputerContext'
 import { MirrorDevPanel } from './ui/account/MirrorDevPanel'
+import { RemoteOfflineBanner } from './ui/account/RemoteOfflineBanner'
 import './ui/styles.css'
 
 // Public, pre-auth legal pages. These are reached by full navigation (the login
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <HomePilotAccountProvider>
           <ComputerProvider>
             <App />
+            <RemoteOfflineBanner />
             <MirrorDevPanel />
           </ComputerProvider>
         </HomePilotAccountProvider>

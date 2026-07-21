@@ -42,7 +42,9 @@ import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { ComputerStatusPill } from './account/ComputerStatusPill'
 // Remote-LLM chat routing (Batch 5) — resolves the cloud-relay target when a
 // remote computer is selected; null (local path unchanged) otherwise.
-import { useRemoteChatTarget } from './account/useRemoteChatTarget'
+// Batch 6 adds useSelectedOfflineNode — a pinned-but-offline computer, used to
+// block silent Web-CPU fallback.
+import { useRemoteChatTarget, useSelectedOfflineNode } from './account/useRemoteChatTarget'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
@@ -2972,6 +2974,19 @@ export default function App() {
   const remoteChatTargetRef = useRef(remoteChatTarget)
   useEffect(() => { remoteChatTargetRef.current = remoteChatTarget }, [remoteChatTarget])
 
+  // Batch 6: a pinned computer that is offline. When set, sends are blocked
+  // rather than silently downgraded to Web CPU. Held in a ref for the send guard.
+  const selectedOfflineNode = useSelectedOfflineNode()
+  const selectedOfflineNodeRef = useRef(selectedOfflineNode)
+  useEffect(() => { selectedOfflineNodeRef.current = selectedOfflineNode }, [selectedOfflineNode])
+
+  // Troubleshoot in the offline banner asks to open settings.
+  useEffect(() => {
+    const onOpen = () => setShowSettings(true)
+    window.addEventListener('homepilot:open-settings', onOpen)
+    return () => window.removeEventListener('homepilot:open-settings', onOpen)
+  }, [setShowSettings])
+
   const currentChatSelection = useCallback(() => {
     // If a remote computer is selected, swap the target to the cloud relay bound
     // to that node's model (same wire shape as "Use for Chat"). The cloud token
@@ -3720,6 +3735,14 @@ export default function App() {
     async (rawText: string) => {
       const trimmed = rawText.trim()
       if (!trimmed) return
+
+      // Batch 6: honest offline. If the user pinned a specific computer that is
+      // offline, do NOT silently run on Web CPU — block the send and surface the
+      // offline banner (which explains + offers Troubleshoot / Notify / Automatic).
+      if (selectedOfflineNodeRef.current) {
+        window.dispatchEvent(new CustomEvent('homepilot:remote-offline-nudge'))
+        return
+      }
 
       setShowSettings(false)
 

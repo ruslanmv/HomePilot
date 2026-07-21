@@ -84,3 +84,21 @@ export function useRemoteChatTarget(): RemoteChatTarget | null {
     nodeName: selectedComputer.node_name || nodeId,
   }
 }
+
+/**
+ * Batch 6: honest offline. When the user has PINNED a specific computer (fixed
+ * selection) that is currently offline, return its identity so the UI can show
+ * an offline state and BLOCK sends — never silently downgrade to Web CPU.
+ * Returns null in automatic mode (which may pick another online computer) and
+ * whenever the pinned computer is online.
+ */
+export function useSelectedOfflineNode(): { nodeId: string; nodeName: string } | null {
+  const { enabled } = useAccount()
+  const { selectedComputer, selectionMode, presenceOf } = useComputer()
+  if (!enabled || selectionMode !== 'fixed' || !selectedComputer) return null
+  if (presenceOf(selectedComputer.node_id) === 'online') return null
+  return {
+    nodeId: selectedComputer.node_id,
+    nodeName: selectedComputer.node_name || selectedComputer.node_id,
+  }
+}
