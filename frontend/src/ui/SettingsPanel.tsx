@@ -25,6 +25,9 @@ import OllaBridgeLink from "./components/OllaBridgeLink";
 // Account & Computers (Batch 3) — ADDITIVE, feature-flagged.
 import AccountComputers from "./account/AccountComputers";
 import { isAccountsUxEnabled } from "./account/featureFlags";
+// Unified model catalog (Batch 8) + relocated OllaBridge provider.
+import { UnifiedModelCatalog } from "./account/UnifiedModelCatalog";
+import OllaBridgeModels from "./components/OllaBridgeModels";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import TtsEngineSection from "./components/TtsEngineSection";
 // Side-effect import: registers the bundled TTS providers (web-speech-api,
@@ -1001,6 +1004,7 @@ export default function SettingsPanel({
 
   function renderProviders() {
     return (
+      <>
       <SettingsCard
         title="Providers"
         description="Choose which backend powers each capability."
@@ -1022,11 +1026,19 @@ export default function SettingsPanel({
         {providerSelectRow("Video Provider", "Used for video generation.", value.providerVideo, (k) => commit({ ...value, providerVideo: k }))}
         {providerSelectRow("Multimodal Provider", "Used for image understanding (vision).", value.providerMultimodal || 'ollama', (k) => commit({ ...value, providerMultimodal: k }))}
       </SettingsCard>
+      {/* Batch 8: the OllaBridge provider is relocated here (under Providers)
+          when the Account & Computers UX is on — no longer a primary Models tab. */}
+      {accountsUx && <OllaBridgeModels />}
+      </>
     );
   }
 
   function renderModels() {
     return (
+      <>
+      {/* Batch 8: unified catalog of models on the account's computers.
+          Self-gates on the Account & Computers flag (null when off). */}
+      <UnifiedModelCatalog />
       <SettingsCard
         title="Model Endpoints"
         description="Optional base URLs and the specific model for each provider."
@@ -1044,6 +1056,7 @@ export default function SettingsPanel({
         {baseUrlRow("Multimodal Base URL", value.providerMultimodal || 'ollama', value.baseUrlMultimodal, (v) => commit({ ...value, baseUrlMultimodal: v }))}
         {modelSelectRow("Multimodal Model", value.providerMultimodal || 'ollama', value.modelMultimodal || '', (m) => commit({ ...value, modelMultimodal: m }), value.baseUrlMultimodal, 'multimodal')}
       </SettingsCard>
+      </>
     );
   }
 
