@@ -39,7 +39,7 @@ function getCloudUrl(): string {
   const env: Record<string, string | undefined> =
     ((import.meta as unknown as { env?: Record<string, string | undefined> }).env) || {}
   const v = (env.VITE_OLLABRIDGE_CLOUD_URL || '').trim()
-  return (v || 'https://ruslanmv-ollabridge.hf.space').replace(/\/+$/, '')
+  return (v || 'https://app.ollabridge.com').replace(/\/+$/, '')
 }
 
 export default function AuthScreen({

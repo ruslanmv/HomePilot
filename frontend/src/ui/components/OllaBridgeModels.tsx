@@ -30,12 +30,23 @@ const LS_CLOUD_URL = 'homepilot_cloud_url'
 
 export function getCloudUrl(): string {
   try {
-    const saved = (localStorage.getItem(LS_CLOUD_URL) || '').trim()
-    if (saved) return saved.replace(/\/+$/, '')
+    const saved = (localStorage.getItem(LS_CLOUD_URL) || '').trim().replace(/\/+$/, '')
+    // Drop known-obsolete cloud URLs so the new default/env value takes over,
+    // while preserving an intentional self-hosted URL. The raw Hugging Face
+    // origin is superseded by the branded app.ollabridge.com host.
+    const legacyUrls = new Set([
+      'https://ruslanmv-ollabridge.hf.space',
+      'https://ruslanmv-ollabridge-cloud.hf.space',
+    ])
+    if (saved && legacyUrls.has(saved)) {
+      localStorage.removeItem(LS_CLOUD_URL)
+    } else if (saved) {
+      return saved
+    }
   } catch { /* ignore */ }
   const env: Record<string, string | undefined> =
     ((import.meta as unknown as { env?: Record<string, string | undefined> }).env) || {}
-  return ((env.VITE_OLLABRIDGE_CLOUD_URL || '').trim() || 'https://ruslanmv-ollabridge.hf.space').replace(/\/+$/, '')
+  return ((env.VITE_OLLABRIDGE_CLOUD_URL || '').trim() || 'https://app.ollabridge.com').replace(/\/+$/, '')
 }
 
 export function getCloudToken(): string {
