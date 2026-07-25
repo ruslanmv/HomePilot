@@ -29,6 +29,13 @@ from pydantic import BaseModel, Field
 
 from .auth import require_ollabridge_api_key
 from . import config as _config
+from .daypilot_bridge import (
+    build_x_homepilot,
+    capabilities_document,
+    extract_directives,
+    parse_bridge_headers,
+    propose_system_suffix,
+)
 from .llm import chat as llm_chat, strip_think_tags
 from .personalities import registry as personality_registry, build_system_prompt, ConversationMemory
 from .storage import add_message, get_recent
@@ -309,6 +316,7 @@ async def _chat_with_persona_project(
     temperature: float,
     max_tokens: int,
     client_type: Optional[str] = None,
+    bridge_suffix: Optional[str] = None,
 ) -> str:
     """Route a chat request through a persona project, including MCP tools if enabled."""
     projects = _get_projects()
@@ -339,6 +347,12 @@ async def _chat_with_persona_project(
             "- Express emotions naturally — the avatar will reflect your mood.\n"
             "- Do not reference 'scrolling', 'clicking', or web-specific interactions."
         )
+
+    # DayPilot bridge: append the propose-only instruction as an ADDITIONAL
+    # system directive (never edits the persona's own prompt). Applies to the
+    # direct-LLM path; the agentic loop keeps its own tool policy.
+    if bridge_suffix:
+        system_prompt += "\n\n" + bridge_suffix
 
     # Extract user message and history
     user_message = messages[-1].content if messages else ""
@@ -402,6 +416,7 @@ async def _chat_with_personality(
     messages: List[ChatMessage],
     temperature: float,
     max_tokens: int,
+    bridge_suffix: Optional[str] = None,
 ) -> str:
     """Route a chat request through a built-in personality agent."""
     agent = personality_registry.get(personality_id)
@@ -417,6 +432,10 @@ async def _chat_with_personality(
     # Build system prompt
     is_first = len(messages) <= 1
     system_prompt = build_system_prompt(agent, memory, is_first_turn=is_first)
+
+    # DayPilot bridge: append propose-only instruction (never edits the base prompt).
+    if bridge_suffix:
+        system_prompt += "\n\n" + bridge_suffix
 
     # Build LLM messages
     llm_messages = [{"role": "system", "content": system_prompt}]
@@ -457,6 +476,9 @@ async def openai_chat_completions(
     req: ChatCompletionRequest,
     x_client_type: Optional[str] = Header(default=None, alias="X-Client-Type"),
     include_media: Optional[str] = Header(default=None, alias="X-Include-Media"),
+    x_tool_mode: Optional[str] = Header(default=None, alias="X-HomePilot-Tool-Mode"),
+    x_session_id: Optional[str] = Header(default=None, alias="X-HomePilot-Session-ID"),
+    x_bridge_version: Optional[str] = Header(default=None, alias="X-HomePilot-Bridge-Version"),
 ) -> Any:
     """OpenAI-compatible chat completions endpoint.
 
@@ -483,6 +505,18 @@ async def openai_chat_completions(
     temperature = req.temperature if req.temperature is not None else 0.7
     max_tokens = req.max_tokens if req.max_tokens is not None else 800
 
+    # DayPilot bridge (Batch A5). When DayPilot calls in propose-only mode, we
+    # append a separate system message telling the persona to propose actions as
+    # a machine block instead of performing them, then extract those directives
+    # into x_directives. Never mutates the persona's own prompt.
+    bridge = parse_bridge_headers(
+        x_client_type=x_client_type,
+        tool_mode=x_tool_mode,
+        session_id=x_session_id,
+        bridge_version=x_bridge_version,
+    )
+    bridge_suffix = propose_system_suffix() if (bridge.active and bridge.propose) else None
+
     # Track the resolved project_id for enriched mode
     resolved_project_id: Optional[str] = None
 
@@ -491,15 +525,18 @@ async def openai_chat_completions(
         resolved_project_id = project_data["id"]
         content = await _chat_with_persona_project(
             project_data["id"], req.messages, temperature, max_tokens,
-            client_type=x_client_type,
+            client_type=x_client_type, bridge_suffix=bridge_suffix,
         )
     elif model_type == "personality":
         content = await _chat_with_personality(
             model_id, req.messages, temperature, max_tokens,
+            bridge_suffix=bridge_suffix,
         )
     else:
         # Default: plain LLM passthrough
         llm_messages = [{"role": m.role, "content": m.content} for m in req.messages]
+        if bridge_suffix:
+            llm_messages.insert(0, {"role": "system", "content": bridge_suffix})
         try:
             result = await llm_chat(
                 llm_messages,
@@ -513,6 +550,13 @@ async def openai_chat_completions(
             raise HTTPException(502, f"LLM backend error: {e}")
 
     latency_ms = int((time.time() - t0) * 1000)
+
+    # --- DayPilot bridge: pull proposed directives out of the reply ---
+    # Done before [show:] resolution so the machine block never leaks into the
+    # visible content or an attachment. Only when a bridge client is calling.
+    bridge_directives: list[Dict[str, Any]] = []
+    if bridge.active:
+        content, bridge_directives = extract_directives(content)
 
     # --- Phase 3: Enriched response mode ---
     # Resolve [show:Label] tags into structured attachments when a
@@ -650,10 +694,38 @@ async def openai_chat_completions(
     # Append enriched fields only when active and present
     if enriched and x_attachments:
         response_data["x_attachments"] = x_attachments
-    if enriched and x_directives:
+
+    # DayPilot bridge fields — always present for a bridge client so DayPilot can
+    # correlate the turn, even when the persona proposed nothing this turn.
+    if bridge.active:
+        response_data["x_directives"] = {
+            "version": bridge.bridge_version,
+            "tool_mode": bridge.tool_mode,
+            "items": bridge_directives,
+        }
+        response_data["x_homepilot"] = build_x_homepilot(
+            bridge,
+            project_id=resolved_project_id,
+            model=req.model,
+            directive_count=len(bridge_directives),
+        )
+    elif enriched and x_directives:
         response_data["x_directives"] = x_directives
 
     return response_data
+
+
+@router.get("/v1/integrations/daypilot/capabilities", dependencies=[Depends(require_ollabridge_api_key)])
+async def daypilot_capabilities() -> Dict[str, Any]:
+    """Advertise this HomePilot's DayPilot-bridge support (Batch A5).
+
+    Lets DayPilot feature-detect a bridge-aware HomePilot (propose-only tool
+    mode, the directive/capability vocabulary, and limits) without a chat
+    round-trip. Static and side-effect free.
+    """
+    if not _compat_enabled:
+        raise HTTPException(503, "Persona API is disabled. Enable it in Settings > OllaBridge Gateway.")
+    return capabilities_document()
 
 
 @router.get("/v1/models", dependencies=[Depends(require_ollabridge_api_key)])
