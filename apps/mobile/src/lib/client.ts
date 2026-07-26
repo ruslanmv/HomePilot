@@ -9,7 +9,7 @@ export const DEFAULT_BASE_URL = 'http://localhost:8000';
 
 // The compute backend (image jobs, devices, sharing) is OllaBridge Cloud. The
 // Connect screen defaults to this so a fresh install only needs an access token.
-export const DEFAULT_CLOUD_URL = 'https://ruslanmv-ollabridge.hf.space';
+export const DEFAULT_CLOUD_URL = 'https://app.ollabridge.com';
 
 let baseUrl = DEFAULT_BASE_URL;
 

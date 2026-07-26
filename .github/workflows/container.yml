@@ -71,5 +71,12 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Frontend feature flags baked at build time. Empty = today's behavior
+          # (OFF); set these as repository variables to enable the OllaBridge
+          # account UX / BFF session for every deployment that uses this image.
+          build-args: |
+            VITE_ACCOUNTS_UX=${{ vars.VITE_ACCOUNTS_UX }}
+            VITE_BFF_SESSION=${{ vars.VITE_BFF_SESSION }}
+            VITE_OLLABRIDGE_CLOUD_URL=${{ vars.VITE_OLLABRIDGE_CLOUD_URL }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

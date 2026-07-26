@@ -132,12 +132,22 @@ jobs:
           API_KEY: ${{ secrets.HOMEPILOT_API_KEY || secrets.API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # OllaBridge account features for the hosted web edition. Non-secret
+          # flags/URL default sensibly below; set them on the oracle-production
+          # environment (as variables) to override. OLLABRIDGE_CLOUD_TOKEN is an
+          # optional operator-wide fallback (secret) — per-user linking does not
+          # need it.
+          OLLABRIDGE_CLOUD_URL: ${{ vars.OLLABRIDGE_CLOUD_URL || secrets.OLLABRIDGE_CLOUD_URL }}
+          OLLABRIDGE_CLOUD_TOKEN: ${{ secrets.OLLABRIDGE_CLOUD_TOKEN }}
+          HOMEPILOT_MIRROR_BFF_ENABLED: ${{ vars.HOMEPILOT_MIRROR_BFF_ENABLED }}
+          HOMEPILOT_BFF_SESSION_ENABLED: ${{ vars.HOMEPILOT_BFF_SESSION_ENABLED }}
+          HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED: ${{ vars.HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED }}
         with:
           host: ${{ vars.ORACLE_HOST || secrets.ORACLE_HOST }}
           username: ${{ vars.ORACLE_USER || secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
           port: ${{ vars.ORACLE_SSH_PORT || secrets.ORACLE_SSH_PORT || 22 }}
-          envs: IMAGE_REF,HOMEPILOT_DOMAIN,ACME_EMAIL,API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY
+          envs: IMAGE_REF,HOMEPILOT_DOMAIN,ACME_EMAIL,API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY,OLLABRIDGE_CLOUD_URL,OLLABRIDGE_CLOUD_TOKEN,HOMEPILOT_MIRROR_BFF_ENABLED,HOMEPILOT_BFF_SESSION_ENABLED,HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED
           script_stop: true
           script: |
             set -Eeuo pipefail
@@ -188,6 +198,16 @@ jobs:
               echo "INTERACTIVE_ENABLED=true"
               echo "INTERACTIVE_PLAYBACK_LLM=false"
               echo "INTERACTIVE_PLAYBACK_RENDER=false"
+              # OllaBridge account features (hosted web edition). Flags default
+              # ON here so remote providers work out of the box; set the matching
+              # variable to "false" on oracle-production to disable. The cloud URL
+              # defaults to the canonical host. OLLABRIDGE_CLOUD_TOKEN is written
+              # only when provided (optional operator-wide fallback).
+              echo "OLLABRIDGE_CLOUD_URL=${OLLABRIDGE_CLOUD_URL:-https://app.ollabridge.com}"
+              [ -n "${OLLABRIDGE_CLOUD_TOKEN:-}" ] && echo "OLLABRIDGE_CLOUD_TOKEN=${OLLABRIDGE_CLOUD_TOKEN}"
+              echo "HOMEPILOT_MIRROR_BFF_ENABLED=${HOMEPILOT_MIRROR_BFF_ENABLED:-true}"
+              echo "HOMEPILOT_BFF_SESSION_ENABLED=${HOMEPILOT_BFF_SESSION_ENABLED:-true}"
+              echo "HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED=${HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED:-true}"
             } | sudo tee .env >/dev/null
 
             # Run via sudo so it works before the docker-group membership added

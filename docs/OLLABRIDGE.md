@@ -137,7 +137,7 @@ Resolved by the backend at startup and exposed to the frontend:
 ```bash
 GET /v1/edition
 → { "edition": "web", "is_web": true, "is_local": false,
-    "can_provide_gpu": false, "cloud_url": "https://ruslanmv-ollabridge.hf.space" }
+    "can_provide_gpu": false, "cloud_url": "https://app.ollabridge.com" }
 ```
 
 The UI **fails safe to web** while loading, so provider/GPU controls never leak
@@ -216,7 +216,7 @@ telemetry-by-default posture.
 | Variable | Side | Default | Purpose |
 |---|---|---|---|
 | `HOMEPILOT_EDITION` | HomePilot | auto (`web` if Space, else `local`) | Force the edition |
-| `OLLABRIDGE_CLOUD_URL` | HomePilot + sidecar | `https://ruslanmv-ollabridge.hf.space` | Canonical Cloud base URL |
+| `OLLABRIDGE_CLOUD_URL` | HomePilot + sidecar | `https://app.ollabridge.com` | Canonical Cloud base URL |
 | `OLLABRIDGE_CLOUD_TOKEN` | HomePilot | — | Token for cloud-compute (consumer burst) |
 | `OLLABRIDGE_LOCAL_URL` | HomePilot | `http://127.0.0.1:11435` | Where to probe the sidecar |
 | `OLLABRIDGE_NODE_GEN_ENABLED` | sidecar | `false` | Advertise GPU + run ComfyUI image/video jobs |
@@ -225,7 +225,7 @@ telemetry-by-default posture.
 | `OLLABRIDGE_HOMEPILOT_URL` | sidecar | `http://127.0.0.1:8001` | HomePilot backend the node serves |
 | `VITE_OLLABRIDGE_CLOUD_URL` | web build | (default above) | Frontend Cloud URL override |
 
-**Canonical production Cloud URL:** `https://ruslanmv-ollabridge.hf.space`
+**Canonical production Cloud URL:** `https://app.ollabridge.com`
 (override per-deployment with the env vars above).
 
 ---
