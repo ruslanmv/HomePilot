@@ -243,6 +243,20 @@ try:
 except Exception as _e:  # pragma: no cover - defensive
     print(f"[mirror-bff] disabled: {_e}")
 
+# Account Providers BFF (/v1/account/providers) — ADDITIVE, FEATURE-FLAGGED
+# (HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED). Same-origin aggregate that surfaces the
+# remote providers shared by the signed-in user's OllaBridge account for
+# Settings → Providers. Reuses the mirror BFF security seam; the cloud token
+# stays server-side. Mounted independently of the mirror RPC/jobs plane so a
+# linked user sees shared providers without enabling the whole mirror BFF.
+try:
+    from . import account_providers as _account_providers
+    if _account_providers.is_enabled():
+        app.include_router(_account_providers.router)
+        print("[account-providers] mounted /v1/account/providers")
+except Exception as _e:  # pragma: no cover - defensive
+    print(f"[account-providers] disabled: {_e}")
+
 # --- Voice call (/v1/voice-call/*) — ADDITIVE, FEATURE-FLAGGED ---------------
 # Fully off by default. Enable with ``VOICE_CALL_ENABLED=true``. If anything
 # in the voice_call module raises on import (bad migration, missing dep, …)

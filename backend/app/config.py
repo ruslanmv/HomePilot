@@ -95,7 +95,7 @@ VIDEO_MODEL = os.getenv("VIDEO_MODEL", "svd").strip()  # svd, wan-2.2, seedream
 #   auto             — local GPU when healthy, else a linked OllaBridge device
 HOMEPILOT_COMPUTE_MODE = os.getenv("HOMEPILOT_COMPUTE_MODE", "local").strip().lower()
 OLLABRIDGE_CLOUD_URL = os.getenv(
-    "OLLABRIDGE_CLOUD_URL", "https://ruslanmv-ollabridge.hf.space"
+    "OLLABRIDGE_CLOUD_URL", "https://app.ollabridge.com"
 ).rstrip("/")
 OLLABRIDGE_CLOUD_TOKEN = os.getenv("OLLABRIDGE_CLOUD_TOKEN", "").strip()
 OLLABRIDGE_CLOUD_IMAGE_MODEL = os.getenv("OLLABRIDGE_CLOUD_IMAGE_MODEL", "flux-schnell").strip()

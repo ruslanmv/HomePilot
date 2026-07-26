@@ -39,6 +39,7 @@ import {
   onActiveTtsEngineChange,
 } from "./tts";
 import { resolveBackendUrl } from "./lib/backendUrl";
+import { fetchApiJson } from "./lib/apiFetch";
 import {
   getModelSettings,
   getPresetDescription,
@@ -523,8 +524,7 @@ export default function SettingsPanel({
     setLoadingProviders(true);
     setProvidersErr(null);
     try {
-      const res = await fetch(`${resolveBackendUrl(value.backendUrl)}/providers`);
-      const data = await res.json();
+      const data = await fetchApiJson(`${resolveBackendUrl(value.backendUrl)}/providers`);
       if (!data.ok) throw new Error(data.message || "Failed to load providers");
       setProviders(data.providers || {});
     } catch (e: any) {
@@ -541,9 +541,11 @@ export default function SettingsPanel({
     setModelsErr((m) => ({ ...m, [stateKey]: null }));
     try {
       const base = baseUrlOverride || providers?.[providerKey]?.base_url || "";
-      const url = `${value.backendUrl}/models?provider=${encodeURIComponent(providerKey)}&base_url=${encodeURIComponent(base)}${modelType ? `&model_type=${encodeURIComponent(modelType)}` : ''}`;
-      const res = await fetch(url);
-      const data = await res.json();
+      // Resolve the backend URL consistently: interpolating an empty
+      // ``value.backendUrl`` here would produce a relative ``/models`` request
+      // that SPA-falls-back to index.html and reproduces the JSON parse error.
+      const url = `${resolveBackendUrl(value.backendUrl)}/models?provider=${encodeURIComponent(providerKey)}&base_url=${encodeURIComponent(base)}${modelType ? `&model_type=${encodeURIComponent(modelType)}` : ''}`;
+      const data = await fetchApiJson(url);
       if (!data.ok) throw new Error(data.message || "Failed to fetch models");
       setModels((prev) => ({ ...prev, [stateKey]: data.models || [] }));
       if (!data.models || data.models.length === 0) {
@@ -580,7 +582,7 @@ export default function SettingsPanel({
       // Fetch all preset levels in parallel
       await Promise.all(
         presetLevels.map(async (preset) => {
-          const url = `${value.backendUrl}/video-presets?model=${encodeURIComponent(modelType)}&preset=${preset}`;
+          const url = `${resolveBackendUrl(value.backendUrl)}/video-presets?model=${encodeURIComponent(modelType)}&preset=${preset}`;
           const res = await fetch(url);
           const data = await res.json();
           if (data.ok && data.values) {

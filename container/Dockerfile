@@ -35,6 +35,17 @@ COPY frontend/ ./
 # WORKDIR is /build, so ../packages must be present at /packages. These are
 # TS source, not npm deps — npm ci above is unchanged.
 COPY packages/ /packages/
+# Frontend build-time flags (Vite bakes ``import.meta.env.VITE_*`` at build).
+# Empty defaults preserve today's behavior (all OFF); pass build-args to opt in.
+#   VITE_ACCOUNTS_UX=1        → mount the OllaBridge account/computers UX
+#   VITE_BFF_SESSION=1        → browser stops storing the cloud token (BFF)
+#   VITE_OLLABRIDGE_CLOUD_URL → cloud host (defaults to app.ollabridge.com)
+ARG VITE_ACCOUNTS_UX=""
+ARG VITE_BFF_SESSION=""
+ARG VITE_OLLABRIDGE_CLOUD_URL=""
+ENV VITE_ACCOUNTS_UX=${VITE_ACCOUNTS_UX} \
+    VITE_BFF_SESSION=${VITE_BFF_SESSION} \
+    VITE_OLLABRIDGE_CLOUD_URL=${VITE_OLLABRIDGE_CLOUD_URL}
 RUN npm run build
 
 # ============================================================

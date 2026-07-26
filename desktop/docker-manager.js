@@ -32,7 +32,7 @@ const SIDECAR_FULL_IMAGE = `${SIDECAR_IMAGE}:${SIDECAR_TAG}`;
 const SIDECAR_CONTAINER = "ollabridge-local";
 const SIDECAR_PORT = 11435; // `ollabridge start` canonical port (dashboard at /ui)
 const NETWORK_NAME = "homepilot-local";
-const DEFAULT_CLOUD_URL = "https://ruslanmv-ollabridge.hf.space";
+const DEFAULT_CLOUD_URL = "https://app.ollabridge.com";
 
 class DockerManager extends EventEmitter {
   constructor() {

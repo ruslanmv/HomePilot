@@ -19,7 +19,7 @@ Companion docs:
 
 | Capability | State | How it's enabled |
 |---|---|---|
-| **OllaBridge Cloud** (control plane) | ✅ live | Hugging Face Space **`ruslanmv/ollabridge`** → `https://ruslanmv-ollabridge.hf.space` (verified RUNNING). |
+| **OllaBridge Cloud** (control plane) | ✅ live | Hugging Face Space **`ruslanmv/ollabridge`** → `https://app.ollabridge.com` (verified RUNNING). |
 | **Mobile Android APK** | ✅ CI-built | `.github/workflows/mobile.yml` → APK attached to each GitHub Release (verified installable: aapt badging + apksigner). |
 | **Mobile sign-in** (MB7) | ✅ | `POST /v1/auth/login` (cloud) → JWT in `expo-secure-store`. |
 | **Streaming chat** (MB1) | ✅ | `POST /v1/chat/completions` — no new route. |
@@ -103,7 +103,7 @@ premium-only with two flags.
 
 ```bash
 HOMEPILOT_COMPUTE_MODE=auto                       # local | ollabridge_cloud | auto
-OLLABRIDGE_CLOUD_URL=https://ruslanmv-ollabridge.hf.space
+OLLABRIDGE_CLOUD_URL=https://app.ollabridge.com
 OLLABRIDGE_CLOUD_TOKEN=                            # Bearer JWT / ob_ API key
 
 # Make the burst premium-only (both default false → everyone can burst):
@@ -121,7 +121,7 @@ by `backend/tests/test_compute_burst.py`.
 
 ## 5. The control plane (OllaBridge Cloud on Hugging Face)
 
-The cloud is **live** at `https://ruslanmv-ollabridge.hf.space` (Space
+The cloud is **live** at `https://app.ollabridge.com` (Space
 `ruslanmv/ollabridge`). Mobile and backend default to this URL
 (`apps/mobile/src/lib/client.ts` `DEFAULT_CLOUD_URL`, `backend/app/config.py`
 `OLLABRIDGE_CLOUD_URL`), so a fresh install needs only a sign-in.
