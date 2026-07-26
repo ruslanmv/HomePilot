@@ -204,7 +204,12 @@ jobs:
               # defaults to the canonical host. OLLABRIDGE_CLOUD_TOKEN is written
               # only when provided (optional operator-wide fallback).
               echo "OLLABRIDGE_CLOUD_URL=${OLLABRIDGE_CLOUD_URL:-https://app.ollabridge.com}"
-              [ -n "${OLLABRIDGE_CLOUD_TOKEN:-}" ] && echo "OLLABRIDGE_CLOUD_TOKEN=${OLLABRIDGE_CLOUD_TOKEN}"
+              # Use if/fi, not `[ -n .. ] && echo`: a false test returns 1, and
+              # under `set -e` that non-zero status (as the group's trailing
+              # command) aborts the deploy silently. `if` with no else returns 0.
+              if [ -n "${OLLABRIDGE_CLOUD_TOKEN:-}" ]; then
+                echo "OLLABRIDGE_CLOUD_TOKEN=${OLLABRIDGE_CLOUD_TOKEN}"
+              fi
               echo "HOMEPILOT_MIRROR_BFF_ENABLED=${HOMEPILOT_MIRROR_BFF_ENABLED:-true}"
               echo "HOMEPILOT_BFF_SESSION_ENABLED=${HOMEPILOT_BFF_SESSION_ENABLED:-true}"
               echo "HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED=${HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED:-true}"
