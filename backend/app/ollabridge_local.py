@@ -86,6 +86,32 @@ async def _probe_sidecar() -> Dict[str, Any]:
                     break
         except Exception:
             continue
+
+    # Additive: read the sidecar's cloud-relay status so callers learn the REAL
+    # pairing/relay state instead of unconditionally offering to pair. The
+    # sidecar exposes ``GET /admin/cloud/status`` →
+    #   { state, cloud_url, device_id, models_count, ... }
+    # Never fatal — a sidecar too old to expose this simply leaves the fields
+    # unset and the UI falls back to its previous (reachability-only) behaviour.
+    if out["running"]:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                cr = await client.get(f"{base}/admin/cloud/status")
+            if cr.status_code < 400:
+                cs = cr.json() if callable(getattr(cr, "json", None)) else {}
+                if isinstance(cs, dict):
+                    state = str(cs.get("state") or "").lower().strip()
+                    device_id = str(cs.get("device_id") or "").strip()
+                    out["relay_state"] = state or None
+                    out["device_id"] = device_id or None
+                    out["relay_url"] = (cs.get("cloud_url") or None)
+                    out["models_shared"] = int(cs.get("models_count") or 0)
+                    # Saved device credentials ⇒ this machine is paired; the
+                    # tunnel may be up (connected) or down (reconnect needed).
+                    out["credentials_saved"] = bool(device_id)
+                    out["paired"] = bool(device_id)
+        except Exception:
+            pass
     return out
 
 
@@ -121,10 +147,18 @@ async def local_status() -> Dict[str, Any]:
         # We can only observe "running" locally; treat reachable ⇒ installed.
         "installed": running,
         "running": running,
-        # Pairing is authoritative on the Cloud; the app learns it via the
-        # Cloud /v1/devices list, so we don't assert it from here.
-        "paired": None,
+        # Real pairing/relay state read from the sidecar's cloud status when
+        # available (additive). ``paired`` is a genuine bool when we can observe
+        # saved credentials, else None (unknown) — preserving the old contract.
+        "paired": probe.get("paired"),
+        "relay_state": probe.get("relay_state"),
+        "device_id": probe.get("device_id"),
+        "credentials_saved": probe.get("credentials_saved"),
+        "models_shared": probe.get("models_shared"),
+        # ``cloud_url`` stays the human-facing app host (for /link pages);
+        # ``relay_url`` is the sidecar's relay API host, surfaced separately.
         "cloud_url": _cloud_url(),
+        "relay_url": probe.get("relay_url"),
         "local_url": probe.get("local_url"),
         "models": probe.get("models", 0),
         "share_scope": "owner_only",

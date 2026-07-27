@@ -311,6 +311,46 @@ def _build_persona_system_prompt(
     return "\n\n".join(parts) if parts else "You are a helpful assistant."
 
 
+async def _resolve_chat_backend() -> tuple[str, str, str, str]:
+    """Resolve ``(provider, base_url, chat_model, vision_model)`` for the persona
+    pipeline.
+
+    A persona is exposed as one API model but orchestrates several models
+    internally; a *text* turn must run on the user's configured **Chat Model**,
+    not the multimodal one. This honors that Chat Model — persisted server-side
+    via ``POST /v1/system/runtime-config`` (``OLLAMA_MODEL``), then the
+    ``OLLAMA_MODEL`` env — and otherwise picks a text-chat model from the live
+    Ollama tags (never a vision-only model like moondream, which returns empty
+    text and produced the "couldn't parse the agent response" fallback).
+    """
+    provider = _config.DEFAULT_PROVIDER
+    if provider != "ollama":
+        model = _config.LLM_MODEL or ""
+        return provider, _config.LLM_BASE_URL, model, model
+
+    from . import llm as _llm
+    from .runtime_config import read_runtime_config
+    import httpx as _httpx
+
+    configured = (
+        read_runtime_config().get("OLLAMA_MODEL")
+        or _config.OLLAMA_MODEL
+        or ""
+    ).strip()
+    base = _config.OLLAMA_BASE_URL.rstrip("/")
+    names: list[str] = []
+    try:
+        async with _httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{base}/api/tags")
+            if r.status_code == 200:
+                names = [str(m.get("name") or "").strip() for m in r.json().get("models", [])]
+    except Exception:
+        names = []
+    chat_model = _llm.pick_chat_model(names, configured)
+    vision_model = _llm.pick_vision_model(names)
+    return provider, _config.OLLAMA_BASE_URL, chat_model, vision_model
+
+
 async def _chat_with_persona_project(
     project_id: str,
     messages: List[ChatMessage],
@@ -365,6 +405,11 @@ async def _chat_with_persona_project(
         if msg.role != "system":
             llm_messages.append({"role": msg.role, "content": msg.content})
 
+    # Resolve the concrete models once: a persona orchestrates a chat model for
+    # text and a vision model for image turns. Never pass None (which made the
+    # Ollama layer auto-pick a vision-only model for text and return empty).
+    provider, base_url, chat_model, vision_model = await _resolve_chat_backend()
+
     # Check if agentic capabilities are enabled
     agentic = project_data.get("agentic") or {}
     capabilities = agentic.get("capabilities") or []
@@ -373,36 +418,31 @@ async def _chat_with_persona_project(
         # Use agent chat with tool use
         try:
             _ac = _get_agent_chat()
-            provider = _config.DEFAULT_PROVIDER
-            if provider == "ollama":
-                base_url = _config.OLLAMA_BASE_URL
-                model = _config.OLLAMA_MODEL or None
-            else:
-                base_url = _config.LLM_BASE_URL
-                model = _config.LLM_MODEL or None
             result = await _ac.agent_chat(
                 user_text=user_message,
                 conversation_id=conversation_id,
                 project_id=project_id,
                 llm_provider=provider,
                 llm_base_url=base_url,
-                llm_model=model,
+                llm_model=chat_model or None,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 vision_provider=provider,
                 vision_base_url=base_url,
-                vision_model=model,
+                vision_model=vision_model or chat_model or None,
                 nsfw_mode=False,
             )
             return result.get("text", "I couldn't generate a response.")
         except Exception as e:
             print(f"[COMPAT] Agent loop failed, falling back to direct LLM: {e}")
 
-    # Direct LLM call (no tools)
+    # Direct LLM call (no tools) — on the resolved chat model.
     try:
         result = await llm_chat(
             llm_messages,
-            provider=_config.DEFAULT_PROVIDER,
+            provider=provider,
+            base_url=base_url,
+            model=chat_model or None,
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -448,11 +488,14 @@ async def _chat_with_personality(
         else:
             llm_messages.append({"role": msg.role, "content": msg.content})
 
-    # Call LLM
+    # Call LLM on the resolved chat model (never a vision-only auto-pick).
+    provider, base_url, chat_model, _vision_model = await _resolve_chat_backend()
     try:
         result = await llm_chat(
             llm_messages,
-            provider=_config.DEFAULT_PROVIDER,
+            provider=provider,
+            base_url=base_url,
+            model=chat_model or None,
             temperature=temperature,
             max_tokens=max_tokens,
         )

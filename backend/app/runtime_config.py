@@ -35,6 +35,10 @@ ALLOWED_KEYS = frozenset({
     "IMAGE_MODEL",
     "VIDEO_MODEL",
     "COMFY_BASE_URL",
+    # The user's selected chat model, persisted so the server-side persona
+    # pipeline (/v1/chat/completions) runs text turns on the same Ollama model
+    # the Settings panel chose — instead of auto-picking a vision-only model.
+    "OLLAMA_MODEL",
 })
 
 
