@@ -33,6 +33,8 @@ interface DeviceInfo {
   online: boolean
   gpu_name?: string | null
   vram_mb?: number | null
+  kind?: string | null
+  last_seen?: string | null
 }
 
 interface LocalStatus {
@@ -43,6 +45,13 @@ interface LocalStatus {
   local_url?: string | null
   models?: number
   share_scope?: string
+  // Real relay/pairing state (additive; present on newer backends).
+  paired?: boolean | null
+  relay_state?: string | null
+  device_id?: string | null
+  credentials_saved?: boolean | null
+  models_shared?: number | null
+  relay_url?: string | null
 }
 
 const INSTALL_LOCAL_URL = 'https://github.com/ruslanmv/HomePilot#installation'
@@ -53,6 +62,9 @@ export default function OllaBridgeLink() {
   const [email, setEmail] = useState('')
   const [me, setMe] = useState<{ email?: string } | null>(null)
   const [devices, setDevices] = useState<DeviceInfo[]>([])
+  // A failed lookup is NOT the same as "no machines" — track it separately so
+  // an API error never renders as an empty state.
+  const [deviceError, setDeviceError] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [pw, setPw] = useState('')
@@ -80,21 +92,40 @@ export default function OllaBridgeLink() {
     if (!tok) return
     setLoading(true)
     setError('')
+    setDeviceError('')
     try {
       const auth = { Authorization: `Bearer ${tok}` }
-      const [meRes, devRes] = await Promise.all([
+      // Prefer the always-on, owner-scoped compute-node inventory (returns only
+      // GPU machines, never client apps). Fall back to /v1/devices only for an
+      // older Cloud that lacks the endpoint.
+      const [meRes, cnRes] = await Promise.all([
         fetch(`${cloudUrl}/v1/auth/me`, { headers: auth }),
-        fetch(`${cloudUrl}/v1/devices`, { headers: auth }),
+        fetch(`${cloudUrl}/v1/account/compute-nodes`, { headers: auth }),
       ])
-      if (meRes.status === 401) {
+      if (meRes.status === 401 || cnRes.status === 401) {
         setError('Your OllaBridge session expired — reconnect below.')
         setToken(''); try { localStorage.removeItem('homepilot_cloud_token') } catch { /* ignore */ }
         return
       }
       setMe(meRes.ok ? await meRes.json() : null)
-      // /v1/devices is 404 when device sharing is disabled on the Cloud — treat
-      // as "no nodes" rather than an error so account-link still reads as OK.
-      setDevices(devRes.ok ? (await devRes.json()) : [])
+      if (cnRes.ok) {
+        const data = await cnRes.json()
+        setDevices(Array.isArray(data?.nodes) ? data.nodes : [])
+      } else if (cnRes.status === 404) {
+        // Older Cloud without the compute-node inventory — fall back to the
+        // legacy device list (compute + client mixed).
+        const devRes = await fetch(`${cloudUrl}/v1/devices`, { headers: auth })
+        if (devRes.ok) {
+          setDevices(await devRes.json())
+        } else if (devRes.status === 404) {
+          // Neither endpoint present — genuinely nothing to enumerate.
+          setDevices([])
+        } else {
+          setDeviceError(`Could not load your computers (${devRes.status}).`)
+        }
+      } else {
+        setDeviceError(`Could not load your computers (${cnRes.status}).`)
+      }
     } catch {
       setError('Could not reach OllaBridge Cloud.')
     } finally {
@@ -135,6 +166,17 @@ export default function OllaBridgeLink() {
 
   const linked = Boolean(token)
   const host = cloudUrl.replace(/^https?:\/\//, '')
+
+  // Derived relay/pairing state for the "This computer" card. Prefer the real
+  // relay state read from the sidecar; fall back gracefully when a field is
+  // absent (older backend) so behaviour degrades to the previous UX.
+  const relayState = (sidecar?.relay_state || '').toLowerCase()
+  const isPaired =
+    sidecar?.paired === true || !!sidecar?.credentials_saved || !!sidecar?.device_id
+  const isRelayConnected = relayState === 'connected'
+  const isReconnecting = relayState === 'reconnecting' || relayState === 'pairing'
+  const modelsShared = sidecar?.models_shared ?? sidecar?.models ?? 0
+  const sidecarUiUrl = `${sidecar?.local_url || 'http://127.0.0.1:11435'}/ui`
 
   return (
     <div className="space-y-4">
@@ -211,38 +253,99 @@ export default function OllaBridgeLink() {
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-white/45">
               <Server size={13} /> This computer
             </div>
-            {sidecar?.running ? (
+            {/* Badge reflects the REAL relay state, not just reachability. */}
+            {!sidecar?.running ? (
+              <span className="text-[11px] px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-white/50">Sidecar stopped</span>
+            ) : isRelayConnected ? (
+              <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/12 border border-emerald-500/30 text-emerald-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Connected
+              </span>
+            ) : isReconnecting ? (
+              <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full bg-amber-500/12 border border-amber-500/30 text-amber-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> Reconnecting
+              </span>
+            ) : isPaired ? (
+              <span className="text-[11px] px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-white/50">Disconnected</span>
+            ) : (
               <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/12 border border-emerald-500/30 text-emerald-300">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Sidecar running
               </span>
-            ) : (
-              <span className="text-[11px] px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-white/50">Sidecar stopped</span>
             )}
           </div>
-          <p className="text-sm text-white/80">
-            This PC can become your <span className="font-semibold text-white">private GPU node</span>. HomePilot Local
-            runs the <span className="font-mono text-white/70">ollabridge</span> sidecar; pair it with OllaBridge Cloud to
-            reach it from HomePilot Web or mobile.
-          </p>
-          {sidecar?.running ? (
-            <div className="flex flex-wrap items-center gap-2 mt-3">
-              <a href={`${(sidecar.local_url || 'http://127.0.0.1:11435')}/ui`} target="_blank" rel="noopener noreferrer"
-                className="h-9 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-white/80 inline-flex items-center gap-1.5">
-                <ExternalLink size={13} /> Open OllaBridge dashboard
-              </a>
-              <a href={`${cloudUrl}/link`} target="_blank" rel="noopener noreferrer"
-                className="h-9 px-3 rounded-xl bg-gradient-to-r from-cyan-500/90 to-violet-500/90 text-white text-xs font-semibold inline-flex items-center gap-1.5">
-                <Plus size={13} /> Pair this computer
-              </a>
-              <span className="text-[11px] text-white/40 ml-1">Sharing: <span className="text-white/60">my account only</span></span>
-            </div>
+
+          {!sidecar?.running ? (
+            /* Sidecar not reachable — how to start it. */
+            <>
+              <p className="text-sm text-white/80">
+                This PC can become your <span className="font-semibold text-white">private GPU node</span>. HomePilot Local
+                runs the <span className="font-mono text-white/70">ollabridge</span> sidecar to reach it from HomePilot Web or mobile.
+              </p>
+              <div className="mt-3 text-xs text-white/50 leading-relaxed">
+                The OllaBridge Local sidecar isn’t reachable{sidecar?.local_url ? ` at ${sidecar.local_url}` : ''}. Start it with{' '}
+                <span className="font-mono text-white/70">ollabridge start</span> (installs on first run) — it serves an
+                OpenAI-compatible gateway on <span className="font-mono text-white/70">:11435</span>. HomePilot Local’s desktop
+                app starts it for you.
+              </div>
+            </>
+          ) : isRelayConnected ? (
+            /* READY — already paired and connected. No pairing button. */
+            <>
+              <p className="text-sm text-white/80">
+                <span className="font-semibold text-white">Ready.</span> This PC is online through OllaBridge Cloud — reachable from HomePilot Web and mobile.
+              </p>
+              <div className="mt-2 grid gap-0.5 text-[11px] text-white/45">
+                {sidecar?.device_id && (
+                  <div>Device: <span className="font-mono text-white/70">{sidecar.device_id}</span></div>
+                )}
+                <div>{modelsShared} model{modelsShared === 1 ? '' : 's'} shared · Access: <span className="text-white/60">Private — only your account</span></div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                <a href={sidecarUiUrl} target="_blank" rel="noopener noreferrer"
+                  className="h-9 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-white/80 inline-flex items-center gap-1.5">
+                  <ExternalLink size={13} /> Open OllaBridge dashboard
+                </a>
+                <span className="text-[11px] text-white/35 ml-1">Manage sharing or disconnect in the dashboard.</span>
+              </div>
+            </>
+          ) : isPaired ? (
+            /* Paired but the tunnel is down — reconnecting or needs reconnect. */
+            <>
+              <p className="text-sm text-white/80">
+                {isReconnecting ? (
+                  <>This computer is <span className="font-semibold text-white">reconnecting</span> to OllaBridge Cloud — no action needed.</>
+                ) : (
+                  <>This computer is paired but its cloud tunnel is <span className="font-semibold text-white">disconnected</span>.</>
+                )}
+              </p>
+              {sidecar?.device_id && (
+                <div className="mt-2 text-[11px] text-white/45">Device: <span className="font-mono text-white/70">{sidecar.device_id}</span></div>
+              )}
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                <a href={sidecarUiUrl} target="_blank" rel="noopener noreferrer"
+                  className="h-9 px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-white/80 inline-flex items-center gap-1.5">
+                  <ExternalLink size={13} /> Open OllaBridge dashboard
+                </a>
+                {!isReconnecting && (
+                  <span className="text-[11px] text-white/35 ml-1">Reconnect from the dashboard’s Cloud tab.</span>
+                )}
+              </div>
+            </>
           ) : (
-            <div className="mt-3 text-xs text-white/50 leading-relaxed">
-              The OllaBridge Local sidecar isn’t reachable{sidecar?.local_url ? ` at ${sidecar.local_url}` : ''}. Start it with{' '}
-              <span className="font-mono text-white/70">ollabridge start</span> (installs on first run) — it serves an
-              OpenAI-compatible gateway on <span className="font-mono text-white/70">:11435</span>. HomePilot Local’s desktop
-              app starts it for you.
-            </div>
+            /* Running, no saved credentials — first-time connect. Opens the
+               local sidecar dashboard where "Link to Cloud" starts pairing —
+               NOT the cloud code-entry page, so the user never types a code. */
+            <>
+              <p className="text-sm text-white/80">
+                This PC can become your <span className="font-semibold text-white">private GPU node</span>. Connect it to OllaBridge Cloud to reach it from HomePilot Web or mobile.
+              </p>
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                <a href={sidecarUiUrl} target="_blank" rel="noopener noreferrer"
+                  className="h-9 px-3 rounded-xl bg-gradient-to-r from-cyan-500/90 to-violet-500/90 text-white text-xs font-semibold inline-flex items-center gap-1.5">
+                  <Plus size={13} /> Connect this computer
+                </a>
+                <span className="text-[11px] text-white/40 ml-1">Opens the dashboard → Cloud tab → Link to Cloud.</span>
+              </div>
+            </>
           )}
           <p className="mt-2 text-[11px] text-white/30">Installed ≠ paired ≠ shared — nothing is shared until you approve it, and only to your own account by default.</p>
         </div>
@@ -257,11 +360,22 @@ export default function OllaBridgeLink() {
             </div>
             <a href={`${cloudUrl}/link`} target="_blank" rel="noopener noreferrer"
               className="h-9 px-3 rounded-xl bg-gradient-to-r from-cyan-500/90 to-violet-500/90 text-white text-xs font-semibold inline-flex items-center gap-1.5">
-              <Plus size={13} /> Add a machine
+              <Plus size={13} /> {devices.length > 0 ? 'Add another computer' : 'Add a machine'}
             </a>
           </div>
 
-          {devices.length > 0 ? (
+          {deviceError ? (
+            /* A lookup failure must never render as "no machines". */
+            <div className="text-xs leading-relaxed">
+              <div className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300">
+                {deviceError}
+              </div>
+              <button type="button" onClick={() => load(token)}
+                className="mt-2 h-8 px-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-white/70 inline-flex items-center gap-1.5">
+                <RefreshCw size={12} /> Retry
+              </button>
+            </div>
+          ) : devices.length > 0 ? (
             <div className="grid gap-1.5">
               {devices.map((d) => (
                 <div key={d.id} className="flex items-center gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.02] px-3 py-2">

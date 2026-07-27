@@ -1906,6 +1906,9 @@ export default function App() {
                         IMAGE_MODEL: settingsDraft.modelImages || '',
                         VIDEO_MODEL: settingsDraft.modelVideo || '',
                         COMFY_BASE_URL: comfyBaseUrl,
+                        // Persist the chat model server-side so HomePilot
+                        // personas run text turns on the same model.
+                        OLLAMA_MODEL: settingsDraft.modelChat || '',
                     },
                 }),
             }).catch(() => { });

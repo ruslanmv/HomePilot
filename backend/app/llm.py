@@ -274,6 +274,79 @@ from .config import (
 ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx"]
 
 
+# ── Ollama model classification & selection ─────────────────────────────────
+# When no model is configured we must never auto-pick a vision-only or embedding
+# model for a *text* turn (that is what made persona chats land on
+# ``moondream:latest`` and return empty content → "couldn't parse"). These
+# heuristics + priority keep text chats on a text model.
+_VISION_ONLY_HINTS = (
+    "moondream", "llava", "bakllava", "minicpm-v", "-vl", "vision", "llama3.2-vision",
+)
+_EMBED_HINTS = (
+    "embed", "nomic-embed", "mxbai-embed", "all-minilm", "bge-", "bge:",
+)
+# Preferred general text-chat models, best first (mirrors /auto-detect).
+_CHAT_MODEL_PRIORITY = (
+    "llama3.2:3b", "llama3.2", "llama3.1", "llama3:8b", "qwen3", "qwen2.5",
+    "mistral-nemo", "gemma2", "mistral:7b", "phi4", "deepseek-r1",
+)
+_VISION_MODEL_PRIORITY = (
+    "moondream", "gemma3:4b", "gemma3", "llava:7b", "llava", "minicpm-v",
+    "llama3.2-vision",
+)
+
+
+def is_text_chat_model(name: str) -> bool:
+    """True when a model id can serve a plain text chat turn (i.e. it is not a
+    vision-only or embedding model)."""
+    n = (name or "").lower()
+    if not n:
+        return False
+    if any(h in n for h in _EMBED_HINTS):
+        return False
+    if any(h in n for h in _VISION_ONLY_HINTS):
+        return False
+    return True
+
+
+def _match_priority(available: List[str], priority) -> str:
+    for preferred in priority:
+        for a in available:
+            al = a.lower()
+            if al == preferred or al.startswith(preferred + ":") or preferred in al:
+                return a
+    return ""
+
+
+def pick_chat_model(available: List[str], configured: str = "") -> str:
+    """Choose a text-chat model. ``configured`` (the user's Chat Model) wins;
+    otherwise prefer a known text model, then any chat-capable model, and only
+    as a last resort the first available id."""
+    names = [str(a).strip() for a in (available or []) if str(a).strip()]
+    cfg = (configured or "").strip()
+    if cfg:
+        return cfg
+    if not names:
+        return ""
+    return (
+        _match_priority(names, _CHAT_MODEL_PRIORITY)
+        or next((n for n in names if is_text_chat_model(n)), "")
+        or names[0]
+    )
+
+
+def pick_vision_model(available: List[str], configured: str = "") -> str:
+    """Choose a vision-capable model for image turns. ``configured`` wins;
+    otherwise prefer a known vision model, then any model."""
+    names = [str(a).strip() for a in (available or []) if str(a).strip()]
+    cfg = (configured or "").strip()
+    if cfg:
+        return cfg
+    if not names:
+        return ""
+    return _match_priority(names, _VISION_MODEL_PRIORITY) or names[0]
+
+
 def _timeout() -> httpx.Timeout:
     # Keep connect reasonable; total bounded by TOOL_TIMEOUT_S
     return httpx.Timeout(timeout=TOOL_TIMEOUT_S, connect=30.0)
@@ -486,7 +559,10 @@ async def chat_ollama(
                     tags_data = tags_r.json()
                     models = tags_data.get("models", [])
                     if models:
-                        mdl = str(models[0].get("name") or "").strip()
+                        names = [str(m.get("name") or "").strip() for m in models]
+                        # Prefer a text-chat model over a vision-only/embedding
+                        # one so a text turn never lands on e.g. moondream.
+                        mdl = pick_chat_model(names, OLLAMA_MODEL)
             except Exception:
                 pass
 
