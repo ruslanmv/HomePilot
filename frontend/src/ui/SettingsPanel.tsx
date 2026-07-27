@@ -1500,7 +1500,7 @@ export default function SettingsPanel({
       case "general": return renderGeneral();
       case "connection": return renderConnection();
       case "account": return <AccountComputers />;
-      case "linking": return <OllaBridgeLink />;
+      case "linking": return <OllaBridgeLink onOpenModels={() => setActiveSection("models")} />;
       case "providers": return renderProviders();
       case "models": return renderModels();
       case "generation": return renderGeneration();
