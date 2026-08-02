@@ -117,6 +117,11 @@ class ModelObject(BaseModel):
     created: int = 0
     owned_by: str = "homepilot"
     name: Optional[str] = None
+    # The underlying persona project UUID. Published so an external client (e.g.
+    # DayPilot) can map the aliased model id (``persona:<alias>--<short>``) back to
+    # the project without re-deriving HomePilot's id-building rules. None for
+    # non-persona models.
+    homepilot_project_id: Optional[str] = None
 
 
 class ModelListResponse(BaseModel):
@@ -851,6 +856,7 @@ async def openai_list_models() -> ModelListResponse:
                 name=label,
                 created=now,
                 owned_by="homepilot-persona",
+                homepilot_project_id=proj.get("id"),
             ))
     except Exception as e:
         print(f"[COMPAT] Error listing persona projects: {e}")
