@@ -48,6 +48,36 @@ class TestOpenAIModels:
             assert "owned_by" in m
 
 
+class TestPersonaModelIdMapping:
+    """The aliased persona model id must carry the project UUID so an external
+    client (DayPilot) can map ``persona:<alias>--<short>`` back to the project."""
+
+    def test_build_external_id_uses_alias_and_short_uuid(self):
+        from app.openai_compat_endpoint import _build_external_id
+        proj = {
+            "id": "d1ee423b-906f-40d7-a079-e982e6b7ab0e",
+            "shared_api": {"enabled": True, "alias": "Girlfriend"},
+            "persona_agent": {"label": "Girlfriend"},
+        }
+        # persona:<alias>--<first-8-of-uuid>
+        assert _build_external_id(proj) == "persona:girlfriend--d1ee423b"
+
+    def test_build_external_id_falls_back_to_short_uuid(self):
+        from app.openai_compat_endpoint import _build_external_id
+        proj = {"id": "abcd1234-0000-0000-0000-000000000000", "shared_api": {"enabled": True}}
+        assert _build_external_id(proj) == "persona:abcd1234"
+
+    def test_model_object_exposes_project_id(self):
+        from app.openai_compat_endpoint import ModelObject
+        m = ModelObject(id="persona:girlfriend--d1ee423b", name="Girlfriend",
+                        owned_by="homepilot-persona",
+                        homepilot_project_id="d1ee423b-906f-40d7-a079-e982e6b7ab0e")
+        dumped = m.model_dump()
+        assert dumped["homepilot_project_id"] == "d1ee423b-906f-40d7-a079-e982e6b7ab0e"
+        # A mapping from the short id back to the full project id is derivable.
+        assert dumped["id"].endswith(dumped["homepilot_project_id"][:8])
+
+
 # ---------------------------------------------------------------------------
 # /v1/chat/completions
 # ---------------------------------------------------------------------------
