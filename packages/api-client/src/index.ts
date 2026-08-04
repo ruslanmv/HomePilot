@@ -30,6 +30,7 @@ export interface ApiClient {
   get<T>(path: string): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
   put<T>(path: string, body?: unknown): Promise<T>;
+  del<T>(path: string): Promise<T>;
 }
 
 export class ApiError extends Error {
@@ -70,6 +71,7 @@ export function createClient(opts: ClientOptions): ApiClient {
     get: (path) => request("GET", path),
     post: (path, body) => request("POST", path, body),
     put: (path, body) => request("PUT", path, body),
+    del: (path) => request("DELETE", path),
   };
 }
 

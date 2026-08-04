@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 # Imports from your existing structure
-from .llm import chat as llm_chat
+from .compute import route_chat
 from .storage import add_message, get_recent
 from .tracing import log_event
 from .config import UPLOAD_DIR, PUBLIC_BASE_URL
@@ -1383,7 +1383,7 @@ You have access to the project's context. When relevant context from the knowled
             f"max_tokens={300 if is_voice else 900} is_persona={bool(is_persona)}"
         )
         _llm_started = _time.perf_counter()
-        response = await llm_chat(
+        response = await route_chat(
             messages,
             provider=provider,
             temperature=0.7,

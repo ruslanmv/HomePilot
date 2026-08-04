@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 650" role="img"
+     aria-label="Compute Sources and Routing: HomePilot's Compute Router binds each model to a target and sends the request with routing metadata to OllaBridge Cloud, which authorizes and relays it over an outbound WebSocket to the GPU worker that executes it (Google Colab running Ollama, RunPod running ComfyUI); local models run on This PC without the relay; tokens stream back, and when a device is offline the request falls back to the local GPU before the first token.">
+  <title>HomePilot — Compute Sources &amp; Routing</title>
+  <defs>
+    <style>
+      text { font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      .h    { fill:#f2f4f7; font-weight:700; }
+      .sub  { fill:#8890a0; }
+      .lbl  { fill:#d7dbe3; }
+      .mut  { fill:#7b8494; }
+      .cap  { fill:#9aa2b1; }
+      .kick { fill:#a97cff; font-weight:700; letter-spacing:1.5px; }
+    </style>
+    <radialGradient id="glowV" cx="20%" cy="0%" r="70%">
+      <stop offset="0%" stop-color="#7d3bff" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#7d3bff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowC" cx="90%" cy="100%" r="70%">
+      <stop offset="0%" stop-color="#25b8cf" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#25b8cf" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="cloudTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#46d3e6" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#46d3e6" stop-opacity="0"/>
+    </linearGradient>
+    <marker id="aV" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#a97cff"/></marker>
+    <marker id="aC" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#4dd6e8"/></marker>
+    <marker id="aE" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#43d19b"/></marker>
+    <marker id="aA" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><polygon points="0,0 8,3 0,6" fill="#f6c453"/></marker>
+  </defs>
+
+  <!-- canvas -->
+  <rect width="1200" height="650" rx="18" fill="#0b0d12"/>
+  <rect width="1200" height="650" rx="18" fill="url(#glowV)"/>
+  <rect width="1200" height="650" rx="18" fill="url(#glowC)"/>
+
+  <!-- header -->
+  <rect x="40" y="34" width="4" height="34" rx="2" fill="#a97cff"/>
+  <text x="56" y="52" class="h" font-size="24">Compute Sources &amp; Routing</text>
+  <text x="56" y="74" class="sub" font-size="13">Per-model routing across local and relay-reached GPU workers — with outbound WSS, health-aware fallback, and token streaming.</text>
+
+  <!-- ===================== HomePilot (orchestrator) ===================== -->
+  <rect x="40" y="104" width="352" height="316" rx="16" fill="#15171d" stroke="#2a2e38"/>
+  <text x="62" y="140" class="h" font-size="17">HomePilot</text>
+  <text x="62" y="160" class="mut" font-size="12">Orchestrator · personas · memory · tools · policy</text>
+
+  <!-- compute router -->
+  <rect x="62" y="176" width="308" height="180" rx="12" fill="#1b1f28" stroke="#2f3441"/>
+  <text x="80" y="200" class="kick" font-size="11">COMPUTE ROUTER</text>
+
+  <!-- route rows: modality pill + model -->
+  <g font-size="13">
+    <rect x="80" y="212" width="46" height="20" rx="10" fill="#a97cff" fill-opacity="0.16" stroke="#a97cff" stroke-opacity="0.5"/>
+    <text x="103" y="226" fill="#c9b3ff" text-anchor="middle" font-size="11" font-weight="700">chat</text>
+    <text x="136" y="226" class="lbl">deepseek-r1:latest</text>
+
+    <rect x="80" y="248" width="46" height="20" rx="10" fill="#4dd6e8" fill-opacity="0.14" stroke="#4dd6e8" stroke-opacity="0.5"/>
+    <text x="103" y="262" fill="#9fe9f3" text-anchor="middle" font-size="11" font-weight="700">image</text>
+    <text x="136" y="262" class="lbl">dreamshaper_8</text>
+
+    <rect x="80" y="284" width="46" height="20" rx="10" fill="#43d19b" fill-opacity="0.14" stroke="#43d19b" stroke-opacity="0.5"/>
+    <text x="103" y="298" fill="#93e7c6" text-anchor="middle" font-size="11" font-weight="700">chat</text>
+    <text x="136" y="298" class="lbl">llama3:8b</text>
+  </g>
+  <line x1="80" y1="320" x2="352" y2="320" stroke="#2f3441"/>
+  <text x="80" y="340" class="mut" font-size="11">explicit route → modality default → global default → safe local tail</text>
+
+  <!-- This PC (local target + fallback destination) -->
+  <rect x="40" y="446" width="236" height="74" rx="14" fill="#0f1a17" stroke="#43d19b" stroke-opacity="0.45"/>
+  <circle cx="62" cy="474" r="5" fill="#43d19b"/>
+  <text x="78" y="479" class="h" font-size="15">This PC</text>
+  <text x="62" y="502" class="mut" font-size="11.5">Local GPU · Ollama / ComfyUI · always available</text>
+
+  <!-- ===================== OllaBridge Cloud (control plane + relay) ===================== -->
+  <rect x="475" y="150" width="250" height="250" rx="16" fill="#15171d" stroke="#2a2e38"/>
+  <rect x="475" y="150" width="250" height="60" rx="16" fill="url(#cloudTop)"/>
+  <text x="497" y="186" class="h" font-size="16">OllaBridge Cloud</text>
+  <text x="497" y="205" class="mut" font-size="11.5">Control plane · secure relay · no inference</text>
+  <g font-size="12.5" class="lbl">
+    <circle cx="503" cy="234" r="3" fill="#4dd6e8"/><text x="516" y="238">Authentication &amp; device pairing</text>
+    <circle cx="503" cy="262" r="3" fill="#4dd6e8"/><text x="516" y="266">Device registry + heartbeat</text>
+    <circle cx="503" cy="290" r="3" fill="#4dd6e8"/><text x="516" y="294">Owner-only routing</text>
+    <circle cx="503" cy="318" r="3" fill="#4dd6e8"/><text x="516" y="322">WebSocket relay</text>
+    <circle cx="503" cy="346" r="3" fill="#4dd6e8"/><text x="516" y="350">Short-lived media cache</text>
+  </g>
+
+  <!-- ===================== GPU workers (execute) ===================== -->
+  <!-- Colab -->
+  <rect x="808" y="150" width="352" height="104" rx="14" fill="#15171d" stroke="#2a2e38"/>
+  <text x="830" y="184" class="h" font-size="15">Google Colab · T4</text>
+  <text x="830" y="205" class="mut" font-size="11.5">Runtime: Ollama · chat / multimodal</text>
+  <text x="830" y="234" class="mut" font-size="11">llama3.2 · gemma3 · moondream</text>
+  <rect x="1028" y="164" width="58" height="20" rx="10" fill="#43d19b" fill-opacity="0.14" stroke="#43d19b" stroke-opacity="0.5"/>
+  <text x="1057" y="178" fill="#93e7c6" text-anchor="middle" font-size="10.5" font-weight="700">Online</text>
+  <rect x="1092" y="164" width="64" height="20" rx="10" fill="#f6c453" fill-opacity="0.12" stroke="#f6c453" stroke-opacity="0.45"/>
+  <text x="1124" y="178" fill="#f3d38a" text-anchor="middle" font-size="10.5" font-weight="700">Ephemeral</text>
+
+  <!-- RunPod -->
+  <rect x="808" y="286" width="352" height="104" rx="14" fill="#15171d" stroke="#2a2e38"/>
+  <text x="830" y="320" class="h" font-size="15">RunPod · RTX 4090</text>
+  <text x="830" y="341" class="mut" font-size="11.5">Runtime: ComfyUI · image / video</text>
+  <text x="830" y="370" class="mut" font-size="11">dreamshaper · flux · ltx-video</text>
+  <rect x="1028" y="300" width="58" height="20" rx="10" fill="#43d19b" fill-opacity="0.14" stroke="#43d19b" stroke-opacity="0.5"/>
+  <text x="1057" y="314" fill="#93e7c6" text-anchor="middle" font-size="10.5" font-weight="700">Online</text>
+
+  <!-- ===================== flows ===================== -->
+  <!-- request: Router -> Cloud (violet) -->
+  <line x1="392" y1="248" x2="469" y2="248" stroke="#a97cff" stroke-width="2" marker-end="url(#aV)"/>
+  <text x="404" y="240" fill="#b79bff" font-size="10.5">HTTPS</text>
+
+  <!-- relay: Cloud -> workers (cyan) -->
+  <path d="M725,208 C 762,208 772,200 806,202" fill="none" stroke="#4dd6e8" stroke-width="2" marker-end="url(#aC)"/>
+  <path d="M725,322 C 762,322 772,334 806,336" fill="none" stroke="#4dd6e8" stroke-width="2" marker-end="url(#aC)"/>
+  <text x="738" y="262" fill="#7fdfec" font-size="10.5">relay</text>
+
+  <!-- outbound WSS: worker connects out to Cloud (dashed cyan) -->
+  <path d="M806,248 C 762,250 736,228 726,206" fill="none" stroke="#4dd6e8" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#aC)" opacity="0.9"/>
+  <text x="600" y="126" fill="#7fdfec" font-size="10.5">outbound WSS · no public ports / static IP</text>
+
+  <!-- stream back: Cloud -> HomePilot (cyan) -->
+  <path d="M469,372 C 432,384 408,382 394,376" fill="none" stroke="#4dd6e8" stroke-width="2" marker-end="url(#aC)"/>
+  <text x="404" y="360" fill="#7fdfec" font-size="10.5">◄ stream</text>
+
+  <!-- local route: Router -> This PC (emerald, bypasses cloud) -->
+  <line x1="158" y1="356" x2="158" y2="444" stroke="#43d19b" stroke-width="2" marker-end="url(#aE)"/>
+  <text x="170" y="404" fill="#7bdcb6" font-size="10.5">local — no relay</text>
+
+  <!-- fallback: offline device -> This PC (dashed amber, bottom gutter) -->
+  <path d="M808,252 C 560,600 400,600 278,506" fill="none" stroke="#f6c453" stroke-width="1.8" stroke-dasharray="6 5" marker-end="url(#aA)"/>
+  <text x="543" y="596" fill="#f3d38a" font-size="11" text-anchor="middle">device offline → local fallback (heartbeat expired · before the first token)</text>
+
+  <!-- ===================== legend ===================== -->
+  <g font-size="11" class="cap">
+    <line x1="56" y1="628" x2="86" y2="628" stroke="#a97cff" stroke-width="2"/><text x="92" y="632">request + routing</text>
+    <line x1="228" y1="628" x2="258" y2="628" stroke="#4dd6e8" stroke-width="2"/><text x="264" y="632">relay + stream</text>
+    <line x1="392" y1="628" x2="422" y2="628" stroke="#4dd6e8" stroke-width="1.6" stroke-dasharray="5 4"/><text x="428" y="632">outbound WSS</text>
+    <line x1="560" y1="628" x2="590" y2="628" stroke="#43d19b" stroke-width="2"/><text x="596" y="632">local (no relay)</text>
+    <line x1="720" y1="628" x2="750" y2="628" stroke="#f6c453" stroke-width="1.8" stroke-dasharray="6 5"/><text x="756" y="632">health-aware fallback</text>
+  </g>
+</svg>

@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 
-from .base import ComputeProvider, GeneratedMedia
+from .base import ComputeProvider, GeneratedMedia, iter_openai_sse
 
 
 class OllaBridgeCloudComputeProvider(ComputeProvider):
@@ -140,7 +140,20 @@ class OllaBridgeCloudComputeProvider(ComputeProvider):
             r.raise_for_status()
             return r.json()
 
-    async def available(self) -> bool:
+    async def chat_stream(self, *, model, messages, **extra):
+        body = {"model": model, "messages": messages, "stream": True}
+        body.update({k: v for k, v in extra.items() if v is not None})
+        async with self._client(self.timeout) as client:
+            async with client.stream(
+                "POST", "/v1/chat/completions", json=body, headers=self._headers()
+            ) as resp:
+                resp.raise_for_status()
+                async for delta in iter_openai_sse(resp):
+                    yield delta
+
+    async def available(self, modality: str | None = None) -> bool:
+        # The Cloud relay is a single endpoint regardless of modality; per-device
+        # / per-model capability is enforced Cloud-side at routing time.
         if not self.base_url:
             return False
         try:

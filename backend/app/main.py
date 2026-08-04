@@ -209,6 +209,14 @@ app.include_router(capabilities_router)
 # Compute status (Wave A / Batch 6): /compute/status, /compute/mode. Additive;
 # default mode is "local" so existing generation paths are unchanged.
 app.include_router(compute_router)
+# Compute admin (PR 2): /compute/admin/* — persisted sources, per-model routes,
+# manifests and settings. Additive; empty registry ⇒ legacy global-mode routing.
+from .compute.routes_admin import router as compute_admin_router  # noqa: E402
+app.include_router(compute_admin_router)
+# Compute streaming (P1): POST /v1/compute/chat/stream (SSE). Additive; the
+# existing non-streaming /chat is unchanged.
+from .compute.stream_routes import router as compute_stream_router  # noqa: E402
+app.include_router(compute_stream_router)
 
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)

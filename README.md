@@ -722,3 +722,12 @@ Apache-2.0
 </p>
 
 <p align="center"><sub>🎬 Turn your writing into a YouTube video, Short, and teaser — see <a href="docs/YOUTUBE.md">docs/YOUTUBE.md</a>.</sub></p>
+
+<h2 align="center">🖥️ Compute Sources &amp; Routing</h2>
+
+<p align="center">
+  <img src="assets/compute-sources-routing.svg" alt="Compute Sources & Routing — HomePilot's Compute Router binds each model to a target and sends the request over HTTPS to OllaBridge Cloud, which authorizes and relays it over an outbound WebSocket to the GPU worker that executes it (Google Colab running Ollama, RunPod running ComfyUI); local models run on This PC without the relay; tokens stream back, and when a device is offline the request falls back to the local GPU before the first token." width="900" />
+</p>
+
+<p align="center"><sub>Run each model where you choose — this PC, a paired Google Colab / RunPod GPU via OllaBridge Cloud, or a hosted API — with <b>per-model routing</b>, <b>health-aware fallback</b>, cost budgets, and token streaming. HomePilot sends the request to Cloud with routing metadata (model · device · fallback) — never to the worker directly.</sub></p>
+<p align="center"><sub>👉 <b>New here?</b> Follow the beginner step-by-step guide — connect a free Google Colab / RunPod / AWS GPU in minutes: <a href="docs/COMPUTE_PRODUCTION.md">docs/COMPUTE_PRODUCTION.md</a>. Going live? It ends with the production checklist and <code>GET /compute/readiness</code>.</sub></p>

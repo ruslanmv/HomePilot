@@ -203,3 +203,25 @@ def mock_outbound(monkeypatch):
 
 
     return True
+
+
+@pytest.fixture()
+def compute_db(monkeypatch, tmp_path):
+    """Isolate the compute registry on a fresh temp SQLite DB and reset the
+    shared health cache, so registry/router tests don't leak state into each
+    other or into the session `app` fixture's DB."""
+    import app.storage as storage
+    prev_resolved = storage._RESOLVED_DB_PATH
+    prev_sqlite = storage.SQLITE_PATH
+    # storage binds SQLITE_PATH at import, so patch the module attr (not just env)
+    # and reset the resolved-path cache so _get_db_path() re-resolves to the temp DB.
+    monkeypatch.setattr(storage, "SQLITE_PATH", str(tmp_path / "compute.db"), raising=False)
+    storage._RESOLVED_DB_PATH = None
+    try:
+        from app.compute import health
+        health.shared_cache().invalidate()
+    except Exception:
+        pass
+    yield
+    storage._RESOLVED_DB_PATH = prev_resolved
+    storage.SQLITE_PATH = prev_sqlite
