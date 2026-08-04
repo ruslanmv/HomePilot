@@ -35,6 +35,11 @@ COPY frontend/ ./
 # WORKDIR is /build, so ../packages must be present at /packages. These are
 # TS source, not npm deps — npm ci above is unchanged.
 COPY packages/ /packages/
+# Each package's tsconfig.json does `"extends": "../../tsconfig.base.json"`,
+# which resolves to /tsconfig.base.json. esbuild reads it while transforming the
+# @homepilot/* package sources, so the base config must be present in the image
+# too — otherwise the build fails with `failed to resolve "extends"`.
+COPY tsconfig.base.json /tsconfig.base.json
 # Frontend build-time flags (Vite bakes ``import.meta.env.VITE_*`` at build).
 # Empty defaults preserve today's behavior (all OFF); pass build-args to opt in.
 #   VITE_ACCOUNTS_UX=1        → mount the OllaBridge account/computers UX
