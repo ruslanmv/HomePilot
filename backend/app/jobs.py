@@ -216,7 +216,7 @@ async def _process_summarize_session(job: Dict[str, Any]) -> None:
 
     # Use LLM to generate summary
     try:
-        from .llm import chat as llm_chat
+        from .compute import route_chat
 
         summary_prompt = [
             {
@@ -230,7 +230,7 @@ async def _process_summarize_session(job: Dict[str, Any]) -> None:
             {"role": "user", "content": f"Summarize this conversation:\n\n{transcript}"},
         ]
 
-        response = await llm_chat(
+        response = await route_chat(
             summary_prompt,
             temperature=0.3,
             max_tokens=150,
@@ -292,7 +292,7 @@ async def _process_extract_memory(job: Dict[str, Any]) -> None:
     transcript = "\n".join(transcript_lines)
 
     try:
-        from .llm import chat as llm_chat
+        from .compute import route_chat
 
         extract_prompt = [
             {
@@ -318,7 +318,7 @@ Return ONLY the JSON array, no markdown or explanation.""",
             {"role": "user", "content": f"Extract memories from:\n\n{transcript}"},
         ]
 
-        response = await llm_chat(
+        response = await route_chat(
             extract_prompt,
             temperature=0.1,
             max_tokens=500,

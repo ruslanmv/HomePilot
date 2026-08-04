@@ -74,6 +74,7 @@ import {
   type ChatScopedSettings,
 } from './components/ChatSettingsPopover'
 import { MessageMarkdown } from './components/MessageMarkdown'
+import RouteBadge from './components/compute/RouteBadge'
 import { ChatEmptyState } from './components/ChatEmptyState'
 import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
 import { AgentSettingsPanel, type AgentProjectData } from './components/AgentSettingsPanel'
@@ -135,6 +136,15 @@ export type Msg = {
     active_angle?: 'front' | 'left' | 'right' | 'back'
     available_views?: Array<'front' | 'left' | 'right' | 'back'>
     interactive_preview?: boolean
+  } | null
+  // Compute routing diagnostics (P0-2): which device served this reply, and
+  // whether it fell back. Raw shape from /chat (snake_case, not camelized).
+  compute?: {
+    target: string
+    device_id?: string | null
+    label: string
+    fell_back: boolean
+    reason?: string | null
   } | null
   // Phase 4: "Ask before acting" confirmation payload
   confirm?: {
@@ -2320,6 +2330,9 @@ function ChatState({
                     className="w-full rounded-xl border border-white/10 mt-2"
                   />
                 ) : null}
+                {m.role === 'assistant' && m.compute ? (
+                  <div className="mt-2"><RouteBadge compute={m.compute} /></div>
+                ) : null}
               </div>
             )}
             </>)}
@@ -4420,7 +4433,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
-              ? { ...m, pending: false, animate: true, text: (data.text ?? data.content ?? '…'), media: data.media ?? null }
+              ? { ...m, pending: false, animate: true, text: (data.text ?? data.content ?? '…'), media: data.media ?? null, compute: data.compute ?? null }
               : m
           )
         )
@@ -5094,7 +5107,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
-              ? { ...m, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null }
+              ? { ...m, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null, compute: data.compute ?? null }
               : m
           )
         )

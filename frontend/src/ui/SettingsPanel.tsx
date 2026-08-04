@@ -19,6 +19,7 @@ import {
   Check,
   Loader2,
   Cloud,
+  Cpu,
 } from "lucide-react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
 import OllaBridgeLink from "./components/OllaBridgeLink";
@@ -28,6 +29,9 @@ import { isAccountsUxEnabled } from "./account/featureFlags";
 // Unified model catalog (Batch 8) + relocated OllaBridge provider.
 import { UnifiedModelCatalog } from "./account/UnifiedModelCatalog";
 import OllaBridgeModels from "./components/OllaBridgeModels";
+// Compute Sources & Routing (PR 3) — segmented Resources / Sources / Routing.
+import ComputeSettingsTabs from "./components/compute/ComputeSettingsTabs";
+import ModelExecutionSelector from "./components/compute/ModelExecutionSelector";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import TtsEngineSection from "./components/TtsEngineSection";
 // Side-effect import: registers the bundled TTS providers (web-speech-api,
@@ -299,6 +303,7 @@ const SECTIONS = [
   { id: "account", label: "Account & Computers", Icon: Cloud },
   { id: "linking", label: "OllaBridge Link", Icon: Cloud },
   { id: "providers", label: "Providers", Icon: Server },
+  { id: "compute", label: "Compute", Icon: Cpu },
   { id: "models", label: "Models", Icon: Boxes },
   { id: "generation", label: "Generation", Icon: SlidersHorizontal },
   { id: "memory", label: "Memory & Safety", Icon: ShieldCheck },
@@ -893,6 +898,14 @@ export default function SettingsPanel({
           </button>
         </div>
         {err ? <div className="mt-2 text-[11px] text-red-400">{err}</div> : null}
+        {modelValue ? (
+          <div className="mt-2 pt-2 border-t border-white/[0.06]">
+            <ModelExecutionSelector
+              modelId={modelValue}
+              modality={(modelType as "image" | "video" | "multimodal") || "chat"}
+            />
+          </div>
+        ) : null}
       </Row>
     );
   }
@@ -1495,6 +1508,18 @@ export default function SettingsPanel({
     );
   }
 
+  function renderCompute() {
+    return (
+      <SettingsCard
+        title="Compute Sources & Routing"
+        description="Choose where each model runs — this PC, a linked GPU, or a hosted endpoint — and how HomePilot falls back when a source is offline."
+        icon={<Cpu size={16} />}
+      >
+        <ComputeSettingsTabs />
+      </SettingsCard>
+    );
+  }
+
   function renderSection() {
     switch (activeSection) {
       case "general": return renderGeneral();
@@ -1502,6 +1527,7 @@ export default function SettingsPanel({
       case "account": return <AccountComputers />;
       case "linking": return <OllaBridgeLink />;
       case "providers": return renderProviders();
+      case "compute": return renderCompute();
       case "models": return renderModels();
       case "generation": return renderGeneration();
       case "memory": return renderMemory();

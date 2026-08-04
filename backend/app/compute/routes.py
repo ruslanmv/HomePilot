@@ -24,3 +24,12 @@ async def get_status() -> dict:
 async def get_mode() -> dict:
     from app.config import HOMEPILOT_COMPUTE_MODE
     return {"configured": HOMEPILOT_COMPUTE_MODE, "effective": await resolve_mode()}
+
+
+@router.get("/readiness")
+async def get_readiness() -> dict:
+    """Production-readiness of the compute feature — what an operator must set
+    before exposing HomePilot to the world (credential encryption, API key,
+    canonical Cloud URL). See docs/COMPUTE_PRODUCTION.md."""
+    from .readiness import production_readiness
+    return production_readiness()

@@ -14,7 +14,7 @@ import pytest
 
 
 class _FakeCloud:
-    async def available(self) -> bool:
+    async def available(self, modality=None) -> bool:
         return True
 
 
@@ -33,7 +33,7 @@ def env(monkeypatch):
     monkeypatch.setattr(config, "OLLABRIDGE_CLOUD_URL", "https://cloud.example", raising=False)
     monkeypatch.setattr(config, "OLLABRIDGE_CLOUD_TOKEN", "tok", raising=False)
 
-    async def _local_off(self):
+    async def _local_off(self, modality=None):
         return False
 
     monkeypatch.setattr(compute.LocalComputeProvider, "available", _local_off, raising=False)

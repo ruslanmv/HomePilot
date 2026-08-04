@@ -10,7 +10,9 @@ import uuid
 from typing import Any, Dict, Optional, Literal
 
 from .comfy import check_nodes_available, run_workflow
-from .llm import chat as llm_chat, is_thinking_model, strip_think_tags, _is_reasoning_text, recover_from_reasoning
+from .llm import is_thinking_model, strip_think_tags, _is_reasoning_text, recover_from_reasoning
+from .compute import route_chat
+from .compute.router import build_diagnostics as _compute_diag
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
@@ -590,7 +592,7 @@ async def _refine_prompt(
 
     try:
         print(f"[_refine_prompt] Sending to llm_chat...")
-        result = await llm_chat(
+        result = await route_chat(
             messages,
             provider=provider,
             temperature=0.7,
@@ -697,7 +699,7 @@ async def _refine_video_prompt(
 
     try:
         print(f"[_refine_video_prompt] Sending to llm_chat...")
-        result = await llm_chat(
+        result = await route_chat(
             messages,
             provider=provider,
             temperature=0.7,
@@ -2009,14 +2011,16 @@ async def orchestrate(
     )
     llm_started = time.perf_counter()
 
+    _route_report: dict = {}
     try:
-        out = await llm_chat(
+        out = await route_chat(
             messages,
             provider=prov,
             temperature=text_temperature if text_temperature is not None else (0.9 if fun_mode else 0.7),
             max_tokens=effective_max_tokens,
             base_url=provider_base_url,
             model=provider_model,
+            report=_route_report,
         )
     except Exception as e:
         llm_elapsed_ms = int((time.perf_counter() - llm_started) * 1000)
@@ -2111,7 +2115,12 @@ async def orchestrate(
     except Exception:
         pass
 
-    return {"conversation_id": cid, "text": text, "media": text_media}
+    return {
+        "conversation_id": cid,
+        "text": text,
+        "media": text_media,
+        "compute": _compute_diag(_route_report),
+    }
 
 
 async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[str, Any]:

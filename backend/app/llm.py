@@ -808,3 +808,59 @@ async def chat(
         base_url=base_url,
         model=model,
     )
+
+
+async def stream_chat(
+    messages: List[Dict[str, Any]],
+    *,
+    provider: ProviderName = "openai_compat",
+    temperature: float = 0.7,
+    max_tokens: int = 800,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+):
+    """Yield assistant text deltas as they arrive (P1 — token streaming).
+
+    Ollama streams natively over ``/api/chat`` (NDJSON, ``message.content``
+    deltas). For every other provider we don't have a streaming adapter yet, so
+    we degrade gracefully: run the normal non-streaming ``chat`` and yield the
+    whole reply as a single chunk. Callers get a uniform async-iterator either
+    way, so the streaming path never breaks a provider it can't stream.
+    """
+    if provider == "ollama":
+        base = (base_url or OLLAMA_BASE_URL).rstrip("/")
+        mdl = (model or OLLAMA_MODEL).strip()
+        payload = {
+            "model": mdl,
+            "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
+            "stream": True,
+            "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+            "options": {"temperature": float(temperature), "num_predict": int(max_tokens)},
+        }
+        if is_thinking_model(mdl):
+            payload["think"] = False
+        async with httpx.AsyncClient(timeout=_timeout()) as client:
+            async with client.stream("POST", f"{base}/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    delta = (obj.get("message") or {}).get("content") or ""
+                    if delta:
+                        yield delta
+                    if obj.get("done"):
+                        break
+        return
+
+    # Non-streaming providers: one chunk, uniform interface.
+    result = await chat(
+        messages, provider=provider, temperature=temperature,
+        max_tokens=max_tokens, base_url=base_url, model=model,
+    )
+    text = ((result.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "")
+    if text:
+        yield text

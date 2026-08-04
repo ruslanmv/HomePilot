@@ -27,10 +27,21 @@ __all__ = [
     "GeneratedMedia",
     "LocalComputeProvider",
     "OllaBridgeCloudComputeProvider",
+    "ComputeRouter",
+    "route_chat",
     "get_compute_provider",
     "resolve_mode",
     "compute_status",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # Lazily expose the router without importing it at package import time
+    # (keeps the import graph light for callers that only need status helpers).
+    if name in ("ComputeRouter", "route_chat"):
+        from .router import ComputeRouter, route_chat
+        return {"ComputeRouter": ComputeRouter, "route_chat": route_chat}[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _build_cloud() -> Optional[OllaBridgeCloudComputeProvider]:
@@ -73,26 +84,33 @@ def _burst_allowed() -> bool:
     return (not COMPUTE_BURST_REQUIRES_PREMIUM) or PREMIUM_COMPUTE_ENABLED
 
 
-async def resolve_mode() -> str:
-    """Resolve the effective mode (never returns ``auto``)."""
+async def resolve_mode(modality: str | None = None) -> str:
+    """Resolve the effective mode (never returns ``auto``).
+
+    ``modality`` makes ``auto`` decide against the runtime the request actually
+    needs (Ollama for chat, ComfyUI for image/video) rather than a single global
+    "is the local GPU up" signal.
+    """
     configured = _configured_mode()
     if configured in ("local", "ollabridge_cloud"):
         return configured
 
-    # auto: prefer the local GPU, then — if bursting is allowed — a *configured*
-    # linked OllaBridge device.
-    if await LocalComputeProvider().available():
+    # auto: prefer the local runtime for this modality, then — if bursting is
+    # allowed — a *configured* linked OllaBridge device.
+    if await LocalComputeProvider().available(modality):
         return "local"
     if _burst_allowed():
         cloud = _build_cloud()
-        if cloud is not None and _cloud_configured() and await cloud.available():
+        if cloud is not None and _cloud_configured() and await cloud.available(modality):
             return "ollabridge_cloud"
     return "local"  # offline (or burst-gated) — compute_status() explains
 
 
-async def get_compute_provider(mode: str | None = None) -> ComputeProvider:
-    """Return the provider for the given (or resolved) mode."""
-    mode = mode or await resolve_mode()
+async def get_compute_provider(
+    mode: str | None = None, modality: str | None = None
+) -> ComputeProvider:
+    """Return the provider for the given (or resolved) mode and modality."""
+    mode = mode or await resolve_mode(modality)
     if mode == "ollabridge_cloud":
         cloud = _build_cloud()
         if cloud is not None:

@@ -4,7 +4,7 @@ Implements web search with summarization (Grok-style) and conversation history s
 """
 from typing import Any, Dict, List, Optional
 import httpx
-from .llm import chat as llm_chat
+from .compute import route_chat
 from .storage import get_messages
 
 
@@ -55,7 +55,7 @@ async def summarize_results(query: str, results: List[Dict[str, Any]], provider:
     ]
 
     try:
-        response = await llm_chat(
+        response = await route_chat(
             messages,
             provider=provider,
             temperature=0.3,  # Lower temperature for factual summarization

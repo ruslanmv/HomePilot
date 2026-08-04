@@ -72,7 +72,7 @@ def test_models_ollama_down(mock_client_class, client, mock_outbound):
     assert data["models"] == []
 
 
-@patch("app.orchestrator.llm_chat")
+@patch("app.orchestrator.route_chat")
 def test_chat_basic(mock_llm, client, mock_outbound):
     """Test /chat endpoint with mocked LLM."""
     # Mock LLM response
@@ -98,7 +98,7 @@ def test_chat_basic(mock_llm, client, mock_outbound):
     assert "Hello" in data["text"]
 
 
-@patch("app.orchestrator.llm_chat")
+@patch("app.orchestrator.route_chat")
 def test_chat_ollama_provider(mock_llm, client, mock_outbound):
     """Test /chat endpoint with Ollama provider."""
     mock_llm.return_value = {
@@ -125,7 +125,7 @@ def test_chat_ollama_provider(mock_llm, client, mock_outbound):
 
 
 @patch("app.orchestrator.run_workflow")
-@patch("app.orchestrator.llm_chat")
+@patch("app.orchestrator.route_chat")
 def test_chat_imagine_mode(mock_llm, mock_workflow, client, mock_outbound):
     """Test /chat endpoint in imagine mode."""
     # Mock prompt refiner
@@ -210,7 +210,7 @@ def test_cors_headers(client, mock_outbound):
     assert "access-control-allow-origin" in [h.lower() for h in r.headers.keys()]
 
 
-@patch("app.orchestrator.llm_chat")
+@patch("app.orchestrator.route_chat")
 def test_chat_error_handling(mock_llm, client, mock_outbound):
     """Test /chat endpoint handles errors gracefully."""
     # Mock LLM error

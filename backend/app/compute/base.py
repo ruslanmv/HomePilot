@@ -18,8 +18,32 @@ opts into cloud or auto mode.
 from __future__ import annotations
 
 import abc
+import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncIterator
+
+
+async def iter_openai_sse(resp: Any) -> AsyncIterator[str]:
+    """Parse an OpenAI-style ``/v1/chat/completions`` SSE stream, yielding the
+    ``choices[0].delta.content`` text deltas. Tolerates keep-alive blanks and
+    the terminal ``data: [DONE]``. ``resp`` is a streaming httpx response."""
+    async for line in resp.aiter_lines():
+        line = line.strip()
+        if not line or not line.startswith("data:"):
+            continue
+        data = line[len("data:"):].strip()
+        if data == "[DONE]":
+            break
+        try:
+            obj = json.loads(data)
+        except Exception:
+            continue
+        choices = obj.get("choices") or []
+        if not choices:
+            continue
+        delta = (choices[0].get("delta") or {}).get("content")
+        if delta:
+            yield delta
 
 
 @dataclass
@@ -51,8 +75,14 @@ class ComputeProvider(abc.ABC):
         ...
 
     @abc.abstractmethod
-    async def available(self) -> bool:
-        """Can this provider serve a request right now?"""
+    async def available(self, modality: str | None = None) -> bool:
+        """Can this provider serve a request right now?
+
+        ``modality`` (``"chat"``/``"multimodal"``/``"image"``/``"video"``/
+        ``"edit"``) lets a provider answer for the specific runtime a request
+        needs — e.g. a healthy Ollama should report *available for chat* even
+        when the ComfyUI image runtime is down. ``None`` means "any runtime".
+        """
         ...
 
     # The following have sensible defaults so a provider only overrides what it
@@ -75,6 +105,16 @@ class ComputeProvider(abc.ABC):
 
     async def chat(self, *, model: str, messages: list[dict], **extra: Any) -> dict:
         raise NotImplementedError(f"{self.name} does not support chat")
+
+    async def chat_stream(
+        self, *, model: str, messages: list[dict], **extra: Any
+    ) -> AsyncIterator[str]:
+        """Yield assistant text deltas. Default: adapt the non-streaming ``chat``
+        into a single chunk, so every provider streams *something* uniformly."""
+        result = await self.chat(model=model, messages=messages, **extra)
+        text = ((result.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "")
+        if text:
+            yield text
 
     def describe(self) -> dict[str, Any]:
         return {"provider": self.name}

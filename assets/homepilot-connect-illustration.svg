@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 360" role="img"
+     aria-label="Illustration of HomePilot after connecting a GPU: the Resources tab lists This PC (Online) and Google Colab T4 (Online, Ephemeral, heartbeat 8 seconds ago); beside the deepseek-r1 model, Runs on is set to Colab T4 with Fallback This PC and Status Colab T4 online.">
+  <title>Illustration — what you'll see in HomePilot after connecting a GPU</title>
+  <defs>
+    <style>
+      text { font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      .h { fill:#f2f4f7; font-weight:700; }
+      .m { fill:#8890a0; }
+      .l { fill:#d7dbe3; }
+      .k { fill:#a97cff; font-weight:700; letter-spacing:1px; }
+    </style>
+  </defs>
+  <rect width="940" height="360" rx="16" fill="#0b0d12"/>
+  <text x="28" y="40" class="k" font-size="12">ILLUSTRATION — WHAT YOU'LL SEE IN HOMEPILOT</text>
+
+  <!-- Resources panel -->
+  <rect x="28" y="56" width="430" height="276" rx="14" fill="#15171d" stroke="#2a2e38"/>
+  <text x="50" y="90" class="h" font-size="16">Settings ›  Compute ›  Resources</text>
+
+  <!-- Sync button -->
+  <rect x="300" y="72" width="140" height="30" rx="9" fill="#4dd6e8" fill-opacity="0.14" stroke="#4dd6e8" stroke-opacity="0.5"/>
+  <text x="370" y="92" fill="#9fe9f3" text-anchor="middle" font-size="12" font-weight="700">☁ Sync from Cloud</text>
+
+  <!-- This PC row -->
+  <rect x="50" y="112" width="386" height="86" rx="12" fill="#0f1a17" stroke="#43d19b" stroke-opacity="0.4"/>
+  <circle cx="72" cy="140" r="5" fill="#43d19b"/>
+  <text x="86" y="145" class="h" font-size="14">This PC</text>
+  <text x="72" y="168" class="m" font-size="11.5">Local GPU · Ollama / ComfyUI · always available</text>
+  <rect x="360" y="126" width="58" height="20" rx="10" fill="#43d19b" fill-opacity="0.14" stroke="#43d19b" stroke-opacity="0.5"/>
+  <text x="389" y="140" fill="#93e7c6" text-anchor="middle" font-size="10.5" font-weight="700">Online</text>
+
+  <!-- Colab row -->
+  <rect x="50" y="210" width="386" height="102" rx="12" fill="#15181f" stroke="#2a2e38"/>
+  <text x="66" y="238" class="h" font-size="14">Google Colab · T4</text>
+  <text x="66" y="259" class="m" font-size="11.5">Runtime: Ollama · chat / multimodal</text>
+  <text x="66" y="288" class="m" font-size="11">NVIDIA T4 · 16 GB · 3 models · heartbeat 8s ago</text>
+  <rect x="300" y="222" width="58" height="20" rx="10" fill="#43d19b" fill-opacity="0.14" stroke="#43d19b" stroke-opacity="0.5"/>
+  <text x="329" y="236" fill="#93e7c6" text-anchor="middle" font-size="10.5" font-weight="700">Online</text>
+  <rect x="362" y="222" width="66" height="20" rx="10" fill="#f6c453" fill-opacity="0.12" stroke="#f6c453" stroke-opacity="0.45"/>
+  <text x="395" y="236" fill="#f3d38a" text-anchor="middle" font-size="10.5" font-weight="700">Ephemeral</text>
+
+  <!-- Per-model panel -->
+  <rect x="482" y="56" width="430" height="276" rx="14" fill="#15171d" stroke="#2a2e38"/>
+  <text x="504" y="90" class="h" font-size="16">Settings ›  Models</text>
+
+  <text x="504" y="128" class="m" font-size="12">Chat model</text>
+  <rect x="504" y="138" width="386" height="34" rx="9" fill="#0a0b0f" stroke="#2f3441"/>
+  <text x="520" y="160" class="l" font-size="13">deepseek-r1:latest</text>
+  <text x="874" y="160" class="m" font-size="12" text-anchor="end">▾</text>
+
+  <text x="504" y="200" class="m" font-size="12">Runs on</text>
+  <rect x="504" y="210" width="240" height="34" rx="9" fill="#0a0b0f" stroke="#4dd6e8" stroke-opacity="0.5"/>
+  <text x="520" y="232" class="l" font-size="13">Colab T4</text>
+  <text x="728" y="232" class="m" font-size="12" text-anchor="end">▾</text>
+
+  <text x="760" y="200" class="m" font-size="12">Fallback</text>
+  <rect x="760" y="210" width="130" height="34" rx="9" fill="#0a0b0f" stroke="#2f3441"/>
+  <text x="776" y="232" class="l" font-size="13">This PC</text>
+  <text x="874" y="232" class="m" font-size="12" text-anchor="end">▾</text>
+
+  <circle cx="512" cy="286" r="5" fill="#43d19b"/>
+  <text x="526" y="291" fill="#93e7c6" font-size="12.5">Status: Colab T4 online</text>
+</svg>

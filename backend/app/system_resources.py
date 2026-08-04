@@ -34,7 +34,39 @@ def _status_from_percent(
     return good_label
 
 
-def _get_gpu_info() -> Dict[str, Any]:
+def _parse_gpu_line(line: str) -> Dict[str, Any]:
+    parts = [p.strip() for p in line.split(",")]
+    name = parts[0]
+    total_mb = int(parts[1])
+    used_mb = int(parts[2])
+    free_mb = int(parts[3])
+    util = int(parts[4])
+    temp = int(parts[5])
+
+    free_ratio = free_mb / max(total_mb, 1)
+    if free_ratio < 0.15:
+        status = "tight"
+    elif free_ratio < 0.30:
+        status = "warning"
+    else:
+        status = "good"
+
+    return {
+        "available": True,
+        "name": name,
+        "vram_total_mb": total_mb,
+        "vram_used_mb": used_mb,
+        "vram_free_mb": free_mb,
+        "used_percent": round((used_mb / total_mb) * 100) if total_mb else 0,
+        "utilization_percent": util,
+        "temperature_c": temp,
+        "status": status,
+    }
+
+
+def _get_gpus_list() -> list:
+    """All local NVIDIA GPUs (not just the first). Fixes the single-GPU report
+    so the Resources UI can show a rig with multiple cards."""
     try:
         result = subprocess.run(
             [
@@ -44,47 +76,34 @@ def _get_gpu_info() -> Dict[str, Any]:
             ],
             capture_output=True, text=True, check=True, timeout=2.5,
         )
-        line = result.stdout.strip().splitlines()[0]
-        parts = [p.strip() for p in line.split(",")]
-
-        name = parts[0]
-        total_mb = int(parts[1])
-        used_mb = int(parts[2])
-        free_mb = int(parts[3])
-        util = int(parts[4])
-        temp = int(parts[5])
-
-        free_ratio = free_mb / max(total_mb, 1)
-        if free_ratio < 0.15:
-            status = "tight"
-        elif free_ratio < 0.30:
-            status = "warning"
-        else:
-            status = "good"
-
-        return {
-            "available": True,
-            "name": name,
-            "vram_total_mb": total_mb,
-            "vram_used_mb": used_mb,
-            "vram_free_mb": free_mb,
-            "used_percent": round((used_mb / total_mb) * 100) if total_mb else 0,
-            "utilization_percent": util,
-            "temperature_c": temp,
-            "status": status,
-        }
+        gpus = []
+        for i, line in enumerate(result.stdout.strip().splitlines()):
+            if not line.strip():
+                continue
+            g = _parse_gpu_line(line)
+            g["index"] = i
+            gpus.append(g)
+        return gpus
     except Exception:
-        return {
-            "available": False,
-            "name": None,
-            "vram_total_mb": None,
-            "vram_used_mb": None,
-            "vram_free_mb": None,
-            "used_percent": None,
-            "utilization_percent": None,
-            "temperature_c": None,
-            "status": "unavailable",
-        }
+        return []
+
+
+def _get_gpu_info() -> Dict[str, Any]:
+    """The primary GPU (back-compat single-GPU shape)."""
+    gpus = _get_gpus_list()
+    if gpus:
+        return gpus[0]
+    return {
+        "available": False,
+        "name": None,
+        "vram_total_mb": None,
+        "vram_used_mb": None,
+        "vram_free_mb": None,
+        "used_percent": None,
+        "utilization_percent": None,
+        "temperature_c": None,
+        "status": "unavailable",
+    }
 
 
 def _get_ram_info() -> Dict[str, Any]:
@@ -143,9 +162,10 @@ def _get_disk_info() -> Dict[str, Any]:
 
 @router.get("/resources")
 async def system_resources() -> JSONResponse:
-    """Machine capacity: GPU, RAM, CPU, disk."""
+    """Machine capacity: GPU(s), RAM, CPU, disk."""
     return JSONResponse({
-        "gpu": _get_gpu_info(),
+        "gpu": _get_gpu_info(),      # primary GPU (back-compat)
+        "gpus": _get_gpus_list(),    # all local GPUs (multi-GPU rigs)
         "ram": _get_ram_info(),
         "cpu": _get_cpu_info(),
         "disk": _get_disk_info(),
