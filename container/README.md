@@ -108,3 +108,22 @@ Two GitHub Actions workflows publish the container image:
 - **Supervisord** — Process manager for all services
 
 Both `linux/amd64` and `linux/arm64` are supported.
+
+### How the multi-arch image is built
+
+`container.yml` and `dockerhub.yml` build **one architecture per native
+runner** (`ubuntu-latest` for amd64, `ubuntu-24.04-arm` for arm64), push each
+result by digest, then join the digests into a single manifest list in a
+`merge` job.
+
+Do not collapse this back into one job with
+`platforms: linux/amd64,linux/arm64` on an amd64 runner. That form runs the
+entire arm64 leg under QEMU, and the emulated `npm ci` in the frontend stage
+alone ran for over two hours without finishing before the job was killed.
+GitHub-hosted arm64 runners are free for public repositories, so there is
+nothing to emulate.
+
+The frontend stage in `container/Dockerfile` is additionally pinned to
+`--platform=$BUILDPLATFORM`: it emits architecture-independent static assets,
+so it is built once on whatever machine is running the build rather than
+per-target.
