@@ -17,15 +17,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-push:
-    name: Build & Push (Docker Hub)
+  # ------------------------------------------------------------------
+  # Normalize the release version once so both the build matrix and the
+  # manifest merge agree on the tags.
+  # ------------------------------------------------------------------
+  prepare:
+    name: Derive release version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      semver: ${{ steps.version.outputs.semver }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+      build_date: ${{ steps.version.outputs.build_date }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # Normalize version from release tag or manual input
       - name: Derive release version
         id: version
         shell: bash
@@ -45,25 +51,125 @@ jobs:
             RELEASE_TAG="v$RAW"
             SEMVER="$RAW"
           fi
-          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
-          echo "SEMVER=$SEMVER" >> $GITHUB_ENV
-          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
-          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "semver=$SEMVER"
+            echo "short_sha=${GITHUB_SHA::7}"
+            echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          } >> "$GITHUB_OUTPUT"
           echo "Resolved RELEASE_TAG=${RELEASE_TAG}, SEMVER=${SEMVER}"
 
-      # docker.io requires lowercase namespace
+  # ------------------------------------------------------------------
+  # One native runner per architecture, each pushing by digest. The
+  # previous single-job `platforms: linux/amd64,linux/arm64` build ran the
+  # whole arm64 leg under QEMU on an amd64 runner, where the emulated
+  # `npm ci` alone could run for hours without finishing. GitHub-hosted
+  # arm64 runners are free for public repositories.
+  # ------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    needs: [prepare]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Prepare platform slug
+        run: echo "PLATFORM_PAIR=${{ matrix.platform }}" | tr '/' '-' >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # docker.io requires a lowercase namespace. Computed per job rather
+      # than passed as a job output, because outputs derived from a secret
+      # come back redacted.
       - name: Compute image name (lowercase)
-        id: img
         shell: bash
         run: |
           USER_RAW="${{ secrets.DOCKERHUB_USERNAME }}"
           USER_LC="${USER_RAW,,}"
-          IMAGE="docker.io/${USER_LC}/homepilot"
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          echo "Image: $IMAGE"
+          echo "IMAGE=docker.io/${USER_LC}/homepilot" >> "$GITHUB_ENV"
 
-      - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Hub login
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata (labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          labels: |
+            org.opencontainers.image.title=homepilot
+            org.opencontainers.image.description=HomePilot — self-hosted AI assistant with GPU support for RunPod, Colab, and personal machines
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.semver }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ needs.prepare.outputs.build_date }}
+
+      - name: Build & push by digest (Docker Hub)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./container/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Tags are applied by the merge job; this leg only uploads a blob.
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # Per-architecture cache scopes; a shared scope would have the two
+          # legs overwrite each other's layers on every run.
+          cache-from: type=gha,scope=dockerhub-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=dockerhub-${{ env.PLATFORM_PAIR }}
+
+      - name: Export digest
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${RUNNER_TEMP}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Push multi-arch manifest (Docker Hub)
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    timeout-minutes: 20
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Compute image name (lowercase)
+        shell: bash
+        run: |
+          USER_RAW="${{ secrets.DOCKERHUB_USERNAME }}"
+          USER_LC="${USER_RAW,,}"
+          echo "IMAGE=docker.io/${USER_LC}/homepilot" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -84,12 +190,12 @@ jobs:
             latest=false
           tags: |
             # stable semver tags (always)
-            type=raw,value=v${{ env.SEMVER }}
-            type=semver,pattern={{version}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ env.SEMVER }}
-            type=semver,pattern={{major}},value=${{ env.SEMVER }}
+            type=raw,value=v${{ needs.prepare.outputs.semver }}
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.semver }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.semver }}
+            type=semver,pattern={{major}},value=${{ needs.prepare.outputs.semver }}
             # short sha tag (always)
-            type=raw,value=sha-${{ env.SHORT_SHA }}
+            type=raw,value=sha-${{ needs.prepare.outputs.short_sha }}
             # latest only on release
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
           labels: |
@@ -97,29 +203,23 @@ jobs:
             org.opencontainers.image.description=HomePilot — self-hosted AI assistant with GPU support for RunPod, Colab, and personal machines
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.version=${{ env.SEMVER }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.semver }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ env.BUILD_DATE }}
+            org.opencontainers.image.created=${{ needs.prepare.outputs.build_date }}
 
-      - name: Build & push (Docker Hub)
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./container/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
 
       # Guard: image must not contain baked secrets or user data
       - name: Sanity guard — no baked secrets
         shell: bash
         run: |
-          REF="$(echo "${{ steps.meta.outputs.tags }}" | head -n1)"
-          docker run --rm --entrypoint /bin/bash "$REF" -lc \
+          docker run --rm --entrypoint /bin/bash \
+            "${IMAGE}:v${{ needs.prepare.outputs.semver }}" -lc \
             'test ! -f /home/user/app/data/.env.json && test ! -f /home/user/app/.env'
           echo "OK: no baked secrets in image"
 
@@ -127,6 +227,7 @@ jobs:
         if: always()
         shell: bash
         run: |
+          SEMVER="${{ needs.prepare.outputs.semver }}"
           echo "Inspecting v${SEMVER}…"
           docker buildx imagetools inspect "${IMAGE}:v${SEMVER}"
           if [ "${{ github.event_name }}" = "release" ]; then

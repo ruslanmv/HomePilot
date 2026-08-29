@@ -23,8 +23,16 @@
 
 # ============================================================
 # Stage 1: Frontend build
+#
+# Pinned to $BUILDPLATFORM (the machine running the build) rather
+# than $TARGETPLATFORM. `npm ci` + `vite build` emit architecture
+# independent static assets — only /build/dist is copied into the
+# runtime stage — so there is nothing to gain from running Node under
+# QEMU emulation, and a great deal to lose: the emulated arm64 `npm ci`
+# ran for over two hours in CI before the job was killed. Building it
+# once natively makes the arm64 leg as cheap as the amd64 one.
 # ============================================================
-FROM node:20-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
 
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
