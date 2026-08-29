@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800" role="img" aria-label="Nexus — screen-aware executive secretary portrait placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2540"/>
+      <stop offset="1" stop-color="#0a0f1e"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.5" cy="0.34" r="0.42">
+      <stop offset="0" stop-color="#3a4f86" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#3a4f86" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0c9a8"/>
+      <stop offset="1" stop-color="#dda882"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3330"/>
+      <stop offset="1" stop-color="#211c1a"/>
+    </linearGradient>
+    <linearGradient id="blazer" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26365f"/>
+      <stop offset="1" stop-color="#182642"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="600" height="800" fill="url(#bg)"/>
+  <circle cx="300" cy="272" r="250" fill="url(#halo)"/>
+
+  <!-- shoulders / navy blazer -->
+  <path d="M120 800 C120 610 190 540 300 540 C410 540 480 610 480 800 Z" fill="url(#blazer)"/>
+  <path d="M300 548 L262 700 L300 620 L338 700 Z" fill="#f4f6fb"/>
+  <path d="M262 560 L300 632 L262 700 Z" fill="#1f2f52"/>
+  <path d="M338 560 L300 632 L338 700 Z" fill="#1f2f52"/>
+
+  <!-- neck -->
+  <rect x="272" y="446" width="56" height="90" rx="26" fill="url(#skin)"/>
+
+  <!-- hair back -->
+  <path d="M176 300 C176 176 230 108 300 108 C370 108 424 176 424 300 C424 400 404 470 404 470 L196 470 C196 470 176 400 176 300 Z" fill="url(#hair)"/>
+
+  <!-- face -->
+  <path d="M204 296 C204 200 246 150 300 150 C354 150 396 200 396 296 C396 372 352 432 300 432 C248 432 204 372 204 296 Z" fill="url(#skin)"/>
+
+  <!-- ears + earpiece -->
+  <circle cx="206" cy="308" r="16" fill="#dda882"/>
+  <circle cx="394" cy="308" r="16" fill="#dda882"/>
+  <circle cx="398" cy="322" r="7" fill="#0f1830"/>
+  <path d="M401 322 C420 340 420 380 402 402" fill="none" stroke="#0f1830" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- brows -->
+  <path d="M238 270 q28 -16 54 -2" fill="none" stroke="#2c2420" stroke-width="6" stroke-linecap="round"/>
+  <path d="M308 268 q28 -14 54 2" fill="none" stroke="#2c2420" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- eyes -->
+  <ellipse cx="262" cy="298" rx="17" ry="10" fill="#fff"/>
+  <ellipse cx="338" cy="298" rx="17" ry="10" fill="#fff"/>
+  <circle cx="264" cy="299" r="6.5" fill="#4a3b2f"/>
+  <circle cx="336" cy="299" r="6.5" fill="#4a3b2f"/>
+
+  <!-- nose + lips -->
+  <path d="M300 308 l-8 34 q8 8 16 0" fill="none" stroke="#c8916a" stroke-width="4" stroke-linecap="round"/>
+  <path d="M280 372 q20 16 40 0 q-20 8 -40 0 Z" fill="#c9707a"/>
+
+  <!-- hair front sweep -->
+  <path d="M196 300 C196 190 244 150 300 150 C300 150 240 176 234 268 C230 320 210 340 196 300 Z" fill="url(#hair)"/>
+  <path d="M404 300 C404 190 356 150 300 150 C300 150 360 176 366 268 C370 320 390 340 404 300 Z" fill="url(#hair)"/>
+
+  <!-- necklace -->
+  <path d="M276 470 q24 26 48 0" fill="none" stroke="#c9d2e6" stroke-width="3"/>
+  <circle cx="300" cy="492" r="4" fill="#e6ecf7"/>
+
+  <!-- caption -->
+  <text x="300" y="770" text-anchor="middle" font-family="system-ui, sans-serif" font-size="30" font-weight="700" fill="#dbe6ff">NEXUS</text>
+  <text x="300" y="700" text-anchor="middle" font-family="system-ui, sans-serif" font-size="15" fill="#8ea3ce">Screen-Aware Executive Secretary</text>
+</svg>

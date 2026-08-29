@@ -41,8 +41,19 @@ community/shared/
 │   └── port_map.json                 # Port allocation tracker
 └── scripts/
     ├── generate_bundle.py            # Scaffold new bundles
-    └── install_bundle.py             # Install bundles into HomePilot
+    ├── install_bundle.py             # Install bundles into HomePilot
+    ├── generate_persona_portrait.py  # Standard 512/256 synthetic portrait
+    └── generate-persona-portrait.sh  # Sandbox-friendly wrapper (bootstraps Pillow)
 ```
+
+## Persona Portraits
+
+Every shared bundle ships a **synthetic** portrait — a 512×512 PNG avatar and a
+256×256 WebP thumbnail of a person who does not exist. Generate it with the
+custom local StyleGAN2 generator when available, falling back to the
+thispersondoesnotexist.com API otherwise. The full standard, tooling, and the
+Claude Code sandbox recipe are documented in
+[`docs/PERSONA_PORTRAIT_STANDARD.md`](../../docs/PERSONA_PORTRAIT_STANDARD.md).
 
 ## MCP Server Modes
 

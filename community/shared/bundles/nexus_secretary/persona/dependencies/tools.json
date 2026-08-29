@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Screen-aware executive assistance tools",
+    "tools": ["vision", "calendar", "email_drafts", "notes", "reminders", "web_search", "file_reader", "contacts", "projects"]
+  },
+  "forge_tools": { "description": "Context Forge tool references", "tools": [] },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": ["vision", "calendar", "reminders", "notes"],
+    "optional": ["email_drafts", "web_search", "file_reader", "contacts", "projects"]
+  }
+}

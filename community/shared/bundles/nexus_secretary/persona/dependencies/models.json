@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "description": "Nexus's screen awareness needs one local vision-capable Ollama model.",
+  "items": [
+    {
+      "kind": "ollama_model",
+      "purpose": "vision",
+      "recommended": "llava:7b",
+      "alternatives": ["moondream", "gemma3:4b", "qwen2-vl", "minicpm-v"],
+      "install_hint": "ollama pull llava:7b",
+      "required": true
+    }
+  ]
+}
