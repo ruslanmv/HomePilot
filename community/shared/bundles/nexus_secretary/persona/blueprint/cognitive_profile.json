@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "reasoning_mode": "orchestrated",
+  "memory_strategy": "basic",
+  "initiative_level": "proactive",
+  "action_confirmation": "risky_only",
+  "allowed_tool_categories": ["vision", "calendar", "email", "notes", "reminders", "web_search", "file_reader", "task_execution"],
+  "spatial_intelligence": {
+    "enabled": true,
+    "world_state_aware": true,
+    "proximity_reasoning": true,
+    "gesture_interpretation": false,
+    "environment_mapping": false
+  },
+  "screen_awareness": {
+    "enabled": true,
+    "capture_strategy": "adaptive",
+    "capture_modes": {
+      "desktop": "native_local_capture",
+      "cloud": "request_share_or_upload"
+    },
+    "observation_policy": "single_most_useful",
+    "privacy": "confidential_never_persisted_outside_conversation"
+  },
+  "superintelligence_traits": {
+    "multi_step_planning": true,
+    "self_reflection": true,
+    "context_persistence": true,
+    "tool_chaining": true,
+    "emotional_continuity": false,
+    "workflow_graphs": ["secretary_daily_briefing", "secretary_email_triage", "secretary_meeting_prep", "secretary_screen_glance"]
+  },
+  "safety_policy": {
+    "content_rating": "sfw",
+    "tool_autonomy_cap": "limited",
+    "external_action_gate": true,
+    "relationship_boundary": "professional"
+  }
+}

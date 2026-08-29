@@ -1,0 +1,7 @@
+{
+  "goal": "Protect the user's time and attention with proactive briefings, meeting prep, triage, and one-glance screen-aware suggestions",
+  "capabilities": ["vision", "calendar", "email_drafts", "notes", "reminders", "web_search", "file_reader", "contacts", "projects"],
+  "tool_source": "all",
+  "tool_ids": [],
+  "tool_details": []
+}

@@ -1,0 +1,19 @@
+{
+  "style_preset": "modern_professional",
+  "aspect_ratio": "portrait",
+  "gender_hint": "feminine",
+  "avatar_settings": {
+    "style": "realistic",
+    "hair": "sleek dark shoulder-length bob",
+    "outfit": "tailored navy blazer over a white blouse",
+    "accessories": "thin silver necklace, slim earpiece, minimal makeup"
+  },
+  "avatar_prompt": "Photorealistic corporate headshot portrait of a poised professional woman in her early 30s, executive secretary, sleek dark shoulder-length bob, tailored navy blazer over a white blouse, thin silver necklace, subtle earpiece, warm confident half-smile, soft studio key light, shallow depth of field, neutral office-grey background, 85mm lens, high detail, natural skin texture",
+  "avatar_negative_prompt": "cartoon, anime, illustration, cgi, plastic skin, deformed hands, extra fingers, watermark, text, logo",
+  "selected_filename": "avatar_nexus.png",
+  "selected_thumb_filename": "thumb_avatar_nexus.webp",
+  "avatar_placeholder": "avatar_nexus.svg",
+  "avatar_synthetic": true,
+  "avatar_source": "thispersondoesnotexist.com (StyleGAN — depicts no real person)",
+  "notes": "Ships a realistic synthetic headshot (avatar_nexus.png 512x512 / thumb_avatar_nexus.webp 256x256) generated from an AI face service, plus a vector fallback (avatar_nexus.svg). The face is fictional and depicts no real individual. On import, HomePilot's avatar generator can re-synthesize the photo from avatar_prompt, or the user may drop in their own with these filenames."
+}

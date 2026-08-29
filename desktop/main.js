@@ -14,6 +14,8 @@ const {
   dialog,
   nativeImage,
   ipcMain,
+  desktopCapturer,
+  screen,
 } = require("electron");
 const path = require("path");
 const Store = require("electron-store");
@@ -468,6 +470,38 @@ async function promptAndApplyUpdate() {
     }
   }
 }
+
+// ── ScreenSense native capture ──────────────────────────────────────────────
+// Additive IPC handler: grabs the primary display and returns a PNG data URL.
+// Fully local — the image is produced in the desktop process and handed to the
+// renderer, which uploads it to the LOCAL HomePilot backend. Never leaves the
+// machine. Returns null on any failure so the renderer can degrade gracefully.
+ipcMain.handle("screensense:capture", async () => {
+  try {
+    const primary = screen.getPrimaryDisplay();
+    const { width, height } = primary.size;
+    const scale = primary.scaleFactor || 1;
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: {
+        width: Math.round(width * scale),
+        height: Math.round(height * scale),
+      },
+    });
+    if (!sources.length) return null;
+
+    // Prefer the source matching the primary display; fall back to the first.
+    const primaryId = String(primary.id);
+    const chosen =
+      sources.find((s) => String(s.display_id) === primaryId) || sources[0];
+    const thumb = chosen.thumbnail;
+    if (!thumb || thumb.isEmpty()) return null;
+    return thumb.toDataURL();
+  } catch (err) {
+    console.error("[ScreenSense] capture failed:", err);
+    return null;
+  }
+});
 
 // ── App lifecycle ─────────────────────────────────────────────────────────
 

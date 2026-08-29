@@ -31,6 +31,23 @@
       "tool_count": 3,
       "requires_config": [],
       "status": "stable"
+    },
+    {
+      "bundle_id": "nexus_secretary",
+      "name": "Nexus — Screen-Aware Executive Secretary",
+      "version": "1.0.0",
+      "persona_id": "nexus_secretary",
+      "class_id": "secretary",
+      "tags": ["secretary", "assistant", "vision", "screen-aware", "productivity", "local-first", "vr-compatible"],
+      "content_rating": "sfw",
+      "mcp_server_mode": "none",
+      "mcp_server_id": null,
+      "tool_count": 9,
+      "requires_config": [],
+      "requires_models": [
+        { "purpose": "vision", "recommended": "llava:7b", "install_hint": "ollama pull llava:7b", "required": true }
+      ],
+      "status": "stable"
     }
   ]
 }

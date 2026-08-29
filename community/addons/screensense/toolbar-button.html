@@ -1,0 +1,59 @@
+<!--
+  ScreenSense toolbar button — copy-paste snippet for a HomePilot chat toolbar.
+
+  Use this when you want the "look at my screen" action to live inside your own
+  chat toolbar instead of (or in addition to) the auto-mounted floating button.
+
+  1. Set window.HOMEPILOT_SCREENSENSE_NO_AUTOBUTTON = true BEFORE loading
+     homepilot-screensense.js if you don't want the floating button too.
+  2. Drop this button anywhere in your toolbar markup.
+  3. Wire getConversationId() to however your UI tracks the active conversation.
+
+  The button label/tooltip adapt to the active capture mode:
+     desktop → "👁 Ask about my screen"  (native local capture)
+     browser → "👁 Share screen"          (screen-share picker)
+     upload  → "👁 Send a screenshot"     (asks for an image)
+-->
+<button id="hp-screensense-btn" type="button" class="hp-toolbar-btn"
+        title="Let your assistant see your screen (analyzed locally)">
+  👁 Screen
+</button>
+
+<script>
+  (function () {
+    var btn = document.getElementById('hp-screensense-btn');
+    if (!btn || !window.hpScreenSense) return;
+
+    // Reflect the active capture mode in the label.
+    var ss = window.hpScreenSense;
+    btn.textContent =
+      ss.mode === 'desktop' ? '👁 Ask about my screen'
+      : ss.mode === 'browser' ? '👁 Share screen'
+      : '👁 Send a screenshot';
+
+    // TODO: return the active conversation id from your app's state/store/URL.
+    function getConversationId() {
+      return window.HOMEPILOT_CONVERSATION_ID || undefined;
+    }
+
+    btn.addEventListener('click', async function () {
+      var question =
+        'Look at my screen — what is the single most useful thing you notice?';
+      btn.disabled = true;
+      try {
+        var r = await ss.ask(question, {
+          conversationId: getConversationId(),
+          apiKey: window.HOMEPILOT_API_KEY,
+        });
+        // Route the answer into your chat UI however you render assistant turns.
+        // With a conversationId, the backend has already persisted it to history.
+        console.log('[ScreenSense]', r.ok ? r.analysis_text : r.error, '(mode:', r.mode + ')');
+        if (typeof window.HOMEPILOT_ON_SCREENSENSE === 'function') {
+          window.HOMEPILOT_ON_SCREENSENSE(r);
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  })();
+</script>
