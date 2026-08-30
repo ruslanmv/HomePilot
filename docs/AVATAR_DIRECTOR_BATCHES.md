@@ -35,7 +35,7 @@ Config lands as a new `avatar:` block only: `enabled:false`, `vision.model`,
 
 | Batch | Title | Depends on | Touches existing code |
 |---|---|---|---|
-| **B0** | Ground truth: `docs/`, `avatar:` config block, shared protocol fixtures, additive CI job | — | nothing |
+| **B0** ✅ | Ground truth: `docs/PATHMAP.md`, `avatar_director/config.py` (`AVATAR_*` env keys, all off), `backend/tests/fixtures/protocol/`, `backend/tests/avatar/`, additive CI job | — | nothing |
 | **B8** | Session gateway — `avatar_director/{__init__,session,safety}.py`, mock server, contract tests | B0 | `backend/app/main.py`: one guarded `register_avatar(app, config)` |
 | **B10** | Voice uplink — `avatar_director/rtc.py`, signalling over the B8 WS, mic → existing `voice_call` ASR path | B8, client B9 | nothing new |
 | **B15** | Vision — `avatar_director/vision.py`, `POST /avatar/vision/insight`, model adapter via the existing model runner | B8, client B11 | nothing |
@@ -63,6 +63,14 @@ Addendum config, new keys only: `avatar.adult.enabled: false`,
 ---
 
 ## Acceptance criteria per batch
+
+**B0 · Ground truth — landed.** `backend/app/avatar_director/` exists with its config
+block only; `register()` deliberately does not exist yet and a test asserts that, so the
+package cannot quietly acquire a mount point between batches. 18 tests
+(`pytest tests/avatar -q`), zero pre-existing files touched, `backend/app/main.py`
+untouched. Config defaults proven off, including the two that carry weight: `adult.enabled`
+is never implied by `avatar.enabled`, and a malformed numeric env value falls back to the
+safe default instead of being coerced.
 
 **B8 · Session gateway.** Build the mock server and the contract tests from
 `tests/fixtures/protocol/*.json` **before** the real endpoints. WS auth reuses HomePilot's
