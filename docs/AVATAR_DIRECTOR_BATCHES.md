@@ -1,4 +1,4 @@
-# Avatar Director — HomePilot server lane (batch plan, spec v1.1)
+# Avatar Director — HomePilot server lane (batch plan, spec v1.1 + addendum v1.2)
 
 **Status:** planning artifact. No product code changes.
 **Full cross-repo plan:** `ruslanmv/3D-Avatar-Chatbot` → `docs/BEHAVIOR_DIRECTOR_BATCHES.md`
@@ -18,6 +18,9 @@ imports.
 | new memory store for interests | `backend/app/ltm.py` — long-term persona memory, its own golden rule is "ADDITIVE ONLY" | New **categories inside LTM**, no parallel store |
 | new ASR / streaming voice path | `backend/app/voice_call/{ws,barge_in,turn_stream}.py` + `backend/app/voice/` | Feed the existing voice-call path; mark turns `source:"voice"` |
 | new MCP tool-server registry | `backend/app/agentic/` (`server_manager`, `mcp_installer`, `forge_http`, `server_config`) + `agentic/forge/` seed & templates | Register `avatar_control` through the existing Context Forge registry |
+| new tool-approval flow for the embodied assistant (UC-12) | `backend/app/daypilot_bridge/` — **propose-only** mode: the persona proposes structured ops in `x_directives`, an Approval Center gates every external write | Reuse that contract verbatim. UC-12's "act = *confirm* unless the owner sets autonomous" is this, already built |
+| new calendar/agenda source (UC-12) | `agentic/integrations/mcp/personal_assistant_server.py` exposes `hp_personal_plan_day`; the Forge seed catalog ships `hp-google-calendar` and Microsoft Graph mail/calendar | The agenda has a real source on day one; the server side of UC-12 is a `display` emitter, not a new integration |
+| new store for focus streaks (UC-16) | `ltm.py` upserts on `(project_id, category, key)` | One more LTM **category**, same additive path as curiosity records |
 
 Route prefix `/avatar/*` is free (`backend/app/avatar/router.py` mounts at `/v1`), so
 `/avatar/session`, `/avatar/rtc` and `/avatar/vision/insight` stand as specified.
@@ -40,8 +43,22 @@ Config lands as a new `avatar:` block only: `enabled:false`, `vision.model`,
 | **B17** | MCP `avatar_control` tool server registered through Context Forge | client B9 | Context Forge tool-server registry: one new entry |
 | **B19** | Privacy audit, retention proofs, docs; `avatar.enabled` stays **opt-in** | all | docs |
 
-Client-side counterparts (`SessionAdapter`, capture/consent, Together activities, the
-Behavior Director itself) are batches B1–B7, B9, B11–B14 in the client repo's plan.
+### Addendum v1.2 — server work (after B19, each behind its own flag)
+
+| Batch | Title | Depends on | Touches existing code |
+|---|---|---|---|
+| **B20** | `display` message type + panel payload validation (agenda, cards, tool results) | B9, client B12 | nothing — new message type, ignored by older peers |
+| **B21** | Embodied HomePilot server half: agenda assembly over `hp_personal_plan_day` / calendar servers, actions through the `daypilot_bridge` propose→approve path | B20 | nothing |
+| **B22** | Focus streaks as a new LTM category, recalled next session | B16 | nothing |
+| **B28** | Adult gates — `avatar_director/verification.py`, `redaction.py`, `adult_ack` / `adult_verify_request` | B8, B16 | nothing |
+
+Client-side counterparts live in the client repo's plan: the Behavior Director itself,
+`SessionAdapter`, capture/consent and the Together activities are B1–B7, B9 and B11–B14;
+`PanelRenderer`, the five activity plugins, the clip engine, `ConsentFlow` and
+`adult.profile` are B20–B29.
+
+Addendum config, new keys only: `avatar.adult.enabled: false`,
+`avatar.adult.provider: "owner-attest" | "<plugin>"`, `avatar.redaction.enabled: true`.
 
 ---
 
@@ -76,10 +93,30 @@ capture or vision `confirm` **and** requires an active client consent state. AC:
 client runs a 3-clip queued sequence on the live avatar; no live session → clean error;
 killing the tool server has zero effect on local avatar behaviour.
 
+**B20/B21 · Embodied assistant.** The server sends `display` panels; the client renders
+them as a canvas texture on the virtual screen. Every action the persona proposes goes
+through the existing propose-only bridge and its Approval Center — **a second approval path
+is the one thing this batch must not build.** AC: "good morning" produces panel + spoken
+summary + exactly one *confirm*-level tool call; a negative test proves no tool can be
+invoked outside the persona safety layer; `assistant.panelMaxKb` is enforced server-side,
+with oversized payloads rejected rather than silently truncated.
+
+**B28 · Adult gates (server first, always).** `verification.py` answers
+`adult_verify_request` with a signed, expiring, session-scoped `adult_ack` — the **only**
+path by which `adultVerified` can become true anywhere in the system. Owner attestation is
+the self-host default and **refuses to load on a multi-user instance**; distribution builds
+must configure a real provider through `avatar.adult.provider`. `redaction.py` runs on every
+memory write while `mode=='adult'`: warmth signals may persist ("prefers slow pacing"),
+explicit detail may not. AC: the §16.7 invariants are written as tests **before** the
+feature — no client path sets `adultVerified`; curiosity, vision and MCP sources can never
+select nsfw content; redaction fixtures pass; with `avatar.adult.enabled=false` the tier is
+invisible in the UI and unactivatable over MCP or the session channel.
+
 **Definition of done, every batch:** `pytest` green including the pre-existing suites;
 `avatar.enabled=false` proven inert; only the files listed for that batch touched;
 rollback = revert the PR or delete `backend/app/avatar_director/`.
 
 ---
 
-*Companion to the client-side plan; spec v1.1 §§4B, 5.P6–P12, 6.9–6.14.*
+*Companion to the client-side plan; spec v1.1 §§4B, 5.P6–P12, 6.9–6.14 and addendum v1.2
+§§13–17.*
