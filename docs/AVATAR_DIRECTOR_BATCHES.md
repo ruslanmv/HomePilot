@@ -93,6 +93,19 @@ client waiting forever on a reply that will never come is worse than a no), and
 `adult_verify_request` answers `adult_unavailable` — a placeholder that answered "verified"
 would be exactly the failure §16.2 forbids.
 
+**Client B9 · landed, in the other repo.** The 3D-Avatar-Chatbot side of this protocol now
+exists (`src/behavior/adapters/SessionAdapter.js`), so both peers are written against
+`tests/fixtures/protocol/` and the fixtures have a second reader — a change to one repo's copy
+turns the other repo's contract test red, which is the whole point of keeping them
+byte-identical.
+
+Two things settled there that the server batches inherit. Intents sent over this socket are
+held to the client's own §6.2 whitelist and §6.5 gates, so nothing a server sends can name a
+clip or bypass the NSFW rules — B16's curiosity and B17's tools should be written on that
+assumption rather than expecting the client to trust them. And the client treats heartbeat
+silence, not `onclose`, as the evidence a link is dead, because a stranded socket never
+closes; the 15 s `ping` in `session.py` is load-bearing for that, not decorative.
+
 **B10 · Voice uplink.** One `RTCPeerConnection` per session, signalled over the WS; mic
 audio upstream only, no downstream video. This is an **integration** — a second ASR
 implementation fails review. AC: mic → ASR → persona reply → client gesture, end to end;
