@@ -322,6 +322,31 @@ not relax — and says why it is a specification rather than code. Its only use 
 with no HomePilot at all, and writing an unused optional layer to demonstrate that the layer
 is optional is the wrong trade. All three acceptance criteria are met by the registered path.
 
+**B19 · Rollout — HomePilot's half, which is a document.** `docs/AVATAR_ENABLING.md`.
+
+`avatar.enabled` does not flip. It ships off, it stays off, and that page is how someone
+turns it on deliberately. This is a self-hosted server that already does a great deal, and
+mounting a websocket, a vision endpoint and an MCP tool server on every existing install
+because a *client* feature became ready would be taking that choice away from the person
+running it.
+
+The page is written to be checkable rather than reassuring. What is off is stated as the
+tests that prove it — `test_registration.py` asserts against `sys.modules`, not against
+intent. The four gates beneath the kill switch are listed with the fact that **none is
+implied by turning the director on**: voice, vision, adult and the KB manifest each need
+their own variable, and `test_config_defaults.py` asserts that `AVATAR_ENABLED=true` turns
+none of them on. Retention is explained as *there is nowhere to store a frame*, with the
+process-wide patching in `test_vision_retention.py` named as the proof.
+
+One thing is explicitly **not** claimed: that a hosted model provider stores nothing. That is
+somebody else's disk, which is why `AVATAR_VISION_MODEL` names a model rather than defaulting
+to a service.
+
+There is no rollout plan on this side because there is nothing to roll out. The client works
+fully without a server — Tier 0 and Tier 1 run on the device, and pulling the network
+mid-session leaves them running, which its own suite asserts. This server is an addition, not
+a dependency, and stays one until somebody with an install decides otherwise.
+
 **B20/B21 · Embodied assistant.** The server sends `display` panels; the client renders
 them as a canvas texture on the virtual screen. Every action the persona proposes goes
 through the existing propose-only bridge and its Approval Center — **a second approval path
