@@ -86,6 +86,19 @@ class VoiceConfig:
 
 
 @dataclass(frozen=True)
+class PanelsConfig:
+    """Addendum §14.3, batch B20. Mirrors the client's ``assistant.panelMaxKb``.
+
+    Both sides know the number; this side enforces it, because this side is the one that can
+    refuse. A payload over the limit is rejected with its size named — never trimmed to fit,
+    because a truncated agenda is an agenda with the afternoon missing, drawn as confidently
+    as a complete one.
+    """
+
+    max_kb: int = 64
+
+
+@dataclass(frozen=True)
 class KbConfig:
     """Where the client's animation manifest is, for B17's read-only tools.
 
@@ -128,6 +141,7 @@ class AvatarDirectorConfig:
     curiosity: CuriosityConfig = field(default_factory=CuriosityConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     kb: KbConfig = field(default_factory=KbConfig)
+    panels: PanelsConfig = field(default_factory=PanelsConfig)
     adult: AdultConfig = field(default_factory=AdultConfig)
     redaction: RedactionConfig = field(default_factory=RedactionConfig)
 
@@ -145,6 +159,7 @@ class AvatarDirectorConfig:
             "voice.model": self.voice.model,
             "voice.media": self.voice.media,
             "kb.manifest": self.kb.manifest,
+            "panels.max_kb": self.panels.max_kb,
             "adult.enabled": self.adult.enabled,
             "adult.provider": self.adult.provider,
             "redaction.enabled": self.redaction.enabled,
@@ -171,6 +186,7 @@ def load_config() -> AvatarDirectorConfig:
             media=os.getenv("AVATAR_VOICE_MEDIA", "transcript").strip().lower() or "transcript",
         ),
         kb=KbConfig(manifest=os.getenv("AVATAR_KB_MANIFEST", "").strip()),
+        panels=PanelsConfig(max_kb=_int("AVATAR_PANEL_MAX_KB", 64)),
         adult=AdultConfig(
             enabled=_flag("AVATAR_ADULT_ENABLED", False),
             provider=os.getenv("AVATAR_ADULT_PROVIDER", "owner-attest").strip() or "owner-attest",

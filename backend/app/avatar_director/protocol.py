@@ -212,6 +212,16 @@ class ProtocolHandler:
     def say(self, text: str, source: str = "server") -> Dict[str, Any]:
         return {"v": PROTOCOL_VERSION, "type": "say", "text": text, "source": source}
 
+    def display(self, kind: str, data: Dict[str, Any], *, max_kb: int = 64) -> Dict[str, Any]:
+        """One panel (B20). Raises ``PanelError`` rather than sending something malformed.
+
+        Every `display` this server emits goes through here, so the size limit and the kind
+        check are not something an emitter can forget — there is one door and it is this one.
+        """
+        from .panels import build  # noqa: PLC0415 — lazy, like every other optional half
+
+        return build(kind, data, max_kb=max_kb)
+
     def scene(self, scene_id: str) -> Dict[str, Any]:
         return {"v": PROTOCOL_VERSION, "type": "scene", "id": scene_id}
 
