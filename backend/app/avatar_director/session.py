@@ -22,7 +22,8 @@ from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from .protocol import HEARTBEAT_SECONDS, ProtocolHandler
+from .protocol import EMOTE_WHITELIST, HEARTBEAT_SECONDS, ProtocolHandler
+from .rtc import VoiceUplink, webrtc_terminus
 
 log = logging.getLogger("avatar_director.session")
 
@@ -42,11 +43,12 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
     @router.websocket("/avatar/session")
     async def avatar_session(websocket: WebSocket) -> None:  # pragma: no cover - transport
         await websocket.accept()
-        handler = ProtocolHandler(authenticate=authenticate)
+        handler = ProtocolHandler(authenticate=authenticate, voice=_uplink_for(config))
         key = f"{id(websocket):x}"
         _SESSIONS[key] = handler
 
         heartbeat = asyncio.create_task(_heartbeat(websocket, handler))
+        turns: set = set()
         try:
             while True:
                 raw = await websocket.receive_text()
@@ -58,13 +60,49 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
 
                 for reply in handler.handle(message):
                     await _send(websocket, reply)
+
+                # B10. A spoken turn is the one thing here that waits on the chat endpoint,
+                # so it runs as its own task: the socket stays readable, which is what lets
+                # the next utterance barge in on the reply to the last one.
+                pending = handler.voice.take_pending() if handler.voice else None
+                if pending is not None:
+                    task = asyncio.create_task(_run_turn(websocket, handler, pending))
+                    turns.add(task)
+                    task.add_done_callback(turns.discard)
         except WebSocketDisconnect:
             log.info("avatar session closed (%s)", handler.state.client or "unidentified")
         finally:
             heartbeat.cancel()
+            for task in list(turns):
+                task.cancel()
             _SESSIONS.pop(key, None)
 
     return router
+
+
+def _uplink_for(config):
+    """One uplink per session, or None while ``avatar.voice.enabled`` is false.
+
+    Building it costs nothing but a dataclass — the chat path and the barge-in registry are
+    imported lazily, inside the turn — so a session that never speaks pays nothing for the
+    uplink existing.
+    """
+    voice = getattr(config, "voice", None)
+    if voice is None or not voice.enabled:
+        return None
+    terminus = webrtc_terminus(voice) if voice.media == "webrtc" else None
+    return VoiceUplink(voice, whitelist=EMOTE_WHITELIST, media_terminus=terminus)
+
+
+async def _run_turn(websocket: WebSocket, handler: ProtocolHandler, pending) -> None:  # pragma: no cover
+    """Await one spoken turn and send what it produced."""
+    try:
+        for reply in await handler.voice.run_pending(pending):
+            await _send(websocket, reply)
+    except asyncio.CancelledError:
+        raise
+    except (WebSocketDisconnect, RuntimeError):
+        return  # the socket went while we were thinking; nothing to say to it
 
 
 async def _heartbeat(websocket: WebSocket, handler: ProtocolHandler) -> None:  # pragma: no cover

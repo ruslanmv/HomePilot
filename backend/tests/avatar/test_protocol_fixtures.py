@@ -47,6 +47,13 @@ EXPECTED_NAMES = {
     "streak",
     "display",
     "adult_ack",
+    # v1.1 §6.10, batch B10 — the voice uplink
+    "voice_offer",
+    "voice_ice",
+    "voice_transcript",
+    "voice_end",
+    "voice_answer",
+    "voice_state",
     # forward compatibility
     FORWARD_COMPAT,
 }

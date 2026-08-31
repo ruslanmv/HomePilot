@@ -20,16 +20,20 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .rtc import VOICE_CLIENT_TYPES, VOICE_SERVER_TYPES
+
 PROTOCOL_VERSION = 1
 
-#: Client → server, §6.9 and addendum §14.3.
-CLIENT_TYPES = frozenset(
-    {"hello", "ctx", "user_event", "vision_ask", "chat_meta", "pong", "adult_verify_request", "streak"}
+#: Client → server, §6.9 and addendum §14.3, plus B10's voice uplink.
+CLIENT_TYPES = (
+    frozenset({"hello", "ctx", "user_event", "vision_ask", "chat_meta", "pong", "adult_verify_request", "streak"})
+    | VOICE_CLIENT_TYPES
 )
 
 #: Server → client. Listed so a typo in an emitter is caught here rather than on a headset.
-SERVER_TYPES = frozenset(
-    {"intent", "say", "vision_insight", "scene", "error", "ping", "display", "adult_ack"}
+SERVER_TYPES = (
+    frozenset({"intent", "say", "vision_insight", "scene", "error", "ping", "display", "adult_ack"})
+    | VOICE_SERVER_TYPES
 )
 
 #: §6.2's emote whitelist. The server may not invent names any more than the model may.
@@ -67,11 +71,14 @@ class ProtocolHandler:
     decides when to send, this decides what.
     """
 
-    def __init__(self, *, authenticate=None, now=time.time) -> None:
+    def __init__(self, *, authenticate=None, now=time.time, voice=None) -> None:
         self.state = SessionState()
         self._authenticate = authenticate or (lambda token: bool(token))
         self._now = now
         self.ignored: List[str] = []
+        #: B10's uplink, or None on a server with the voice gate off. The handler routes to
+        #: it and holds no opinion of its own about audio.
+        self.voice = voice
 
     # ── inbound ──────────────────────────────────────────────────────────────
 
@@ -134,6 +141,28 @@ class ProtocolHandler:
         if isinstance(activity, str) and isinstance(value, int):
             self.state.streaks[activity] = value
         return []
+
+    def _on_voice_offer(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._voice(message)
+
+    def _on_voice_ice(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._voice(message)
+
+    def _on_voice_transcript(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._voice(message)
+
+    def _on_voice_end(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._voice(message)
+
+    def _voice(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Route to B10's uplink. Absent one, refuse by name rather than ignore.
+
+        The §6.9 ignore rule is for types this server has never heard of. These it has heard
+        of, and a client that offered its microphone deserves a no rather than silence.
+        """
+        if self.voice is None:
+            return [self.error("voice_unavailable", "the voice uplink is not enabled")]
+        return self.voice.handle(message)
 
     def _on_adult_verify_request(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
         # B28 implements attestation. Refusing by default is the only safe stub: a

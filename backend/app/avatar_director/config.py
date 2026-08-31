@@ -57,6 +57,25 @@ class CuriosityConfig:
 
 
 @dataclass(frozen=True)
+class VoiceConfig:
+    """§6.10, batch B10. The voice uplink is a third independent gate.
+
+    ``media`` names where speech becomes text. ``transcript`` means the client's own
+    recogniser does it and sends text up — the path that works today, because the client
+    already has a recogniser and HomePilot already accepts final transcripts. ``webrtc``
+    means the server terminates the media instead, which needs a media terminus installed;
+    without one the server refuses the offer rather than accepting an offer it cannot honour.
+
+    ``model`` is whatever the existing chat endpoint accepts (``persona:<id>``,
+    ``personality:<id>``, a plain model name) — the uplink does not interpret it.
+    """
+
+    enabled: bool = False
+    model: str = ""
+    media: str = "transcript"
+
+
+@dataclass(frozen=True)
 class AdultConfig:
     """Addendum §16.2.
 
@@ -85,6 +104,7 @@ class AvatarDirectorConfig:
     vision: VisionConfig = field(default_factory=VisionConfig)
     frames: FramesConfig = field(default_factory=FramesConfig)
     curiosity: CuriosityConfig = field(default_factory=CuriosityConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     adult: AdultConfig = field(default_factory=AdultConfig)
     redaction: RedactionConfig = field(default_factory=RedactionConfig)
 
@@ -96,6 +116,9 @@ class AvatarDirectorConfig:
             "vision.max_image_px": self.vision.max_image_px,
             "frames.retention": self.frames.retention,
             "curiosity.session_budget": self.curiosity.session_budget,
+            "voice.enabled": self.voice.enabled,
+            "voice.model": self.voice.model,
+            "voice.media": self.voice.media,
             "adult.enabled": self.adult.enabled,
             "adult.provider": self.adult.provider,
             "redaction.enabled": self.redaction.enabled,
@@ -112,6 +135,11 @@ def load_config() -> AvatarDirectorConfig:
         ),
         frames=FramesConfig(retention=_int("AVATAR_FRAMES_RETENTION", 0)),
         curiosity=CuriosityConfig(session_budget=_int("AVATAR_CURIOSITY_SESSION_BUDGET", 4)),
+        voice=VoiceConfig(
+            enabled=_flag("AVATAR_VOICE_ENABLED", False),
+            model=os.getenv("AVATAR_VOICE_MODEL", "").strip(),
+            media=os.getenv("AVATAR_VOICE_MEDIA", "transcript").strip().lower() or "transcript",
+        ),
         adult=AdultConfig(
             enabled=_flag("AVATAR_ADULT_ENABLED", False),
             provider=os.getenv("AVATAR_ADULT_PROVIDER", "owner-attest").strip() or "owner-attest",

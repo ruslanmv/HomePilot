@@ -23,6 +23,9 @@ AVATAR_ENV_VARS = [
     "AVATAR_VISION_MAX_IMAGE_PX",
     "AVATAR_FRAMES_RETENTION",
     "AVATAR_CURIOSITY_SESSION_BUDGET",
+    "AVATAR_VOICE_ENABLED",
+    "AVATAR_VOICE_MODEL",
+    "AVATAR_VOICE_MEDIA",
     "AVATAR_ADULT_ENABLED",
     "AVATAR_ADULT_PROVIDER",
     "AVATAR_REDACTION_ENABLED",
@@ -39,6 +42,7 @@ def test_ships_disabled(monkeypatch):
     cfg = load_config()
     assert cfg.enabled is False
     assert cfg.adult.enabled is False
+    assert cfg.voice.enabled is False
 
 
 def test_adult_is_a_second_gate_never_implied_by_enabled(monkeypatch):
@@ -82,6 +86,9 @@ def test_key_set_is_frozen():
             "vision.max_image_px",
             "frames.retention",
             "curiosity.session_budget",
+            "voice.enabled",
+            "voice.model",
+            "voice.media",
             "adult.enabled",
             "adult.provider",
             "redaction.enabled",

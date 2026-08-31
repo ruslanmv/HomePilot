@@ -37,7 +37,7 @@ Config lands as a new `avatar:` block only: `enabled:false`, `vision.model`,
 |---|---|---|---|
 | **B0** ✅ | Ground truth: `docs/PATHMAP.md`, `avatar_director/config.py` (`AVATAR_*` env keys, all off), `backend/tests/fixtures/protocol/`, `backend/tests/avatar/`, additive CI job | — | nothing |
 | **B8** ✅ | Session gateway — `avatar_director/{protocol,session,safety}.py` + `register()`, contract tests driven by the shared fixtures | B0 | `backend/app/main.py`: one guarded `register(app)` block, matching the `voice_call` pattern |
-| **B10** | Voice uplink — `avatar_director/rtc.py`, signalling over the B8 WS, mic → existing `voice_call` ASR path | B8, client B9 | nothing new |
+| **B10** ✅ | Voice uplink — `avatar_director/rtc.py`, signalling over the B8 WS, mic → existing `voice_call` turn path | B8, client B9 | nothing new |
 | **B15** | Vision — `avatar_director/vision.py`, `POST /avatar/vision/insight`, model adapter via the existing model runner | B8, client B11 | nothing |
 | **B16** | Curiosity Engine — `avatar_director/curiosity.py`, interest records as new LTM categories | B8, client B9 | nothing |
 | **B17** | MCP `avatar_control` tool server registered through Context Forge | client B9 | Context Forge tool-server registry: one new entry |
@@ -111,12 +111,45 @@ audio upstream only, no downstream video. This is an **integration** — a secon
 implementation fails review. AC: mic → ASR → persona reply → client gesture, end to end;
 VAD drives `user:speaking`/`user:silent`; declining mic leaves every other channel working.
 
+**B10 · Voice uplink — landed.** 34 tests. The integration reuses three things and
+implements none of them: `voice_call.turn.run_turn` for the turn, `voice_call.barge_in` for
+cancellation, and `app.voice.providers.get_stt_provider` as the only ASR a media terminus may
+call. `rtc.py` is a pure module like `protocol.py`, so every contract test above drives it
+directly with an injected turn runner — which is the same claim in another form: an uplink
+that had to know how a turn is run could not be handed a fake one.
+
+**Two media modes, and the default is the one without WebRTC.** `voice.media = "transcript"`
+means the client's own recogniser — which it already has, and which already handles Quest
+via MediaRecorder — sends final text up. That is not a shortcut around WebRTC; it is the
+shape `voice_call` was built for, and browsers having a recogniser is why. `webrtc` mode
+terminates media server-side and needs a terminus object; B10 deliberately does **not** add
+`aiortc` to `requirements.txt`, because whether a deployment wants the server holding audio
+is a deployment's decision. With no terminus a WebRTC offer is refused as
+`voice_media_unavailable`, naming transcript mode as the alternative — B8's refuse-rather-
+than-lie rule, applied again.
+
+**The tag split is not tidiness.** A `say` goes to the client's `speakText`, not through the
+chat tag parser, so an `[[emote:…]]` left in the string is *read aloud*. `split_emote_tags`
+strips it and turns it into an `intent`, whitelist-checked; a non-whitelisted name is dropped
+from the gestures and still stripped from the speech.
+
+Everything the uplink produces is marked `source: "voice"` — deliberately not `"user"`, since
+§6.5 blocks NSFW for any intent whose source is not the user and a tag written by a model is
+a model's tag whichever way the sentence reached it. The turn also carries
+`X-HomePilot-Source: voice` into chat.
+
+Barge-in is the one place where being an integration is visible in the behaviour: a second
+final transcript while a reply is still coming cancels the first through `voice_call`'s
+registry and **discards the reply that arrives anyway**, because answering a question the
+user has already replaced is worse than not answering it.
+
 **B15 · Vision.** Server re-checks the 768 px cap, runs the configured model, returns
 `{text, intents[]}` with intents whitelist-checked server-side. AC: p95 ≤3 s local;
 **retention test proves nothing is written to disk or logs**; cancelling client-side
 consent mid-flight aborts the ask.
 
-**B16 · Curiosity.** Scoring is pure functions (`+0.15` engaged / `−0.10` short-or-negative
+**B16 · Curiosity.** The uplink's `voice_state` and the client's `user:speaking` /
+`user:silent` are the mute signals this batch needs; both exist as of B10. Scoring is pure functions (`+0.15` engaged / `−0.10` short-or-negative
 / `×0.98` daily decay / clamp [0,1]); the scheduler consumes events only. Hard mutes:
 `user:speaking`, `attention ≥ 0.9`, meditation scenes, user opt-out. AC: unit tests for
 scoring, decay, budget and every mute as a **negative assertion**; a seeded memory
