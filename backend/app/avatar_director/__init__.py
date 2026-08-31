@@ -20,4 +20,25 @@ in ``app.daypilot_bridge`` — none of them are re-implemented here.
 
 from .config import AvatarDirectorConfig, load_config
 
-__all__ = ["AvatarDirectorConfig", "load_config"]
+__all__ = ["AvatarDirectorConfig", "load_config", "register"]
+
+
+def register(app, config=None) -> bool:
+    """Mount the Avatar Director, if it is enabled. The one line ``main.py`` adds.
+
+    Returns whether anything was mounted, so the caller can log it honestly.
+
+    The import of :mod:`session` is **inside** the enabled branch on purpose. That module
+    pulls in FastAPI's WebSocket machinery, and B8 is accepted on the claim that with
+    ``avatar.enabled`` false no route is mounted *and nothing is imported* — a top-level
+    import would quietly make the second half untrue. ``backend/app/voice_call`` guards
+    itself the same way; this follows the house pattern rather than inventing one.
+    """
+    cfg = config or load_config()
+    if not cfg.enabled:
+        return False
+
+    from .session import build_router  # noqa: PLC0415 — deliberately lazy, see above
+
+    app.include_router(build_router(cfg))
+    return True

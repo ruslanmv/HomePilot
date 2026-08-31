@@ -110,8 +110,17 @@ def test_malformed_numbers_fall_back_to_the_safe_default(monkeypatch):
 
 
 def test_importing_the_package_mounts_nothing():
-    """B0 lands the name only. The router entry point arrives in B8."""
+    """Importing the package costs a dataclass and some ``os.getenv`` calls.
+
+    B0 asserted ``register`` did not exist yet; B8 added it, and the claim that matters is
+    now stronger than "the entry point is absent": the entry point is present, and importing
+    it still drags in no transport. ``tests/avatar/test_registration.py`` holds the other
+    half — that calling it while disabled imports nothing either.
+    """
+    import sys
+
     import app.avatar_director as pkg
 
-    assert not hasattr(pkg, "register")
-    assert pkg.__all__ == ["AvatarDirectorConfig", "load_config"]
+    assert callable(pkg.register)
+    assert pkg.__all__ == ["AvatarDirectorConfig", "load_config", "register"]
+    assert "app.avatar_director.session" not in sys.modules

@@ -36,7 +36,7 @@ Config lands as a new `avatar:` block only: `enabled:false`, `vision.model`,
 | Batch | Title | Depends on | Touches existing code |
 |---|---|---|---|
 | **B0** ✅ | Ground truth: `docs/PATHMAP.md`, `avatar_director/config.py` (`AVATAR_*` env keys, all off), `backend/tests/fixtures/protocol/`, `backend/tests/avatar/`, additive CI job | — | nothing |
-| **B8** | Session gateway — `avatar_director/{__init__,session,safety}.py`, mock server, contract tests | B0 | `backend/app/main.py`: one guarded `register_avatar(app, config)` |
+| **B8** ✅ | Session gateway — `avatar_director/{protocol,session,safety}.py` + `register()`, contract tests driven by the shared fixtures | B0 | `backend/app/main.py`: one guarded `register(app)` block, matching the `voice_call` pattern |
 | **B10** | Voice uplink — `avatar_director/rtc.py`, signalling over the B8 WS, mic → existing `voice_call` ASR path | B8, client B9 | nothing new |
 | **B15** | Vision — `avatar_director/vision.py`, `POST /avatar/vision/insight`, model adapter via the existing model runner | B8, client B11 | nothing |
 | **B16** | Curiosity Engine — `avatar_director/curiosity.py`, interest records as new LTM categories | B8, client B9 | nothing |
@@ -77,6 +77,21 @@ safe default instead of being coerced.
 existing auth/pairing; heartbeat 15 s; unknown message `type` ignored (forward
 compatible). AC: every §6.9 message shape round-trips; `avatar.enabled=false` → no route
 mounted and no import executed (asserted); the existing suite stays green.
+
+**B8 · Session gateway — landed.** 40 tests (`pytest tests/avatar -q`). The protocol is a
+pure module (`protocol.py`) so the contract tests need no socket, which is what let the mock
+and the tests come first as the plan requires. `session.py` only moves bytes.
+
+The half worth its own test is **"imports nothing"**: `register()` imports the transport
+*inside* the enabled branch, and `test_registration.py` asserts against `sys.modules`
+directly, because that claim is the one that quietly stops being true the first time someone
+tidies an import to the top of a file. `backend/app/voice_call` guards itself the same way —
+this follows the house pattern rather than inventing one.
+
+Two stubs refuse rather than lie: `vision_ask` answers `vision_unavailable` until B15 (a
+client waiting forever on a reply that will never come is worse than a no), and
+`adult_verify_request` answers `adult_unavailable` — a placeholder that answered "verified"
+would be exactly the failure §16.2 forbids.
 
 **B10 · Voice uplink.** One `RTCPeerConnection` per session, signalled over the WS; mic
 audio upstream only, no downstream video. This is an **integration** — a second ASR

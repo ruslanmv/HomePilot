@@ -283,6 +283,22 @@ except Exception as _vc_err:  # noqa: BLE001
     # Deliberate broad catch: this entire feature is optional. Log and move on.
     print(f"[voice_call] DISABLED due to import error: {_vc_err}")
 
+# --- Avatar Director (/avatar/*) — ADDITIVE, FEATURE-FLAGGED -----------------
+# The realtime channel the 3D avatar client connects to (spec v1.1 §6.9). Off by
+# default; enable with ``AVATAR_ENABLED=true``. Same safety pattern as voice_call
+# and interactive: an import error logs and is swallowed, because an optional
+# feature must never take the app down.
+#
+# `register` imports its transport lazily, so while the flag is false this block
+# costs one dataclass and a few os.getenv calls — no route, and no FastAPI
+# WebSocket machinery loaded. backend/tests/avatar/test_registration.py asserts it.
+try:
+    from .avatar_director import register as _register_avatar
+    if _register_avatar(app):
+        print("[avatar_director] enabled — session channel mounted at /avatar/session")
+except Exception as _ad_err:  # noqa: BLE001
+    print(f"[avatar_director] DISABLED due to import error: {_ad_err}")
+
 # --- Interactive (/v1/interactive/*) — ADDITIVE, FEATURE-FLAGGED -------------
 # AI interactive video engine. Off by default; enable with
 # ``INTERACTIVE_ENABLED=true``. See backend/app/interactive/__init__.py for
