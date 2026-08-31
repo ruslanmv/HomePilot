@@ -51,9 +51,19 @@ class FramesConfig:
 
 @dataclass(frozen=True)
 class CuriosityConfig:
-    """§6.12. The per-session initiative budget: a companion that takes interest, never nags."""
+    """§6.12. The per-session initiative budget: a companion that takes interest, never nags.
+
+    ``min_gap_ms`` is the second half of the same idea. A budget of four spent in the first
+    two minutes is still four interruptions in two minutes.
+    """
 
     session_budget: int = 4
+    min_gap_ms: int = 90000
+    #: How long a session runs before she may raise anything of her own. Surfaced by the
+    #: twenty-minute replay in ``curiosity_review.py``: with only a budget and a gap, she
+    #: opened the evening fifteen seconds in with "Mum's scan results are due this week",
+    #: which is the highest-curiosity thread and a terrible thing to be greeted with.
+    min_session_age_ms: int = 120000
 
 
 @dataclass(frozen=True)
@@ -116,6 +126,8 @@ class AvatarDirectorConfig:
             "vision.max_image_px": self.vision.max_image_px,
             "frames.retention": self.frames.retention,
             "curiosity.session_budget": self.curiosity.session_budget,
+            "curiosity.min_gap_ms": self.curiosity.min_gap_ms,
+            "curiosity.min_session_age_ms": self.curiosity.min_session_age_ms,
             "voice.enabled": self.voice.enabled,
             "voice.model": self.voice.model,
             "voice.media": self.voice.media,
@@ -134,7 +146,11 @@ def load_config() -> AvatarDirectorConfig:
             max_image_px=_int("AVATAR_VISION_MAX_IMAGE_PX", 768),
         ),
         frames=FramesConfig(retention=_int("AVATAR_FRAMES_RETENTION", 0)),
-        curiosity=CuriosityConfig(session_budget=_int("AVATAR_CURIOSITY_SESSION_BUDGET", 4)),
+        curiosity=CuriosityConfig(
+            session_budget=_int("AVATAR_CURIOSITY_SESSION_BUDGET", 4),
+            min_gap_ms=_int("AVATAR_CURIOSITY_MIN_GAP_MS", 90000),
+            min_session_age_ms=_int("AVATAR_CURIOSITY_MIN_SESSION_AGE_MS", 120000),
+        ),
         voice=VoiceConfig(
             enabled=_flag("AVATAR_VOICE_ENABLED", False),
             model=os.getenv("AVATAR_VOICE_MODEL", "").strip(),

@@ -39,6 +39,7 @@ VALID_CATEGORIES = {
     "milestone",         # Relationship milestones: "first deep conversation"
     "boundary",          # User-set boundaries: tone, topics to avoid
     "summary",           # High-level relationship summary (auto-updated)
+    "interest",          # Avatar Director curiosity topics (spec v1.1 §6.12)
 }
 
 # Maximum entries per persona (prevent unbounded growth)

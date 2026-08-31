@@ -39,7 +39,7 @@ Config lands as a new `avatar:` block only: `enabled:false`, `vision.model`,
 | **B8** ✅ | Session gateway — `avatar_director/{protocol,session,safety}.py` + `register()`, contract tests driven by the shared fixtures | B0 | `backend/app/main.py`: one guarded `register(app)` block, matching the `voice_call` pattern |
 | **B10** ✅ | Voice uplink — `avatar_director/rtc.py`, signalling over the B8 WS, mic → existing `voice_call` turn path | B8, client B9 | nothing new |
 | **B15** ✅ | Vision — `avatar_director/vision.py`, `POST /avatar/vision/insight`, model adapter via the existing model runner | B8, client B11 | `app/multimodal.py`: one optional `image_b64=` argument |
-| **B16** | Curiosity Engine — `avatar_director/curiosity.py`, interest records as new LTM categories | B8, client B9 | nothing |
+| **B16** ✅ | Curiosity Engine — `avatar_director/curiosity.py`, interest records as new LTM categories | B8, client B9 | `app/ltm.py`: one entry in `VALID_CATEGORIES` |
 | **B17** | MCP `avatar_control` tool server registered through Context Forge | client B9 | Context Forge tool-server registry: one new entry |
 | **B19** | Privacy audit, retention proofs, docs; `avatar.enabled` stays **opt-in** | all | docs |
 
@@ -208,6 +208,63 @@ here speaks for it, which the test says in as many words.
 scoring, decay, budget and every mute as a **negative assertion**; a seeded memory
 produces a relevant proactive question at the next polite opening; exhausting the
 per-session budget silences initiative for the rest of the session.
+
+**B16 · Curiosity — landed, machine half.** 65 tests across `test_curiosity.py` and
+`test_curiosity_etiquette.py`.
+
+**Records live in the memory that already exists.** One new `interest` entry in
+`ltm.VALID_CATEGORIES`, and `InterestStore` is a thin adapter over `app.ltm` — no table, no
+migration, no cache. The store tests run against a **real sqlite database**, because "not a
+parallel store" is a claim about the actual store and a mock would prove only that this
+module can call a mock. One of them asserts the schema contains exactly one table and it is
+not ours; another calls the existing `forget_all` and watches the interests go with it,
+which is the property that makes this worth insisting on — a parallel store is a second
+place a user's data hides from the delete button they already have. `build_ltm_context`
+walks an explicit category list that `interest` is not on, so the addition changed no
+existing behaviour, and there is a test for that too.
+
+**Scoring is pure functions**, and a test reads their source to keep them that way: no
+`time.`, no `self.`, no store, no logger. The deltas, the ×0.98 and the clamp are the
+spec's, named rather than inlined so a reviewer can diff them. Decay is continuous in days
+rather than a daily step — a step makes a topic touched at 23:59 and again at 00:01 lose a
+whole day, which is how a companion quietly forgets something mentioned yesterday.
+
+**The scheduler consumes events only**, asserted by reading it for `Timer`, `Thread`,
+`sleep`, `create_task` and `asyncio`. It is fed `ctx` and `user_event` — what the session
+already reports — and asked whether now is a moment. It returns a *subject*, never a
+sentence: §6.12 leaves the wording to the persona LLM, and keeping generation out means no
+code path can phrase something into existence past a mute.
+
+**Every mute is a negative assertion.** All four of §6.12's, each with the event fired, an
+initiative requested, and a failure if anything comes back — plus the edges (just under the
+attention threshold she may; the non-silent scenes are not silenced; opting back in works)
+because a mute with no edge is a mute nobody can reason about. Mutes are checked *before*
+the budget, so a muted session does not spend budget it was never going to use. Turning off
+any one mute fails between three and six tests.
+
+**Three bugs the tests and the replay found**, worth listing because none was arithmetic:
+
+1. `user:silent` both clears the speaking flag and is the companion profile's commonest
+   opening. Written as an if/elif chain, the first reading swallowed it and the most
+   frequent polite moment in the whole system never arrived.
+2. Argmax over a set that does not change between openings picks the same topic every time.
+   The first replay had her ask about the aquarium at 0:15, 2:30, 7:10 and 15:00. The
+   scheduler now remembers what it asked and falls silent rather than repeating itself.
+3. She opened the evening fifteen seconds in with "Mum's scan results are due this week" —
+   the highest-curiosity thread, correct by every other rule, and a terrible thing to be
+   greeted with. `curiosity.min_session_age_ms` (120 s) is the answer, and it exists because
+   the replay showed it rather than because the spec asked.
+
+**The human half is not done.** `python -m app.avatar_director.curiosity_review` replays a
+twenty-minute session and prints every moment she would have spoken, the opening that
+licensed it, and what the user was doing at the time. A test can prove she was never *muted*
+when she spoke; whether the moment *felt* right is a judgement about tone and timing that
+belongs to a person. Current output is four initiatives — 2:30, 7:10, 15:00, 16:30 — on four
+different topics, none during the film, the phone call or the meditation.
+
+**Open — a reviewer has not yet sat the session.** The AC asks for a person to run the
+twenty minutes and report. That has not happened, and no test in this repo stands in for it.
+A reviewer's verdict belongs here, signed.
 
 **B17 · MCP tools.** `search_animations`/`get_animation` read-only;
 `play_animation`/`queue_sequence`/`set_mood`/`set_scene` autonomous; anything touching
