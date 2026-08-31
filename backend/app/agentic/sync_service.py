@@ -35,6 +35,10 @@ _CORE_SERVERS = [
     ("hp-executive-briefing", 9104, "HomePilot Executive Briefing MCP server"),
     ("hp-web-search", 9105, "HomePilot Web Search MCP server"),
     ("hp-inventory", 9120, "HomePilot Inventory MCP server"),
+    # Spec v1.1 §6.14, batch B17. Speaks to a live avatar session at turn cadence; holds no
+    # state and reaches the avatar only through the backend's /avatar/control route, so
+    # stopping it removes a caller rather than a capability.
+    ("hp-avatar-control", 9121, "HomePilot Avatar Control MCP server"),
 ]
 
 

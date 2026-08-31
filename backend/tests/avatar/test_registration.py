@@ -42,10 +42,25 @@ def test_disabled_imports_nothing():
     assert SESSION_MODULE not in sys.modules, "the session module was imported while disabled"
 
 
-def test_enabled_mounts_exactly_one_router():
+def test_enabled_mounts_the_session_and_the_control_route():
+    """Two, as of B17: the §6.9 socket and the loopback route the MCP tool server calls.
+    The count is asserted rather than the routers' contents because what matters is that a
+    batch cannot mount a third without saying so here."""
     app = FakeApp()
     assert register(app, AvatarDirectorConfig(enabled=True)) is True
-    assert len(app.routers) == 1
+    assert len(app.routers) == 2
+
+
+def test_vision_adds_a_third_only_when_a_model_is_configured():
+    from app.avatar_director.config import VisionConfig
+
+    app = FakeApp()
+    register(app, AvatarDirectorConfig(enabled=True))
+    assert len(app.routers) == 2
+
+    with_model = FakeApp()
+    register(with_model, AvatarDirectorConfig(enabled=True, vision=VisionConfig(model="moondream")))
+    assert len(with_model.routers) == 3
 
 
 def test_the_package_itself_is_cheap_to_import():

@@ -86,6 +86,18 @@ class VoiceConfig:
 
 
 @dataclass(frozen=True)
+class KbConfig:
+    """Where the client's animation manifest is, for B17's read-only tools.
+
+    The knowledge base is authored in the client repository alongside the assets it
+    describes; copying it here would give two answers to "what can she do". Empty by
+    default, and the two catalogue tools refuse by name rather than returning nothing.
+    """
+
+    manifest: str = ""
+
+
+@dataclass(frozen=True)
 class AdultConfig:
     """Addendum §16.2.
 
@@ -115,6 +127,7 @@ class AvatarDirectorConfig:
     frames: FramesConfig = field(default_factory=FramesConfig)
     curiosity: CuriosityConfig = field(default_factory=CuriosityConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    kb: KbConfig = field(default_factory=KbConfig)
     adult: AdultConfig = field(default_factory=AdultConfig)
     redaction: RedactionConfig = field(default_factory=RedactionConfig)
 
@@ -131,6 +144,7 @@ class AvatarDirectorConfig:
             "voice.enabled": self.voice.enabled,
             "voice.model": self.voice.model,
             "voice.media": self.voice.media,
+            "kb.manifest": self.kb.manifest,
             "adult.enabled": self.adult.enabled,
             "adult.provider": self.adult.provider,
             "redaction.enabled": self.redaction.enabled,
@@ -156,6 +170,7 @@ def load_config() -> AvatarDirectorConfig:
             model=os.getenv("AVATAR_VOICE_MODEL", "").strip(),
             media=os.getenv("AVATAR_VOICE_MEDIA", "transcript").strip().lower() or "transcript",
         ),
+        kb=KbConfig(manifest=os.getenv("AVATAR_KB_MANIFEST", "").strip()),
         adult=AdultConfig(
             enabled=_flag("AVATAR_ADULT_ENABLED", False),
             provider=os.getenv("AVATAR_ADULT_PROVIDER", "owner-attest").strip() or "owner-attest",

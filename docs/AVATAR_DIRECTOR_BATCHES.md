@@ -40,7 +40,7 @@ Config lands as a new `avatar:` block only: `enabled:false`, `vision.model`,
 | **B10** ✅ | Voice uplink — `avatar_director/rtc.py`, signalling over the B8 WS, mic → existing `voice_call` turn path | B8, client B9 | nothing new |
 | **B15** ✅ | Vision — `avatar_director/vision.py`, `POST /avatar/vision/insight`, model adapter via the existing model runner | B8, client B11 | `app/multimodal.py`: one optional `image_b64=` argument |
 | **B16** ✅ | Curiosity Engine — `avatar_director/curiosity.py`, interest records as new LTM categories | B8, client B9 | `app/ltm.py`: one entry in `VALID_CATEGORIES` |
-| **B17** | MCP `avatar_control` tool server registered through Context Forge | client B9 | Context Forge tool-server registry: one new entry |
+| **B17** ✅ | MCP `avatar_control` tool server registered through Context Forge | client B9 | Context Forge tool-server registry: one new entry |
 | **B19** | Privacy audit, retention proofs, docs; `avatar.enabled` stays **opt-in** | all | docs |
 
 ### Addendum v1.2 — server work (after B19, each behind its own flag)
@@ -271,6 +271,56 @@ A reviewer's verdict belongs here, signed.
 capture or vision `confirm` **and** requires an active client consent state. AC: an MCP
 client runs a 3-clip queued sequence on the live avatar; no live session → clean error;
 killing the tool server has zero effect on local avatar behaviour.
+
+**B17 · MCP tools — landed.** 40 tests. Nine tools, one per row of §6.14's safety table, and
+the bridge implements exactly that set — a tool without a row would run at the default level
+by accident rather than by decision, and a row without a tool is a promise nothing keeps.
+Both directions are asserted.
+
+**Paths.** The plan named `backend/app/avatar_director/tool_servers/avatar_control/`. The
+repository's actual convention is `agentic/integrations/mcp/<name>/app.py` plus a
+`<name>_server.py` entry point — where the other twenty-odd `hp-*` servers live, and what
+`sync_service._CORE_SERVERS` points at. Following the repository over the plan, as with
+`avatar_director` vs `avatar`. The registry entry is one line: `hp-avatar-control`, port 9121.
+
+**Tools name intents, never clips.** §6.14's bridge invariant, and the decision everything
+else follows from. `play_animation` sends an *intent*; the client's Tier-1 selector chooses
+which of the thirty-one dance clips that becomes, against the live mood and anti-repeat,
+exactly as a parsed `[[emote:…]]` tag would. A test confirms a real clip id cannot be
+smuggled through the intent field. Intents carry `source: "tool"` — not `"user"` — so §6.5's
+NSFW gate holds against them.
+
+**Capture needs two yeses.** `confirm` (the operator, through Context Forge) *and* a live
+capture consent on the client. Approved-but-no-consent is a refusal with nothing sent, and
+revoking mid-session closes the door again; both are negative assertions. Turning off the
+client-consent check fails three tests; the confirm check, one.
+
+**"Killing the server changes nothing locally"** is an architectural claim, checked as one
+rather than by killing a process a test runner does not have. The bridge holds no avatar
+state (asserted against its own `vars`), decides no timing (no `sleep`, `delay`, `duration`
+or `wait` in the class), and reaches the session through exactly one method — established by
+asking which methods' source mentions the outbox rather than by counting the word. The MCP
+process itself is one `httpx` call per tool with no state at all. It is a caller, not a
+component.
+
+**One writer on the socket.** `control.py` is pure — importing it pulls in neither FastAPI
+nor `httpx` nor the session module, asserted in a subprocess. Tool calls queue on the
+handler's `outbox` and the transport drains it four times a second, so a queued gesture does
+not wait fifteen seconds for the next heartbeat.
+
+**The catalogue reads the client's manifest and does not copy it.** `AVATAR_KB_MANIFEST`
+names the file; the knowledge base is authored in the client repository alongside the assets
+it describes, and a copy here would give two answers to "what can she do". With no manifest
+the two read-only tools refuse **by name** — a search that quietly returned nothing would
+read as "she can't dance". Search is substring over descriptions, tags and intents,
+deliberately *not* a second copy of the client's TF-IDF selector: searching a catalogue and
+choosing a clip for a moment are different jobs.
+
+**The standalone client-side server stays documented, not written.** `mcp-server/README.md`
+in the client repository specifies it exactly — the same nine tools, the three rules it may
+not relax — and says why it is a specification rather than code. Its only use is an install
+with no HomePilot at all, and writing an unused optional layer to demonstrate that the layer
+is optional is the wrong trade. All three acceptance criteria are met by the registered path.
 
 **B20/B21 · Embodied assistant.** The server sends `display` panels; the client renders
 them as a canvas texture on the virtual screen. Every action the persona proposes goes

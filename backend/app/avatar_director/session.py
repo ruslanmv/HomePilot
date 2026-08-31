@@ -51,6 +51,10 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
         _SESSIONS[key] = handler
 
         heartbeat = asyncio.create_task(_heartbeat(websocket, handler))
+        # B17. A tool call queues on the handler and this sends it — four wakeups a second,
+        # because a gesture that waits for the next heartbeat is a gesture that arrives
+        # fifteen seconds after the thing it was reacting to.
+        pump = asyncio.create_task(_outbox_pump(websocket, handler))
         turns: set = set()
         try:
             while True:
@@ -63,6 +67,11 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
 
                 for reply in handler.handle(message):
                     await _send(websocket, reply)
+
+                # Anything a tool call (B17) or curiosity (B16) queued while we were
+                # waiting. Drained here rather than pushed from those modules, so the
+                # socket has exactly one writer.
+                await _drain(websocket, handler)
 
                 # B10. A spoken turn is the one thing here that waits on the chat endpoint,
                 # so it runs as its own task: the socket stays readable, which is what lets
@@ -77,6 +86,7 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
             log.info("avatar session closed (%s)", handler.state.client or "unidentified")
         finally:
             heartbeat.cancel()
+            pump.cancel()
             for task in list(turns):
                 task.cancel()
             _SESSIONS.pop(key, None)
@@ -121,11 +131,40 @@ def vision_service(config):
     return VisionService(config)
 
 
+async def _drain(websocket: WebSocket, handler: ProtocolHandler) -> int:  # pragma: no cover
+    """Send whatever was queued out of band. Returns how many went."""
+    sent = 0
+    while handler.outbox:
+        await _send(websocket, handler.outbox.pop(0))
+        sent += 1
+    return sent
+
+
+#: How often the outbox is checked. Fast enough that a queued gesture feels immediate,
+#: slow enough that an idle session costs four no-op wakeups a second.
+OUTBOX_POLL_SECONDS = 0.25
+
+
+async def _outbox_pump(websocket: WebSocket, handler: ProtocolHandler) -> None:  # pragma: no cover
+    try:
+        while True:
+            await asyncio.sleep(OUTBOX_POLL_SECONDS)
+            await _drain(websocket, handler)
+    except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+        return
+
+
 async def _heartbeat(websocket: WebSocket, handler: ProtocolHandler) -> None:  # pragma: no cover
-    """§6.9: a ping every 15 s. A silent socket is indistinguishable from a dead one."""
+    """§6.9: a ping every 15 s, and a chance to flush the outbox.
+
+    The heartbeat is why a tool call does not wait for the user to say something: a queued
+    intent goes out on the next tick at the latest, which for an animation is close enough
+    to now and is one timer rather than two.
+    """
     try:
         while True:
             await asyncio.sleep(HEARTBEAT_SECONDS)
+            await _drain(websocket, handler)
             await _send(websocket, handler.ping())
     except (asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
         return

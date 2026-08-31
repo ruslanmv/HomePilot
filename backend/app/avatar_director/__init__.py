@@ -50,4 +50,11 @@ def register(app, config=None) -> bool:
         from .vision import build_router as build_vision_router  # noqa: PLC0415
 
         app.include_router(build_vision_router(cfg, service=service))
+
+    # B17's loopback route. The MCP tool server is a separate process on its own port and
+    # reaches the live socket through this — the same shape voice_call already uses to
+    # reach the chat endpoint. Killing that server removes a caller, not a capability.
+    from .control import build_router as build_control_router  # noqa: PLC0415
+
+    app.include_router(build_control_router(cfg))
     return True

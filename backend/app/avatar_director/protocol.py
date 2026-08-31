@@ -81,6 +81,10 @@ class ProtocolHandler:
         self.voice = voice
         #: B15's vision service, or None. Same arrangement: this decides nothing about it.
         self.vision = vision
+        #: Messages queued by something other than an inbound message — B17's tool bridge,
+        #: and B16's curiosity when it lands a turn. The transport drains it; nothing here
+        #: sends, because this class has never had a socket and should not grow one.
+        self.outbox: List[Dict[str, Any]] = []
 
     # ── inbound ──────────────────────────────────────────────────────────────
 
