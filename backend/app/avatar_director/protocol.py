@@ -71,7 +71,7 @@ class ProtocolHandler:
     decides when to send, this decides what.
     """
 
-    def __init__(self, *, authenticate=None, now=time.time, voice=None) -> None:
+    def __init__(self, *, authenticate=None, now=time.time, voice=None, vision=None) -> None:
         self.state = SessionState()
         self._authenticate = authenticate or (lambda token: bool(token))
         self._now = now
@@ -79,6 +79,8 @@ class ProtocolHandler:
         #: B10's uplink, or None on a server with the voice gate off. The handler routes to
         #: it and holds no opinion of its own about audio.
         self.voice = voice
+        #: B15's vision service, or None. Same arrangement: this decides nothing about it.
+        self.vision = vision
 
     # ── inbound ──────────────────────────────────────────────────────────────
 
@@ -121,13 +123,39 @@ class ProtocolHandler:
         return []
 
     def _on_user_event(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
-        self.state.last_event = message.get("name")
+        name = message.get("name")
+        self.state.last_event = name
+        # B11's consent state, as the client reports it. No new message type: `user_event`
+        # is exactly "something happened on the client", and consent starting or stopping
+        # is that. §6.14 reads `capture_consent` before any tool may touch a frame.
+        if name == "capture:start":
+            self.state.capture_consent = True
+        elif name == "capture:stop":
+            self.state.capture_consent = False
         return []
 
     def _on_vision_ask(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
-        # B15 answers this for real. Until then it is refused rather than left hanging:
-        # a client waiting forever on a reply that will never come is worse than a no.
-        return [self.error("vision_unavailable", "vision is not enabled on this server")]
+        """B15, and every answer here is a refusal — deliberately.
+
+        §6.9 sends the frame itself as a data-channel message keyed by ``frameId``. B10
+        shipped transcript mode rather than WebRTC, so this session has no data channel and
+        no bytes can reach the server this way. Rather than accept an ask it can never
+        answer, the handler says so and names the endpoint that does take frames.
+
+        The consent check still happens here and happens first, because §6.14 makes it a
+        precondition of *asking*, not of uploading: a client without live capture consent is
+        told about the consent, not about the endpoint.
+
+        Nothing in this method touches or holds a frame. There is nowhere in this handler
+        that could.
+        """
+        if self.vision is None:
+            return [self.error("vision_unavailable", "vision is not enabled on this server")]
+        if not self.state.capture_consent:
+            # A server-side permission is not the same as the user having opted in on the
+            # device holding the screen.
+            return [self.error("vision_no_consent", "no active capture consent on the client")]
+        return [self.error("vision_use_endpoint", "POST the frame to /avatar/vision/insight")]
 
     def _on_chat_meta(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
         return []

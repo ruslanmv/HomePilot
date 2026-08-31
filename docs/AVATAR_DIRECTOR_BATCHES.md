@@ -38,7 +38,7 @@ Config lands as a new `avatar:` block only: `enabled:false`, `vision.model`,
 | **B0** ✅ | Ground truth: `docs/PATHMAP.md`, `avatar_director/config.py` (`AVATAR_*` env keys, all off), `backend/tests/fixtures/protocol/`, `backend/tests/avatar/`, additive CI job | — | nothing |
 | **B8** ✅ | Session gateway — `avatar_director/{protocol,session,safety}.py` + `register()`, contract tests driven by the shared fixtures | B0 | `backend/app/main.py`: one guarded `register(app)` block, matching the `voice_call` pattern |
 | **B10** ✅ | Voice uplink — `avatar_director/rtc.py`, signalling over the B8 WS, mic → existing `voice_call` turn path | B8, client B9 | nothing new |
-| **B15** | Vision — `avatar_director/vision.py`, `POST /avatar/vision/insight`, model adapter via the existing model runner | B8, client B11 | nothing |
+| **B15** ✅ | Vision — `avatar_director/vision.py`, `POST /avatar/vision/insight`, model adapter via the existing model runner | B8, client B11 | `app/multimodal.py`: one optional `image_b64=` argument |
 | **B16** | Curiosity Engine — `avatar_director/curiosity.py`, interest records as new LTM categories | B8, client B9 | nothing |
 | **B17** | MCP `avatar_control` tool server registered through Context Forge | client B9 | Context Forge tool-server registry: one new entry |
 | **B19** | Privacy audit, retention proofs, docs; `avatar.enabled` stays **opt-in** | all | docs |
@@ -147,6 +147,59 @@ user has already replaced is worse than not answering it.
 `{text, intents[]}` with intents whitelist-checked server-side. AC: p95 ≤3 s local;
 **retention test proves nothing is written to disk or logs**; cancelling client-side
 consent mid-flight aborts the ask.
+
+**B15 · Vision — landed.** 46 tests across `test_vision.py` and
+`test_vision_retention.py`.
+
+**Retention is 0 because there is nowhere to put a frame.** Not a policy on top of a store —
+there is no store. `vision.py` contains no `open(`, no `Path(`, no `tempfile`, no
+`upload_path`, and a test asserts each of those absences against the file. The behavioural
+half runs a real request against a stubbed model with `open`, `Path.write_bytes`,
+`Path.write_text` and `os.replace` patched **process-wide** and the root logger captured:
+the observation is deliberately broad, because checking that *this* module does not write
+would prove nothing about the module it calls. A recognisable needle is baked into the test
+frame, and the assertions are that neither disk nor logs ever saw it — including on the
+error path, which is where a frame usually ends up in a log attached to a traceback somebody
+added while debugging. Planting a cache, a log line and a debug dump fails five of them.
+
+What is *not* claimed: that a hosted model provider stores nothing. That is somebody else's
+disk, which is why §6.2's default is a local model.
+
+**One touched file, and the reason.** `app.multimodal.analyze_image` resolves an image *from
+disk*, which is precisely what must not happen here — so it gains one optional `image_b64=`
+argument that skips resolution entirely. Every existing caller passes a URL and is
+unaffected. The alternative was a second Ollama call in `vision.py`, which is sixty lines of
+payload construction that would drift from the one that owns model resolution and the
+prompts. The batch plan said "Touched: none"; this is the amendment, taken rather than
+silently.
+
+**The size cap is read, never decoded.** §6.13 caps input at 768 px and says the server
+re-checks. Decoding a hostile 20000×20000 JPEG to discover it is too big *is* the attack, so
+the dimensions come out of the JPEG SOFn / PNG IHDR header — a few dozen bytes, nothing
+allocated. A test asserts a huge declaration costs no more than a small one. An oversize
+frame is refused rather than resized: the client already caps at 512 (§6.2), so one arriving
+over the server's limit means the client is wrong, compromised, or not the client.
+
+**Intents are whitelist-checked with B10's splitter**, not a second parser with a second idea
+of what is allowed. The vision prompt asks for §6.8's tag, `split_emote_tags` pulls it out
+and drops anything outside §6.2, and at most one survives. The client checks again on
+arrival — belt and braces, as §6.9 intends.
+
+**`vision_ask` over the socket answers three refusals and nothing else.** Vision off →
+`vision_unavailable`. No client capture consent → `vision_no_consent`, checked first,
+because §6.14 makes consent a precondition of *asking*. Consent live → `vision_use_endpoint`,
+because §6.9 sends the frame as a data-channel message and B10 shipped transcript mode
+rather than WebRTC, so no bytes can reach the server that way. Accepting an ask that can
+never be answered would be the worse choice. Consent itself arrives as `user_event`
+`capture:start` / `capture:stop` — no new message type, because "something happened on the
+client" is exactly what that type means.
+
+The endpoint is mounted **only when a model is configured**. A route that answers every
+request "not configured" looks like a feature to anything probing the API surface.
+
+On p95: the wrapper's own cost — decode, size check, tag split — is measured at well under a
+hundredth of the 3 s budget. The model's latency is the deployment's hardware and no test
+here speaks for it, which the test says in as many words.
 
 **B16 · Curiosity.** The uplink's `voice_state` and the client's `user:speaking` /
 `user:silent` are the mute signals this batch needs; both exist as of B10. Scoring is pure functions (`+0.15` engaged / `−0.10` short-or-negative

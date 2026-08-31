@@ -233,6 +233,7 @@ async def analyze_image_ollama(
     user_prompt: Optional[str] = None,
     nsfw_mode: bool = False,
     mode: str = "both",  # caption | ocr | both
+    image_b64: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Analyze an image using an Ollama vision model.
@@ -273,9 +274,16 @@ async def analyze_image_ollama(
             "meta": {"model": None, "mode": mode},
         }
 
-    # Load and encode image
-    raw_bytes, mime_type = await _load_image_bytes(image_url, upload_path)
-    img_b64 = _image_to_base64(raw_bytes)
+    # Load and encode image. ``image_b64`` skips the disk entirely — the avatar director's
+    # vision path (spec v1.1 §6.13) must never write a frame anywhere, so it hands the bytes
+    # straight in rather than staging a file for this function to read back. Every existing
+    # caller passes a URL and is unaffected.
+    if image_b64:
+        raw_bytes, mime_type = b"", "image/jpeg"
+        img_b64 = image_b64
+    else:
+        raw_bytes, mime_type = await _load_image_bytes(image_url, upload_path)
+        img_b64 = _image_to_base64(raw_bytes)
 
     # Build prompt
     system_prompt = _NSFW_SYSTEM_PROMPT if nsfw_mode else _SFW_SYSTEM_PROMPT
@@ -384,10 +392,15 @@ async def analyze_image(
     user_prompt: Optional[str] = None,
     nsfw_mode: bool = False,
     mode: str = "both",
+    image_b64: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Top-level dispatcher for multimodal image analysis.
     Currently supports Ollama; extensible to other providers.
+
+    ``image_b64`` supplies the image directly and bypasses disk resolution entirely; when it
+    is given, *image_url* and *upload_path* are ignored. Added for the avatar director's
+    §6.13 vision path, whose defining constraint is that a frame is never written anywhere.
     """
     if provider == "ollama":
         return await analyze_image_ollama(
@@ -398,6 +411,7 @@ async def analyze_image(
             user_prompt=user_prompt,
             nsfw_mode=nsfw_mode,
             mode=mode,
+            image_b64=image_b64,
         )
 
     return {

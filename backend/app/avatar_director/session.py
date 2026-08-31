@@ -24,6 +24,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from .protocol import EMOTE_WHITELIST, HEARTBEAT_SECONDS, ProtocolHandler
 from .rtc import VoiceUplink, webrtc_terminus
+from .vision import VisionService
 
 log = logging.getLogger("avatar_director.session")
 
@@ -43,7 +44,9 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
     @router.websocket("/avatar/session")
     async def avatar_session(websocket: WebSocket) -> None:  # pragma: no cover - transport
         await websocket.accept()
-        handler = ProtocolHandler(authenticate=authenticate, voice=_uplink_for(config))
+        handler = ProtocolHandler(
+            authenticate=authenticate, voice=_uplink_for(config), vision=vision_service(config)
+        )
         key = f"{id(websocket):x}"
         _SESSIONS[key] = handler
 
@@ -69,6 +72,7 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
                     task = asyncio.create_task(_run_turn(websocket, handler, pending))
                     turns.add(task)
                     task.add_done_callback(turns.discard)
+
         except WebSocketDisconnect:
             log.info("avatar session closed (%s)", handler.state.client or "unidentified")
         finally:
@@ -103,6 +107,18 @@ async def _run_turn(websocket: WebSocket, handler: ProtocolHandler, pending) -> 
         raise
     except (WebSocketDisconnect, RuntimeError):
         return  # the socket went while we were thinking; nothing to say to it
+
+
+def vision_service(config):
+    """One service per session, or None while vision has no model configured.
+
+    §6.13's model is a deployment choice; with none named the endpoint is not mounted and
+    ``vision_ask`` is refused by name, which is B8's rule for a stub that cannot answer.
+    """
+    vision = getattr(config, "vision", None)
+    if vision is None or not (vision.model or "").strip():
+        return None
+    return VisionService(config)
 
 
 async def _heartbeat(websocket: WebSocket, handler: ProtocolHandler) -> None:  # pragma: no cover

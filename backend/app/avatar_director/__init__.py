@@ -38,7 +38,16 @@ def register(app, config=None) -> bool:
     if not cfg.enabled:
         return False
 
-    from .session import build_router  # noqa: PLC0415 — deliberately lazy, see above
+    from .session import build_router, vision_service  # noqa: PLC0415 — deliberately lazy
 
     app.include_router(build_router(cfg))
+
+    # B15's REST endpoint, mounted only when a vision model is configured. A route that
+    # would answer every request with "not configured" is worse than no route: it looks
+    # like a feature to anything probing the API surface.
+    service = vision_service(cfg)
+    if service is not None:
+        from .vision import build_router as build_vision_router  # noqa: PLC0415
+
+        app.include_router(build_vision_router(cfg, service=service))
     return True
