@@ -40,6 +40,7 @@ VALID_CATEGORIES = {
     "boundary",          # User-set boundaries: tone, topics to avoid
     "summary",           # High-level relationship summary (auto-updated)
     "interest",          # Avatar Director curiosity topics (spec v1.1 §6.12)
+    "focus_streak",      # Avatar Director body-doubling streaks (spec v1.1 §6.16)
 }
 
 # Maximum entries per persona (prevent unbounded growth)

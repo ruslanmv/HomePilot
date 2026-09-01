@@ -16,11 +16,15 @@ Two rules from §6.9 that are easy to get wrong and are therefore tested directl
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 from .rtc import VOICE_CLIENT_TYPES, VOICE_SERVER_TYPES
+
+log = logging.getLogger("avatar_director.protocol")
 
 PROTOCOL_VERSION = 1
 
@@ -71,7 +75,7 @@ class ProtocolHandler:
     decides when to send, this decides what.
     """
 
-    def __init__(self, *, authenticate=None, now=time.time, voice=None, vision=None) -> None:
+    def __init__(self, *, authenticate=None, now=time.time, voice=None, vision=None, streaks=None) -> None:
         self.state = SessionState()
         self._authenticate = authenticate or (lambda token: bool(token))
         self._now = now
@@ -81,10 +85,18 @@ class ProtocolHandler:
         self.voice = voice
         #: B15's vision service, or None. Same arrangement: this decides nothing about it.
         self.vision = vision
+        #: B22's streak store, or None. None keeps `streak` exactly what it was before that
+        #: batch: session-scoped, and gone when the socket closes.
+        self._streaks = streaks
         #: Messages queued by something other than an inbound message — B17's tool bridge,
         #: and B16's curiosity when it lands a turn. The transport drains it; nothing here
         #: sends, because this class has never had a socket and should not grow one.
         self.outbox: List[Dict[str, Any]] = []
+
+    def _today(self) -> date:
+        """Today, from the handler's own injectable clock rather than from ``date.today()``
+        — a streak is entirely about which day it is, and a test needs to choose."""
+        return date.fromtimestamp(self._now())
 
     # ── inbound ──────────────────────────────────────────────────────────────
 
@@ -172,6 +184,15 @@ class ProtocolHandler:
         value = message.get("value")
         if isinstance(activity, str) and isinstance(value, int):
             self.state.streaks[activity] = value
+            # B22. Without a store this stays exactly what it was: session-scoped, and gone
+            # when the socket closes. With one it becomes a `focus_streak` row in the
+            # persona's existing long-term memory, which is what makes it visible tomorrow.
+            # A store that raises must not cost the client its session, so this is guarded.
+            if self._streaks is not None:
+                try:
+                    self._streaks.record_block(activity, self._today())
+                except Exception as error:  # noqa: BLE001 — a streak is never worth a drop
+                    log.warning("streak not recorded for %r: %s", activity, error)
         return []
 
     def _on_voice_offer(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
