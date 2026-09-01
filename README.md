@@ -35,6 +35,11 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
+### 🎭 Avatar Director — Your Persona With a Body (opt-in)
+Pair HomePilot with [3D-Avatar-Chatbot](https://github.com/ruslanmv/3D-Avatar-Chatbot) and your persona gets gestures, presence and shared activities: a morning brief on a virtual screen, focus sessions with streaks in her long-term memory, a hands-busy copilot that looks at your camera *only when you ask*, and rep counting from a coach.
+
+Everything is **off until you turn it on** — `AVATAR_ENABLED=true` mounts two routes and nothing else, and four capabilities beneath it have their own independent flags. Frames are never retained (`retention: 0` is enforced by there being nowhere in the code to put one), memory writes in the adult tier keep warmth signals and drop explicit detail, and verification is server-side only: a "click yes" age dialog is not merely insufficient, it must not exist. See [docs/AVATAR_ENABLING.md](docs/AVATAR_ENABLING.md).
+
 ### ☁️ OllaBridge Link — Use Your Home GPU From Anywhere
 Link a HomePilot on your high-end GPU PC to your OllaBridge account, and the web or mobile app can browse its models and run inference on that machine remotely — sign in with **Continue with OllaBridge** to auto-link, then manage nodes in **Settings → OllaBridge Link**. See [docs/OLLABRIDGE.md](docs/OLLABRIDGE.md).
 
