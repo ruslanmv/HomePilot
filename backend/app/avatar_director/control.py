@@ -374,6 +374,21 @@ def build_router(config, *, control: Optional[AvatarControl] = None):
         args: Dict[str, Any] = Field(default_factory=dict)
         approved: bool = False
 
+    # This module has `from __future__ import annotations`, so the endpoint's parameter
+    # annotation below is the *string* "ControlRequest", and Pydantic resolves a string
+    # annotation against the function's `__globals__` — the module namespace — where a class
+    # defined inside this function does not exist.
+    #
+    # Pydantic 2.13 happens to fall back to the enclosing frame's locals and finds it anyway;
+    # the version this project pins, 2.7.4, does not, and raises PydanticUndefinedAnnotation.
+    # So the route built fine on a developer's machine and failed in CI, which is the whole
+    # reason the pin is in requirements.txt.
+    #
+    # Publishing the model into the module namespace is what makes the annotation resolvable
+    # on both, while keeping the pydantic import lazy — this package deliberately imports
+    # without FastAPI installed, and hoisting the model to module scope would end that.
+    globals()["ControlRequest"] = ControlRequest
+
     router = APIRouter(tags=["avatar-director"])
     registry = ManifestRegistry.from_jsonl(getattr(getattr(config, "kb", None), "manifest", "") or "")
     bridge = control or AvatarControl(sessions=_default_sessions, registry=registry)

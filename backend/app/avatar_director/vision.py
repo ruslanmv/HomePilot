@@ -270,6 +270,16 @@ def build_router(config, *, service: Optional[VisionService] = None):
         prompt: str = ""
         ctx: Ctx = Field(default_factory=Ctx)
 
+    # See `control.build_router` for the full reasoning. In short: this module has
+    # `from __future__ import annotations`, so both the endpoint's `body: InsightRequest`
+    # and `InsightRequest`'s own `ctx: Ctx` are strings, and Pydantic resolves a string
+    # annotation against the module namespace — where a class defined inside this function
+    # is not. Pydantic 2.13 finds it in the enclosing frame anyway; the pinned 2.7.4 does
+    # not. Both names have to be published, because `Ctx` is resolved while `InsightRequest`
+    # is being built.
+    globals()["Ctx"] = Ctx
+    globals()["InsightRequest"] = InsightRequest
+
     router = APIRouter(tags=["avatar-director"])
     vision = service or VisionService(config)
 
