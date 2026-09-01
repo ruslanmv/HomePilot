@@ -75,7 +75,9 @@ class ProtocolHandler:
     decides when to send, this decides what.
     """
 
-    def __init__(self, *, authenticate=None, now=time.time, voice=None, vision=None, streaks=None) -> None:
+    def __init__(
+        self, *, authenticate=None, now=time.time, voice=None, vision=None, streaks=None, adult=None
+    ) -> None:
         self.state = SessionState()
         self._authenticate = authenticate or (lambda token: bool(token))
         self._now = now
@@ -88,6 +90,10 @@ class ProtocolHandler:
         #: B22's streak store, or None. None keeps `streak` exactly what it was before that
         #: batch: session-scoped, and gone when the socket closes.
         self._streaks = streaks
+        #: B28's attestation session, or None. None means the adult tier is unreachable from
+        #: this socket — which is what an instance with the tier disabled gets, and the
+        #: reason `_on_adult_verify_request` can refuse without consulting anything.
+        self._adult = adult
         #: Messages queued by something other than an inbound message — B17's tool bridge,
         #: and B16's curiosity when it lands a turn. The transport drains it; nothing here
         #: sends, because this class has never had a socket and should not grow one.
@@ -218,9 +224,25 @@ class ProtocolHandler:
         return self.voice.handle(message)
 
     def _on_adult_verify_request(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
-        # B28 implements attestation. Refusing by default is the only safe stub: a
-        # placeholder that answered "verified" would be the exact failure §16.2 forbids.
-        return [self.error("adult_unavailable", "adult verification is not configured")]
+        """§16.2. The only place an ``adult_ack`` is ever produced.
+
+        There is no other emitter and there must never be one: the client's `adultVerified`
+        becomes true exactly when this frame arrives, so a second producer would be a second
+        way to verify, and one of them would eventually be reachable without a provider.
+        """
+        if self._adult is None:
+            # No attestation session means the tier is unreachable from this socket. Refusing
+            # without consulting anything is what makes `adult.enabled = false` unactivatable
+            # rather than merely unadvertised.
+            return [self.error("adult_unavailable", "adult verification is not configured")]
+
+        attestation = self._adult.request(message.get("user"))
+        self.state.adult_verified = attestation.live(self._now())
+        if not self.state.adult_verified:
+            # A refusal is an answer, not an error: the client shows the tier as unavailable
+            # and every other channel carries on.
+            return [self.adult_ack(attestation)]
+        return [self.adult_ack(attestation)]
 
     # ── outbound ─────────────────────────────────────────────────────────────
 
@@ -242,6 +264,10 @@ class ProtocolHandler:
         from .panels import build  # noqa: PLC0415 — lazy, like every other optional half
 
         return build(kind, data, max_kb=max_kb)
+
+    def adult_ack(self, attestation) -> Dict[str, Any]:
+        """The attestation, on the wire. Carries no identity — see `verification.Attestation`."""
+        return {"v": PROTOCOL_VERSION, "type": "adult_ack", **attestation.as_ack(self._now())}
 
     def scene(self, scene_id: str) -> Dict[str, Any]:
         return {"v": PROTOCOL_VERSION, "type": "scene", "id": scene_id}
