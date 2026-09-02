@@ -115,6 +115,20 @@ and the status endpoint reports it:
 `device: null` means the model has not loaded yet, which is a different answer from `"cpu"`
 and is kept distinct.
 
+### Two things MS1 did not finish
+
+Both are tracked as rows in the batches file rather than left as intentions.
+
+**A remote STT provider still cannot cite timestamps.** `OpenAICompatSTTProvider` inherits the
+one-span fallback, so with `STT_BASE_URL` set you get `t1: null` and `segments: false`. That is
+honest, not broken — but the notes engine cites `t0` per item, so real remote timings
+(`verbose_json`) are needed before W4. Tracked as **MS1-a**.
+
+**The latency budget is still a hypothesis.** Part 2 §F assumes GPU transcription at roughly
+0.2× real time. Nobody has measured it: the build container has no CUDA and no
+`faster_whisper`. Take the number during the W1 pilot, on the machine that will actually run
+meetings, and record it here. Tracked as **MS1-b**.
+
 ---
 
 ## Where your audio goes
