@@ -30,10 +30,14 @@ router = APIRouter(tags=["meetingsense"])
 def stt_capability() -> Dict[str, Any]:
     """What this machine can do about speech, as three separate answers.
 
-    ``available`` is whether anything can transcribe at all. ``segments`` is whether it can
-    return *timed* spans — MS1 adds ``transcribe_segments`` to the provider layer, and until
-    it lands this is false everywhere, which is the honest answer: the design cites
-    timestamps that nothing currently produces.
+    ``available`` is whether anything can transcribe at all. ``segments`` is whether the
+    timings are *measured* rather than assumed: every provider can return spans since MS1,
+    but only one reads them off the model. A UI that cites a timestamp should know which it
+    is looking at.
+
+    ``device`` is the device the model actually loaded on, which is not always the one that
+    was asked for — ``auto`` falls back to CPU silently when CUDA is present but unusable,
+    and that silence is how someone concludes the latency budget is unachievable.
 
     ``provider`` is named rather than merely counted because ``get_stt_provider()`` prefers
     the OpenAI-compatible endpoint whenever ``STT_BASE_URL`` is set. Someone who configured
@@ -45,6 +49,7 @@ def stt_capability() -> Dict[str, Any]:
         "provider": None,
         "segments": False,
         "remote": False,
+        "device": None,
         "hint": "Set WHISPER_MODEL (e.g. small) for local transcription, or STT_BASE_URL for a remote one.",
     }
     try:
@@ -53,12 +58,20 @@ def stt_capability() -> Dict[str, Any]:
         provider = get_stt_provider()
         info["provider"] = getattr(provider, "name", None)
         info["available"] = bool(getattr(provider, "available", False))
-        # MS1 adds this method beside the existing `transcribe`. Probing for it rather than
-        # for a version keeps this line true before and after that batch, with no edit.
-        info["segments"] = callable(getattr(provider, "transcribe_segments", None))
+        # Not "does the method exist" — MS1 put `transcribe_segments` on the base class so a
+        # caller never has to branch, which means it exists everywhere and asking that
+        # question would answer yes for a provider that only guesses. The real question is
+        # whether the timings were *measured*, which is what `supports_segments` reports.
+        info["segments"] = bool(getattr(provider, "supports_segments", False))
         # A remote provider is a legitimate choice, not an error — but the user should be
         # the one making it, so it is surfaced rather than assumed.
         info["remote"] = bool(os.getenv("STT_BASE_URL", "").strip())
+        # None until the model has loaded once — a different answer from "loaded on CPU",
+        # and reported as such rather than flattened into a guess.
+        info["device"] = getattr(provider, "device", None)
+        requested = getattr(provider, "requested_device", None)
+        if requested and info["device"] and requested != info["device"]:
+            info["device_note"] = f"requested {requested}, running on {info['device']}"
         if info["available"]:
             info["hint"] = None
     except Exception as exc:  # noqa: BLE001 — every failure here is "cannot transcribe"

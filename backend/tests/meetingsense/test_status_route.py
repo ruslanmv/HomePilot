@@ -15,8 +15,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.meetingsense import router
-from app.meetingsense.routes import stt_capability, vision_capability
+# Imported inside the fixtures below, never at module scope. `tests/conftest.py` purges
+# every `app.*` entry from `sys.modules` in a session fixture, so a module captured at
+# collection time is a *different object* from the one `monkeypatch.setattr("app...")`
+# reaches afterwards — the patch lands on one and the route runs in the other. That is why
+# these tests pass alone and failed the moment another suite ran first.
 
 MS_ENV_VARS = [
     "MEETINGSENSE_ENABLED",
@@ -41,11 +44,23 @@ def _clean_env(monkeypatch):
 
 
 @pytest.fixture()
-def client():
+def routes():
+    """The live ``app.meetingsense.routes`` module, imported after conftest's purge.
+
+    Tests patch attributes on *this object* rather than by dotted string, so the patch and
+    the running route are guaranteed to be the same module.
+    """
+    import app.meetingsense.routes as module
+
+    return module
+
+
+@pytest.fixture()
+def client(routes):
     """A bare app carrying only this router — the route must not depend on the rest of
     main.py being importable, which is also what keeps this test fast."""
     app = FastAPI()
-    app.include_router(router)
+    app.include_router(routes.router)
     return TestClient(app)
 
 
@@ -59,12 +74,13 @@ def test_disabled_is_a_200_with_a_reason_not_a_404(client):
     assert "stt" in body and "vision" in body
 
 
-def test_enabled_still_reports_ready_false_without_speech(client, monkeypatch):
+def test_enabled_still_reports_ready_false_without_speech(client, routes, monkeypatch):
     # The distinction the endpoint exists for: the operator turned it on, and the machine
     # still cannot record. A UI that only reads `enabled` would show a control that fails.
     monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
     monkeypatch.setattr(
-        "app.meetingsense.routes.stt_capability",
+        routes,
+        "stt_capability",
         lambda: {"available": False, "provider": None, "segments": False, "remote": False, "hint": "no stt"},
     )
     body = client.get("/v1/meetingsense/status").json()
@@ -73,20 +89,22 @@ def test_enabled_still_reports_ready_false_without_speech(client, monkeypatch):
     assert body["stt"]["hint"] == "no stt"
 
 
-def test_ready_needs_both_the_flag_and_a_provider(client, monkeypatch):
+def test_ready_needs_both_the_flag_and_a_provider(client, routes, monkeypatch):
     monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
     monkeypatch.setattr(
-        "app.meetingsense.routes.stt_capability",
+        routes,
+        "stt_capability",
         lambda: {"available": True, "provider": "whisper-local", "segments": True, "remote": False, "hint": None},
     )
     body = client.get("/v1/meetingsense/status").json()
     assert body["ready"] is True
 
 
-def test_the_flag_alone_is_not_ready(client, monkeypatch):
+def test_the_flag_alone_is_not_ready(client, routes, monkeypatch):
     # And the inverse: a provider without the flag is not ready either.
     monkeypatch.setattr(
-        "app.meetingsense.routes.stt_capability",
+        routes,
+        "stt_capability",
         lambda: {"available": True, "provider": "whisper-local", "segments": True, "remote": False, "hint": None},
     )
     assert client.get("/v1/meetingsense/status").json()["ready"] is False
@@ -106,14 +124,14 @@ def test_limits_are_echoed_so_a_client_needs_one_call(client):
     assert limits["max_keyframes_per_hour"] == 60
 
 
-def test_the_route_never_500s_when_a_probe_explodes(client, monkeypatch):
+def test_the_route_never_500s_when_a_probe_explodes(client, routes, monkeypatch):
     # The probes below catch their own errors. This asserts the route survives a probe that
     # does not — because "status always answers" should be a property of the route, not a
     # promise every future probe has to remember to keep.
     def boom():
         raise RuntimeError("providers module is broken")
 
-    monkeypatch.setattr("app.meetingsense.routes.stt_capability", boom)
+    monkeypatch.setattr(routes, "stt_capability", boom)
     response = client.get("/v1/meetingsense/status")
     assert response.status_code == 200
     body = response.json()
@@ -121,9 +139,10 @@ def test_the_route_never_500s_when_a_probe_explodes(client, monkeypatch):
     assert "probe failed" in body["stt"]["hint"]
 
 
-def test_a_broken_vision_probe_does_not_take_the_route_down(client, monkeypatch):
+def test_a_broken_vision_probe_does_not_take_the_route_down(client, routes, monkeypatch):
     monkeypatch.setattr(
-        "app.meetingsense.routes.vision_capability",
+        routes,
+        "vision_capability",
         lambda _model: (_ for _ in ()).throw(RuntimeError("no vision stack")),
     )
     body = client.get("/v1/meetingsense/status").json()
@@ -134,7 +153,7 @@ def test_a_broken_vision_probe_does_not_take_the_route_down(client, monkeypatch)
 # ── the probes are the thing that must not raise ────────────────────────────
 
 
-def test_stt_probe_survives_a_missing_provider_module(monkeypatch):
+def test_stt_probe_survives_a_missing_provider_module(routes, monkeypatch):
     import builtins
 
     real_import = builtins.__import__
@@ -145,44 +164,44 @@ def test_stt_probe_survives_a_missing_provider_module(monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", refuse)
-    info = stt_capability()
+    info = routes.stt_capability()
     assert info["available"] is False
     assert info["hint"]  # says what is missing rather than staying silent
 
 
-def test_stt_probe_names_the_provider(monkeypatch):
+def test_stt_probe_names_the_provider(routes, monkeypatch):
     # Naming it is what lets the consent sheet name it. `get_stt_provider()` prefers the
     # remote endpoint whenever STT_BASE_URL is set, and a user who configured that months
     # ago for voice calls should not discover it by shipping an hour of meeting audio.
     monkeypatch.setenv("STT_BASE_URL", "https://api.example/v1")
-    info = stt_capability()
+    info = routes.stt_capability()
     assert info["remote"] is True
     assert info["provider"] is not None
 
 
-def test_stt_probe_reports_no_timestamps_before_ms1():
+def test_stt_probe_reports_no_timestamps_before_ms1(routes):
     # Honest today: the design cites t0 per note, and nothing produces timed spans until MS1
     # adds `transcribe_segments`. When that lands this flips with no edit here, because the
     # probe asks for the method rather than for a version.
-    assert stt_capability()["segments"] is False
+    assert routes.stt_capability()["segments"] is False
 
 
-def test_vision_probe_is_a_capability_not_a_blocker():
-    info = vision_capability("")
+def test_vision_probe_is_a_capability_not_a_blocker(routes):
+    info = routes.vision_capability("")
     assert info["available"] is False
     assert info["hint"]
 
 
-def test_vision_probe_prefers_the_meetingsense_model(monkeypatch):
+def test_vision_probe_prefers_the_meetingsense_model(routes, monkeypatch):
     monkeypatch.setenv("MULTIMODAL_MODEL", "moondream")
-    info = vision_capability("gemma3:4b")
+    info = routes.vision_capability("gemma3:4b")
     assert info["model"] == "gemma3:4b"
     assert info["available"] is True
 
 
-def test_vision_probe_falls_back_to_the_multimodal_default(monkeypatch):
+def test_vision_probe_falls_back_to_the_multimodal_default(routes, monkeypatch):
     monkeypatch.setenv("MULTIMODAL_MODEL", "moondream")
-    assert vision_capability("")["model"] == "moondream"
+    assert routes.vision_capability("")["model"] == "moondream"
 
 
 # ── it reveals nothing it should not ────────────────────────────────────────

@@ -3,8 +3,8 @@
 Screen + audio → a live transcript, slide keyframes and rolling notes, in the chat you are
 already in. Local by default.
 
-**Status: MS0 only.** The flags, the package and the status endpoint exist. Nothing records
-yet — the recorder lands in wave W1. This page grows one section per batch; what is written
+**Status: MS0 + MS1.** The flags, the package, the status endpoint and the speech layer
+exist. Nothing records yet — the recorder lands in wave W1. This page grows one section per batch; what is written
 below is what works today, not what is planned. The plan is
 [`docs/design/MEETINGSENSE_BATCHES.md`](design/MEETINGSENSE_BATCHES.md).
 
@@ -50,7 +50,9 @@ Read it like this:
 | `ready` | Can this machine actually honour that? (`enabled` **and** speech available) |
 | `stt.hint` | If not, what to set — this is the text a UI should show rather than greying a control out |
 | `stt.provider` | **Which** engine will transcribe. See "Where your audio goes" below |
-| `stt.segments` | Whether transcription returns *timed* spans. False until MS1 |
+| `stt.segments` | Whether the timings are **measured** rather than assumed. Every provider returns spans; only local Whisper reads them off the model |
+| `stt.device` | Which device the model actually loaded on — `null` until the first transcription |
+| `stt.device_note` | Present only when the resolved device differs from the requested one |
 | `vision.available` | Whether slides can be captioned. Never a blocker — the recorder works without it |
 
 `ready: false` with `enabled: true` is the case worth designing for: the operator asked for
@@ -92,6 +94,26 @@ the recorder on never turns on something a later wave built.
 | `MEETINGSENSE_MAX_KEYFRAMES_PER_HOUR` | `60` | Cap on captured slides |
 | `MEETINGSENSE_PANEL_MAX_KB` | `64` | Card size on the avatar surface. Mirrors `avatar_director.panels.DEFAULT_MAX_KB`; a test asserts the two stay equal |
 | `WHISPER_MODEL`, `STT_BASE_URL` | *(existing)* | Speech selection — unchanged, shared with voice calls |
+| `WHISPER_DEVICE` | `auto` | `auto` \| `cuda` \| `cpu`. `auto` is what faster-whisper already picked, so setting nothing keeps today's behaviour |
+| `WHISPER_COMPUTE` | `default` | e.g. `float16` on CUDA, `int8` on CPU. `default` is again today's behaviour |
+
+### Why the device is reported, not just configurable
+
+`auto` is a request, not an outcome. When CUDA is present but unusable — a mismatched
+ctranslate2 wheel, a missing cuDNN — faster-whisper falls back to CPU **silently**, and
+transcription runs perhaps ten times slower than the design's latency budget assumes. Nothing
+says so.
+
+So the provider reads the device back off the loaded model rather than echoing the request,
+and the status endpoint reports it:
+
+```json
+"stt": { "provider": "whisper-local", "device": "cpu",
+         "device_note": "requested cuda, running on cpu" }
+```
+
+`device: null` means the model has not loaded yet, which is a different answer from `"cpu"`
+and is kept distinct.
 
 ---
 
@@ -115,7 +137,7 @@ To force local transcription, unset `STT_BASE_URL` and set `WHISPER_MODEL=small`
 
 ---
 
-## Verifying MS0
+## Verifying MS0 and MS1
 
 With the flag off — the shipped state:
 
@@ -136,8 +158,18 @@ Tests:
 cd backend && python3 -m pytest tests/meetingsense -q
 ```
 
-What MS0 deliberately does **not** do: mount a session route, create a table, write a
-message, or read a microphone. The package imports one router and a dataclass.
+MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
+one sanctioned exception to additive-only. The rule it keeps instead is narrower and
+checkable, and these are the tests that check it:
+
+```bash
+cd backend && python3 -m pytest tests/meetingsense/test_stt_capability.py -q  # 28
+cd backend && python3 -m pytest tests/test_voice.py tests/test_voice_call*.py -q
+```
+
+What MS0 and MS1 deliberately do **not** do: mount a session route, create a table, write a
+message, or read a microphone. The package imports one router and a dataclass, and the
+speech layer only grows methods beside the ones that were already there.
 
 ---
 

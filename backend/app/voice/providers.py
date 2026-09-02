@@ -18,8 +18,10 @@ import abc
 import asyncio
 import os
 import shutil
+import math
 import subprocess
 import tempfile
+from typing import Any, Dict, List
 
 
 class TTSProvider(abc.ABC):
@@ -32,6 +34,14 @@ class TTSProvider(abc.ABC):
     async def synth(self, text: str) -> bytes | None: ...
 
 
+#: One transcribed span. ``t1`` may be ``None``, and that is a real answer rather than a
+#: missing one: a provider that returns only text does not know where the words sat in the
+#: clip, and inventing a number would be worse than saying so. A caller that framed the
+#: audio itself — MeetingSense frames every utterance with its own VAD — knows the span and
+#: can pass ``duration_s`` to have the fallback fill it in.
+Span = Dict[str, Any]
+
+
 class STTProvider(abc.ABC):
     """audio bytes → transcript text."""
 
@@ -41,8 +51,37 @@ class STTProvider(abc.ABC):
     def available(self) -> bool:
         return False
 
+    @property
+    def supports_segments(self) -> bool:
+        """Whether :meth:`transcribe_segments` returns *measured* spans.
+
+        False on this base class, and deliberately not the same question as "does the method
+        exist" — the method exists everywhere, because a caller should never have to branch.
+        What varies is whether the timings came from the model or from the fallback below.
+        """
+        return False
+
     @abc.abstractmethod
     async def transcribe(self, audio: bytes, *, fmt: str = "wav") -> str: ...
+
+    async def transcribe_segments(
+        self, audio: bytes, *, fmt: str = "wav", duration_s: float | None = None
+    ) -> List[Span]:
+        """Transcribe into timed spans.
+
+        Additive: :meth:`transcribe` is untouched and remains the only abstract method, so
+        every existing provider — in this file and any written since — keeps working without
+        an edit. This default wraps the text answer in a single span, which is the honest
+        degradation: one span covering the clip, timings unknown unless the caller supplies
+        the duration it already knows.
+
+        A provider that *can* time its output overrides this and sets
+        :attr:`supports_segments`.
+        """
+        text = (await self.transcribe(audio, fmt=fmt) or "").strip()
+        if not text:
+            return []
+        return [{"t0": 0.0, "t1": duration_s, "text": text, "conf": None}]
 
 
 # ── Free / default providers ───────────────────────────────────────────────
@@ -278,13 +317,30 @@ class OpenAICompatSTTProvider(STTProvider):
 
 class WhisperLocalSTTProvider(STTProvider):
     """Local faster-whisper STT. Active only when ``WHISPER_MODEL`` is set (e.g.
-    ``base``, ``small``) and the ``faster_whisper`` package is installed."""
+    ``base``, ``small``) and the ``faster_whisper`` package is installed.
+
+    ``WHISPER_DEVICE`` and ``WHISPER_COMPUTE`` default to ``auto`` and ``default``, which is
+    exactly what faster-whisper picks on its own — so an install that sets neither behaves
+    the way it did before these knobs existed. They are here for the case ``auto`` handles
+    badly rather than wrongly: it falls back to CPU silently when CUDA is present but
+    unusable (a mismatched ctranslate2 wheel, a missing cuDNN), and the operator is left
+    wondering why transcription is ten times slower than the budget assumed.
+
+    :attr:`device` is what makes that visible. It reports the device the model *actually*
+    loaded on, read back from ctranslate2 rather than echoed from the request, so "I asked
+    for auto and got cpu" is a fact the status endpoint can show instead of a mystery.
+    """
 
     name = "whisper-local"
 
     def __init__(self) -> None:
         self.model_name = os.getenv("WHISPER_MODEL", "").strip()
+        self.requested_device = os.getenv("WHISPER_DEVICE", "auto").strip() or "auto"
+        self.compute_type = os.getenv("WHISPER_COMPUTE", "default").strip() or "default"
         self._model = None
+        #: Resolved after the first load. ``None`` means "not loaded yet", which is a
+        #: different answer from "loaded on CPU" and is reported as such.
+        self.device: str | None = None
 
     @property
     def available(self) -> bool:
@@ -296,18 +352,92 @@ class WhisperLocalSTTProvider(STTProvider):
         except Exception:
             return False
 
-    async def transcribe(self, audio: bytes, *, fmt: str = "wav") -> str:
-        from faster_whisper import WhisperModel
+    @property
+    def supports_segments(self) -> bool:
+        return True
 
+    def _ensure_model(self):
+        """Load the model once and remember which device it landed on.
+
+        The load is the expensive part — hundreds of megabytes and several seconds — which is
+        why :func:`get_stt_provider` caches the provider rather than rebuilding it. A meeting
+        transcribes an utterance every few seconds; reloading per call would dominate.
+        """
         if self._model is None:
-            self._model = WhisperModel(self.model_name)
+            from faster_whisper import WhisperModel
+
+            self._model = WhisperModel(
+                self.model_name,
+                device=self.requested_device,
+                compute_type=self.compute_type,
+            )
+            # Read back rather than assume: `auto` is a request, not an outcome.
+            inner = getattr(self._model, "model", None)
+            self.device = str(getattr(inner, "device", None) or self.requested_device)
+        return self._model
+
+    def _write_temp(self, audio: bytes, fmt: str) -> str:
         with tempfile.NamedTemporaryFile(suffix=f".{fmt}", delete=False) as tmp:
             tmp.write(audio)
-            path = tmp.name
+            return tmp.name
+
+    async def transcribe(self, audio: bytes, *, fmt: str = "wav") -> str:
+        """Unchanged in shape and result: the joined text, exactly as before."""
+        model = self._ensure_model()
+        path = self._write_temp(audio, fmt)
 
         def _run() -> str:
-            segments, _ = self._model.transcribe(path)  # type: ignore[union-attr]
+            segments, _ = model.transcribe(path)
             return " ".join(seg.text for seg in segments).strip()
+
+        try:
+            return await asyncio.to_thread(_run)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    async def transcribe_segments(
+        self, audio: bytes, *, fmt: str = "wav", duration_s: float | None = None
+    ) -> List[Span]:
+        """The same call, keeping the timings ``transcribe`` throws away.
+
+        ``transcribe`` joins the segments into one string, which is right for a voice turn
+        and useless for a transcript that cites where something was said. This is the same
+        model call with ``seg.start`` and ``seg.end`` kept.
+
+        ``conf`` is ``exp(avg_logprob)`` — the conventional reading of faster-whisper's mean
+        token log-probability as a rough 0–1 confidence. It is a signal for greying out a
+        doubtful line, not a calibrated probability, and it is reported as ``None`` when the
+        model does not supply one rather than defaulted to something reassuring.
+        """
+        model = self._ensure_model()
+        path = self._write_temp(audio, fmt)
+
+        def _run() -> List[Span]:
+            segments, _info = model.transcribe(path)
+            spans: List[Span] = []
+            for seg in segments:
+                text = (getattr(seg, "text", "") or "").strip()
+                if not text:
+                    continue
+                logprob = getattr(seg, "avg_logprob", None)
+                conf = None
+                if isinstance(logprob, (int, float)):
+                    try:
+                        conf = round(min(1.0, max(0.0, math.exp(logprob))), 4)
+                    except (OverflowError, ValueError):
+                        conf = None
+                spans.append(
+                    {
+                        "t0": float(getattr(seg, "start", 0.0) or 0.0),
+                        "t1": float(getattr(seg, "end", 0.0) or 0.0),
+                        "text": text,
+                        "conf": conf,
+                    }
+                )
+            return spans
 
         try:
             return await asyncio.to_thread(_run)
@@ -354,7 +484,31 @@ def get_tts_provider_by_name(name: str) -> TTSProvider:
     return piper if piper.configured else NullTTSProvider()
 
 
-def get_stt_provider() -> STTProvider:
+#: The last provider handed out, with the configuration it was built from. Keyed rather
+#: than a plain singleton on purpose — see :func:`get_stt_provider`.
+_stt_cache: tuple[tuple, STTProvider] | None = None
+
+
+def _stt_config_key() -> tuple:
+    """Every environment variable that decides *which* provider and *how* it loads.
+
+    A cache keyed on this gives the two properties that matter at once: the same
+    configuration returns the same object, so the Whisper model stays loaded; and changing
+    the configuration returns a new one, so an operator who edits ``.env`` — or a test that
+    sets ``STT_BASE_URL`` — is not served a stale provider built before the change.
+    """
+    return (
+        os.getenv("STT_BASE_URL", "").strip(),
+        os.getenv("STT_API_KEY", "").strip(),
+        os.getenv("STT_MODEL", "").strip(),
+        os.getenv("WHISPER_MODEL", "").strip(),
+        os.getenv("WHISPER_DEVICE", "").strip(),
+        os.getenv("WHISPER_COMPUTE", "").strip(),
+    )
+
+
+def _build_stt_provider() -> STTProvider:
+    """Selection order, unchanged: a configured remote endpoint wins, then local Whisper."""
     cloud = OpenAICompatSTTProvider()
     if cloud.available:
         return cloud
@@ -362,3 +516,27 @@ def get_stt_provider() -> STTProvider:
     if local.available:
         return local
     return NullSTTProvider()
+
+
+def get_stt_provider() -> STTProvider:
+    """The speech-to-text provider for this configuration.
+
+    Same selection as before, now cached. The previous version built a fresh
+    ``WhisperLocalSTTProvider`` on every call, and the model lives on the *instance* — so a
+    caller that fetched a provider per utterance reloaded hundreds of megabytes each time.
+    ``voice/routes.py`` already avoids that by holding one provider for the connection; a
+    transcript that runs for an hour cannot rely on every future caller remembering to.
+    """
+    global _stt_cache
+    key = _stt_config_key()
+    if _stt_cache is not None and _stt_cache[0] == key:
+        return _stt_cache[1]
+    provider = _build_stt_provider()
+    _stt_cache = (key, provider)
+    return provider
+
+
+def reset_stt_provider_cache() -> None:
+    """Drop the cached provider. For tests, and for anything that reloads configuration."""
+    global _stt_cache
+    _stt_cache = None
