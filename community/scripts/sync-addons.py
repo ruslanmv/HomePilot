@@ -18,6 +18,7 @@ Without --upload, it only builds /tmp/gallery-registry.json for inspection.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -34,9 +35,72 @@ SAMPLE_REGISTRY = REPO_ROOT / "community" / "sample" / "registry.json"
 ADDONS_DIR = REPO_ROOT / "community" / "addons"
 OUTPUT_REGISTRY = Path("/tmp/gallery-registry.json")
 
+# ── Avatar quality gate ──────────────────────────────────
+#
+# Fourteen Chata personas shipped with gradient-and-initials tiles instead of faces:
+# the avatar builder's last-resort fallback fired during export and still wrote
+# "srgan" provenance. Every one of them declared `contents.has_avatar: true`, and
+# every file it names was present and the right size — so neither the metadata nor a
+# file-presence check could tell a face from a failure. Only the pixels could.
+#
+# Measured on those packages: placeholders carry 381-755 unique colours, real
+# StyleGAN faces 77,869-125,924. The threshold sits in a 100x gap and needs no tuning.
+PLACEHOLDER_MAX_COLORS = 5_000
+
+
+def _unique_colors(png_bytes: bytes) -> int:
+    from PIL import Image  # noqa: PLC0415 — optional at import, required at use
+
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    return len(img.getcolors(maxcolors=1 << 24))
+
+
+def check_avatar(z: zipfile.ZipFile, names: set[str], pid: str,
+                 avatar_seen: dict[str, str] | None) -> str | None:
+    """Return a rejection reason for this package's avatar, or None if it is fine.
+
+    Two failures, both invisible to metadata:
+
+    * a placeholder, found by colour complexity;
+    * a face already published under another persona's name in this same run —
+      five Chata personas shared one byte-identical avatar, which reads to a user
+      as a copy-paste mistake rather than the caching bug it was.
+    """
+    avatar_name = f"assets/avatar_{pid}.png"
+    if avatar_name not in names:
+        return None  # nothing claimed, nothing to check
+
+    data = z.read(avatar_name)
+
+    try:
+        colors = _unique_colors(data)
+    except ImportError:
+        # Loud, and fatal. Skipping the check quietly is precisely the shape of the
+        # bug this gate exists to catch: something failed, nothing said so, and a
+        # broken package sailed through looking exactly like a good one.
+        print("  ERROR Pillow is not installed — the avatar quality gate cannot run.",
+              file=sys.stderr)
+        print("        Install it (pip install Pillow) or the registry is unchecked.",
+              file=sys.stderr)
+        raise SystemExit(2) from None
+
+    if colors < PLACEHOLDER_MAX_COLORS:
+        return f"placeholder avatar ({colors:,} unique colours)"
+
+    if avatar_seen is not None:
+        digest = hashlib.sha256(data).hexdigest()
+        owner = avatar_seen.get(digest)
+        if owner is not None and owner != pid:
+            return f"avatar is byte-identical to {owner}"
+        avatar_seen[digest] = pid
+
+    return None
+
+
 # ── Extract metadata from .hpersona ──────────────────────
 
-def extract_persona_meta(hpersona_path: Path, pack: dict) -> dict[str, Any] | None:
+def extract_persona_meta(hpersona_path: Path, pack: dict,
+                         avatar_seen: dict[str, str] | None = None) -> dict[str, Any] | None:
     """Extract a registry entry from a .hpersona ZIP file."""
     pid = hpersona_path.stem
     if not zipfile.is_zipfile(hpersona_path):
@@ -66,11 +130,22 @@ def extract_persona_meta(hpersona_path: Path, pack: dict) -> dict[str, Any] | No
         if "preview/card.json" in names:
             card = json.loads(z.read("preview/card.json"))
 
+        # Refuse to publish a broken avatar rather than putting it in front of users.
+        rejection = check_avatar(z, names, pid, avatar_seen)
+        if rejection:
+            print(f"  SKIP {pid} ({rejection})")
+            return None
+
     # Build entry
     name = card.get("name") or agent.get("label") or pid.replace("_", " ").title()
     short = card.get("short") or agent.get("role", "")
     tags = list(set(card.get("tags", []) + pack.get("default_tags", [])))
-    nsfw = manifest.get("content_rating") == "nsfw" or pack.get("content_rating") == "nsfw"
+    # A persona's own rating wins. The pack rating is only a default for legacy
+    # packages that do not declare one — ORing the two meant a single wrong word in
+    # pack.json branded all 14 Chata personas NSFW while every manifest said "sfw",
+    # and no persona could ever correct it.
+    content_rating = manifest.get("content_rating") or pack.get("content_rating") or "sfw"
+    nsfw = content_rating in {"nsfw", "adult"}
     has_avatar = manifest.get("contents", {}).get("has_avatar", False)
     pack_id = pack.get("id", "")
 
@@ -160,6 +235,9 @@ def main():
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     addon_count = 0
+    # Shared across the whole run, not per pack: two personas in different packs
+    # wearing one face is the same problem as two in the same one.
+    avatar_seen: dict[str, str] = {}
     for addon_dir in addon_dirs:
         pack = json.loads((addon_dir / "pack.json").read_text())
         pack_id = pack["id"]
@@ -168,7 +246,7 @@ def main():
         print(f"\n[{pack_id}] {pack['name']} — {len(hpersona_files)} personas")
 
         for hp in hpersona_files:
-            entry = extract_persona_meta(hp, pack)
+            entry = extract_persona_meta(hp, pack, avatar_seen)
             if entry:
                 # Preserve download count from existing entries
                 if entry["id"] in base_items:
