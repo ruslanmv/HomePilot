@@ -466,6 +466,14 @@ app.include_router(files_router)
 from .voice import router as voice_router
 app.include_router(voice_router)
 
+# Include MeetingSense status (MS0 — additive, flag-gated MEETINGSENSE_ENABLED).
+# The status route answers whether the flag is on or off, deliberately: a frontend has to
+# tell "disabled" apart from "enabled but this machine cannot transcribe", and a 404 would
+# collapse both into "no". The session WebSocket lands in MS3 and refuses while the flag
+# is off, the way the voice route does.
+from .meetingsense import router as meetingsense_router
+app.include_router(meetingsense_router)
+
 # Include media:// URI resolver (/media/resolve)
 from .media_resolver import router as media_router
 app.include_router(media_router)
