@@ -40,6 +40,10 @@ from .config import load_config
 
 log = logging.getLogger(__name__)
 
+#: The helper modes W9 will implement. Named here because a mode has to be *refused* now — one
+#: nobody implements yet is still a mode, and a typo is not.
+MODES = ("note-taker", "participant", "presenter", "coach", "practice")
+
 router = APIRouter(tags=["meetingsense"])
 
 
@@ -449,6 +453,57 @@ def _require_meeting(meeting_id: str) -> Dict[str, Any]:
     return meeting
 
 
+@router.get("/v1/meetingsense/meetings")
+async def list_meetings(limit: int = Query(25), conversation_id: str = Query("")) -> Dict[str, Any]:
+    """Recent meetings, or the meetings in one conversation (MS21).
+
+    Declared above ``/{meeting_id}`` for the same reason ``/conversations`` is: a path
+    parameter first reads "meetings" as a meeting id and 404s.
+    """
+    if not load_config().enabled:
+        return {"meetings": []}
+    limit = max(1, min(int(limit or 25), 100))
+    try:
+        if conversation_id.strip():
+            rows = store.meetings_for_conversation(conversation_id.strip())[-limit:]
+        else:
+            rows = store.list_meetings(limit=limit)
+    except Exception:  # noqa: BLE001 — an install with no tables has no meetings
+        return {"meetings": []}
+    return {"meetings": rows}
+
+
+@router.get("/v1/meetingsense/search")
+async def search_meetings(
+    q: str = Query(""), meeting_id: str = Query(""), k: int = Query(8)
+) -> Dict[str, Any]:
+    """MS15's retrieval, over HTTP (MS21).
+
+    The same ``ms_search`` the MCP tool and a persona's `Recall` node call, rather than a
+    second scorer behind an endpoint: one implementation, and every caller gets the citation
+    with it.
+    """
+    if not load_config().enabled:
+        return {"results": []}
+    from . import retrieval as retrieval_mod
+
+    rows = retrieval_mod.ms_search(q, meeting_id.strip() or None, max(1, min(int(k or 8), 25)))
+    return {"results": rows}
+
+
+@router.get("/v1/meetingsense/conversations/{conversation_id}/live")
+async def live_context(conversation_id: str) -> Dict[str, Any]:
+    """MS18's bounded block for whatever is recording in this conversation (MS21).
+
+    The same block, not a bigger one: an endpoint that returned more than the prompt does
+    would be a way around D9's budget.
+    """
+    from . import live_context as live_mod
+
+    block = live_mod.for_conversation(conversation_id)
+    return {"conversation_id": conversation_id, "live": bool(block), "block": block}
+
+
 @router.get("/v1/meetingsense/conversations/{conversation_id}")
 async def meetings_in_conversation(conversation_id: str) -> Dict[str, Any]:
     """The meetings a conversation can bring a card back for (MS16).
@@ -581,6 +636,62 @@ async def ask_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
     from .notes_engine import call_model
 
     return await ask_mod.answer(meeting_id, question, call=call_model)
+
+
+@router.post("/v1/meetingsense/{meeting_id}/notes")
+async def amend_notes(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Amend a meeting's notes, or leave something beside them (MS21).
+
+    Three operations, because they are three different kinds of statement and keeping them
+    apart is what makes the meeting's own record citeable:
+
+    * ``action`` closes or reopens an item **in** the notes — a claim about what the meeting
+      decided, so it belongs with the rest of them.
+    * ``suggestion`` is what an agent thinks, recorded as an artifact **beside** the notes.
+      Merged in, it would be indistinguishable from something that was said.
+    * ``mode`` records which helper mode was asked for. W9 owns what a mode does; this is so
+      the request is not lost between waves.
+    """
+    _require_meeting(meeting_id)
+    op = str((body or {}).get("op") or "").strip().lower()
+    text = str((body or {}).get("text") or "").strip()
+
+    if op == "action":
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+        stored = export_mod.notes_body(store.get_notes(meeting_id)) or {}
+        notes = dict(stored)
+        actions = [dict(a) for a in (notes.get("actions") or [])]
+        match = next((a for a in actions
+                      if (a.get("text") or "").strip().lower() == text.lower()), None)
+        if match is None:
+            # Added rather than refused: an agent that has just done something the meeting
+            # did not record has still done it.
+            match = {"text": text}
+            actions.append(match)
+        match["done"] = bool(body.get("done", True))
+        owner = str(body.get("owner") or "").strip()
+        if owner:
+            match["owner"] = owner
+        notes["actions"] = actions
+        return {"ok": True, "version": store.save_notes(meeting_id, notes), "actions": actions}
+
+    if op == "suggestion":
+        if not text:
+            raise HTTPException(status_code=400, detail="text is required")
+        artifact = store.add_artifact(meeting_id, kind="suggestion",
+                                      target=str(body.get("kind") or "note"), ref=text)
+        return {"ok": True, "artifact_id": artifact}
+
+    if op == "mode":
+        mode = str(body.get("mode") or "").strip().lower()
+        if mode not in MODES:
+            raise HTTPException(status_code=400,
+                                detail=f"unknown mode; expected one of {', '.join(MODES)}")
+        return {"ok": True, "mode": mode,
+                "artifact_id": store.add_artifact(meeting_id, kind="mode", target=mode)}
+
+    raise HTTPException(status_code=400, detail="op must be one of: action, suggestion, mode")
 
 
 @router.post("/v1/meetingsense/{meeting_id}/thread")

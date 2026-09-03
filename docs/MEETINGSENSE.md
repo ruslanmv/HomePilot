@@ -589,6 +589,40 @@ glance at.
 reimplemented. A panel it refuses is dropped: the meeting is recording either way, and a card
 that could not be drawn is not a reason to send an error into a live session.
 
+### A meeting as tools (MS21)
+
+`agentic/integrations/mcp/meetingsense_server.py`, port **9107**, ten tools:
+`ms.list_meetings`, `get_meeting`, `get_transcript`, `search`, `get_live_context`, `get_slide`,
+`update_action`, `suggest`, `set_mode`, `export`. `make start-meetingsense` runs it;
+`stop-meetingsense` and `health-meetingsense` do what they say.
+
+**Nothing here computes anything**, which is the point of the batch landing last. Every tool is
+one HTTP call to the backend — the way `inventory` does it — because the MCP image contains
+`agentic/` and no `backend/`, so importing the meeting store would work from the Makefile and
+fail in the container. MS21 added the four routes that did not exist yet:
+`GET /v1/meetingsense/meetings`, `/search`, `/conversations/{id}/live`, and
+`POST /{id}/notes`.
+
+**Reads are open; the four writes are gated** behind `WRITE_ENABLED`, with the same wording
+`local-notes` uses, so an operator who has seen one refusal recognises the other. Reads need no
+gate: a meeting is the user's own recording on the user's own machine, and the server is not
+reachable from outside it.
+
+Three smaller decisions worth knowing:
+
+- **`get_meeting` returns counts, not rows.** A "get" that returned the transcript would make
+  `get_transcript` and its 200-segment cap pointless.
+- **`get_slide(at_ms=…)` is the last slide taken at or before that moment**, not the nearest —
+  on a deck clicked through quickly the nearest is often the one the speaker had not reached.
+- **A suggestion is recorded beside the notes, not merged into them.** A suggestion is what an
+  agent thinks; the notes are what the meeting said, and merging them makes the meeting's own
+  record unciteable.
+
+Every tool answers "MeetingSense is not available on this install" rather than raising when the
+backend is off, absent or has the flag down — a persona can pass that on and cannot pass on a
+tool error. A *missing meeting* is told apart from a missing install, because those are two
+different sentences.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -678,6 +712,10 @@ the sheet exists to prevent.
 | `GET /v1/meetingsense/conversations/{id}` | the meetings a chat can bring a card back for (MS16). Never errors; empty with the flag off |
 | `POST /v1/meetingsense/{id}/thread` | open a new conversation from this meeting, with a brief (MS16) |
 | `POST /v1/meetingsense/{id}/attach` | push the transcript into a project's knowledge base (MS16) |
+| `GET /v1/meetingsense/meetings` | recent meetings, or one conversation's (MS21) |
+| `GET /v1/meetingsense/search` | MS15's retrieval, cited (MS21) |
+| `GET /v1/meetingsense/conversations/{id}/live` | MS18's bounded live block (MS21) |
+| `POST /v1/meetingsense/{id}/notes` | amend an action, leave a suggestion, or set a mode (MS21) |
 | `GET /v1/meetingsense/{id}/export?fmt=md` | Markdown to paste into a document |
 | `…?fmt=srt` | real cues from `t0`/`t1`, to lay over a recording |
 | `…?fmt=json` | everything, in the shape it is stored |
@@ -1036,6 +1074,7 @@ cd backend && python3 -m pytest tests/meetingsense/test_metadata.py -q      # 72
 cd backend && python3 -m pytest tests/meetingsense/test_notes_wiring.py -q  # 11  (MS12-a)
 cd backend && python3 -m pytest tests/meetingsense/test_live_context.py -q  # 26  (MS18)
 cd backend && python3 -m pytest tests/meetingsense/test_panel.py -q         # 21  (MS20)
+cd backend && python3 -m pytest tests/test_mcp_meetingsense_rpc.py -q       # 48  (MS21)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 90  (MS4, MS4-a, MS9, MS19)
 cd ../3D-Avatar-Chatbot && npx jest tests/behavior/meeting.test.js           # 21  (MS19)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 55  (MS5 + MS11)

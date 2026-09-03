@@ -148,6 +148,30 @@ services:
     profiles: ["local", "all"]
 
   # ═══════════════════════════════════════════════════════════════════════════
+  # MEETINGSENSE MCP SERVER (port 9107) — MS21
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 9107 is D3's assignment: 9101–9105 are the core servers, 9110–9120 the local ones, and
+  # 9106 belongs to hp-teams. A test asserts nothing else in the Makefile already starts it.
+
+  meetingsense:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.meetingsense_server:app
+      PORT: "9107"
+      # Reads are ungated: a meeting is the user's own recording on the user's own machine.
+      # The four tools that change something are behind this, off, like every other write
+      # server here.
+      WRITE_ENABLED: ${MEETINGSENSE_MCP_WRITE_ENABLED:-false}
+      DRY_RUN: ${MEETINGSENSE_MCP_DRY_RUN:-true}
+      # Every tool is one call to the backend, the way `inventory` does it: the MCP image
+      # contains `agentic/` and no `backend/`, so importing the meeting store here would work
+      # from the Makefile and fail in the container. No volume — this server holds nothing.
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://backend:8000}
+    ports: ["9107:9107"]
+    profiles: ["local", "all"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
   # INVENTORY MCP SERVER (port 9120)
   # ═══════════════════════════════════════════════════════════════════════════
 
