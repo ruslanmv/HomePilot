@@ -181,6 +181,8 @@ def test_the_key_set_is_frozen():
         "vision.model",
         "vision.max_keyframes_per_hour",
         "panels.max_kb",
+        "resume.grace_s",
+        "resume.max_replay",
     }
 
 

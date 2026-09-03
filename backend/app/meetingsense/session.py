@@ -71,9 +71,29 @@ class ListTransport:
         return [f for f in self.frames if f.get("type") == kind]
 
 
+class _DetachedTransport:
+    """Where frames go while a meeting is suspended: nowhere.
+
+    A suspended session must not hold the socket that died — a write to it raises, and the
+    raise would land in whatever code path was mid-way through handling a timer. Swallowing
+    instead is safe because nothing *should* be sending: every entry point checks the state
+    first, and this is the backstop for the one that forgets.
+    """
+
+    async def send(self, frame: Frame) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
 class MeetingState:
     IDLE = "idle"
     LIVE = "live"
+    #: Dropped, but still resumable (D10). A separate state rather than a flag on LIVE,
+    #: because everything that refuses when not live must keep refusing here: a suspended
+    #: meeting has no socket, so accepting audio for it would transcribe into a void.
+    SUSPENDED = "suspended"
     ENDED = "ended"
 
 
@@ -117,6 +137,9 @@ class MeetingSession:
         self.ended_at: Optional[float] = None
         self.conversation_id: Optional[str] = None
         self.audio_mode: Optional[str] = None
+        #: Declared by `start`. Kept on the session because a resume arrives on a new socket
+        #: that never sent a `start`, and the channel count decides how its audio is split.
+        self.audio_channels: int = 1
         self.mic_muted = False
         # One assembler per speaker. The 200 ms overlap is an artefact of how *one* stream
         # was chunked, so removing it across streams would compare the microphone against
@@ -125,6 +148,13 @@ class MeetingSession:
         self.assemblers: Dict[str, UtteranceAssembler] = {}
         self.segment_count = 0
         self.keyframe_count = 0
+        #: Monotonic per-meeting numbering of outbound segments. The client reports the last
+        #: one it saw when it resumes, which is the only way to know what died in the socket.
+        self.seq = 0
+        self.suspended_at: Optional[float] = None
+        #: The task that ends this meeting when its grace window runs out. Held so a resume
+        #: can cancel it and a test can await it.
+        self.expiry_task: Any = None
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
@@ -146,7 +176,12 @@ class MeetingSession:
             raise MeetingSessionError("conversation_required", "start needs a conversation_id")
 
         self.conversation_id = conversation_id
-        self.audio_mode = message.get("audio", {}).get("mode") if isinstance(message.get("audio"), dict) else None
+        audio = message.get("audio") if isinstance(message.get("audio"), dict) else {}
+        self.audio_mode = audio.get("mode")
+        try:
+            self.audio_channels = max(1, int(audio.get("channels") or 1))
+        except (TypeError, ValueError):
+            self.audio_channels = 1
         self.started_at = self._now()
         self.state = MeetingState.LIVE
 
@@ -170,6 +205,80 @@ class MeetingSession:
             }
         )
 
+    # ── suspend and resume (D10) ────────────────────────────────────────────
+
+    def resumable_until(self, grace_s: float) -> Optional[float]:
+        """When this meeting stops being resumable, or None while it is live."""
+        if self.suspended_at is None:
+            return None
+        return self.suspended_at + max(0.0, grace_s)
+
+    def suspend(self, *, at: Optional[float] = None) -> None:
+        """The socket died. Hold the meeting open rather than ending it.
+
+        Nothing is sent — there is no socket to send it to — and the transport is dropped so a
+        stray write cannot go to a closed connection. Everything that makes the transcript
+        continuous is kept: the assemblers with their overlap windows, the counters, `seq`.
+        Rebuilding those on resume would restart the overlap dedupe and duplicate a line at
+        every reconnection.
+        """
+        if self.state != MeetingState.LIVE:
+            raise MeetingSessionError("not_live", f"session is {self.state}, not live")
+        self.suspended_at = at if at is not None else self._now()
+        self.state = MeetingState.SUSPENDED
+        self.transport = _DetachedTransport()
+        store.suspend_meeting(self.meeting_id, suspended_at=self.suspended_at)
+
+    async def resume(self, transport: Transport, *, last_seq: int = 0, max_replay: int = 200) -> List[Frame]:
+        """Re-attach a new socket to this meeting and hand back what it missed.
+
+        Returns the frames sent: a ``resumed`` frame, then any segments numbered above
+        ``last_seq``. D10 says the server replays nothing because the client already has it —
+        which is true of everything that arrived, and false of exactly the frames that were in
+        flight when the socket died. Those exist only in the store, so replaying them is what
+        makes "no gap in seq" true rather than aspirational.
+        """
+        if self.state != MeetingState.SUSPENDED:
+            raise MeetingSessionError("not_suspended", f"session is {self.state}, not suspended")
+        if not store.resume_meeting(self.meeting_id):
+            # The store disagrees — the meeting ended underneath us. Believe the store.
+            raise MeetingSessionError("not_resumable", "this meeting is no longer resumable")
+
+        self.transport = transport
+        self.state = MeetingState.LIVE
+        self.suspended_at = None
+        if self.expiry_task is not None:
+            self.expiry_task.cancel()
+            self.expiry_task = None
+
+        sent: List[Frame] = [
+            {
+                "type": "resumed",
+                "meeting_id": self.meeting_id,
+                "elapsed": self.elapsed_ms,
+                "segments": self.segment_count,
+                "slides": self.keyframe_count,
+                "seq": self.seq,
+            }
+        ]
+        await self.transport.send(sent[0])
+
+        for row in store.segments_after_seq(self.meeting_id, last_seq, limit=max_replay):
+            frame = {
+                "type": "segment",
+                "id": row["id"],
+                "seq": row["seq"],
+                "t0": row["t0_ms"],
+                "t1": row["t1_ms"],
+                "speaker": row.get("speaker"),
+                "text": row["text"],
+                "conf": row.get("conf"),
+                "replayed": True,
+            }
+            await self.transport.send(frame)
+            sent.append(frame)
+        return sent
+
     async def stop(self) -> Frame:
         """End the meeting and answer ``final``. Idempotent.
 
@@ -178,10 +287,13 @@ class MeetingSession:
         """
         if self.state == MeetingState.ENDED:
             return {"type": "final", "meeting_id": self.meeting_id, "segments": self.segment_count}
-        if self.state != MeetingState.LIVE:
+        if self.state not in (MeetingState.LIVE, MeetingState.SUSPENDED):
             raise MeetingSessionError("not_live", "this session was never started")
 
-        self.ended_at = self._now()
+        # A meeting that ends out of its grace window ends at the moment the socket dropped,
+        # not two minutes later when a timer noticed. The elapsed time a card shows should be
+        # how long people were talking.
+        self.ended_at = self.suspended_at if self.suspended_at is not None else self._now()
         self.state = MeetingState.ENDED
         store.end_meeting(self.meeting_id, ended_at=self.ended_at)
         final: Frame = {
@@ -240,6 +352,11 @@ class MeetingSession:
         if not fresh:
             return []
 
+        # Numbered before they are stored, so the row and the frame carry the same `seq` and
+        # a replay can reproduce the frame exactly.
+        for seg in fresh:
+            self.seq += 1
+            seg["seq"] = self.seq
         ids = store.add_segments(self.meeting_id, fresh)
         self.segment_count += len(ids)
 
@@ -248,6 +365,7 @@ class MeetingSession:
             frame = {
                 "type": "segment",
                 "id": seg_id,
+                "seq": seg["seq"],
                 "t0": seg["t0_ms"],
                 "t1": seg["t1_ms"],
                 "speaker": seg.get("speaker"),
@@ -311,7 +429,7 @@ class MeetingSession:
         self.mic_muted = bool(message.get("mic"))
         await self.send_status()
 
-    async def send_status(self, **extra: Any) -> Frame:
+    async def send_status(self, *, grace_s: float = 0.0, **extra: Any) -> Frame:
         frame: Frame = {
             "type": "status",
             "meeting_id": self.meeting_id,
@@ -320,6 +438,8 @@ class MeetingSession:
             "segments": self.segment_count,
             "slides": self.keyframe_count,
             "mic_muted": self.mic_muted,
+            "seq": self.seq,
+            "resumable_until": self.resumable_until(grace_s),
             **extra,
         }
         await self.transport.send(frame)
@@ -359,6 +479,26 @@ def get(meeting_id: str) -> Optional[MeetingSession]:
 def live_sessions() -> Dict[str, MeetingSession]:
     """Every live session. MS18's context provider reads this to find a conversation's."""
     return {mid: s for mid, s in _SESSIONS.items() if s.state == MeetingState.LIVE}
+
+
+async def expire_if_due(session: MeetingSession, *, grace_s: float, now: float) -> bool:
+    """End a suspended meeting whose grace window has run out. Returns whether it did.
+
+    A function rather than a sleep so the decision can be tested against a clock instead of a
+    stopwatch: the caller schedules the wait, this decides the outcome.
+    """
+    if session.state != MeetingState.SUSPENDED:
+        return False
+    deadline = session.resumable_until(grace_s)
+    if deadline is not None and now < deadline:
+        return False
+    await session.stop()
+    unregister(session.meeting_id)
+    return True
+
+
+def suspended_sessions() -> Dict[str, MeetingSession]:
+    return {mid: s for mid, s in _SESSIONS.items() if s.state == MeetingState.SUSPENDED}
 
 
 def for_conversation(conversation_id: str) -> Optional[MeetingSession]:

@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 #: Bumped when a migration adds something. Recorded so a later batch can tell an old file
 #: from a new one without inspecting the schema — MS16 adds columns to ``ms_meetings``.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = (
     """
@@ -40,7 +40,8 @@ _SCHEMA = (
         audio_mode      TEXT,
         retention       TEXT NOT NULL DEFAULT 'text',
         status          TEXT NOT NULL DEFAULT 'live',
-        summary_json    TEXT
+        summary_json    TEXT,
+        suspended_at    REAL
     )
     """,
     """
@@ -51,7 +52,8 @@ _SCHEMA = (
         t1_ms      INTEGER,
         speaker    TEXT,
         text       TEXT NOT NULL,
-        conf       REAL
+        conf       REAL,
+        seq        INTEGER
     )
     """,
     """
@@ -74,11 +76,29 @@ _SCHEMA = (
         PRIMARY KEY (meeting_id, version)
     )
     """,
+)
+
+#: Indexes are separate from the tables above, and applied *after* the column patch below.
+#: An index over a column added in a later schema cannot be created on a database that has not
+#: had that column added yet — the CREATE INDEX fails before the ALTER ever runs.
+_INDEXES = (
     # A meeting is read back in time order constantly — the card, the export, the slide/
     # transcript join. Without these, every read is a scan of every segment ever recorded.
     "CREATE INDEX IF NOT EXISTS ix_ms_segments_meeting_t0 ON ms_segments(meeting_id, t0_ms)",
     "CREATE INDEX IF NOT EXISTS ix_ms_keyframes_meeting_t ON ms_keyframes(meeting_id, t_ms)",
     "CREATE INDEX IF NOT EXISTS ix_ms_meetings_conversation ON ms_meetings(conversation_id)",
+    # Resume replays by sequence, not by time: two channels can share a `t0`, so time order is
+    # not a stable numbering and cannot answer "everything after seq 4".
+    "CREATE INDEX IF NOT EXISTS ix_ms_segments_meeting_seq ON ms_segments(meeting_id, seq)",
+)
+
+#: Columns added after schema 1. `CREATE TABLE IF NOT EXISTS` does nothing to a table that
+#: already exists, so a database created by MS2 keeps the old shape unless it is told
+#: otherwise — and the failure would be an `OperationalError` on the first resume, in the
+#: middle of somebody's meeting.
+_ADDED_COLUMNS = (
+    ("ms_meetings", "suspended_at", "REAL"),
+    ("ms_segments", "seq", "INTEGER"),
 )
 
 
@@ -107,9 +127,32 @@ def migrate() -> None:
         cur = con.cursor()
         for statement in _SCHEMA:
             cur.execute(statement)
+        # Columns first, then indexes: an index over a column a schema-1 database has not
+        # gained yet fails before the ALTER that would add it ever runs.
+        _add_missing_columns(cur)
+        for statement in _INDEXES:
+            cur.execute(statement)
         con.commit()
     finally:
         con.close()
+
+
+def _add_missing_columns(cur) -> List[str]:
+    """Bring a schema-1 database up to date. Returns the columns it added.
+
+    Additive only, and it has to be: SQLite can add a nullable column to a populated table
+    without rewriting it, and every reader here already treats both of these as optional. A
+    meeting recorded before this batch has `seq = NULL` on its segments and simply cannot be
+    resumed — which is right, because it was recorded by a server that had no resume.
+    """
+    added: List[str] = []
+    for table, column, decl in _ADDED_COLUMNS:
+        existing = {row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
+        if not existing or column in existing:
+            continue
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        added.append(f"{table}.{column}")
+    return added
 
 
 def migrate_if_enabled(config) -> bool:
@@ -195,6 +238,46 @@ def end_meeting(meeting_id: str, *, ended_at: Optional[float] = None, summary: A
         con.close()
 
 
+def suspend_meeting(meeting_id: str, *, suspended_at: Optional[float] = None) -> None:
+    """Mark a meeting as droppped-but-resumable (D10).
+
+    Deliberately not `ended_at`: a suspended meeting has no end yet, and writing one now would
+    have to be un-written on resume — a timestamp that moves backwards is worse than no
+    timestamp. Only `end_meeting` ever sets `ended_at`.
+    """
+    con = _connect()
+    try:
+        con.execute(
+            "UPDATE ms_meetings SET status = 'suspended', suspended_at = ?"
+            " WHERE id = ? AND ended_at IS NULL",
+            (suspended_at if suspended_at is not None else time.time(), meeting_id),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def resume_meeting(meeting_id: str) -> bool:
+    """Bring a suspended meeting back to live. False if it was not suspended.
+
+    The `status = 'suspended'` in the WHERE clause is the guard that makes this safe to call
+    from a socket: a meeting that already ended while the client was reconnecting must not be
+    reopened, and answering False lets the caller say so instead of recording into a closed
+    meeting.
+    """
+    con = _connect()
+    try:
+        cur = con.execute(
+            "UPDATE ms_meetings SET status = 'live', suspended_at = NULL"
+            " WHERE id = ? AND status = 'suspended' AND ended_at IS NULL",
+            (meeting_id,),
+        )
+        con.commit()
+        return cur.rowcount > 0
+    finally:
+        con.close()
+
+
 def get_meeting(meeting_id: str) -> Optional[Dict[str, Any]]:
     con = _connect()
     try:
@@ -250,6 +333,7 @@ def add_segments(meeting_id: str, segments: Iterable[Dict[str, Any]]) -> List[st
                 seg.get("speaker"),
                 text,
                 seg.get("conf"),
+                seg.get("seq"),
             )
         )
     if not rows:
@@ -257,8 +341,8 @@ def add_segments(meeting_id: str, segments: Iterable[Dict[str, Any]]) -> List[st
     con = _connect()
     try:
         con.executemany(
-            "INSERT INTO ms_segments(id, meeting_id, t0_ms, t1_ms, speaker, text, conf)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ms_segments(id, meeting_id, t0_ms, t1_ms, speaker, text, conf, seq)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         con.commit()
@@ -283,6 +367,26 @@ def get_segments(
     con = _connect()
     try:
         return [dict(r) for r in con.execute(sql, args).fetchall()]
+    finally:
+        con.close()
+
+
+def segments_after_seq(meeting_id: str, after_seq: int, *, limit: int = 200) -> List[Dict[str, Any]]:
+    """Segments numbered above ``after_seq``, in sequence order — what a resume replays.
+
+    A client that reconnects has whatever reached it before the socket died. Anything the
+    server sent into the dead socket is in the store and nowhere else, so without this the
+    live transcript keeps a hole that only heals on reload. Ordered by `seq` rather than by
+    time because two channels can share a `t0`.
+    """
+    con = _connect()
+    try:
+        rows = con.execute(
+            "SELECT * FROM ms_segments WHERE meeting_id = ? AND seq IS NOT NULL AND seq > ?"
+            " ORDER BY seq ASC LIMIT ?",
+            (meeting_id, int(after_seq), int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         con.close()
 

@@ -17,8 +17,11 @@ missing has failed at the one job it has: reporting what is missing.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
+import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -254,6 +257,9 @@ async def meetingsense_session(websocket: WebSocket) -> None:
     except Exception as exc:  # noqa: BLE001
         log.warning("meetingsense: no speech provider (%s)", exc)
 
+    # A resume attaches this socket to a session that already exists, so the one built here
+    # is only used if the client starts a new meeting. Building it up front keeps the frame
+    # loop's error handling in one shape.
     session = session_mod.MeetingSession(
         transport=WebSocketTransport(websocket),
         config=cfg,
@@ -286,8 +292,14 @@ async def meetingsense_session(websocket: WebSocket) -> None:
                 elif kind == "mute":
                     await session.on_mute(message)
 
+                elif kind == "resume":
+                    resumed = await _handle_resume(websocket, session, message, cfg)
+                    if resumed is not None:
+                        session = resumed
+                        channels = session.audio_channels or channels
+
                 elif kind == "status":
-                    await session.send_status()
+                    await session.send_status(grace_s=cfg.resume.grace_s)
 
                 elif kind == "stop":
                     await session.stop()
@@ -314,12 +326,74 @@ async def meetingsense_session(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        # A dropped socket ends the meeting rather than leaving it live forever: the session
-        # is the socket, and nothing is going to reconnect to it. What survives is in the
-        # store.
-        if session.state == session_mod.MeetingState.LIVE:
-            try:
-                await session.stop()
-            except Exception:  # noqa: BLE001 — the socket is already gone
-                log.debug("meetingsense: could not send the final frame", exc_info=True)
+        await _on_disconnect(session, cfg)
+
+
+async def _handle_resume(websocket: WebSocket, current, message: Dict[str, Any], cfg):
+    """Re-attach this socket to a meeting that was dropped, per D10.
+
+    Returns the session to carry on with, or ``None`` when the resume was refused — refused
+    with an error frame and an open socket, never a close, because a client that reconnected
+    only to be hung up on has no way to tell "too late" from "wrong server" and will keep
+    trying.
+    """
+    meeting_id = str(message.get("meeting_id") or "").strip()
+    if not meeting_id:
+        await current.send_error("meeting_required", "resume needs a meeting_id")
+        return None
+
+    existing = session_mod.get(meeting_id)
+    if existing is None or existing.state != session_mod.MeetingState.SUSPENDED:
+        # Either the grace window closed, the process restarted, or the id is wrong. All three
+        # mean the same thing to a client: this meeting cannot be continued, start a new one.
+        await current.send_error("not_resumable", "that meeting is not resumable")
+        return None
+
+    try:
+        await existing.resume(
+            WebSocketTransport(websocket),
+            last_seq=int(message.get("last_seq") or 0),
+            max_replay=cfg.resume.max_replay,
+        )
+    except session_mod.MeetingSessionError as exc:
+        await current.send_error(exc.code, exc.detail)
+        return None
+    return existing
+
+
+async def _on_disconnect(session, cfg) -> None:
+    """The socket died. Suspend rather than end, and arm the timer that ends it (D10).
+
+    MS3 ended the meeting here, which is right for the store — no row saying "in progress"
+    forever — and wrong for a person whose Wi-Fi blinked in the middle of a board meeting. A
+    grace of zero restores MS3's behaviour exactly, and is the honest setting for anyone who
+    would rather a drop be final.
+    """
+    if session.state != session_mod.MeetingState.LIVE:
         session_mod.unregister(session.meeting_id)
+        return
+
+    if cfg.resume.grace_s <= 0:
+        try:
+            await session.stop()
+        except Exception:  # noqa: BLE001 — the socket is already gone
+            log.debug("meetingsense: could not send the final frame", exc_info=True)
+        session_mod.unregister(session.meeting_id)
+        return
+
+    session.suspend()
+    session.expiry_task = asyncio.create_task(_expire_later(session, cfg.resume.grace_s))
+
+
+async def _expire_later(session, grace_s: float) -> None:
+    """Wait out the grace window, then end the meeting if nobody came back.
+
+    Held on the session so a resume can cancel it — and so a test can await it rather than
+    sleep for two minutes hoping.
+    """
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.sleep(grace_s)
+        try:
+            await session_mod.expire_if_due(session, grace_s=grace_s, now=time.time())
+        except Exception:  # noqa: BLE001 — a timer must not take the process down
+            log.exception("meetingsense: could not expire meeting %s", session.meeting_id)

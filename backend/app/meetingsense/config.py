@@ -34,6 +34,17 @@ def _flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _float(name: str, default: float) -> float:
+    """Read a numeric env var. Seconds, and a float rather than an int on purpose: the resume
+    grace is a duration a test needs to be able to make very short, and an integer-only
+    setting would force every test of the expiry path to wait a real second."""
+    raw = os.getenv(name, "").strip()
+    try:
+        return float(raw) if raw else default
+    except ValueError:
+        return default
+
+
 def _int(name: str, default: int) -> int:
     raw = os.getenv(name, "").strip()
     try:
@@ -78,6 +89,23 @@ class PanelsConfig:
 
 
 @dataclass(frozen=True)
+class ResumeConfig:
+    """How long a dropped meeting stays resumable (D10).
+
+    ``grace_s = 0`` reproduces MS3 exactly — the socket drops, the meeting ends — which is
+    both a legitimate configuration and the reason the old code path is kept rather than
+    replaced.
+    """
+
+    grace_s: float = 120.0
+
+    #: Most a resume will replay from the store. A client that asks from zero after an hour
+    #: is not owed the whole transcript down a socket it is about to render anyway; the card
+    #: hydrates from the store for anything older.
+    max_replay: int = 200
+
+
+@dataclass(frozen=True)
 class SubFlags:
     """One flag per wave beyond the recorder. All false, and none implied by ``enabled``."""
 
@@ -109,6 +137,7 @@ class MeetingSenseConfig:
     notes: NotesConfig = field(default_factory=NotesConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     panels: PanelsConfig = field(default_factory=PanelsConfig)
+    resume: ResumeConfig = field(default_factory=ResumeConfig)
 
     def as_dict(self) -> Dict[str, Any]:
         """Flat view, for logging and for the test that asserts the key set is frozen."""
@@ -127,6 +156,8 @@ class MeetingSenseConfig:
             "vision.model": self.vision.model,
             "vision.max_keyframes_per_hour": self.vision.max_keyframes_per_hour,
             "panels.max_kb": self.panels.max_kb,
+            "resume.grace_s": self.resume.grace_s,
+            "resume.max_replay": self.resume.max_replay,
         }
 
 
@@ -160,4 +191,8 @@ def load_config() -> MeetingSenseConfig:
             max_keyframes_per_hour=_int("MEETINGSENSE_MAX_KEYFRAMES_PER_HOUR", 60),
         ),
         panels=PanelsConfig(max_kb=_int("MEETINGSENSE_PANEL_MAX_KB", 64)),
+        resume=ResumeConfig(
+            grace_s=max(0.0, _float("MEETINGSENSE_RESUME_GRACE_S", 120.0)),
+            max_replay=_int("MEETINGSENSE_RESUME_MAX_REPLAY", 200),
+        ),
     )

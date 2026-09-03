@@ -531,9 +531,11 @@ class TestStop:
             ws.receive_json()
         assert modules.session.live_sessions() == {}
 
-    def test_a_dropped_socket_ends_the_meeting_too(self, client, enabled, stt, modules):
-        # The session is the socket, and nothing is going to reconnect to it. Leaving the
-        # meeting live would leave a row that says "in progress" forever.
+    def test_a_dropped_socket_ends_the_meeting_when_there_is_no_grace(self, client, enabled, stt, modules, monkeypatch):
+        # MS3's behaviour, and still reachable: `MEETINGSENSE_RESUME_GRACE_S=0` says a drop is
+        # final. D10 changed the default, not the option — somebody who would rather lose a
+        # recording than have a half-open one can still have that.
+        monkeypatch.setenv("MEETINGSENSE_RESUME_GRACE_S", "0")
         with client.websocket_connect("/v1/meetingsense/session") as ws:
             ready = start(ws)
         assert modules.store.get_meeting(ready["meeting_id"])["ended_at"] is not None
