@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W3 — Eyes
 
-### MS11 — desktop system audio · `PENDING`
+### MS11 — desktop system audio · `e3e7937`
 
 - `desktop/meetingsense-audio.js` + a `setDisplayMediaRequestHandler` registered from
   `bootstrap`, `preload.js` exposing `meetingSenseAudio()`, and a popover notice built from the
