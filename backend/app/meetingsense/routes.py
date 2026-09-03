@@ -27,6 +27,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 
+from . import ask as ask_mod
 from . import audio as audio_wire
 from . import export as export_mod
 from . import retention as retention_mod
@@ -309,6 +310,11 @@ async def meetingsense_session(websocket: WebSocket) -> None:
                         session = resumed
                         channels = session.audio_channels or channels
 
+                elif kind == "ask":
+                    # Answered on the socket the question arrived on, so a question asked
+                    # mid-meeting does not need a second round trip through HTTP.
+                    await _handle_ask(session, message)
+
                 elif kind == "status":
                     await session.send_status(grace_s=cfg.resume.grace_s)
 
@@ -506,3 +512,39 @@ async def delete_meeting_route(meeting_id: str) -> Dict[str, Any]:
     if result is None:
         raise HTTPException(status_code=404, detail="not found")
     return result
+
+
+async def _handle_ask(session, message: Dict[str, Any]) -> Dict[str, Any]:
+    """Answer a question about the meeting in progress (MS13).
+
+    ``now_ms`` is the session's own elapsed time rather than the last segment's, because a
+    question asked during a silence is still about *now* — using the last segment would slide
+    the verbatim window backwards every time somebody stopped talking.
+    """
+    from .notes_engine import call_model
+
+    frame = await ask_mod.answer(
+        session.meeting_id,
+        str(message.get("text") or ""),
+        call=call_model,
+        now_ms=session.elapsed_ms,
+    )
+    await session.transport.send(frame)
+    return frame
+
+
+@router.post("/v1/meetingsense/{meeting_id}/ask")
+async def ask_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Ask about a meeting that has ended.
+
+    The same function the live socket uses, so an answer does not depend on whether the
+    meeting is still running — only on how much of it exists.
+    """
+    _require_meeting(meeting_id)
+    question = str((body or {}).get("text") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    from .notes_engine import call_model
+
+    return await ask_mod.answer(meeting_id, question, call=call_model)
