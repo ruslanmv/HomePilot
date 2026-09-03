@@ -263,7 +263,73 @@ install that never enables MeetingSense never grows the schema.
 
 ---
 
-## Verifying MS0 – MS3
+## The capture addon (MS4)
+
+`frontend/public/js/homepilot-meetingsense.js`, mirrored byte-for-byte in
+`community/addons/meetingsense/`. It opens its own capture rather than extending ScreenSense
+(decision D1): ScreenSense promises one silent still with `audio: false`, and MeetingSense
+breaks both halves of that by holding a stream open for an hour and recording sound.
+
+```js
+await hpMeetingSense.start({ conversationId, title, source });
+hpMeetingSense.muteMic(true);     // your side only; the call keeps recording
+await hpMeetingSense.stop();
+```
+
+Results arrive as `ms:segment`, `ms:partial`, `ms:status` and `ms:audio_lost` events on
+`window` — events rather than callbacks, so the chat card and the recording pill can both
+listen and neither owns the recorder.
+
+**The two sources stay on separate channels.** Screen audio goes to a gain node into merger
+input 0 and the microphone to input 1; summing them would be one line shorter and would throw
+away the only speaker signal there is. Muting is that gain going to zero, which is why mute
+has to be a node rather than a flag.
+
+### When a chunk is cut
+
+An energy VAD closes an utterance after **350 ms** of quiet, provided it has run for at least
+**1 s** — a shorter pause is a breath in the middle of a sentence, and a shorter utterance is
+a cough. A speaker who never pauses is **hard-cut at 8 s**, which bounds both the memory held
+and how long a reader waits for a line to appear.
+
+Only the hard cut carries the **200 ms overlap** into the next chunk, and that asymmetry is
+the point: a hard cut fires regardless of what the speaker is doing, so it lands inside a
+word and the next chunk has to repeat the tail for the server to reconcile. A close on silence
+cut nothing — that is what waiting for the quiet buys — so repeating audio there would hand
+the server a duplicate to remove for no reason.
+
+Every utterance still opens slightly *before* the frame that tripped the threshold, using a
+rolling buffer of the preceding frames. The attack of a word is quieter than its body, so the
+frame that trips the VAD is already a syllable in.
+
+### What the tests cover, and what they cannot
+
+jsdom has no `AudioContext`, no `AudioWorklet` and no `getDisplayMedia`, so the capture graph
+is not exercised by any automated test. What is covered — 39 tests over synthetic buffers — is
+every decision made about the samples after they arrive: framing without drift, the VAD cuts,
+the WAV layout and channel order, clamping, resampling, base64 chunking.
+
+The graph itself needs the manual matrix below. **Nobody has run it yet.**
+
+| # | Browser | Share | Expected | Signed off |
+|---|---|---|---|---|
+| 1 | Chrome, desktop | a tab, "Share tab audio" ticked | `system+mic`, both speakers labelled | ⬜ |
+| 2 | Chrome, desktop | a whole screen | `system+mic` on Windows/macOS; `mic` on Linux | ⬜ |
+| 3 | Chrome, desktop | a window | `mic` — window shares carry no audio anywhere | ⬜ |
+| 4 | Edge, desktop | a tab | as Chrome | ⬜ |
+| 5 | Firefox | any | `mic`; the popover says why | ⬜ |
+| 6 | Safari | any | `mic`; the popover says why | ⬜ |
+| 7 | Any | microphone declined | `system`, and the meeting still records | ⬜ |
+| 8 | Any | both declined | `start` refuses with `audioMode: 'none'` | ⬜ |
+| 9 | Chrome | stop sharing mid-meeting | `ms:audio_lost`, recording continues on the mic | ⬜ |
+| 10 | Chrome | 30-minute meeting | memory flat, no drift between audio and timestamps | ⬜ |
+
+Rows 1–3 are the ones that decide whether MeetingSense records a meeting at all; row 10 is the
+one a short test cannot substitute for.
+
+---
+
+## Verifying MS0 – MS4
 
 With the flag off — the shipped state:
 
@@ -299,11 +365,17 @@ MS2 adds 68 of those tests and touches nothing outside `backend/app/meetingsense
 cd backend && python3 -m pytest tests/meetingsense/test_transcript.py -q     # 31
 cd backend && python3 -m pytest tests/meetingsense/test_session_core.py -q   # 37
 cd backend && python3 -m pytest tests/meetingsense/test_session_ws.py -q     # 40  (MS3)
+cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 39  (MS4)
 ```
 
-What MS0 – MS3 deliberately do **not** do: read a microphone, draw a UI, caption a slide
-(MS9), or write a message into the conversation (MS12). There is a socket to record a meeting
-through and nothing yet that opens it — the capture addon is MS4 and the entry point is MS5.
+MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to include `js` and
+`jsx`. That glob had been quietly excluding **17 test files and 124 tests** — the whole
+phone/call primitives suite among them — which had never run in CI since they were written.
+All of them pass; nothing was fixed to make that true.
+
+What MS0 – MS4 deliberately do **not** do: draw a UI, caption a slide (MS9), or write a
+message into the conversation (MS12). There is now a recorder and a socket for it to talk to,
+and nothing yet that offers either to a user — the entry point is MS5.
 
 ---
 
