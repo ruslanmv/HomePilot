@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from . import export
 
@@ -37,10 +37,15 @@ log = logging.getLogger(__name__)
 #: readable — the fallback is the message body itself.
 MESSAGE_PREFIX = "[Meeting]"
 
-#: Lines of transcript in the placeholder message. MS12 replaces the body with real notes;
-#: until then the message has to be worth reading on its own, and the opening exchange is the
-#: part that says what the meeting was about.
+#: Lines of transcript in the message when there are no notes to show — an install with no
+#: model reachable, or a meeting too short to have triggered a window. The opening exchange is
+#: the part that says what the meeting was about.
 PREVIEW_SEGMENTS = 6
+
+#: Most slide thumbnails attached to the summary message. A meeting can produce sixty in an
+#: hour; a chat message carrying sixty images is a scroll trap, and the card shows the full
+#: strip anyway.
+MAX_THUMBNAILS = 8
 
 
 def conversation_title(meeting: Dict[str, Any]) -> str:
@@ -58,12 +63,23 @@ def meeting_message(
     meeting: Dict[str, Any],
     segments: Sequence[Dict[str, Any]],
     keyframes: Sequence[Dict[str, Any]] = (),
+    notes: Any = None,
 ) -> str:
-    """The message body.
+    """The message body — **self-sufficient, per D9** (MS14).
+
+    This is the one thing a persona is guaranteed to see. HomePilot's chat path passes the last
+    six messages and drops the rest (`main.py:4951`), so in any conversation with a little
+    activity after the meeting, this message *is* the meeting as far as the model is concerned.
+    That is why it carries the recap, the decisions, the actions with their owners and the open
+    questions rather than a pointer to them: a summary that says "see the meeting card" is
+    useless to the reader who cannot see it.
 
     Deliberately readable as plain text. The card parses it, but a client that does not — an
-    export, a mobile fallback, another persona reading the conversation later — sees a short
-    account of the meeting rather than a marker and a blank.
+    export, a mobile fallback, another persona reading the conversation later — sees an account
+    of the meeting rather than a marker and a blank.
+
+    Per D4 nothing here is "remembered": this is a normal chat message, readable and deletable,
+    and everything beyond it reaches a persona through retrieval (MS15).
     """
     # The title leads, because this line is what History shows for the whole conversation.
     header = f"{MESSAGE_PREFIX} {conversation_title(meeting)}"
@@ -75,6 +91,29 @@ def meeting_message(
         counts.insert(0, export.clock(length))
 
     lines = [header, " · ".join(counts)]
+    body = export.notes_body(notes)
+
+    if body:
+        if body.get("recap"):
+            lines += ["", body["recap"]]
+        elif body.get("summary"):
+            lines += ["", body["summary"]]
+        lines += _note_section("Decisions", body.get("decisions"))
+        lines += _note_section("Actions", body.get("actions"))
+        # Resolved questions are left out: an "open questions" list that includes answered ones
+        # is a list the reader has to re-check, which is the opposite of what it is for.
+        lines += _note_section(
+            "Open questions", [q for q in (body.get("questions") or []) if not q.get("resolved")]
+        )
+        if keyframes:
+            lines += ["", "Slides:"]
+            for frame in keyframes[:MAX_THUMBNAILS]:
+                caption = (frame.get("caption") or "").strip() or "(not captioned)"
+                lines.append(f"  {export.clock(frame.get('t_ms'))} {caption}")
+        return "\n".join(lines)
+
+    # No notes — no model reachable, or a meeting too short to have triggered a window. Fall
+    # back to the opening exchange, which at least says what the meeting was about.
     preview = [s for s in segments if (s.get("text") or "").strip()][:PREVIEW_SEGMENTS]
     if preview:
         lines.append("")
@@ -87,6 +126,38 @@ def meeting_message(
         lines.append("")
         lines.append("Nothing was transcribed.")
     return "\n".join(lines)
+
+
+def _note_section(label: str, items: Any) -> List[str]:
+    """One notes section, or nothing at all.
+
+    An empty heading claims something — "Decisions:" with nothing under it reads as a meeting
+    where nothing was decided, which is a different statement from "no notes were taken". The
+    same reasoning as the Markdown export.
+    """
+    if not items:
+        return []
+    lines = ["", f"{label}:"]
+    for item in items:
+        text = (item.get("text") or "").strip() if isinstance(item, dict) else str(item).strip()
+        if not text:
+            continue
+        owner = f" — {item['owner']}" if isinstance(item, dict) and item.get("owner") else ""
+        stamp = ""
+        if isinstance(item, dict) and isinstance(item.get("t0"), (int, float)):
+            stamp = f" [{export.clock(item['t0'])}]"
+        lines.append(f"  - {text}{owner}{stamp}")
+    return lines if len(lines) > 2 else []
+
+
+def thumbnails(keyframes: Sequence[Dict[str, Any]]) -> List[str]:
+    """Slide images for the message's ``media.images``, capped.
+
+    A meeting can produce sixty keyframes in an hour. A chat message carrying sixty images is a
+    scroll trap, and the card shows the whole strip anyway — this is the glance, not the record.
+    """
+    urls = [(k.get("url") or "").strip() for k in keyframes]
+    return [u for u in urls if u][:MAX_THUMBNAILS]
 
 
 def finalize_meeting(meeting_id: str) -> Optional[str]:
@@ -106,12 +177,18 @@ def finalize_meeting(meeting_id: str) -> Optional[str]:
 
         segments = store.get_segments(meeting_id)
         keyframes = store.get_keyframes(meeting_id)
+        notes = store.get_notes(meeting_id)
+        images = thumbnails(keyframes)
         add_message(
             meeting["conversation_id"],
             "assistant",
-            meeting_message(meeting, segments, keyframes),
+            meeting_message(meeting, segments, keyframes, notes),
+            media={"images": images} if images else None,
             project_id=meeting.get("project_id"),
         )
+        # D4, and the reason there is no `schedule_session_jobs` call here: a meeting is not
+        # "remembered". It is a message, readable and deletable, and a persona's route to
+        # anything more is retrieval (MS15). A test asserts nothing is enqueued.
         return conversation_title(meeting)
     except Exception:  # noqa: BLE001 — a failure here must not fail the meeting
         log.exception("meetingsense: could not finalize meeting %s", meeting_id)

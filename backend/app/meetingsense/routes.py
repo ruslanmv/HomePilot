@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse, Response
 
 from . import audio as audio_wire
 from . import export as export_mod
+from . import retention as retention_mod
 from . import session as session_mod
 from . import store
 from .config import load_config
@@ -477,3 +478,31 @@ async def export_meeting(meeting_id: str, fmt: str = Query("md")) -> Response:
         else export_mod.to_markdown(meeting, segments, keyframes, notes)
     )
     return Response(content=body, media_type=media_type, headers={"Content-Disposition": disposition})
+
+
+@router.delete("/v1/meetingsense/{meeting_id}")
+async def delete_meeting_route(meeting_id: str) -> Dict[str, Any]:
+    """Delete a meeting: its rows, and the files it owned (MS14).
+
+    One call, because deletion is the one thing a user must never have to do twice to be sure
+    of. It reports counts rather than "ok": somebody deleting a meeting with twelve slides is
+    entitled to know whether the twelve images went with it.
+
+    Retention does not modify this. Whatever was kept is removed — a mode that let something
+    survive an explicit delete would be a setting quietly overriding an instruction.
+    """
+    _require_meeting(meeting_id)
+
+    # A live meeting is stopped first. Deleting the rows under a running session would leave it
+    # transcribing into a meeting that no longer exists, and the next segment would resurrect a
+    # row the user thought they had removed.
+    session = session_mod.get(meeting_id)
+    if session is not None:
+        with contextlib.suppress(Exception):
+            await session.stop()
+        session_mod.unregister(meeting_id)
+
+    result = retention_mod.delete_meeting(meeting_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return result

@@ -16,6 +16,7 @@ notice a disconnect and both will try.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence
@@ -27,6 +28,8 @@ from .transcript import UtteranceAssembler
 #: protocol documented in the design, and a dataclass per type here would be a second place
 #: to keep it in step.
 Frame = Dict[str, Any]
+
+log = logging.getLogger(__name__)
 
 
 class Transport(Protocol):
@@ -124,12 +127,16 @@ class MeetingSession:
         transport: Transport,
         config: Any,
         transcribe: Optional[Callable[..., Awaitable[Sequence[Dict[str, Any]]]]] = None,
+        notes: Any = None,
         now: Callable[[], float] = time.time,
         meeting_id: Optional[str] = None,
     ) -> None:
         self.transport = transport
         self.config = config
         self._transcribe = transcribe
+        #: MS12's engine, or None. Injected like `transcribe` and for the same reason: a test
+        #: needs no model, and the core keeps no opinion about where notes come from.
+        self.notes = notes
         self._now = now
         self.meeting_id = meeting_id or uuid.uuid4().hex
         self.state = MeetingState.IDLE
@@ -295,6 +302,16 @@ class MeetingSession:
         # how long people were talking.
         self.ended_at = self.suspended_at if self.suspended_at is not None else self._now()
         self.state = MeetingState.ENDED
+
+        # The final window, forced: without this the last minute of every meeting is missing
+        # from its notes, and the summary is built from an incomplete picture.
+        if self.notes is not None:
+            try:
+                final_notes = await self.notes.run(force=True)
+                if final_notes is not None:
+                    await self.transport.send(final_notes)
+            except Exception:  # noqa: BLE001
+                log.exception("meetingsense: final notes failed for %s", self.meeting_id)
         store.end_meeting(self.meeting_id, ended_at=self.ended_at)
         final: Frame = {
             "type": "final",
@@ -380,7 +397,30 @@ class MeetingSession:
             }
             await self.transport.send(frame)
             sent.append(frame)
+
+        await self._maybe_notes(fresh)
         return sent
+
+    async def _maybe_notes(self, fresh: List[Frame]) -> Optional[Frame]:
+        """Feed the notes engine and push a `notes` frame when it produced one.
+
+        Guarded rather than assumed: an install with no model reachable records a perfectly
+        good transcript, and a notes engine that could take the meeting down with it would be
+        a worse trade than having no notes.
+        """
+        if self.notes is None:
+            return None
+        try:
+            self.notes.add(fresh)
+            if not self.notes.due():
+                return None
+            frame = await self.notes.run()
+        except Exception:  # noqa: BLE001 — notes are never worth a meeting
+            log.exception("meetingsense: notes failed for %s", self.meeting_id)
+            return None
+        if frame is not None:
+            await self.transport.send(frame)
+        return frame
 
     async def on_partial(self, message: Frame) -> List[Frame]:
         """Transcribe a frame provisionally: emit ``partial``, store nothing, remember nothing.
