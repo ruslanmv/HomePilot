@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W7 — Capability
 
-### MS22 — Forge registration, and the Teams decision · `PENDING`
+### MS22 — Forge registration, and the Teams decision · `dd92397`
 
 - `hp-meetingsense` / 9107 registered in all four places that need it: the Forge seeder, the
   gateway list, the server catalog (marked `write_gated`) and the virtual servers
