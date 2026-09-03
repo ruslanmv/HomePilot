@@ -51,6 +51,21 @@ this is reachable and no table is created.
 
 ---
 
+## Carried work
+
+### MS1-a — real timings from a remote endpoint · `97fc3e4`
+
+- `OpenAICompatSTTProvider.transcribe_segments` asks for `response_format=verbose_json`;
+  `supports_segments` is now true for that provider. Every install with `STT_BASE_URL` set had
+  been producing `t1: None` on every segment.
+- **A second call site, not a modified one.** `transcribe()` still sends the default format —
+  changing it would alter a return value the voice call shares.
+- `verbose_json` is documented, not guaranteed: every degraded shape falls back to one honest
+  span rather than raising. **A segment the server did not time is skipped, never given
+  `t0: 0`** — these get cited in notes.
+
+---
+
 ## W1 — Recorder (local)
 
 ### MS6 — the live card, the pill, consent and export · `657f592`
