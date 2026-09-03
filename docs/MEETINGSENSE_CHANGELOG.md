@@ -19,6 +19,25 @@ this is reachable and no table is created.
 
 ## W5 — Memory
 
+### MS17 — naming a meeting without asking · `PENDING`
+
+- New `metadata.py`: the shared window's title (free, from `MediaStreamTrack.label`) and a
+  calendar event via MCP, both applied after `ready` as a background task and reported as a
+  `meta` frame. Schema 4 adds `attendees` and `link`.
+- **A title the user gave always wins**, and **an empty answer is not an answer** — the two
+  rules that stop auto-metadata from being worse than nothing. `"Zoom Meeting"` yields no
+  title, because writing it in makes every Zoom call in History look identical.
+- **Two real bugs the tests found.** Markers matched as substrings read "Cisco Webex Meetings"
+  — and any shared document called "Meeting notes" — as a Meet call; they now match on word
+  boundaries. And a regex counts `_` as a word character, so "Webex_Meetings" matched nothing
+  until underscores were normalised for matching.
+- The name is the **longest** surviving part of a window title, not the first: Teams titles a
+  call `"<speaker> | <meeting> | Microsoft Teams"`, and the first part is whoever happened to
+  be talking when recording started.
+- Auto-metadata may write four columns and no others. It is fed by a calendar event and a
+  window title, neither of which the user typed, and a path that can set any column is one bad
+  MCP answer away from rewriting a meeting's conversation or its retention mode.
+
 ### MS16 — binding, resume and branching · `bd16c01`
 
 - `ms_threads` and `ms_artifacts` (schema 3), a new `binding.py`, and three endpoints:

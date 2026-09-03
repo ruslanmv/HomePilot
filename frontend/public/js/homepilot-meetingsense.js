@@ -689,6 +689,24 @@
         return url.toString();
     }
 
+    /**
+     * The name of the shared window, if the browser gave one.
+     *
+     * `MediaStreamTrack.label` is the surface's title on Chrome and Edge for a window or tab
+     * share, the display name for a whole screen, and an empty string on Firefox and Safari.
+     * Empty is a fine answer — the meeting is then named from the calendar, or not at all.
+     */
+    function trackLabel(stream) {
+        try {
+            const track = (stream.getVideoTracks() || [])[0];
+            const label = (track && track.label) || '';
+            // "screen:0:0" and "window:12345:0" are Chrome's ids for the surface, not names.
+            return /^(screen|window|web-contents-media-stream):/i.test(label) ? '' : label.trim();
+        } catch (_) {
+            return '';
+        }
+    }
+
     function emit(name, detail) {
         window.dispatchEvent(new CustomEvent(name, { detail: detail }));
     }
@@ -727,6 +745,8 @@
             /** MS9's sampler: `{ video, canvas, ctx, scheduler }` while slides are watched. */
             this._watch = null;
             this._watchTimer = null;
+            /** The shared surface's title, read once at start. See `trackLabel`. */
+            this._windowTitle = '';
             /** Keyframes sent this meeting. Read by the card's slide count. */
             this.slideCount = 0;
         }
@@ -774,6 +794,12 @@
             } catch (_) {
                 mic = null;
             }
+
+            // MS17. The shared surface's own name — "Q3 planning | Microsoft Teams" — which
+            // the browser hands over for free and which carries both the meeting's name and
+            // the platform it ran on. Read before the graph is built, because a stopped track
+            // has no label.
+            this._windowTitle = screen ? trackLabel(screen) : '';
 
             this.audioMode = pickAudioMode(!!system, !!mic);
             if (this.audioMode === 'none') {
@@ -1154,6 +1180,10 @@
                                       project_id: opts.projectId,
                                       title: opts.title,
                                       source: opts.source,
+                                      // Sent, never applied here: the server decides whether
+                                      // it beats a title the user typed, and one copy of that
+                                      // rule is better than two.
+                                      window_title: opts.windowTitle || this._windowTitle || '',
                                       notes: !!opts.notes,
                                       watch: !!opts.watch,
                                       audio: {
@@ -1191,6 +1221,9 @@
                         emit('ms:segment', frame);
                     } else if (frame.type === 'partial') {
                         emit('ms:partial', frame);
+                    } else if (frame.type === 'meta') {
+                        // The meeting acquiring a name, moments after it started (MS17).
+                        emit('ms:meta', frame);
                     } else if (frame.type === 'slide') {
                         // Two of these arrive for one slide: the frame when it is taken, and
                         // again when the caption lands. The card upserts on `id` (MS10).
@@ -1317,6 +1350,7 @@
         backoffDelay: backoffDelay,
         shedQueue: shedQueue,
         utteranceToWav: utteranceToWav,
+        trackLabel: trackLabel,
         grayscale: grayscale,
         changedRatio: changedRatio,
         dhash: dhash,

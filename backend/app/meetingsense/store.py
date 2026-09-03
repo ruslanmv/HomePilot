@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 #: Bumped when a migration adds something. Recorded so a later batch can tell an old file
 #: from a new one without inspecting the schema — MS16 adds columns to ``ms_meetings``.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = (
     """
@@ -131,6 +131,10 @@ _INDEXES = (
 _ADDED_COLUMNS = (
     ("ms_meetings", "suspended_at", "REAL"),
     ("ms_segments", "seq", "INTEGER"),
+    # MS17. Filled in from a calendar event or the shared window title, and both nullable
+    # because most meetings have neither: no calendar connected, no window title shared.
+    ("ms_meetings", "attendees", "TEXT"),
+    ("ms_meetings", "link", "TEXT"),
 )
 
 
@@ -347,6 +351,40 @@ def create_meeting(
     finally:
         con.close()
     return mid
+
+
+#: What auto-metadata is allowed to write (MS17). An allow-list rather than "whatever the
+#: caller passed": this is fed by a calendar event and a window title, neither of which the
+#: user typed, and a metadata path that can set any column is one bad MCP answer away from
+#: rewriting a meeting's conversation or its retention mode.
+UPDATABLE = ("title", "source", "attendees", "link")
+
+
+def update_meeting(meeting_id: str, fields: Dict[str, Any]) -> List[str]:
+    """Set metadata on a meeting. Returns the columns actually written.
+
+    Only :data:`UPDATABLE` columns, and only values that say something — a ``None`` or an
+    empty string is "I did not find one", which must not blank a value that is already there.
+    """
+    writes = {
+        key: value
+        for key, value in (fields or {}).items()
+        if key in UPDATABLE and value not in (None, "", [])
+    }
+    if not writes:
+        return []
+    columns = sorted(writes)
+    con = _connect()
+    try:
+        con.execute(
+            f"UPDATE ms_meetings SET {', '.join(f'{c} = ?' for c in columns)} WHERE id = ?",
+            [json.dumps(writes[c]) if isinstance(writes[c], (list, dict)) else writes[c] for c in columns]
+            + [meeting_id],
+        )
+        con.commit()
+    finally:
+        con.close()
+    return columns
 
 
 def end_meeting(meeting_id: str, *, ended_at: Optional[float] = None, summary: Any = None) -> None:

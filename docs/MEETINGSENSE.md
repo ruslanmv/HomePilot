@@ -467,6 +467,57 @@ Two more tables — `ms_threads` and `ms_artifacts` — and the delete path clea
 same rule as the other three: a thread row left behind hydrates a card for a meeting that no
 longer exists.
 
+### Naming a meeting without asking (MS17)
+
+Nobody types a title before they hit record. They are already in the call, somebody is
+talking, and the dialog asking what to call this is the reason the recording did not start. So
+a meeting is named *afterwards*, from two sources that cost the user nothing.
+
+**The shared window's title**, which the browser hands over for free as
+`MediaStreamTrack.label` — `"Q3 planning | Microsoft Teams"`. One string carrying both the
+meeting's name and the platform it ran on, with no network call, no permission and no
+dependency. Empty on Firefox and Safari, which is a fine answer.
+
+**A calendar event**, when `google_calendar` or `microsoft_graph` is connected through MCP,
+which adds the attendees, the join link and a title somebody actually chose.
+
+Both run *after* `ready` is sent, as a background task, and the result arrives as a `meta`
+frame. A calendar round trip before `ready` is a dialog-free start turned back into a wait, and
+the recording is what the user pressed the button for.
+
+Two rules keep this from being worse than nothing:
+
+- **A title the user gave always wins.** Auto-metadata fills a blank; it never corrects a
+  person. Somebody who typed "1:1 with Ana" and got "Microsoft Teams" back would stop typing
+  titles, and would be right to.
+- **An empty answer is not an answer.** A calendar that matched nothing, a window title that
+  was only the app name, an MCP call that timed out — each leaves the meeting as it was rather
+  than blanking what is there. `"Zoom Meeting"` yields no title, because it is the absence of a
+  name: written in, every Zoom call in History looks identical.
+
+Two details that are easy to get wrong and were:
+
+- **Markers match on word boundaries.** "Cisco Webex Meetings" contains "meet", and a substring
+  test tags every Webex call — and every shared document called "Meeting notes" — as a Meet
+  call. Underscores are normalised for matching, because a regex counts `_` as a word character
+  and a person reads it as a space.
+- **The longest surviving part is the name.** Teams titles a call
+  `"<current speaker> | <meeting> | Microsoft Teams"`; taking the first part would name the
+  meeting after whoever happened to be talking when recording started.
+
+An event *containing* the start beats a nearer one outright — twenty minutes into an hour-long
+call you are in that call — and only then does proximity decide, inside fifteen minutes. Ties
+break on the shorter event, because on a day of overlapping invitations the specific one is
+more likely to be the call than the all-day block around it.
+
+Auto-metadata may only write `title`, `source`, `attendees` and `link`. An allow-list rather
+than "whatever the caller passed": this is fed by a calendar event and a window title, neither
+of which the user typed, and a metadata path that can set any column is one bad MCP answer
+away from rewriting a meeting's conversation or its retention mode.
+
+The window-title half is unit-tested against real titles. The calendar half is tested against
+an injected invoker; a live MCP connection is **row 16 of the manual matrix**.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -494,6 +545,7 @@ Both the graph and the sampler need the manual matrix below. **Nobody has run it
 | 13 | Desktop app, Windows | flag on, any share | `audioMode: 'system+mic'`, the call audible in the transcript | ⬜ |
 | 14 | Desktop app, macOS | flag on | `mic` only, and the popover says why before recording starts | ⬜ |
 | 15 | Desktop app, either | flag off | ScreenSense's "Ask once" unchanged; no share dialog behaves differently | ⬜ |
+| 16 | Any | a real `google_calendar` / `microsoft_graph` connection | the meeting takes its title, attendees and link from the event that contains its start | ⬜ |
 
 Rows 1–3 are the ones that decide whether MeetingSense records a meeting at all; row 10 is the
 one a short test cannot substitute for. Row 11 is the only place the thresholds meet a real
@@ -882,7 +934,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 576
+cd backend && python3 -m pytest tests/meetingsense -q   # 648
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -909,6 +961,7 @@ cd backend && python3 -m pytest tests/meetingsense/test_ask.py -q            # 4
 cd backend && python3 -m pytest tests/meetingsense/test_keyframes.py -q     # 26  (MS9)
 cd backend && python3 -m pytest tests/meetingsense/test_retrieval.py -q     # 37  (MS15)
 cd backend && python3 -m pytest tests/meetingsense/test_binding.py -q       # 33  (MS16)
+cd backend && python3 -m pytest tests/meetingsense/test_metadata.py -q      # 72  (MS17)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 84  (MS4, MS4-a, MS9)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 55  (MS5 + MS11)
 cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 90  (MS6 + MS10)
@@ -919,13 +972,17 @@ MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to in
 phone/call primitives suite among them — which had never run in CI since they were written.
 All of them pass; nothing was fixed to make that true.
 
-**W0 through W4 are complete.** A meeting records, resumes, transcribes, takes rolling notes,
+**W0 through W5 are complete.** A meeting records, resumes, transcribes, takes rolling notes,
 answers questions, summarises itself into History, exports, deletes, works from a hosted page,
 captures its slides, captions them, shows each one beside what was said while it was up, and on
 Windows in the desktop app records the call itself rather than whatever the share dialog offered.
 
-What is left before the pilot can be signed off is not code: the fifteen-row browser and
-desktop matrix below, none of which anybody has run.
+Beyond that it remembers: a finished meeting is embedded and searchable across every meeting
+ever recorded, reachable from any chat, branchable into a new thread and attachable to a
+project — and it names itself.
+
+What is left before the pilot can be signed off is not code: the sixteen-row matrix below,
+none of which anybody has run.
 
 **Two wiring seams are open**, and it is worth being exact about which:
 

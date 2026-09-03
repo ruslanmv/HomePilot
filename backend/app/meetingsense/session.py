@@ -135,6 +135,7 @@ class MeetingSession:
         transcribe: Optional[Callable[..., Awaitable[Sequence[Dict[str, Any]]]]] = None,
         notes: Any = None,
         vision: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,
+        calendar: Optional[Callable[..., Awaitable[Any]]] = None,
         now: Callable[[], float] = time.time,
         meeting_id: Optional[str] = None,
     ) -> None:
@@ -147,6 +148,11 @@ class MeetingSession:
         #: MS9's ``analyze_image``, or None. None means slides are recorded and not captioned,
         #: which is a complete meeting on an install with no vision model — not a degraded one.
         self.vision = vision
+        #: MS17's calendar invoker, or None. None means a meeting is named from its window
+        #: title alone, which is what an install with no calendar connected has.
+        self.calendar = calendar
+        #: Held so a test can await the naming instead of sleeping.
+        self.metadata_task: Any = None
         self._now = now
         self.meeting_id = meeting_id or uuid.uuid4().hex
         self.state = MeetingState.IDLE
@@ -223,6 +229,11 @@ class MeetingSession:
                              created_at=self.started_at)
         except Exception:  # noqa: BLE001 — a missing link is a card that does not hydrate
             log.exception("meetingsense: could not record the thread for %s", self.meeting_id)
+
+        # MS17. Scheduled, not awaited: a calendar round trip before `ready` is a dialog-free
+        # start turned back into a wait, and the recording is what the user pressed the button
+        # for. The name arrives moments later as a `meta` frame.
+        self._start_metadata(message)
 
         await self.transport.send(
             {
@@ -509,6 +520,48 @@ class MeetingSession:
         )
         self._start_caption(kid, url=url, hash_=hash_, t_ms=t_ms)
         return kid
+
+    def _start_metadata(self, message: Frame) -> Any:
+        """Name the meeting in the background (MS17). Returns the task, or ``None``.
+
+        Nothing is scheduled when there is neither a window title nor a calendar to ask —
+        which is most installs, and a task that resolves to an empty dict is a task nobody
+        needed.
+        """
+        window_title = str(message.get("window_title") or "").strip()
+        if not window_title and self.calendar is None:
+            return None
+        try:
+            loop = asyncio.get_event_loop()
+            task = loop.create_task(self._metadata(window_title))
+        except RuntimeError:  # pragma: no cover
+            return None
+        self.metadata_task = task
+        return task
+
+    async def _metadata(self, window_title: str) -> None:
+        """Fill in the title, source, attendees and link, and say so. Never raises."""
+        from . import metadata as metadata_mod
+
+        try:
+            written = await metadata_mod.enrich(
+                self.meeting_id,
+                window_title=window_title,
+                started_at=self.started_at,
+                invoke=self.calendar,
+            )
+        except Exception:  # noqa: BLE001 — an unnamed meeting is a complete meeting
+            log.exception("meetingsense: metadata failed for %s", self.meeting_id)
+            return
+        if not written:
+            return
+        try:
+            # Its own frame rather than a `status`: this is the meeting acquiring a name,
+            # which the card shows in a different place from the counters, and a client that
+            # has never heard of `meta` ignores it under the same silent-ignore rule.
+            await self.transport.send({"type": "meta", "meeting_id": self.meeting_id, **written})
+        except Exception:  # noqa: BLE001
+            log.debug("meetingsense: could not send the meta frame", exc_info=True)
 
     def _start_caption(self, keyframe_id: str, *, url: str, hash_: Optional[str], t_ms: int) -> Any:
         """Schedule captioning for one keyframe. Returns the task, or ``None``.
