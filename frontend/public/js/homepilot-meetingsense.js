@@ -1191,6 +1191,10 @@
                         emit('ms:segment', frame);
                     } else if (frame.type === 'partial') {
                         emit('ms:partial', frame);
+                    } else if (frame.type === 'slide') {
+                        // Two of these arrive for one slide: the frame when it is taken, and
+                        // again when the caption lands. The card upserts on `id` (MS10).
+                        emit('ms:slide', frame);
                     } else if (frame.type === 'status' || frame.type === 'final') {
                         emit('ms:status', frame);
                     } else if (frame.type === 'error') {

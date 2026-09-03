@@ -482,6 +482,14 @@ class MeetingSession:
         hash_ = message.get("hash")
         kid = store.add_keyframe(self.meeting_id, t_ms=t_ms, url=url, hash=hash_)
         self.keyframe_count += 1
+        # Announced before it is captioned, and again once it is (MS10). The strip has to show
+        # a slide the moment it is taken — an install with no vision model would otherwise have
+        # an empty strip for a meeting full of slides, and a slide that appears three seconds
+        # late looks like a slide that was missed. A client upserts on `id`.
+        await self.transport.send(
+            {"type": "slide", "id": kid, "t": t_ms, "url": url, "hash": hash_,
+             "caption": None, "reused": False}
+        )
         self._start_caption(kid, url=url, hash_=hash_, t_ms=t_ms)
         return kid
 

@@ -16,6 +16,7 @@ import {
     EMPTY_VIEW,
     UNDO_WINDOW_MS,
     mergeSegment,
+    mergeSlide,
     type MeetingView,
     type Phase,
 } from './meetingState';
@@ -68,6 +69,11 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         const onPartial = (event: Event) => {
             patch({ partial: (event as CustomEvent).detail });
         };
+        const onSlide = (event: Event) => {
+            const detail = (event as CustomEvent).detail;
+            if (!detail || !detail.url) return;
+            setView((current) => ({ ...current, slideList: mergeSlide(current.slideList, detail) }));
+        };
         const onStatus = (event: Event) => {
             const detail = (event as CustomEvent).detail || {};
             setView((current) => ({
@@ -89,6 +95,7 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         const handlers: Array<[string, EventListener]> = [
             ['ms:segment', onSegment],
             ['ms:partial', onPartial],
+            ['ms:slide', onSlide],
             ['ms:status', onStatus],
             ['ms:reconnecting', onReconnecting],
             ['ms:resumed', onResumed],

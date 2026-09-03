@@ -19,6 +19,24 @@ this is reachable and no table is created.
 
 ## W3 — Eyes
 
+### MS10 — slides in the card · `PENDING`
+
+- `SlideStrip.tsx`: a strip under the transcript, and a lightbox joining a slide's caption to
+  the transcript spoken while it was up. `mergeSlide` and `segmentsDuring` in `meetingState`,
+  because the join is the claim of the batch and a renderer is the wrong place to test an
+  interval boundary.
+- **The join is half-open at the next slide.** A segment whose `t0` equals the next slide's
+  timestamp belongs to the next slide — the words began as it went up — and a closed interval
+  would file the opening sentence of every slide under the one before it. Attribution is by
+  where a segment *starts*, so a sentence spanning a change appears once.
+- **The server now announces a keyframe twice**: when it is taken, and again when the caption
+  lands. The strip upserts on `id`. Without the first frame an install with no vision model
+  has an empty strip for a meeting full of slides, and a slide that appears three seconds
+  late looks like a slide that was missed.
+- **A defect a test of my own found:** `mergeSlide` spread the incoming frame over the stored
+  one, so a `caption: null` arriving out of order across a reconnect would erase a caption
+  already on screen. Fields are now only overwritten by a value that says something.
+
 ### MS9 — the keyframe scheduler, and captions · `0e0281f`
 
 - **Client** (`homepilot-meetingsense.js`, mirrored): a 500 ms sampler → 64×36 gray → dHash and

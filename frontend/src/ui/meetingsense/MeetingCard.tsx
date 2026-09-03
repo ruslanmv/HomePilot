@@ -18,8 +18,13 @@
  * The transcript is a `<section aria-label="Live transcript">` with `aria-live="polite"`, and
  * each line a `<p data-t0>` — the timestamp is data, not decoration, and MS10's slide join
  * reads it.
+ *
+ * MS10 hangs the slide strip below the transcript rather than beside it: a strip in the margin
+ * competes with the transcript for the same attention and adds a horizontal scroll on every
+ * phone, and the slides are the thing a reader goes looking for rather than watches.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import SlideStrip from './SlideStrip';
 import {
     latencyLabel,
     shouldStickToBottom,
@@ -133,6 +138,11 @@ export function MeetingCard({ view, compact = false, lastLines = 3, onExport }: 
                 ))}
                 {view.partial ? <Line segment={{ ...view.partial }} provisional /> : null}
             </section>
+
+            {/* Under the transcript, not beside it: the transcript is what the reader is
+                following, and a strip in the margin competes with it for the same attention
+                while adding a horizontal scroll on every phone. */}
+            <SlideStrip slides={view.slideList} segments={view.segments} compact={compact} />
 
             {unseen > 0 && !stuck ? (
                 <button type="button" className="ms-card__jump" onClick={jumpToBottom} data-testid="ms-jump">

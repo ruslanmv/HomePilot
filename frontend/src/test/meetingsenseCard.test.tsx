@@ -18,6 +18,7 @@ import { render, screen, act, fireEvent } from '@testing-library/react';
 import axe from 'axe-core';
 
 import { MeetingCard } from '../ui/meetingsense/MeetingCard';
+import { SlideStrip } from '../ui/meetingsense/SlideStrip';
 import { RecordingPill } from '../ui/meetingsense/RecordingPill';
 import {
     ConsentSheet,
@@ -33,7 +34,10 @@ import {
     elapsedLabel,
     latencyLabel,
     mergeSegment,
+    mergeSlide,
     meterLevel,
+    segmentsDuring,
+    slideLabel,
     phaseLabel,
     shouldStickToBottom,
     speakerLabel,
@@ -662,5 +666,253 @@ describe('useMeetingSense', () => {
         render(<Harness recorder={null} target={target} />);
         const result = await (Harness as any).last.start({ conversationId: 'c' });
         expect(result.ok).toBe(false);
+    });
+});
+
+// ── slides (MS10) ───────────────────────────────────────────────────────────
+
+/**
+ * The strip is a renderer; the join is the claim. A slide on its own is a picture of a screen,
+ * and a picture of a screen is not why anybody records a meeting — joined to the words spoken
+ * while it was up, it answers "what were they saying when this chart was on?".
+ *
+ * The boundary is where a join like this is right or wrong, so most of these are about one
+ * millisecond either side of a slide change.
+ */
+
+const slide = (id: string, t: number, caption: string | null = null) => ({
+    id,
+    t,
+    url: `/files/${id}.jpg`,
+    caption,
+});
+
+const at = (id: string, t0: number, text: string) => ({ id, t0, text, speaker: 'them' as const });
+
+describe('mergeSlide', () => {
+    it('upserts on id, because one slide arrives twice', () => {
+        // Taken, then captioned. Appending both would put the same picture in the strip twice
+        // with one of them blank.
+        const taken = mergeSlide([], slide('k1', 4000));
+        const captioned = mergeSlide(taken, { id: 'k1', t: 4000, url: '/files/k1.jpg', caption: 'Q3 revenue.' });
+        expect(captioned).toHaveLength(1);
+        expect(captioned[0].caption).toBe('Q3 revenue.');
+    });
+
+    it('merges rather than replaces, so a caption-only frame keeps the url', () => {
+        const taken = mergeSlide([], slide('k1', 4000));
+        const merged = mergeSlide(taken, { id: 'k1', url: '', caption: 'Q3 revenue.' } as any);
+        expect(merged[0].url).toBe('/files/k1.jpg');
+    });
+
+    it('never blanks a caption already on screen with a later empty one', () => {
+        // The two frames for one slide can arrive in either order across a reconnect, and a
+        // `caption: null` from the "taken" frame landing second would erase a caption the
+        // reader has already read — which is exactly what §2a forbids.
+        const captioned = mergeSlide([], { ...slide('k1', 4000), caption: 'Q3 revenue.' });
+        const later = mergeSlide(captioned, slide('k1', 4000));
+        expect(later[0].caption).toBe('Q3 revenue.');
+    });
+
+    it('keeps the strip in time order however the frames arrive', () => {
+        // A caption for slide 2 can land after slide 3 has been taken. Appending on arrival
+        // would leave the strip in the order the vision model happened to answer in.
+        let slides = mergeSlide([], slide('k1', 4000));
+        slides = mergeSlide(slides, slide('k3', 40_000));
+        slides = mergeSlide(slides, slide('k2', 20_000));
+        expect(slides.map((s) => s.id)).toEqual(['k1', 'k2', 'k3']);
+    });
+});
+
+describe('segmentsDuring — the join', () => {
+    const slides = [slide('k1', 10_000), slide('k2', 20_000), slide('k3', 30_000)];
+
+    it('takes the words spoken between one slide and the next', () => {
+        const segments = [
+            at('a', 5_000, 'before any slide'),
+            at('b', 12_000, 'about slide one'),
+            at('c', 22_000, 'about slide two'),
+        ];
+        expect(segmentsDuring(slides, segments, 0).map((s) => s.id)).toEqual(['b']);
+        expect(segmentsDuring(slides, segments, 1).map((s) => s.id)).toEqual(['c']);
+    });
+
+    it('is half-open at the boundary: a segment starting on the change belongs to the new slide', () => {
+        // The one that decides whether the join is right. A closed interval would put the
+        // opening sentence of every slide under the slide before it — which is exactly the
+        // sentence that says what the new slide is about.
+        const segments = [at('edge', 20_000, 'so, moving on to the architecture')];
+        expect(segmentsDuring(slides, segments, 0)).toEqual([]);
+        expect(segmentsDuring(slides, segments, 1).map((s) => s.id)).toEqual(['edge']);
+    });
+
+    it('a millisecond before the change still belongs to the slide that was up', () => {
+        const segments = [at('just', 19_999, 'and that is the revenue picture')];
+        expect(segmentsDuring(slides, segments, 0).map((s) => s.id)).toEqual(['just']);
+        expect(segmentsDuring(slides, segments, 1)).toEqual([]);
+    });
+
+    it('attributes a sentence spanning a change to the slide it began under, once', () => {
+        // Splitting on overlap would show the same words under two slides, and a reader who
+        // has just read them under slide 1 does not need them again under slide 2.
+        const segments = [{ ...at('span', 19_000, 'this chart, and the next one too'), t1: 24_000 }];
+        expect(segmentsDuring(slides, segments, 0).map((s) => s.id)).toEqual(['span']);
+        expect(segmentsDuring(slides, segments, 1)).toEqual([]);
+    });
+
+    it('the last slide runs to the end of the meeting', () => {
+        const segments = [at('late', 90_000, 'any questions?')];
+        expect(segmentsDuring(slides, segments, 2).map((s) => s.id)).toEqual(['late']);
+    });
+
+    it('words spoken before the first slide belong to no slide', () => {
+        // They are in the transcript, where they belong. Attaching them to slide 1 would put
+        // the pre-meeting chat under the title slide.
+        const segments = [at('early', 1_000, 'can everyone hear me?')];
+        expect(segmentsDuring(slides, segments, 0)).toEqual([]);
+    });
+
+    it('an index nobody has is empty rather than a crash', () => {
+        expect(segmentsDuring(slides, [at('a', 15_000, 'x')], 9)).toEqual([]);
+        expect(segmentsDuring([], [at('a', 15_000, 'x')], 0)).toEqual([]);
+    });
+});
+
+describe('slideLabel', () => {
+    it('says a slide is not captioned rather than showing a blank', () => {
+        expect(slideLabel(slide('k1', 0))).toBe('Not captioned');
+        expect(slideLabel({ ...slide('k1', 0), caption: '   ' })).toBe('Not captioned');
+    });
+
+    it('uses the caption when there is one', () => {
+        expect(slideLabel(slide('k1', 0, 'Q3 revenue, up 14%.'))).toBe('Q3 revenue, up 14%.');
+    });
+});
+
+describe('SlideStrip', () => {
+    const slides = [slide('k1', 10_000, 'The agenda.'), slide('k2', 20_000)];
+    const segments = [at('a', 12_000, 'first, the numbers'), at('b', 25_000, 'and the architecture')];
+
+    it('renders nothing at all when a meeting had no slides', () => {
+        // Not an empty strip with a heading: a meeting with no slides should not grow a
+        // section announcing that it has none.
+        render(<SlideStrip slides={[]} segments={segments} />);
+        expect(screen.queryByTestId('ms-slides')).toBeNull();
+    });
+
+    it('shows one entry per slide, with the timestamp and the caption', () => {
+        render(<SlideStrip slides={slides} segments={segments} />);
+        const entries = screen.getAllByTestId('ms-slide');
+        expect(entries).toHaveLength(2);
+        expect(entries[0]).toHaveAccessibleName('00:00:10 — The agenda.');
+        expect(entries[1]).toHaveAccessibleName('00:00:20 — Not captioned');
+    });
+
+    it('opening a slide shows what was said while it was up', () => {
+        render(<SlideStrip slides={slides} segments={segments} />);
+        fireEvent.click(screen.getAllByTestId('ms-slide')[0]);
+        expect(screen.getByTestId('ms-lightbox-caption')).toHaveTextContent('The agenda.');
+        expect(screen.getAllByTestId('ms-lightbox-line').map((p) => p.textContent)).toEqual([
+            expect.stringContaining('first, the numbers'),
+        ]);
+    });
+
+    it('says so when nobody spoke over a slide, rather than showing a blank panel', () => {
+        render(<SlideStrip slides={slides} segments={[at('b', 25_000, 'later')]} />);
+        fireEvent.click(screen.getAllByTestId('ms-slide')[0]);
+        expect(screen.getByTestId('ms-lightbox-silent')).toBeTruthy();
+    });
+
+    it('arrow keys move between slides and Escape closes', () => {
+        render(<SlideStrip slides={slides} segments={segments} />);
+        fireEvent.click(screen.getAllByTestId('ms-slide')[0]);
+        fireEvent.keyDown(document, { key: 'ArrowRight' });
+        expect(screen.getByTestId('ms-lightbox-caption')).toHaveTextContent('Not captioned');
+        fireEvent.keyDown(document, { key: 'Escape' });
+        expect(screen.queryByTestId('ms-lightbox')).toBeNull();
+    });
+
+    it('does not walk off either end', () => {
+        render(<SlideStrip slides={slides} segments={segments} />);
+        fireEvent.click(screen.getAllByTestId('ms-slide')[0]);
+        fireEvent.keyDown(document, { key: 'ArrowLeft' });
+        expect(screen.getByTestId('ms-lightbox-caption')).toHaveTextContent('The agenda.');
+        fireEvent.keyDown(document, { key: 'ArrowRight' });
+        fireEvent.keyDown(document, { key: 'ArrowRight' });
+        expect(screen.getByTestId('ms-lightbox-caption')).toHaveTextContent('Not captioned');
+    });
+
+    it('the thumbnail image is decorative; the button carries the name', () => {
+        // The caption is on the button, so a screen reader reads "00:00:10 — The agenda,
+        // button" rather than the caption twice or "image, button".
+        render(<SlideStrip slides={slides} segments={segments} />);
+        const image = screen.getAllByTestId('ms-slide')[0].querySelector('img');
+        expect(image?.getAttribute('alt')).toBe('');
+    });
+
+    it('has no accessibility violations, strip or lightbox', async () => {
+        render(<SlideStrip slides={slides} segments={segments} />);
+        const run = async () =>
+            (await axe.run(document.body, { rules: { 'color-contrast': { enabled: false } } })).violations.map(
+                (v) => v.id,
+            );
+        expect(await run()).toEqual([]);
+        fireEvent.click(screen.getAllByTestId('ms-slide')[0]);
+        expect(await run()).toEqual([]);
+    });
+});
+
+describe('the card and the hook, with slides', () => {
+    /** The card driven by the real hook, so a `slide` frame is followed end to end. */
+    function SlideHarness({ target }: { target: EventTarget }) {
+        const ms = useMeetingSense({ recorder: null, target });
+        return <MeetingCard view={ms.view} />;
+    }
+
+    it('the card hangs the strip under the transcript', () => {
+        render(
+            <MeetingCard
+                view={view({
+                    segments: [at('a', 12_000, 'first, the numbers')],
+                    slideList: [slide('k1', 10_000, 'The agenda.')],
+                })}
+            />,
+        );
+        const card = screen.getByTestId('ms-card');
+        const nodes = Array.from(card.querySelectorAll('[data-testid]'));
+        const transcript = nodes.indexOf(screen.getByTestId('ms-transcript'));
+        const strip = nodes.indexOf(screen.getByTestId('ms-slides'));
+        expect(strip).toBeGreaterThan(transcript);
+    });
+
+    it('a slide frame reaches the strip, and its caption fills in without a second entry', () => {
+        const target = new EventTarget();
+        render(<SlideHarness target={target} />);
+        act(() => {
+            target.dispatchEvent(
+                new CustomEvent('ms:slide', { detail: { id: 'k1', t: 4000, url: '/files/k1.jpg', caption: null } }),
+            );
+        });
+        expect(screen.getAllByTestId('ms-slide')).toHaveLength(1);
+        expect(screen.getAllByTestId('ms-slide')[0]).toHaveAccessibleName('00:00:04 — Not captioned');
+
+        act(() => {
+            target.dispatchEvent(
+                new CustomEvent('ms:slide', {
+                    detail: { id: 'k1', t: 4000, url: '/files/k1.jpg', caption: 'The roadmap.' },
+                }),
+            );
+        });
+        expect(screen.getAllByTestId('ms-slide')).toHaveLength(1);
+        expect(screen.getAllByTestId('ms-slide')[0]).toHaveAccessibleName('00:00:04 — The roadmap.');
+    });
+
+    it('a malformed slide frame is ignored rather than rendering a broken thumbnail', () => {
+        const target = new EventTarget();
+        render(<SlideHarness target={target} />);
+        act(() => {
+            target.dispatchEvent(new CustomEvent('ms:slide', { detail: { id: 'k1', t: 4000 } }));
+        });
+        expect(screen.queryByTestId('ms-slides')).toBeNull();
     });
 });

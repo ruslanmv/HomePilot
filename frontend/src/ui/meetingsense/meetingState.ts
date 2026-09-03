@@ -29,6 +29,19 @@ export interface Partial {
     text: string;
 }
 
+/** One captured keyframe (MS9/MS10). ``caption`` is null until the model answers, and stays
+ *  null forever on an install with no vision model — which is a complete meeting. */
+export interface Slide {
+    id?: string;
+    /** Milliseconds into the meeting, on the *same* clock as a segment's ``t0``. */
+    t?: number;
+    url: string;
+    caption?: string | null;
+    hash?: string | null;
+    /** The same picture as an earlier slide, captioned once. */
+    reused?: boolean;
+}
+
 export type Phase = 'idle' | 'live' | 'reconnecting' | 'stopping' | 'ended';
 
 export interface MeetingView {
@@ -42,7 +55,10 @@ export interface MeetingView {
     levels: number[];
     provider: string | null;
     audioMode: string | null;
+    /** How many keyframes the *server* has. Can lead ``slideList`` by a frame while one is
+     *  still in flight, which is why the pill reads this and the strip reads the list. */
     slides: number;
+    slideList: Slide[];
     error: string | null;
 }
 
@@ -58,6 +74,7 @@ export const EMPTY_VIEW: MeetingView = {
     provider: null,
     audioMode: null,
     slides: 0,
+    slideList: [],
     error: null,
 };
 
@@ -82,6 +99,75 @@ export function mergeSegment(segments: Segment[], incoming: Segment): Segment[] 
     const next = segments.concat(incoming);
     if (incoming.seq === undefined) return next;
     return next.sort((a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER));
+}
+
+/**
+ * Add or update a slide, keeping the strip in time order.
+ *
+ * An upsert rather than an append, because one slide arrives twice: once when the recorder
+ * takes it, and again when the caption lands seconds later. Appending both would put the same
+ * picture in the strip twice with one of them blank.
+ *
+ * This does not break §2a's "nothing already shown changes". A caption arriving fills a blank
+ * that was visibly a blank — the thumbnail, its position and its timestamp are all unchanged.
+ * What that rule forbids is *rewriting* something the reader has already read.
+ *
+ * Ordered by ``t``: a caption for slide 2 can land after slide 3 has been taken, and appending
+ * on arrival would leave the strip in the order the model happened to answer in.
+ */
+export function mergeSlide(slides: Slide[], incoming: Slide): Slide[] {
+    const at = incoming.id ? slides.findIndex((s) => s.id === incoming.id) : -1;
+    const next = slides.slice();
+    if (at !== -1) {
+        // Merged field by field, and **only by a value that says something**. A plain spread
+        // looks equivalent and is not: the two frames for one slide can arrive in either
+        // order across a reconnect, so the "taken" frame's `caption: null` can land after the
+        // captioned one and would erase a caption the reader has already read. Same for a
+        // frame that omits the url — it would blank the thumbnail on screen.
+        const merged: Record<string, unknown> = { ...next[at] };
+        for (const [key, value] of Object.entries(incoming)) {
+            if (value === undefined || value === null || value === '') continue;
+            merged[key] = value;
+        }
+        next[at] = merged as unknown as Slide;
+    } else {
+        next.push(incoming);
+    }
+    return next.sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+}
+
+/**
+ * The transcript spoken while one slide was up — MS10's join, and the reason keyframes carry
+ * the transcript's clock rather than a wall clock.
+ *
+ * **Half-open on the start of the next slide.** A segment whose ``t0`` equals the next slide's
+ * timestamp belongs to that next slide: the words began as the new slide went up, and a
+ * closed interval would put the opening sentence of every slide under the one before it.
+ *
+ * **Attribution is by where a segment *starts*.** A sentence that ran across a slide change
+ * belongs to the slide it began under. The alternative — splitting on overlap — would show the
+ * same words under two slides, and a reader who has just read them under slide 3 does not need
+ * to read them again under slide 4.
+ */
+export function segmentsDuring(slides: Slide[], segments: Segment[], index: number): Segment[] {
+    const slide = slides[index];
+    if (!slide) return [];
+    const from = slide.t ?? 0;
+    const nextSlide = slides[index + 1];
+    const to = nextSlide ? (nextSlide.t ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+    return segments.filter((segment) => {
+        const t0 = segment.t0 ?? 0;
+        return t0 >= from && t0 < to;
+    });
+}
+
+/** What a strip entry says under its thumbnail. */
+export function slideLabel(slide: Slide): string {
+    const caption = (slide.caption || '').trim();
+    // Not "no caption": the difference between "the model has not answered yet" and "there is
+    // no model here" is not something the strip can tell, and either way what the reader can
+    // act on is the timestamp and the picture.
+    return caption || 'Not captioned';
 }
 
 /** ``mm:ss``, or ``h:mm:ss`` once a meeting runs past the hour. */

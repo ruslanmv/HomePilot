@@ -302,8 +302,12 @@ class TestSessionKeyframes:
         session, kid = run(scenario())
         assert modules.store.get_keyframe(kid)["caption"] == "The roadmap slide."
         slides = [f for f in session.transport.frames if f.get("type") == "slide"]
-        assert [f["id"] for f in slides] == [kid]
-        assert slides[0]["t"] == 4000
+        # Two frames for one slide, in this order: the slide exists the moment it is taken, and
+        # the caption fills in seconds later. The strip upserts on `id` — a slide that only
+        # appeared once the model answered would look like a slide that was missed.
+        assert [f["id"] for f in slides] == [kid, kid]
+        assert [f["caption"] for f in slides] == [None, "The roadmap slide."]
+        assert {f["t"] for f in slides} == {4000}
 
     def test_captioning_does_not_block_the_frame_loop(self, modules):
         # The claim `on_keyframe` makes: it returns before the model does. A meeting whose
@@ -346,7 +350,10 @@ class TestSessionKeyframes:
         session, kid = run(scenario())
         assert modules.store.get_keyframe(kid)["url"] == "/files/a.jpg"
         assert session.caption_tasks == []
-        assert [f for f in session.transport.frames if f.get("type") == "slide"] == []
+        # The slide is still announced. An install with no vision model gets a strip of
+        # timestamped thumbnails, which is a complete meeting rather than an empty strip.
+        slides = [f for f in session.transport.frames if f.get("type") == "slide"]
+        assert [(f["id"], f["caption"]) for f in slides] == [(kid, None)]
 
     def test_stop_waits_for_the_caption_the_summary_is_about_to_quote(self, modules):
         # finalize writes the summary message inside `stop`. A caption that lands a second

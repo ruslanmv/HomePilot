@@ -477,8 +477,14 @@ class TestOtherFrames:
         with client.websocket_connect("/v1/meetingsense/session") as ws:
             ready = start(ws)
             ws.send_json({"type": "keyframe", "t": 4_000, "url": "/files/slide-1.png"})
+            # MS10: the slide is announced the moment it is taken, before any caption. The
+            # strip has to show it now — a slide that appeared only once a vision model
+            # answered would look like a slide that was missed.
+            slide = ws.receive_json()
             ws.send_json({"type": "status"})
             status = ws.receive_json()
+        assert slide["type"] == "slide"
+        assert (slide["t"], slide["url"], slide["caption"]) == (4_000, "/files/slide-1.png", None)
         assert status["slides"] == 1
         assert modules.store.get_keyframes(ready["meeting_id"])[0]["url"] == "/files/slide-1.png"
 

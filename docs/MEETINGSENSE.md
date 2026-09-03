@@ -11,10 +11,12 @@ the meeting landing in History as a titled conversation.
 Slides are captured and captioned too (MS9): the recorder watches the shared screen, decides
 which frames are a *new thing to look at*, and a local vision model describes each one.
 
-**What does not, yet:** the slide strip in the card (MS10) and desktop system-audio loopback
-(MS11) — the rest of W3. Everything else in the recorder works: rolling notes, a summary that
-carries its own recap and decisions, asking a question about a meeting live or afterwards,
-export, and one-call deletion.
+The card shows them as a strip, and opening one shows the caption beside the words spoken
+while that slide was up (MS10).
+
+**What does not, yet:** desktop system-audio loopback (MS11) — the last row of W3. Everything
+else in the recorder works: rolling notes, a summary that carries its own recap and decisions,
+asking a question about a meeting live or afterwards, export, and one-call deletion.
 
 The order of work, and the reasoning behind each decision, is
 [`docs/design/MEETINGSENSE_BATCHES.md`](design/MEETINGSENSE_BATCHES.md). What changed when is
@@ -317,6 +319,31 @@ D4 a meeting is retrieved from, never extracted into long-term memory.
 
 **No vision model is a complete meeting, not a degraded one.** Slides are still captured, and
 the strip shows timestamps with no captions.
+
+### The strip, and the join (MS10)
+
+Slides hang under the transcript rather than beside it: a strip in the margin competes with the
+transcript for the same attention and adds a horizontal scroll on every phone, and the slides
+are what a reader goes looking for rather than what they watch.
+
+**Two `slide` frames arrive for one slide** — one when the recorder takes it, one when the
+caption lands seconds later. The card upserts on `id`. A slide that only appeared once the
+model answered would look, for those seconds, like a slide that was missed.
+
+Opening one shows the caption **and the transcript spoken while it was up**, which is the
+point of the batch: a slide on its own is a picture of a screen, and a picture of a screen is
+not why anybody records a meeting. Two rules make the join right:
+
+- **Half-open at the next slide.** A segment whose `t0` equals the next slide's timestamp
+  belongs to the *next* slide — the words began as the new slide went up. A closed interval
+  would file the opening sentence of every slide under the one before it, and that sentence is
+  usually the one that says what the new slide is about.
+- **Attribution by where a segment starts.** A sentence that ran across a slide change belongs
+  to the slide it began under, once. Splitting on overlap would show the same words under two
+  slides.
+
+This is why keyframes carry the transcript's clock (above). The join is exact because there is
+one clock, not two that agree to within a second.
 
 ### What the automated tests cover, and what they cannot
 
@@ -754,7 +781,7 @@ cd backend && python3 -m pytest tests/meetingsense/test_ask.py -q            # 4
 cd backend && python3 -m pytest tests/meetingsense/test_keyframes.py -q     # 26  (MS9)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 84  (MS4, MS4-a, MS9)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 39  (MS5)
-cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 66  (MS6)
+cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 90  (MS6 + MS10)
 ```
 
 MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to include `js` and
@@ -762,18 +789,17 @@ MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to in
 phone/call primitives suite among them — which had never run in CI since they were written.
 All of them pass; nothing was fixed to make that true.
 
-**W0, W1, W2 and W4 are complete, and W3 is half of the way through.** A meeting records,
-resumes, transcribes, takes rolling notes, answers questions, summarises itself into History,
-exports, deletes, works from a hosted page — and now captures and captions its slides.
+**W0, W1, W2 and W4 are complete, and W3 needs only MS11.** A meeting records, resumes,
+transcribes, takes rolling notes, answers questions, summarises itself into History, exports,
+deletes, works from a hosted page — and now captures its slides, captions them, and shows each
+one beside what was said while it was up.
 
-**Three wiring seams are open**, and it is worth being exact about which:
+**Two wiring seams are open**, and it is worth being exact about which:
 
 1. MS5's **Start session** calls an `onStart` callback and the host application decides what
    to mount it against. Everything it needs — the hook, the card, the pill, the consent sheet
    — exists and is tested. Deliberate.
-2. **The slide strip is MS10.** Keyframes are captured, captioned and returned by
-   `GET /v1/meetingsense/{id}`; nothing renders them yet.
-3. **MS12's `NotesEngine` is not constructed by either transport.** `start` echoes
+2. **MS12's `NotesEngine` is not constructed by either transport.** `start` echoes
    `notes: true` back to a client, `MeetingSession` accepts a `notes=` engine and drives it
    correctly, and no route builds one — so no meeting has ever produced a `notes` frame. The
    engine and its 60 tests are right; the four lines that hand one to the session are missing.
