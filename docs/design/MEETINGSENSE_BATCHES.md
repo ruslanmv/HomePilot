@@ -5,36 +5,29 @@ Same discipline as `docs/design/MONOREPO_BATCHES.md`: small, additive, flag-gate
 independently shippable batches. **Every batch leaves the existing app green with all
 flags off.** One batch = one Claude Code session = one PR.
 
-**Revision 5 — after MS3.** Supersedes revisions 1–4 and keeps their structure, decisions
-D1–D7 and MS numbering. What changed is what implementing MS2 and MS3 taught, plus three
-decisions (D8–D10) and one section (§2a) that fix the *experience* bar before the first
-user-facing batch (MS4) is written.
+**Revision 6 — after MS8. W0, W1 and W2 are complete.** Supersedes revisions 1–5 and keeps
+their structure, decisions D1–D10, §2a and the MS numbering. Where this file and a design
+document disagree, **this file wins**: the design documents are the spec for *what*, this file
+is the contract for *how and in what order*.
 
-Reflects the branch at `be286c0` — MS0–MS3 landed, **191 tests** under
-`backend/tests/meetingsense/`; the backend now has a session core, a store and a local
-WebSocket that transcribes two-channel audio into timed, speaker-tagged segments. Nothing is
-visible to a user yet: MS4–MS6 are the first batches that touch the frontend. Where this file and a design document disagree, **this file
-wins**; the design documents are the spec for *what*, this file is the contract for *how and
-in what order*.
+Reflects the branch at `f1028d5`. **316 tests** under `backend/tests/meetingsense/`, 434 in the
+frontend, 61 in `ruslanmv/ollabridge`'s avatar suite. A meeting can be recorded end to end —
+from the browser on the machine running HomePilot, or from a hosted avatar page through
+OllaBridge — survives a dropped connection, renders live, and exports.
 
-Changed in rev 5:
+Changed in rev 6:
 
-* **§2a Experience quality bar** — the industry-standard behaviours a live-transcription UI is
-  judged on (latency states, no layout jumps, reconnect with resume, degraded-mode honesty,
-  accessibility, undo). Each is assigned to the batch that first puts it at risk, so it is
-  tested there rather than remembered later.
-* **D8 Memory is storage + retrieval, never agent-managed.** Closes the "do we need deep
-  agents for memory" question: no.
-* **D9 Context compaction is three tiers with one budget** — the same shape Claude and ChatGPT
-  use — because HomePilot's chat path passes only the last 6 messages (`main.py:4951`) and
-  drops the rest, which is fatal for a two-hour meeting. Lands as a `recap` field in MS12, a
-  budget assertion in MS18, and an idempotent resume in MS3-a/MS4.
-* **D10 Reconnect resumes, never restarts.** A dropped socket ends the meeting today (MS3);
-  from MS4 on, the client must be able to resume the same `meeting_id` within a grace window.
-* §1 gains the rows MS2/MS3 produced (wire names, error shape, `audio.py`) and one new
-  fact: the chat history window.
-* MS2/MS3 rows record their real acceptance; MS3-a carried.
-* §7 gains the transport contracts MS3 created.
+* **W1 and W2 marked done**, with each row carrying what was actually verified rather than what
+  was scoped. MS4-a exists because rev 5 expanded MS4 after it had been built.
+* §1 gains four facts the work produced: there is **no `conversations` table**; the vitest glob
+  was excluding 17 files; the protocol fixture set is **shared byte-for-byte with
+  `ruslanmv/3D-Avatar-Chatbot`**; and the resume replay deviates from D10 deliberately.
+* §7 gains the byte-level form of the OllaBridge pipe claim and the cross-repo fixture rule.
+* **§0 gains the lessons of nine batches** — the traps that cost real time, so the next session
+  does not rediscover them.
+* Changelog entries now live in [`docs/MEETINGSENSE_CHANGELOG.md`](../MEETINGSENSE_CHANGELOG.md).
+  §0 has asked for one since MS0; the repository has no changelog and never had, so the file was
+  created at rev 6 and backfilled rather than a repo-wide convention being invented mid-feature.
 
 ---
 
@@ -75,9 +68,31 @@ Rules:
   - Every UI batch checks its rows in §2a (experience quality bar) and ships the test named there.
   - Memory and context follow D8/D9: no agent decides what is remembered; the prompt budget for
     meeting context is fixed and asserted; the transcript is never in the prompt, it is retrieved.
-  - Finish by updating the Status column of this file and writing a short CHANGELOG entry.
+  - Finish by updating the Status column of this file and adding an entry to
+    docs/MEETINGSENSE_CHANGELOG.md (the repo has no other changelog; that file is the one §0
+    means).
   - Do not start the next batch. Stop, report what was verified, how to run it, and what
     you could not verify from here.
+
+Traps that cost real time in MS0-MS8. Each of these passed review once and was wrong:
+  - A test that HANGS instead of failing. `[receive_json() for _ in range(n)]` blocks forever
+    when the server sends fewer frames than expected, and CI reports a timeout with no
+    diagnosis. Bound every read: send a ping, stop at the pong.
+  - `pytest.approx` on a Unix timestamp. Its default tolerance is RELATIVE — about plus or
+    minus 1700 seconds on 1.7e9 — so the assertion cannot fail. Inject a clock instead.
+  - A byte-identity fixture that is accidentally canonical. A JSON string in `json.dumps`'
+    default format survives a re-serialisation mutant unchanged. Make fixtures non-canonical
+    on purpose.
+  - An ordering-confounded test. Putting the item you expect to be dropped FIRST means
+    "drop by age" and "drop by policy" give the same answer, and the policy could be absent.
+  - Leaked `addEventListener` across tests. The handler closes over the variable, not the
+    array it held, so every earlier test's listener pushes into the current test's events.
+  - Testing the engine and not the ignition. A pure function can be perfect and never called;
+    assert the wiring separately.
+  - jsdom does not lay out or paint. `offsetHeight` is 0 for everything: pixel and contrast
+    claims belong in the manual matrix, not in a vitest that would pass vacuously.
+  - Mutate every load-bearing claim before believing a green suite. Roughly one in six
+    mutations survived first, and every survivor was a real hole.
 ```
 
 ---
@@ -342,7 +357,7 @@ from here. Do not begin the next batch.
 2. ~~MS2~~ ✅ `82c8ff4`, ~~MS3~~ ✅ `15b2b24`. The core and the local wire exist; 191 tests.
 3. ~~MS4~~ ✅ `6ee54ab`, ~~MS5~~ ✅ `1ee3227`, ~~MS3-a~~ ✅ `ada9408`, ~~MS4-a~~ ✅. Built out of rev-5 order — MS4 and MS5 landed against rev 4, then the resume pair caught up. A Wi-Fi blip no longer loses a recording, which was the pilot's largest exposure.
 4. ~~MS6~~ ✅. **W1 is complete**: a recorder, a socket that survives a dropped connection, an entry point, a live card, a pill, consent, and export in three formats.
-5. **Pilot for one week** — and two things gate it, neither of them code. The **10-row browser matrix** in `docs/MEETINGSENSE.md` is unsigned, and rows 1–3 decide whether MeetingSense records at all. **MS1-b** is now load-bearing rather than informational: §2a says the "catching up" threshold derives from the measured real-time factor, and MS6 shipped a provisional 2 s in its place. Take that measurement on the machine that will run meetings.
+5. **Pilot for one week** — [`docs/MEETINGSENSE_PILOT.md`](../MEETINGSENSE_PILOT.md) is what to run, what to write down, and which answer picks W3 or W4. Two things gate it, neither of them code. The **10-row browser matrix** in `docs/MEETINGSENSE.md` is unsigned, and rows 1–3 decide whether MeetingSense records at all. **MS1-b** is now load-bearing rather than informational: §2a says the "catching up" threshold derives from the measured real-time factor, and MS6 shipped a provisional 2 s in its place. Take that measurement on the machine that will run meetings.
 6. ~~MS7–MS8~~ ✅. **W2 is complete**: the same recorder reached from a hosted avatar, with no new URL and no second token, and the pipe claim asserted in bytes on both the direct and the cloud path.
-7. **Order W3 vs W4 by the pilot notes** (missing slides vs. missing notes).
+7. **Order W3 vs W4 by the pilot notes** (missing slides vs. missing notes). The pilot page carries the decision table; do not pick before the week has run.
 8. W5–W7 deliver the "together" and "capability" value; W8–W10 are refinement and can be reordered or dropped.
