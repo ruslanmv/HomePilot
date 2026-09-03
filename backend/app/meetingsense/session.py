@@ -304,6 +304,12 @@ class MeetingSession:
             "slides": self.keyframe_count,
         }
         await self.transport.send(final)
+        # The meeting lands in its conversation here rather than in the route, so both
+        # transports get it: MS7's avatar session ends a meeting through this same method.
+        # Best-effort by construction — see finalize.finalize_meeting.
+        from . import finalize
+
+        finalize.finalize_meeting(self.meeting_id)
         return final
 
     # ── audio in, segments out ──────────────────────────────────────────────

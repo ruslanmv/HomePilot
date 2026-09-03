@@ -430,7 +430,101 @@ check belongs to the manual matrix).
 
 ---
 
-## Verifying MS0 – MS5 (+ MS3-a, MS4-a)
+## The card, the pill and the export (MS6)
+
+The first thing a user actually sees. `frontend/src/ui/meetingsense/` — `meetingState.ts`
+(every decision as a pure function), `MeetingCard.tsx`, `RecordingPill.tsx`,
+`ConsentSheet.tsx`, `useMeetingSense.ts`.
+
+### Stop keeps recording
+
+Pressing **Stop** does not stop the recorder. It starts a ten-second countdown during which
+capture continues, and only then sends `stop`. That is the whole point of the undo: the ten
+seconds somebody spends deciding are usually ten seconds somebody else was still talking, so a
+Stop that stopped immediately would make Undo a lie — you would get the meeting back with a
+hole in it.
+
+### What the card promises
+
+- **Nothing already shown changes.** Segments are keyed by `id`, so the replay after a
+  reconnect is invisible rather than doubling the last few lines — at exactly the moment a
+  "reconnecting" pill has already unsettled the reader. Out-of-order replays sort by `seq`.
+- **No layout jump.** A provisional line is the same element with the same class as the
+  segment that replaces it, so solidifying swaps text in place instead of adding a row.
+- **The reader is never yanked.** New lines scroll into view only when the reader is already
+  at the bottom; otherwise a *"↓ N new lines"* button counts what is waiting and going there
+  stays their decision.
+- **A slow transcript says it is slow.** Over two seconds behind, the card reads
+  *"catching up · N s behind"* from `behind_ms`. Below that it says nothing — a transcript one
+  utterance behind is working normally, and a label that flickers every sentence is worse than
+  none.
+- The transcript is a `<section aria-label="Live transcript" aria-live="polite">` and each line
+  a `<p data-t0>`. The timestamp is data: MS10's slide join reads it.
+
+The pill carries elapsed time, provider, audio mode and a **live level meter** — the meter is
+what answers "is it actually hearing me", which a static red dot never does — as a
+`role="status"` with `aria-live="polite"`, because a screen-reader user has no red dot.
+
+### Consent
+
+The sheet names **which** provider will hear the meeting and **where** the audio goes, built
+from the same `/status` the popover reads. The endpoint is never shown; it can carry a key.
+"Don't show again" is per machine — it is a browser preference and the machine is what has the
+microphone — and it does not cover the reminder to tell participants, which stays in the pill
+on every start. It is a real modal with a hand-rolled focus trap in both directions: tabbing
+out of a consent sheet and starting a recording from a control behind it is the exact outcome
+the sheet exists to prevent.
+
+### Reading a meeting back
+
+| Route | What it gives |
+|---|---|
+| `GET /v1/meetingsense/{id}` | meeting, segments, keyframes, notes, and whether it is live — the card hydrates from this rather than replaying the socket |
+| `GET /v1/meetingsense/{id}/export?fmt=md` | Markdown to paste into a document |
+| `…?fmt=srt` | real cues from `t0`/`t1`, to lay over a recording |
+| `…?fmt=json` | everything, in the shape it is stored |
+
+Both are **404 while the flag is off**, the same answer as a meeting that does not exist —
+`/status` is where a client asks whether the feature exists, and answering it again here would
+let a caller tell a real id from a fabricated one.
+
+**`t1: None` is the normal case on a remote-STT install** (MS1-a is unbuilt), so every format
+handles it. SRT takes the end from the measured `t1`, failing that the next segment's start —
+a real bound, not a guess — and failing both a two-second span; a measured end always wins,
+because taking the next start first would stretch a two-second sentence across a thirty-second
+silence. JSON leaves `t1_ms` null: the other formats have to put something on screen, a data
+export does not, and inventing an end hands the next tool a measurement nobody made.
+
+### Where the meeting lands
+
+**HomePilot has no `conversations` table.** A conversation is `messages` grouped by
+`conversation_id`, and History labels each one with the *content of its last message*. So D5's
+auto-title needs no schema change at all: the meeting message is the last message written when
+a meeting stops, and the D5 title leads it —
+
+```
+[Meeting] 🎙 Q3 planning · teams · 2026-09-03
+00:30:00 · 14 segments · 3 slides
+```
+
+Adding a title column instead would have written a value the existing History view never
+reads. The body is plain text on purpose: a client that has never heard of MeetingSense — an
+export, another persona reading the conversation later — sees an account of the meeting rather
+than a marker and a blank.
+
+Writing it can never break a stop. The transcript is already in the store, which is the part
+that cannot be reconstructed, so a failure here is logged and swallowed.
+
+### What is not covered here
+
+jsdom does not lay out or paint, so *"the DOM height is identical before and after a partial
+solidifies"* cannot be measured in a test. What is asserted is the structural fact underneath
+it — same element, same class, replaced in place. Pixels, and the colour contrast axe-core is
+told to skip, belong to the manual matrix.
+
+---
+
+## Verifying MS0 – MS6
 
 With the flag off — the shipped state:
 
@@ -448,7 +542,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 231
+cd backend && python3 -m pytest tests/meetingsense -q   # 276
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -467,8 +561,10 @@ cd backend && python3 -m pytest tests/meetingsense/test_transcript.py -q     # 3
 cd backend && python3 -m pytest tests/meetingsense/test_session_core.py -q   # 37
 cd backend && python3 -m pytest tests/meetingsense/test_session_ws.py -q     # 40  (MS3)
 cd backend && python3 -m pytest tests/meetingsense/test_resume.py -q         # 50  (MS3-a)
+cd backend && python3 -m pytest tests/meetingsense/test_export.py -q         # 59  (MS6)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 61  (MS4 + MS4-a)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 39  (MS5)
+cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 66  (MS6)
 ```
 
 MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to include `js` and
@@ -476,11 +572,14 @@ MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to in
 phone/call primitives suite among them — which had never run in CI since they were written.
 All of them pass; nothing was fixed to make that true.
 
-What MS0 – MS5 deliberately do **not** do: show a transcript, caption a slide (MS9), or write
-a message into the conversation (MS12). There is a recorder, a socket, and a control that
-offers them — but pressing **Start session** currently calls an `onStart` callback that nothing
-has wired to `hpMeetingSense.start()` yet. The live card, the recording pill and the consent
-sheet are MS6, and that wiring lands with them.
+**W1 is complete.** What it deliberately does not do yet: caption a slide (MS9), take rolling
+notes or write a real summary (MS12, MS14), answer questions about the meeting (MS13), or work
+from a hosted page (W2). The message a meeting leaves is a transcript preview, not a summary —
+MS14 replaces its body.
+
+One wiring seam is left open on purpose: MS5's **Start session** calls an `onStart` callback,
+and the host application decides what to mount it against. Everything it needs — the hook, the
+card, the pill, the consent sheet — exists and is tested.
 
 ---
 

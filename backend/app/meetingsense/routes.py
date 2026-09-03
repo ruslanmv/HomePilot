@@ -24,9 +24,11 @@ import os
 import time
 from typing import Any, Dict
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, Response
 
 from . import audio as audio_wire
+from . import export as export_mod
 from . import session as session_mod
 from . import store
 from .config import load_config
@@ -397,3 +399,73 @@ async def _expire_later(session, grace_s: float) -> None:
             await session_mod.expire_if_due(session, grace_s=grace_s, now=time.time())
         except Exception:  # noqa: BLE001 — a timer must not take the process down
             log.exception("meetingsense: could not expire meeting %s", session.meeting_id)
+
+
+# ── reading a meeting back (MS6) ────────────────────────────────────────────
+
+
+def _require_meeting(meeting_id: str) -> Dict[str, Any]:
+    """Load a meeting, or refuse in a way a client can act on.
+
+    404 for both "no such meeting" and "MeetingSense is off", deliberately: the status
+    endpoint is where a client asks whether the feature exists, and answering that question
+    again from every read would let a caller distinguish a real meeting id from a fabricated
+    one on an install that never enabled the feature.
+    """
+    cfg = load_config()
+    if not cfg.enabled:
+        raise HTTPException(status_code=404, detail="not found")
+    try:
+        meeting = store.get_meeting(meeting_id)
+    except Exception:  # noqa: BLE001 — an install with no tables has no meetings
+        raise HTTPException(status_code=404, detail="not found") from None
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return meeting
+
+
+@router.get("/v1/meetingsense/{meeting_id}")
+async def get_meeting(meeting_id: str) -> Dict[str, Any]:
+    """Everything the card needs to rebuild itself.
+
+    The card hydrates from this rather than replaying the socket, which is what lets a meeting
+    be reopened days later, and what makes a reload during a live meeting cheap.
+    """
+    meeting = _require_meeting(meeting_id)
+    return {
+        "meeting": meeting,
+        "segments": store.get_segments(meeting_id),
+        "keyframes": store.get_keyframes(meeting_id),
+        "notes": store.get_notes(meeting_id),
+        # A live meeting is one with a socket attached right now, which the store cannot know.
+        "live": session_mod.get(meeting_id) is not None
+        and session_mod.get(meeting_id).state == session_mod.MeetingState.LIVE,
+    }
+
+
+@router.get("/v1/meetingsense/{meeting_id}/export")
+async def export_meeting(meeting_id: str, fmt: str = Query("md")) -> Response:
+    """Markdown to paste, SRT to lay over a recording, JSON for anything else."""
+    fmt = (fmt or "md").strip().lower()
+    if fmt not in export_mod.FORMATS:
+        raise HTTPException(status_code=400, detail=f"format must be one of {', '.join(export_mod.FORMATS)}")
+
+    meeting = _require_meeting(meeting_id)
+    segments = store.get_segments(meeting_id)
+    keyframes = store.get_keyframes(meeting_id)
+    notes = store.get_notes(meeting_id)
+    media_type, _ = export_mod.MEDIA_TYPES[fmt]
+    # Named so a download lands in Downloads as something findable rather than as the id.
+    disposition = f'attachment; filename="{export_mod.filename(meeting, fmt)}"'
+
+    if fmt == "json":
+        return JSONResponse(
+            export_mod.to_json(meeting, segments, keyframes, notes),
+            headers={"Content-Disposition": disposition},
+        )
+    body = (
+        export_mod.to_srt(segments)
+        if fmt == "srt"
+        else export_mod.to_markdown(meeting, segments, keyframes, notes)
+    )
+    return Response(content=body, media_type=media_type, headers={"Content-Disposition": disposition})
