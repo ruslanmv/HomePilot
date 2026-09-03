@@ -191,7 +191,79 @@ Not yet done, and not in MS2's scope: a route, a microphone, a UI, captioning a 
 
 ---
 
-## Verifying MS0, MS1 and MS2
+## The session socket (MS3)
+
+`WS /v1/meetingsense/session`. One connection is one meeting.
+
+```
+client → server   start · audio · keyframe · mute · status · stop · ping
+server → client   ready · partial · segment · status · final · error · pong
+```
+
+Unknown types are ignored in both directions. A newer client talking to an older server
+should lose the feature it asked for, not the meeting it is recording.
+
+**Turning the flag off refuses the way the voice route refuses** — the socket is accepted, an
+`error` frame says `disabled`, and then it closes with 1008. Rejecting the handshake instead
+would leave the client unable to tell "disabled" from "wrong URL" from "server down", and the
+popover has to explain which.
+
+### Audio on the wire
+
+`{"type":"audio", "format":"wav"|"pcm16", "data_b64":"…", "t0":ms, "t1":ms}` — the same shape
+as a `/v1/voice/session` frame, so there is one contract to debug rather than two. (A frame
+using the design document's `pcm16_b64` field works too.)
+
+Two things happen to it server-side:
+
+- **A RIFF header goes on raw PCM16.** The provider writes the bytes it is given to a `.wav`
+  temp file; headerless PCM named `.wav` has its first 44 bytes of *speech* read as a header,
+  and the result is a garbled transcript rather than an error.
+- **A stereo frame is split into two transcriptions**, because MS4's mixer keeps system audio
+  and microphone on separate gain nodes rather than summing them. The convention is fixed:
+
+  | channel | speaker | what it is |
+  |---|---|---|
+  | 0 | `them` | system audio — the other people in the call |
+  | 1 | `me` | this machine's microphone |
+
+  Each channel gets its own assembler. The 200 ms overlap is an artefact of how *one* stream
+  was chunked, so deduplicating across the two would compare your microphone against the call
+  and drop whichever of two people said the same words second — attributing the line to
+  whichever channel happened to be transcribed first.
+
+`t0`/`t1` describe where the chunk sat; the client framed the audio, so the frame length is
+passed to the provider as `duration_s`. The timings inside a `segment` come from
+`transcribe_segments`, not from the frame.
+
+### `partial` is shown, never recorded
+
+A frame marked `"partial": true` is transcribed and echoed as provisional text. It is not
+stored and does not advance the assembler — the same audio arrives again when the utterance
+closes, and a partial that had been remembered would make the real segment look like a
+duplicate of itself, so the meeting would lose the line.
+
+### When something goes wrong
+
+One bad frame does not end a recording. Every refusal is an `error` frame with a stable code
+— `disabled`, `not_live`, `stt_unavailable`, `conversation_required`, `url_required`,
+`audio_missing`, `audio_undecodable`, `audio_format`, `audio_misaligned`, `audio_too_large`,
+`frame_failed` — and the socket stays up.
+
+A dropped socket ends the meeting. The session *is* the socket and nothing is going to
+reconnect to it; leaving it live would leave a row that says "in progress" forever. What
+survives is in the store.
+
+If no speech provider is available the meeting still starts, with `"stt": false` in `ready`
+and a named refusal on each audio frame. A meeting that records slides and markers without a
+transcript is still a meeting, and is a better answer than refusing the connection.
+
+The tables are created on the **first connection** with the flag on, not at import — an
+install that never enables MeetingSense never grows the schema.
+
+---
+
+## Verifying MS0 – MS3
 
 With the flag off — the shipped state:
 
@@ -209,7 +281,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 151
+cd backend && python3 -m pytest tests/meetingsense -q   # 191
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -226,11 +298,12 @@ MS2 adds 68 of those tests and touches nothing outside `backend/app/meetingsense
 ```bash
 cd backend && python3 -m pytest tests/meetingsense/test_transcript.py -q     # 31
 cd backend && python3 -m pytest tests/meetingsense/test_session_core.py -q   # 37
+cd backend && python3 -m pytest tests/meetingsense/test_session_ws.py -q     # 40  (MS3)
 ```
 
-What MS0, MS1 and MS2 deliberately do **not** do: mount a session route, write a message, or
-read a microphone. The package imports one router, a dataclass and a store nothing calls yet;
-the speech layer only grows methods beside the ones that were already there.
+What MS0 – MS3 deliberately do **not** do: read a microphone, draw a UI, caption a slide
+(MS9), or write a message into the conversation (MS12). There is a socket to record a meeting
+through and nothing yet that opens it — the capture addon is MS4 and the entry point is MS5.
 
 ---
 
