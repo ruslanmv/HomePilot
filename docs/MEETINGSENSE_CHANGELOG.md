@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W5 — Memory
 
-### MS17 — naming a meeting without asking · `PENDING`
+### MS17 — naming a meeting without asking · `d3facbe`
 
 - New `metadata.py`: the shared window's title (free, from `MediaStreamTrack.label`) and a
   calendar event via MCP, both applied after `ready` as a background task and reported as a
