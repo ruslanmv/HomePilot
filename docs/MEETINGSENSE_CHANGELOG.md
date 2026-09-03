@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W6 — Together
 
-### MS20 — the card on the avatar surface · `PENDING`
+### MS20 — the card on the avatar surface · `8640ad4`
 
 - New `panel.py`: the same store rows become a `display` message of the existing `cards`
   kind — a third renderer, not a third source — and a `meeting_panel` frame on the avatar
