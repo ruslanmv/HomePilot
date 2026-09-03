@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W5 — Memory
 
-### MS16 — binding, resume and branching · `PENDING`
+### MS16 — binding, resume and branching · `bd16c01`
 
 - `ms_threads` and `ms_artifacts` (schema 3), a new `binding.py`, and three endpoints:
   `GET /conversations/{id}` to bring a card back, `POST /{id}/thread` to branch, and
@@ -40,7 +40,7 @@ this is reachable and no table is created.
   printed its heading. MS14's note sections had the identical bug and its guard was copied
   without its test.
 
-### MS15 — embeddings and cross-meeting retrieval · `PENDING`
+### MS15 — embeddings and cross-meeting retrieval · `bd16c01`
 
 - New `retrieval.py`. On stop a meeting is embedded — after `final`, so nobody waits on it —
   into a Chroma namespace of its own, and `ms_search(query, meeting_id?, k)` returns rows
