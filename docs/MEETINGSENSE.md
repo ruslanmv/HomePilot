@@ -518,6 +518,35 @@ away from rewriting a meeting's conversation or its retention mode.
 The window-title half is unit-tested against real titles. The calendar half is tested against
 an injected invoker; a live MCP connection is **row 16 of the manual matrix**.
 
+### What a persona knows about the meeting happening now (MS18)
+
+Together mode is a person talking to a persona *while* a meeting runs — "what did she just say
+the number was?" — and the whole feature is one block prepended to the system prompt. Everything
+hard about it is what that block may **not** contain.
+
+**The transcript is not it.** HomePilot's chat path passes `get_recent(cid, limit=6)` and drops
+everything older; that limit is not touched by this batch. A three-hour meeting is perhaps
+30,000 words, and a block that grows with the meeting turns every question in the second hour
+into a truncated prompt — an answer confidently wrong about the part that got cut. So the block
+is **D9 tiers 1 and 2 only**: the last 90 seconds verbatim, the slide on screen now, the rolling
+notes, and the recap. Everything older reaches the persona through MS15's retrieval, cited, when
+it is asked for.
+
+**900 tokens, enforced.** The same constant MS13 answers under, and the same trim order:
+verbatim first (oldest line first), then the notes lists, and **the recap never**. A model with
+the recap and no verbatim can still say what the meeting has been about; one with the verbatim
+and no recap knows the last thirty seconds of a three-hour call and nothing else.
+
+**Off is byte-identical.** With no live meeting, with the `together` flag down, or on an install
+where MeetingSense raises, `build_system_prompt` returns character-for-character what it
+returned before this batch. Asserted, not assumed — a context provider that quietly changes
+every prompt changes every persona in the product. `build_system_prompt` gained one optional
+`conversation_id` argument, and every existing caller that omits it is unaffected.
+
+The block tells the persona what it cannot see, in as many words. Without that a model asked
+"what did she say?" answers about the last thing in *its* window — which is the chat, not the
+meeting — and cites a timestamp it invented.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -934,7 +963,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 648
+cd backend && python3 -m pytest tests/meetingsense -q   # 685
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -962,6 +991,8 @@ cd backend && python3 -m pytest tests/meetingsense/test_keyframes.py -q     # 26
 cd backend && python3 -m pytest tests/meetingsense/test_retrieval.py -q     # 37  (MS15)
 cd backend && python3 -m pytest tests/meetingsense/test_binding.py -q       # 33  (MS16)
 cd backend && python3 -m pytest tests/meetingsense/test_metadata.py -q      # 72  (MS17)
+cd backend && python3 -m pytest tests/meetingsense/test_notes_wiring.py -q  # 11  (MS12-a)
+cd backend && python3 -m pytest tests/meetingsense/test_live_context.py -q  # 26  (MS18)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 84  (MS4, MS4-a, MS9)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 55  (MS5 + MS11)
 cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 90  (MS6 + MS10)

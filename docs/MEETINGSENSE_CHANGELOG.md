@@ -17,6 +17,30 @@ this is reachable and no table is created.
 
 ---
 
+## W6 — Together
+
+### MS18 — the live context provider · `PENDING`
+
+- New `live_context.py`, and one optional `conversation_id` argument on
+  `build_system_prompt`. Every existing caller omits it and gets a byte-identical prompt;
+  `orchestrator.py`'s chat path passes it.
+- **D9 tiers 1 and 2 only**, capped at 900 tokens — the same constant MS13 answers under, so
+  there is one number rather than two that drift. Trim order: verbatim oldest-first, then the
+  notes lists, and the recap never.
+- The block tells the persona what it cannot see. Without that, a model asked "what did she
+  say?" answers about the last thing in its own window — the chat — and invents a timestamp.
+- **Two weak tests found by mutation.** The budget was asserted against
+  `live_context.TOKEN_BUDGET`, so raising that constant passed; it is now asserted against
+  900. And nothing covered the orchestrator seam, so the wiring could be removed with the
+  suite green — now checked by reading the call, which is the right weight for a one-keyword
+  claim.
+- A separate hazard worth recording: a mutation that replaced the notes-trim body with `pass`
+  turned the loop infinite, timed out past the harness's own limit, and was left in the source
+  by a restore that never ran. Every subsequent run hung until it was found. Mutations that can
+  spin need their own timeout inside the harness, not around it.
+
+---
+
 ## Carried work
 
 ### MS12-a — the notes engine, actually connected · 3c592f0

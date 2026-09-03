@@ -1829,7 +1829,12 @@ async def orchestrate(
 
         # Build the dynamic system prompt (memory-aware, turn-aware)
         is_first = memory.turn_count <= 1
-        system = build_system_prompt(personality_agent, memory, is_first_turn=is_first)
+        # `conversation_id` is MS18's guarded hook: with MeetingSense off, absent, or with no
+        # meeting live in this conversation, the provider returns "" and this prompt is
+        # byte-identical to what it was before that batch.
+        system = build_system_prompt(
+            personality_agent, memory, is_first_turn=is_first, conversation_id=cid
+        )
         print(f"[PERSONALITY] Using agent '{personality_id}' (turn {memory.turn_count})")
 
         # NSFW mode: inject explicit engagement permission when both the
