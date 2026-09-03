@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W6 — Together
 
-### MS19 — the eighth activity · `3b7af51` (avatar) + `PENDING`
+### MS19 — the eighth activity · `3b7af51` (avatar) + `51bff81`
 
 - `meeting.js` joins the 👥 launcher. It cannot obtain a stream: no `navigator`, no media
   call, no canvas — asserted by reading its own source. The recorder is handed the grant's
