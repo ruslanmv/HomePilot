@@ -24,4 +24,13 @@ contextBridge.exposeInMainWorld("homepilot", {
   // user's own machine the app already holds screen-recording permission.
   // Resolves to null if capture is unavailable or denied by the OS.
   captureScreen: () => ipcRenderer.invoke("screensense:capture"),
+
+  // MeetingSense — what system audio this machine can actually capture (MS11).
+  //
+  // Answered whether the flag is on or off, because "system audio is off" is a sentence the
+  // consent popover needs as much as "it is on". On Electron 33 loopback is Windows-only:
+  // macOS has no public API for capturing system output, so the hint names the virtual audio
+  // device workaround rather than stopping at "unsupported". Resolves to null if the main
+  // process could not answer, which the renderer should read as "browser rules apply".
+  meetingSenseAudio: () => ipcRenderer.invoke("meetingsense:audio"),
 });

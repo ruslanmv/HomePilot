@@ -16,10 +16,12 @@ const {
   ipcMain,
   desktopCapturer,
   screen,
+  session,
 } = require("electron");
 const path = require("path");
 const Store = require("electron-store");
 const { DockerManager, PORT } = require("./docker-manager");
+const meetingSenseAudio = require("./meetingsense-audio");
 
 // Single-instance lock
 const gotLock = app.requestSingleInstanceLock();
@@ -37,8 +39,19 @@ const store = new Store({
     launchOnStartup: false,
     minimizeToTray: true,
     setupComplete: false,
+    // MS11. Off, like every MeetingSense flag: turning it on installs a display-media handler
+    // that changes what every screen share in the app does, ScreenSense's included, and a
+    // desktop build with this off must behave exactly as it did before the batch.
+    meetingSenseDesktopAudio: false,
   },
 });
+
+/** Whether the desktop system-audio path is on. The env var is for a QA pass without a UI. */
+function desktopAudioEnabled() {
+  if (process.env.MEETINGSENSE_DESKTOP_AUDIO === "true") return true;
+  if (process.env.MEETINGSENSE_DESKTOP_AUDIO === "false") return false;
+  return !!store.get("meetingSenseDesktopAudio");
+}
 
 const docker = new DockerManager();
 let mainWindow = null;
@@ -287,6 +300,10 @@ async function startContainer() {
 }
 
 async function bootstrap() {
+  // Before any window exists: the handler belongs to the session, and a window created first
+  // would have already answered a share request with the default behaviour.
+  installMeetingSenseAudio();
+
   createSplash();
 
   // Step 0: First-run setup wizard
@@ -470,6 +487,40 @@ async function promptAndApplyUpdate() {
     }
   }
 }
+
+// ── MeetingSense desktop audio (MS11) ───────────────────────────────────────
+// Registered only when the flag is on — see meetingsense-audio.js for why, and for why
+// loopback is Windows-only on Electron 33.
+function installMeetingSenseAudio() {
+  const enabled = desktopAudioEnabled();
+  const installed = meetingSenseAudio.install({
+    session: session.defaultSession,
+    desktopCapturer,
+    platform: process.platform,
+    enabled,
+    log: console.warn,
+  });
+  if (installed) {
+    console.log(
+      `[MeetingSense] desktop audio on (${meetingSenseAudio.capabilities({ enabled, platform: process.platform }).mode})`,
+    );
+  }
+  return installed;
+}
+
+/** What the renderer's popover shows before recording starts. Always answers, flag or not:
+ *  "system audio is off" is a sentence the user needs as much as "it is on". */
+ipcMain.handle("meetingsense:audio", async () => {
+  try {
+    return meetingSenseAudio.capabilities({
+      enabled: desktopAudioEnabled(),
+      platform: process.platform,
+    });
+  } catch (err) {
+    console.error("[MeetingSense] capability probe failed:", err);
+    return null;
+  }
+});
 
 // ── ScreenSense native capture ──────────────────────────────────────────────
 // Additive IPC handler: grabs the primary display and returns a PNG data URL.

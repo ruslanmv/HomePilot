@@ -19,6 +19,26 @@ this is reachable and no table is created.
 
 ## W3 — Eyes
 
+### MS11 — desktop system audio · `PENDING`
+
+- `desktop/meetingsense-audio.js` + a `setDisplayMediaRequestHandler` registered from
+  `bootstrap`, `preload.js` exposing `meetingSenseAudio()`, and a popover notice built from the
+  shell's own answer. Flag off by default (`MEETINGSENSE_DESKTOP_AUDIO`, or
+  `meetingSenseDesktopAudio` in the desktop store).
+- **Windows only on Electron 33**, and the popover says so *before* recording starts. macOS has
+  no public API for capturing system output; the hint names the virtual-audio-device workaround
+  rather than stopping at "unsupported", because a user who believes the call is being recorded
+  and finds out afterwards that it was not has lost the meeting.
+- **"Off" and "not possible here" are two different messages.** Off on Windows is advice the
+  user can act on; the same sentence on macOS would be advice that does not help, so it is not
+  shown there.
+- **Off means nothing is registered.** A display-media handler changes what every screen share
+  in the app does, ScreenSense's included, so the flag-off build is byte-for-byte the old
+  behaviour — asserted, not assumed.
+- The module deliberately does not `require("electron")`: everything is injected, so the
+  platform table is unit-tested in Node. "Manual QA on two machines" is not a test that runs in
+  CI, and the decisions around loopback are exactly what a manual pass covers worst.
+
 ### MS10 — slides in the card · `8023b3d`
 
 - `SlideStrip.tsx`: a strip under the transcript, and a lightbox joining a slide's caption to

@@ -14,9 +14,11 @@ which frames are a *new thing to look at*, and a local vision model describes ea
 The card shows them as a strip, and opening one shows the caption beside the words spoken
 while that slide was up (MS10).
 
-**What does not, yet:** desktop system-audio loopback (MS11) — the last row of W3. Everything
-else in the recorder works: rolling notes, a summary that carries its own recap and decisions,
-asking a question about a meeting live or afterwards, export, and one-call deletion.
+In the desktop app on Windows, the recorder captures the machine's own output rather than
+whatever the browser share dialog happened to offer (MS11).
+
+Everything in the recorder works: rolling notes, a summary that carries its own recap and
+decisions, asking a question about a meeting live or afterwards, export, and one-call deletion.
 
 The order of work, and the reasoning behind each decision, is
 [`docs/design/MEETINGSENSE_BATCHES.md`](design/MEETINGSENSE_BATCHES.md). What changed when is
@@ -345,6 +347,43 @@ not why anybody records a meeting. Two rules make the join right:
 This is why keyframes carry the transcript's clock (above). The join is exact because there is
 one clock, not two that agree to within a second.
 
+### System audio in the desktop app (MS11)
+
+In a browser, `getDisplayMedia({ audio: true })` gets the call's audio only when the user
+shares a **tab** and ticks a box. A window share carries no audio anywhere, and on Linux a
+whole-screen share carries none either — so on the platforms where most meetings happen, the
+browser recorder often records one side of the conversation.
+
+The Electron shell can answer that request itself, with `audio: 'loopback'` — the machine's own
+output, which is everything the user hears.
+
+**On Electron 33 that is Windows only, and the popover says so.**
+
+| | what is recorded | what the popover says |
+|---|---|---|
+| Windows, flag on | the call **and** the microphone | "The call's audio and this microphone are both recorded." |
+| Windows, flag off | browser rules | "Desktop system audio is off … turn it on in Settings." |
+| macOS | the microphone | "macOS cannot share system audio … install a virtual audio device (BlackHole or Loopback)." |
+| Linux desktop | the microphone | the same, without the workaround |
+| any browser | browser rules | the existing per-platform notices |
+
+macOS has no public API for capturing system output. Every product that appears to do it ships
+a kernel extension or asks for a virtual audio device, and HomePilot is not going to install a
+kernel extension quietly. Saying the option exists would be worse than saying it does not: a
+user who believes the call is being recorded and finds out afterwards that it was not has lost
+the meeting. So the macOS sentence names the workaround rather than stopping at "unsupported",
+and "off on Windows" and "impossible on macOS" are two different messages — the first is
+advice the user can act on and the second would be advice that does not help.
+
+**The flag is off, and off means nothing is registered.** `MEETINGSENSE_DESKTOP_AUDIO=true`, or
+`meetingSenseDesktopAudio` in the desktop store. Installing a display-media handler changes what
+*every* screen share in the app does, ScreenSense's included, so a desktop build with this off
+behaves exactly as it did before the batch — and a test asserts that nothing is registered.
+
+The decisions live in `desktop/meetingsense-audio.js`, which deliberately does not
+`require("electron")`: everything is injected, so the platform table above is unit-tested in
+Node. Loopback capture itself cannot be — that is rows 13 and 14 of the manual matrix.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -369,6 +408,9 @@ Both the graph and the sampler need the manual matrix below. **Nobody has run it
 | 10 | Chrome | 30-minute meeting | memory flat, no drift between audio and timestamps | ⬜ |
 | 11 | Chrome | a slide deck, `watch: true` | one keyframe per slide, captioned; none while a video plays | ⬜ |
 | 12 | Chrome | a window share with no audio, `watch: true` | video kept for slides, `audioMode: 'mic'` | ⬜ |
+| 13 | Desktop app, Windows | flag on, any share | `audioMode: 'system+mic'`, the call audible in the transcript | ⬜ |
+| 14 | Desktop app, macOS | flag on | `mic` only, and the popover says why before recording starts | ⬜ |
+| 15 | Desktop app, either | flag off | ScreenSense's "Ask once" unchanged; no share dialog behaves differently | ⬜ |
 
 Rows 1–3 are the ones that decide whether MeetingSense records a meeting at all; row 10 is the
 one a short test cannot substitute for. Row 11 is the only place the thresholds meet a real
@@ -780,7 +822,7 @@ cd ../ollabridge && python3 -m pytest tests/avatar -q                        # 6
 cd backend && python3 -m pytest tests/meetingsense/test_ask.py -q            # 45  (MS13)
 cd backend && python3 -m pytest tests/meetingsense/test_keyframes.py -q     # 26  (MS9)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 84  (MS4, MS4-a, MS9)
-cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 39  (MS5)
+cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 55  (MS5 + MS11)
 cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 90  (MS6 + MS10)
 ```
 
@@ -789,12 +831,16 @@ MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to in
 phone/call primitives suite among them — which had never run in CI since they were written.
 All of them pass; nothing was fixed to make that true.
 
-**W0, W1, W2 and W4 are complete, and W3 needs only MS11.** A meeting records, resumes,
-transcribes, takes rolling notes, answers questions, summarises itself into History, exports,
-deletes, works from a hosted page — and now captures its slides, captions them, and shows each
-one beside what was said while it was up.
+**W0 through W4 are complete.** A meeting records, resumes, transcribes, takes rolling notes,
+answers questions, summarises itself into History, exports, deletes, works from a hosted page,
+captures its slides, captions them, shows each one beside what was said while it was up, and on
+Windows in the desktop app records the call itself rather than whatever the share dialog offered.
+
+What is left before the pilot can be signed off is not code: the fifteen-row browser and
+desktop matrix below, none of which anybody has run.
 
 **Two wiring seams are open**, and it is worth being exact about which:
+
 
 1. MS5's **Start session** calls an `onStart` callback and the host application decides what
    to mount it against. Everything it needs — the hook, the card, the pill, the consent sheet

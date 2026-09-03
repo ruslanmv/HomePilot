@@ -43,11 +43,25 @@ export interface MeetingSenseStatus {
     vision?: { available?: boolean; model?: string | null; hint?: string | null };
 }
 
+/** What the Electron shell reports about system audio (MS11), or null in a browser. */
+export interface DesktopAudio {
+    enabled: boolean;
+    /** Whether this platform *could* do loopback — Windows only on Electron 33. */
+    supported: boolean;
+    /** Whether it is doing it: enabled and supported. */
+    loopback: boolean;
+    platform?: string;
+    mode?: string;
+    hint: string;
+}
+
 export interface Capabilities {
     /** Whether this browser can share system audio at all. */
     canCaptureDisplay: boolean;
     /** Coarse platform, only used for the one message that differs by it. */
     platform?: 'mac' | 'windows' | 'linux' | 'mobile' | 'unknown';
+    /** The desktop shell's own answer, which overrides the browser rules when it is on. */
+    desktop?: DesktopAudio | null;
 }
 
 export interface Notice {
@@ -132,6 +146,12 @@ export function describe(status: MeetingSenseStatus | null, caps: Capabilities):
     }
 
     // ── capture ───────────────────────────────────────────────────────────────────────────
+    // MS11: inside the desktop shell with system audio on, the shell's answer *replaces* the
+    // browser rules below, because they are no longer what happens. The browser notices are
+    // about `getDisplayMedia` in Chrome; with the handler installed, Electron answers that
+    // call itself. Leaving both in would tell a Windows user their call is not being recorded
+    // while it is.
+    const desktop = caps.desktop || null;
     const canWatchScreen = caps.canCaptureDisplay;
     if (!caps.canCaptureDisplay) {
         notices.push({
@@ -142,6 +162,18 @@ export function describe(status: MeetingSenseStatus | null, caps: Capabilities):
                     ? 'Recording a meeting needs a desktop browser — this one cannot share screen audio.'
                     : 'This browser cannot share screen audio. Chrome or Edge on a desktop can.',
         });
+    } else if (desktop && desktop.enabled) {
+        // The hint is the shell's, verbatim: it is the one place that knows the platform's
+        // real answer, and restating it here would be a second copy to keep in step.
+        notices.push({
+            id: desktop.loopback ? 'desktop-loopback' : 'desktop-no-loopback',
+            tone: desktop.loopback ? 'info' : 'warn',
+            text: desktop.hint,
+        });
+    } else if (desktop && desktop.supported) {
+        // Off, on a platform where turning it on would work. Not shown where it would not:
+        // "turn on system audio in Settings" is advice, and on macOS it is bad advice.
+        notices.push({ id: 'desktop-audio-off', tone: 'info', text: desktop.hint });
     } else if (caps.platform === 'mac') {
         notices.push({
             id: 'capture-mac',
@@ -173,6 +205,34 @@ export function describe(status: MeetingSenseStatus | null, caps: Capabilities):
         provider: stt.provider || 'none',
         notices,
     };
+}
+
+/**
+ * Ask the desktop shell what system audio it can capture (MS11). ``null`` in a browser.
+ *
+ * Separate from :func:`detectCapabilities` and asynchronous because it is an IPC round trip,
+ * and because a browser must not grow an `await` on a bridge that is never there. A caller
+ * that skips it gets the browser rules, which is the right answer in a browser.
+ */
+export async function detectDesktopAudio(win: any = globalThis): Promise<DesktopAudio | null> {
+    const bridge = win && win.homepilot;
+    if (!bridge || typeof bridge.meetingSenseAudio !== 'function') return null;
+    try {
+        const caps = await bridge.meetingSenseAudio();
+        if (!caps || typeof caps.hint !== 'string') return null;
+        return {
+            enabled: !!caps.enabled,
+            supported: !!caps.supported,
+            loopback: !!caps.loopback,
+            platform: caps.platform,
+            mode: caps.mode,
+            hint: caps.hint,
+        };
+    } catch (_) {
+        // An older shell without the handler. The browser rules apply, which is what the
+        // renderer was doing before this batch.
+        return null;
+    }
 }
 
 /** What this browser can do, read once. Split out so a test can supply it directly. */

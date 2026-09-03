@@ -24,6 +24,7 @@ import {
     buildPopover,
     describe as describeStatus,
     detectCapabilities,
+    detectDesktopAudio,
     fetchStatus,
     type Capabilities,
     type MeetingSenseStatus,
@@ -446,5 +447,204 @@ suite('fetchStatus', () => {
     it('returns null on a non-200', async () => {
         vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
         expect(await fetchStatus()).toBeNull();
+    });
+});
+
+// ── desktop system audio (MS11) ─────────────────────────────────────────────
+
+/**
+ * The batch row for MS11 says "manual QA Windows + macOS", and it has to: nobody can run
+ * Electron's loopback capture in CI. What *can* be tested is every decision made around it,
+ * which is where the failure that matters lives — not "does loopback work on Windows" but
+ * "does a mac user get told, before they record, that the call is not being captured".
+ *
+ * A user who believes the call is being recorded and finds out afterwards that it was not has
+ * lost the meeting, and no amount of manual QA on a Windows machine catches that.
+ */
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const desktopAudio = require(resolve(ROOT, 'desktop/meetingsense-audio.js'));
+
+suite('the desktop audio module', () => {
+    it('offers loopback on Windows and nowhere else on Electron 33', () => {
+        expect(desktopAudio.loopbackSupported('win32')).toBe(true);
+        expect(desktopAudio.loopbackSupported('darwin')).toBe(false);
+        expect(desktopAudio.loopbackSupported('linux')).toBe(false);
+    });
+
+    it('never sends audio:loopback on a platform that would silently ignore it', () => {
+        // The failure this prevents is quiet: the request resolves with a stream that has no
+        // audio track, and the recorder reports "system+mic" for a meeting that recorded one
+        // side of itself.
+        const source = { id: 'screen:0' };
+        expect(desktopAudio.displayMediaResponse(source, 'win32')).toEqual({
+            video: source,
+            audio: 'loopback',
+        });
+        expect(desktopAudio.displayMediaResponse(source, 'darwin')).toEqual({ video: source });
+    });
+
+    it('tells a mac user what would actually help, not just that it cannot', () => {
+        const caps = desktopAudio.capabilities({ platform: 'darwin', enabled: true });
+        expect(caps.loopback).toBe(false);
+        expect(caps.mode).toBe('mic');
+        expect(caps.hint).toMatch(/virtual audio device/i);
+        expect(caps.hint).toMatch(/microphone/i);
+    });
+
+    it('separates "off" from "not possible here"', () => {
+        // Two different facts, and the popover needs both: off on Windows means "turn it on",
+        // and off on macOS means nothing the user can do about it.
+        const windows = desktopAudio.capabilities({ platform: 'win32', enabled: false });
+        const mac = desktopAudio.capabilities({ platform: 'darwin', enabled: false });
+        expect([windows.supported, windows.loopback]).toEqual([true, false]);
+        expect([mac.supported, mac.loopback]).toEqual([false, false]);
+    });
+
+    it('registers nothing at all when the flag is off', async () => {
+        // The point of the batch's "desktop build unchanged with flag off": an installed
+        // handler changes what every getDisplayMedia call in the app does, ScreenSense's
+        // included.
+        const calls: unknown[] = [];
+        const session = { setDisplayMediaRequestHandler: (...args: unknown[]) => calls.push(args) };
+        expect(desktopAudio.install({ session, desktopCapturer: {}, platform: 'win32', enabled: false })).toBe(
+            false,
+        );
+        expect(calls).toEqual([]);
+    });
+
+    it('registers the handler with the system picker when the flag is on', async () => {
+        let handler: any = null;
+        let options: any = null;
+        const session = {
+            setDisplayMediaRequestHandler: (h: any, o: any) => {
+                handler = h;
+                options = o;
+            },
+        };
+        const source = { id: 'screen:0' };
+        const installed = desktopAudio.install({
+            session,
+            desktopCapturer: { getSources: async () => [source] },
+            platform: 'win32',
+            enabled: true,
+        });
+        expect(installed).toBe(true);
+        expect(options).toEqual({ useSystemPicker: true });
+
+        const answered: unknown[] = [];
+        await handler({}, (r: unknown) => answered.push(r));
+        expect(answered).toEqual([{ video: source, audio: 'loopback' }]);
+    });
+
+    it('refuses rather than throwing when there is nothing to capture', async () => {
+        // An empty answer the renderer can handle: the recorder falls back to the microphone
+        // rather than failing to start a meeting.
+        for (const capturer of [
+            { getSources: async () => [] },
+            {
+                getSources: async () => {
+                    throw new Error('the compositor said no');
+                },
+            },
+        ]) {
+            let handler: any = null;
+            const session = { setDisplayMediaRequestHandler: (h: any) => (handler = h) };
+            desktopAudio.install({ session, desktopCapturer: capturer, platform: 'win32', enabled: true, log: () => {} });
+            const answered: unknown[] = [];
+            await handler({}, (r: unknown) => answered.push(r));
+            expect(answered).toEqual([{}]);
+        }
+    });
+});
+
+suite('the popover, inside the desktop shell', () => {
+    const mac = { enabled: true, supported: false, loopback: false, hint: 'macOS cannot share system audio…' };
+    const windows = { enabled: true, supported: true, loopback: true, hint: 'The call’s audio and this microphone are both recorded.' };
+
+    const ids = (caps: Capabilities) => describeStatus(status(), caps).notices.map((n) => n.id);
+
+    it('says the call is being recorded on Windows', () => {
+        const notices = describeStatus(status(), { ...DESKTOP, desktop: windows }).notices;
+        const notice = notices.find((n) => n.id === 'desktop-loopback');
+        expect(notice?.tone).toBe('info');
+        expect(notice?.text).toBe(windows.hint);
+    });
+
+    it('warns, before recording starts, that a mac is not capturing the call', () => {
+        const notices = describeStatus(status(), {
+            canCaptureDisplay: true,
+            platform: 'mac',
+            desktop: mac,
+        }).notices;
+        const notice = notices.find((n) => n.id === 'desktop-no-loopback');
+        expect(notice?.tone).toBe('warn');
+        expect(notice?.text).toBe(mac.hint);
+    });
+
+    it('replaces the browser rules rather than showing both', () => {
+        // The browser notices describe what Chrome's getDisplayMedia does. With the handler
+        // installed, Electron answers that call itself — so leaving the Linux "share a tab"
+        // notice in would be describing a dialog the user will never see.
+        expect(ids({ canCaptureDisplay: true, platform: 'linux', desktop: { ...windows } })).toContain(
+            'desktop-loopback',
+        );
+        expect(ids({ canCaptureDisplay: true, platform: 'linux', desktop: { ...windows } })).not.toContain(
+            'capture-linux',
+        );
+        expect(ids({ canCaptureDisplay: true, platform: 'mac', desktop: mac })).not.toContain('capture-mac');
+    });
+
+    it('offers "turn it on" only where turning it on would help', () => {
+        const off = { enabled: false, hint: 'Desktop system audio is off…' };
+        expect(
+            ids({ canCaptureDisplay: true, platform: 'windows', desktop: { ...off, supported: true, loopback: false } }),
+        ).toContain('desktop-audio-off');
+        // On a mac the answer is a virtual audio device, not a setting — so the browser's own
+        // macOS notice stands and no "turn it on in Settings" is offered.
+        const macOff = ids({
+            canCaptureDisplay: true,
+            platform: 'mac',
+            desktop: { ...off, supported: false, loopback: false },
+        });
+        expect(macOff).not.toContain('desktop-audio-off');
+        expect(macOff).toContain('capture-mac');
+    });
+
+    it('a browser is unaffected: no desktop notice, the browser rules stand', () => {
+        const notices = ids({ canCaptureDisplay: true, platform: 'mac' });
+        expect(notices.filter((id) => id.startsWith('desktop-'))).toEqual([]);
+        expect(notices).toContain('capture-mac');
+    });
+});
+
+suite('detectDesktopAudio', () => {
+    it('is null in a browser, with no bridge to await', async () => {
+        expect(await detectDesktopAudio({})).toBeNull();
+        expect(await detectDesktopAudio({ homepilot: { isDesktop: true } })).toBeNull();
+    });
+
+    it('is null when an older shell has no handler for the channel', async () => {
+        // The shell shipped before MS11 answers by rejecting. The browser rules then apply,
+        // which is exactly what the renderer did before this batch.
+        const win = { homepilot: { meetingSenseAudio: async () => { throw new Error('no handler'); } } };
+        expect(await detectDesktopAudio(win)).toBeNull();
+    });
+
+    it('is null for an answer with no hint, rather than a popover with a blank line', async () => {
+        const win = { homepilot: { meetingSenseAudio: async () => ({ enabled: true }) } };
+        expect(await detectDesktopAudio(win)).toBeNull();
+    });
+
+    it('reads the shell’s answer', async () => {
+        const win = {
+            homepilot: {
+                meetingSenseAudio: async () => desktopAudio.capabilities({ platform: 'win32', enabled: true }),
+            },
+        };
+        const caps = await detectDesktopAudio(win);
+        expect(caps?.loopback).toBe(true);
+        expect(caps?.supported).toBe(true);
+        expect(caps?.hint).toMatch(/both recorded/);
     });
 });
