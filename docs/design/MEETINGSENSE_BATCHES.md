@@ -91,6 +91,10 @@ Traps that cost real time in MS0-MS8. Each of these passed review once and was w
     assert the wiring separately.
   - jsdom does not lay out or paint. `offsetHeight` is 0 for everything: pixel and contrast
     claims belong in the manual matrix, not in a vitest that would pass vacuously.
+  - A unit test whose fixture is a shape the integration never produces. MS6's export test
+    hand-built `{"json": ...}`; `store.get_notes()` returns `{"notes": {...}}`, so the export
+    silently dropped its notes section with a green test standing over it. Feed at least one
+    test the real function's real output.
   - Mutate every load-bearing claim before believing a green suite. Roughly one in six
     mutations survived first, and every survivor was a real hole.
 ```
@@ -179,7 +183,7 @@ not done while any of its rows is untested.
 | **W1** | Recorder (local) | MS2 ✅ → MS3 ✅ → MS4 ✅ → MS5 ✅ → MS3-a ✅ → MS4-a ✅ → MS6 ✅ | Screen + audio → live transcript in a chat card, export, resume on reconnect. **Pilot for a week here** |
 | **W2** | Reach | MS7 ✅ → MS8 ✅ | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
 | **W3** | Eyes | MS9 → MS11 | Slide-aware keyframes captioned locally; desktop loopback (Windows) |
-| **W4** | Brain | MS12 → MS14 | Rolling notes, "ask about this meeting", final summary + retention |
+| **W4** | Brain | MS12 ✅ → MS14 | Rolling notes, "ask about this meeting", final summary + retention |
 | **W5** | Memory | MS15 → MS17 | Retrieval namespace, binding/resume/branch, auto-metadata |
 | **W6** | Together | MS18 → MS20 | Live grounded chat, meeting as 8th 👥 activity, card on avatar surface |
 | **W7** | Capability | MS21 → MS22 | MeetingSense MCP server (9107) + Forge; Teams server or explicit defer |
@@ -240,7 +244,7 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 
 | # | Batch | Scope | Acceptance | Status |
 |---|---|---|---|---|
-| **MS12** | Notes engine + recap (D9 tier 2) | `notes_engine.py` + `prompts.py`: every 60 s / 400 words, JSON-delta prompt (add/resolve decisions, actions, questions, summary) with `t0` citations, merged server-side into `ms_notes`, pushed as `notes`; **`recap`: 3–5 sentences regenerated from previous recap + new chunk only — never from the full transcript — and capped at 120 words**; the engine compresses itself when notes exceed their token share; small talk yields an empty delta and stores nothing; card uses append + strikethrough, never rewrite | pytest with LLM stub → merge correctness; malformed JSON tolerated without dropping the session; **recap prompt receives only previous recap + window (asserted on the stub's input)**; recap length cap enforced | ⬜ |
+| **MS12** | Notes engine + recap (D9 tier 2) | `notes_engine.py` + `prompts.py`. Trigger is a floor, not a schedule: 60 s **or** 400 words, and nothing pending is never due. **Deltas, not rewrites** — the model says what to add and what to resolve, and the merge happens server-side, because asking for the whole notes object lets every pass silently drop what the last got right. Nothing deletes: resolving marks `resolved` so the card can strike through. **`recap_messages()` takes a string, not a meeting id**, so it *cannot* reach the transcript — that is D9 tier 2 in one signature — and the 120-word cap is enforced in code, not requested in the prompt. A citation the transcript cannot support is dropped while the observation is kept. Small talk stores nothing | 56 tests. Eight mutations each fail. **Found and fixed an MS6 bug on the way:** `to_markdown` read `notes["json"]` while `store.get_notes()` returns the parsed object under `notes["notes"]`, so the Markdown export had been silently omitting its notes section — the MS6 test hand-built a shape the store never produces and passed over it. A regression test now feeds it the real store output. 398 in `tests/meetingsense`; backend baseline unchanged | ✅ `PENDING` |
 | **MS13** | Ask about this meeting (D9 tier 3) | `ask` frame → verbatim window + recap + top-k retrieved segments/captions (k ≤ 12) → LLM → `answer` with `t0` citations; `POST /v1/meetingsense/{id}/ask` for ended meetings. **The full transcript is never placed in the prompt** | pytest: the answer cites timestamps present in the fixture; a 2-hour fixture produces a prompt under the budget; the stub's input never contains more than k segments | ⬜ |
 | **MS14** | Final summary + retention | On stop (after the 10 s undo window): summary assistant message that is **self-sufficient per D9** — recap, decisions, actions with owners, open questions, slide timeline — so the persona knows the meeting even when this is the only meeting message inside the chat path's 6-message window; slide thumbnails in `media.images`; retention `text` / `text+frames` / `all`; one-click delete endpoint. **Per D4: no job is enqueued, no LTM extraction; the persona's route to a meeting is retrieval (MS15).** Docs say so explicitly | pytest: stop produces the summary message; delete removes rows + files per retention; **a test asserts nothing is enqueued in `jobs`** | ⬜ |
 

@@ -208,6 +208,27 @@ class TestMarkdown:
         assert "## Summary" in text and "Short one." in text
         assert "## Decisions" in text and "- Ship in October" in text
 
+    def test_it_renders_what_the_store_actually_returns(self, modules):
+        # The shape that matters, and the one this test originally missed. `get_notes()`
+        # returns {"version", "updated_at", "notes": {...}} — already parsed — while the test
+        # above hand-builds {"json": "..."}, which the store never produces. Reading only the
+        # hand-built shape meant the Markdown export silently omitted its notes section for a
+        # whole batch, with a green test standing over it.
+        meeting_id = modules.store.create_meeting(conversation_id="c", title="T", retention="text")
+        modules.store.save_notes(meeting_id, {"summary": "From the store.", "decisions": ["Ship it"]})
+        text = modules.export.to_markdown(
+            modules.store.get_meeting(meeting_id),
+            modules.store.get_segments(meeting_id),
+            (),
+            modules.store.get_notes(meeting_id),
+        )
+        assert "From the store." in text
+        assert "- Ship it" in text
+
+    def test_it_also_accepts_an_already_unwrapped_object(self, modules):
+        text = modules.export.to_markdown(MEETING, SEGMENTS, (), {"summary": "Bare object."})
+        assert "Bare object." in text
+
     def test_an_empty_section_is_omitted_rather_than_left_blank(self, modules):
         # "Decisions" with nothing under it claims nothing was decided. A missing heading
         # claims nothing was recorded. They are different, and the reader cannot tell which

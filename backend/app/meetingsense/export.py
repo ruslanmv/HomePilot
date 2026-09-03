@@ -103,6 +103,34 @@ def _meeting_heading(meeting: Dict[str, Any]) -> str:
     return f"# 🎙 {title}\n\n*{' · '.join(parts)}*\n"
 
 
+def notes_body(notes: Any) -> Optional[Dict[str, Any]]:
+    """The notes object, from whichever shape the caller had to hand.
+
+    ``store.get_notes()`` returns ``{"version", "updated_at", "notes": {...}}`` — already
+    parsed. A raw ``ms_notes`` row carries ``{"json": "..."}`` instead, and a caller that
+    already unwrapped one passes the object itself. All three arrive here, and reading only
+    one of them is how the Markdown export silently lost its notes section for a whole batch:
+    the unit test built ``{"json": ...}`` by hand, which is a shape the store never produces,
+    so the test passed and the feature did not work.
+    """
+    if not isinstance(notes, dict):
+        return None
+    for candidate in (notes.get("notes"), notes.get("json"), notes):
+        if isinstance(candidate, dict) and candidate is not notes:
+            return candidate
+        if isinstance(candidate, str):
+            try:
+                parsed = json.loads(candidate)
+            except ValueError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+    # The object itself, when it already looks like notes rather than a wrapper.
+    if any(k in notes for k in ("summary", "decisions", "actions", "questions", "recap")):
+        return notes
+    return None
+
+
 def to_markdown(
     meeting: Dict[str, Any],
     segments: Sequence[Dict[str, Any]],
@@ -118,12 +146,7 @@ def to_markdown(
     """
     out: List[str] = [_meeting_heading(meeting)]
 
-    body = (notes or {}).get("json") if isinstance(notes, dict) else None
-    if isinstance(body, str):
-        try:
-            body = json.loads(body)
-        except ValueError:
-            body = None
+    body = notes_body(notes)
     if isinstance(body, dict):
         for heading, key in (("Summary", "summary"), ("Decisions", "decisions"),
                              ("Actions", "actions"), ("Open questions", "questions")):
