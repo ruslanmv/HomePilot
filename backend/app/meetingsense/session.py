@@ -215,6 +215,15 @@ class MeetingSession:
             meeting_id=self.meeting_id,
             started_at=self.started_at,
         )
+        # MS16. Recorded here rather than on stop: a meeting that never ends — a server
+        # restart mid-recording — should still bring its card back when the chat is reopened,
+        # and nothing on a chat message says which meeting produced it.
+        try:
+            store.add_thread(self.meeting_id, conversation_id, kind="origin",
+                             created_at=self.started_at)
+        except Exception:  # noqa: BLE001 — a missing link is a card that does not hydrate
+            log.exception("meetingsense: could not record the thread for %s", self.meeting_id)
+
         await self.transport.send(
             {
                 "type": "ready",
@@ -343,6 +352,14 @@ class MeetingSession:
         from . import finalize
 
         finalize.finalize_meeting(self.meeting_id)
+
+        # MS15, and deliberately last: the client already has `final`, so the time this takes
+        # is time nobody is waiting on. A meeting that cannot be embedded is still a complete
+        # meeting — the transcript is in SQLite, which is the copy that cannot be rebuilt, and
+        # this one can be by re-indexing.
+        from . import retrieval
+
+        retrieval.index_meeting(self.meeting_id)
         return final
 
     # ── audio in, segments out ──────────────────────────────────────────────

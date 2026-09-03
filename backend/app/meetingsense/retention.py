@@ -129,5 +129,19 @@ def delete_meeting(meeting_id: str) -> Optional[Dict[str, Any]]:
     # this meeting's.
     urls = [k.get("url") for k in store.get_keyframes(meeting_id) if k.get("url")]
     files = remove_files(urls)
+    # MS15's third store. A meeting deleted from SQLite but left in the vector index is a
+    # meeting that still answers questions after the user deleted it — the worst available
+    # reading of "delete", and the one nobody would notice until a persona quoted it back.
+    from . import retrieval
+
+    indexed = retrieval.forget_meeting(meeting_id)
     rows = store.delete_meeting(meeting_id)
-    return {"meeting_id": meeting_id, "retention": meeting.get("retention"), "rows": rows, "files": files}
+    return {
+        "meeting_id": meeting_id,
+        "retention": meeting.get("retention"),
+        "rows": rows,
+        "files": files,
+        # Reported rather than assumed: `False` means there was no vector store to clean, which
+        # on an install without Chroma is the correct and complete answer.
+        "index_cleared": indexed,
+    }

@@ -152,6 +152,49 @@ def retrieve(
     return top
 
 
+def fuse(
+    vector_rows: Sequence[Dict[str, Any]],
+    keyword_rows: Sequence[Dict[str, Any]],
+    *,
+    limit: int = MAX_RETRIEVED,
+) -> List[Dict[str, Any]]:
+    """Combine the two retrievers (MS15), interleaved by rank, then in time order.
+
+    **Neither scorer is trusted alone**, which is the whole reason this is not a choice between
+    them. Embeddings find the passage that answers a question in words the question did not
+    use — "what did we decide about pricing?" against a paragraph that says "we will hold at
+    forty a seat" — and are unreliable on the exact tokens people actually ask about: a part
+    number, a name, "the four-one-two figure". Keyword scoring is the reverse. A meeting where
+    only one of them fires is the normal case.
+
+    Interleaved by *rank* rather than merged by score, because the two scores are not
+    comparable: a cosine distance and a length-normalised term count share no scale, and
+    sorting one list by both is arithmetic that means nothing. Taking each retriever's best,
+    then its second, and so on, asks only that each ranks its own hits correctly.
+
+    De-duplicated on the start time, which is the identity of a passage across both: the same
+    moment found twice would otherwise spend the budget twice on one answer.
+    """
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    vector = list(vector_rows)
+    keyword = list(keyword_rows)
+    for index in range(max(len(vector), len(keyword))):
+        for source in (vector, keyword):
+            if index >= len(source) or len(out) >= limit:
+                continue
+            row = source[index]
+            key = (row.get("meeting_id"), int(row.get("t0_ms") or 0))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(row)
+        if len(out) >= limit:
+            break
+    out.sort(key=lambda r: int(r.get("t0_ms") or 0))
+    return out
+
+
 def verbatim(segments: Sequence[Dict[str, Any]], *, now_ms: int, window_ms: int = VERBATIM_MS) -> List[Dict[str, Any]]:
     """The last ``window_ms`` of transcript — D9 tier 1."""
     floor = max(0, now_ms - window_ms)
@@ -236,6 +279,7 @@ async def answer(
     now_ms: Optional[int] = None,
     limit: int = MAX_RETRIEVED,
     budget: int = TOKEN_BUDGET,
+    vector_search: Optional[Callable[..., Sequence[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """Answer one question about one meeting.
 
@@ -261,7 +305,24 @@ async def answer(
 
     verbatim_rows = verbatim(segments, now_ms=end_ms)
     floor = max(0, end_ms - VERBATIM_MS)
-    retrieved_rows = retrieve(segments, keyframes, question, limit=limit, exclude_after_ms=floor)
+    keyword_rows = retrieve(segments, keyframes, question, limit=limit, exclude_after_ms=floor)
+
+    # MS15. A live meeting is not indexed yet — indexing happens on stop — so this is empty
+    # during the meeting and the keyword tier is the whole of retrieval, which is what MS13
+    # shipped. Once the meeting has ended, both fire and `fuse` interleaves them.
+    vector_rows: Sequence[Dict[str, Any]] = ()
+    finder = vector_search
+    if finder is None:
+        from . import retrieval as retrieval_mod
+
+        finder = retrieval_mod.search
+    try:
+        vector_rows = finder(question, meeting_id=meeting_id, k=limit, exclude_after_ms=floor) or ()
+    except Exception:  # noqa: BLE001 — a missing vector store must not lose a keyword answer
+        log.debug("meetingsense: vector retrieval unavailable for %s", meeting_id, exc_info=True)
+        vector_rows = ()
+
+    retrieved_rows = fuse(vector_rows, keyword_rows, limit=limit)
 
     messages = build_prompt(
         question,

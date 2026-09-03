@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 #: Bumped when a migration adds something. Recorded so a later batch can tell an old file
 #: from a new one without inspecting the schema — MS16 adds columns to ``ms_meetings``.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = (
     """
@@ -76,6 +76,33 @@ _SCHEMA = (
         PRIMARY KEY (meeting_id, version)
     )
     """,
+    # MS16. Which conversations a meeting is reachable from. A meeting is not "in" one
+    # conversation: it is recorded in the one that hosted it, and branched into any number of
+    # others afterwards. Without this table, reopening a chat cannot rehydrate the card,
+    # because nothing on the message says which meeting it came from.
+    """
+    CREATE TABLE IF NOT EXISTS ms_threads(
+        id              TEXT PRIMARY KEY,
+        meeting_id      TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        kind            TEXT NOT NULL DEFAULT 'origin',
+        created_at      REAL NOT NULL
+    )
+    """,
+    # MS16. What a meeting has been pushed *into* — a project knowledge base, an export
+    # written to disk. Recorded so the second attach can say "already there" instead of
+    # indexing the same transcript twice, and so a delete knows what else it left behind.
+    """
+    CREATE TABLE IF NOT EXISTS ms_artifacts(
+        id         TEXT PRIMARY KEY,
+        meeting_id TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        target     TEXT,
+        ref        TEXT,
+        detail     TEXT,
+        created_at REAL NOT NULL
+    )
+    """,
 )
 
 #: Indexes are separate from the tables above, and applied *after* the column patch below.
@@ -90,6 +117,11 @@ _INDEXES = (
     # Resume replays by sequence, not by time: two channels can share a `t0`, so time order is
     # not a stable numbering and cannot answer "everything after seq 4".
     "CREATE INDEX IF NOT EXISTS ix_ms_segments_meeting_seq ON ms_segments(meeting_id, seq)",
+    # Reopening a chat asks "which meetings are in this conversation?" on every load, which is
+    # the read this index exists for; the reverse is asked once per card.
+    "CREATE INDEX IF NOT EXISTS ix_ms_threads_conversation ON ms_threads(conversation_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ms_threads_meeting ON ms_threads(meeting_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ms_artifacts_meeting ON ms_artifacts(meeting_id, kind)",
 )
 
 #: Columns added after schema 1. `CREATE TABLE IF NOT EXISTS` does nothing to a table that
@@ -175,6 +207,102 @@ def tables_exist() -> bool:
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'ms_%'"
         ).fetchall()
         return {r["name"] for r in rows} >= {"ms_meetings", "ms_segments", "ms_keyframes", "ms_notes"}
+    finally:
+        con.close()
+
+
+# ── threads and artifacts (MS16) ────────────────────────────────────────────
+
+
+def add_thread(meeting_id: str, conversation_id: str, *, kind: str = "origin",
+               created_at: Optional[float] = None) -> str:
+    """Record that a meeting is reachable from a conversation. Idempotent per pair.
+
+    Idempotent because both ends write it: a meeting records its origin when it starts, and a
+    resume onto the same conversation would otherwise add a second row and make the card
+    hydrate twice.
+    """
+    con = _connect()
+    try:
+        row = con.execute(
+            "SELECT id FROM ms_threads WHERE meeting_id = ? AND conversation_id = ?",
+            (meeting_id, conversation_id),
+        ).fetchone()
+        if row:
+            return row["id"]
+        tid = uuid.uuid4().hex
+        con.execute(
+            "INSERT INTO ms_threads(id, meeting_id, conversation_id, kind, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (tid, meeting_id, conversation_id, kind, float(created_at if created_at is not None else time.time())),
+        )
+        con.commit()
+        return tid
+    finally:
+        con.close()
+
+
+def threads_for_meeting(meeting_id: str) -> List[Dict[str, Any]]:
+    con = _connect()
+    try:
+        rows = con.execute(
+            "SELECT * FROM ms_threads WHERE meeting_id = ? ORDER BY created_at ASC", (meeting_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+
+def meetings_for_conversation(conversation_id: str) -> List[Dict[str, Any]]:
+    """The meetings a conversation can rehydrate a card for, oldest first.
+
+    Joined rather than two reads: a conversation with three meetings in it would otherwise be
+    three round trips on every chat open, and this is on the load path.
+    """
+    con = _connect()
+    try:
+        rows = con.execute(
+            "SELECT m.*, t.kind AS thread_kind FROM ms_threads t"
+            " JOIN ms_meetings m ON m.id = t.meeting_id"
+            " WHERE t.conversation_id = ? ORDER BY m.started_at ASC",
+            (conversation_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        con.close()
+
+
+def add_artifact(meeting_id: str, *, kind: str, target: Optional[str] = None,
+                 ref: Optional[str] = None, detail: Optional[str] = None,
+                 created_at: Optional[float] = None) -> str:
+    aid = uuid.uuid4().hex
+    con = _connect()
+    try:
+        con.execute(
+            "INSERT INTO ms_artifacts(id, meeting_id, kind, target, ref, detail, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (aid, meeting_id, kind, target, ref, detail,
+             float(created_at if created_at is not None else time.time())),
+        )
+        con.commit()
+        return aid
+    finally:
+        con.close()
+
+
+def artifacts_for_meeting(meeting_id: str, *, kind: Optional[str] = None) -> List[Dict[str, Any]]:
+    con = _connect()
+    try:
+        if kind:
+            rows = con.execute(
+                "SELECT * FROM ms_artifacts WHERE meeting_id = ? AND kind = ? ORDER BY created_at ASC",
+                (meeting_id, kind),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT * FROM ms_artifacts WHERE meeting_id = ? ORDER BY created_at ASC", (meeting_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         con.close()
 
@@ -549,7 +677,7 @@ def delete_meeting(meeting_id: str) -> Dict[str, int]:
                 "SELECT COUNT(*) c FROM ms_notes WHERE meeting_id = ?", (meeting_id,)
             ).fetchone()["c"],
         }
-        for table in ("ms_segments", "ms_keyframes", "ms_notes"):
+        for table in ("ms_segments", "ms_keyframes", "ms_notes", "ms_threads", "ms_artifacts"):
             con.execute(f"DELETE FROM {table} WHERE meeting_id = ?", (meeting_id,))
         cur = con.execute("DELETE FROM ms_meetings WHERE id = ?", (meeting_id,))
         counts["meetings"] = cur.rowcount

@@ -384,6 +384,89 @@ The decisions live in `desktop/meetingsense-audio.js`, which deliberately does n
 `require("electron")`: everything is injected, so the platform table above is unit-tested in
 Node. Loopback capture itself cannot be — that is rows 13 and 14 of the manual matrix.
 
+### Searching across meetings (MS15)
+
+MS13 answers a question by keyword-scoring the meeting's own rows. That works, and it stops
+working at the point people start asking the questions worth asking: *"when did we last talk
+about the vendor contract?"* is a question about six meetings, and *"what did they decide about
+pricing?"* needs a passage that shares no words with the question.
+
+So **on stop, a meeting is embedded** — after the client already has its `final` frame, so the
+time it takes is time nobody waits on, and swallowing every failure, because the transcript is
+in SQLite and that is the copy that cannot be rebuilt.
+
+**A meeting is retrieved from, never absorbed into a project (D4).** The vectors live in a
+Chroma namespace of their own — `meetings_…`, never `project_…` — so
+`get_project_document_count`, `query_project_knowledge` and `delete_project_knowledge` cannot
+see them. Somebody who records a call must not watch their project's document count jump, and
+a persona answering from project knowledge must not quote a meeting nobody attached. Attaching
+one is a deliberate act, and MS16's route for it is the existing upload path.
+
+`vectordb.py` gained one thing for this: a `namespace` parameter whose default produces the
+byte-identical collection name it always produced. A test asserts that against a **fixed hash**
+rather than against the expression that builds it — an assertion written as
+`f"project_{md5(...)}"` passes for any change made to both sides at once, and what is at risk
+is a collection already sitting on somebody's disk.
+
+**What gets embedded is decided by rules, not by a model** (D9's pre-compaction pruning):
+
+- consecutive segments are windowed into paragraphs of ~120 words. A segment is eight seconds
+  of speech and often half a sentence; embedded alone it is a fragment that matches nothing;
+- segments under three words are dropped — "yeah" and "mm-hm" are most of a meeting's segments
+  and none of its content — but the same words *inside* a paragraph are kept, because cutting
+  them out would embed a transcript nobody said;
+- a slide shown twice is embedded once, by dHash; the image never, the caption always.
+
+**Both retrievers run, interleaved by rank.** Embeddings find the passage that answers a
+question in words the question did not use; keyword scoring finds the exact token somebody
+actually asked about — a part number, a name, "the four-one-two figure". Neither is trusted
+alone. They are interleaved by rank rather than merged by score, because a cosine distance and
+a length-normalised term count share no scale and sorting one list by both is arithmetic that
+means nothing. During a live meeting the vector side is simply empty — indexing happens on
+stop — so the live path is exactly what MS13 shipped.
+
+**Delete now means three stores.** Rows, files, and vectors. A meeting removed from SQLite but
+left in the index still answers questions after the user deleted it, which is the worst
+available reading of "delete" and the one nobody would notice until a persona quoted it back.
+
+**No Chroma is not a broken meeting.** An install without the package records, transcribes,
+captions and exports exactly as before; search returns nothing and the keyword tier answers.
+
+### Getting back into a meeting (MS16)
+
+A meeting ends and the useful part starts. Three ways back in, all reusing conversation
+machinery that already exists — no meetings tab, no second inbox, no new job type.
+
+**Reopen the chat it was recorded in.** `GET /v1/meetingsense/conversations/{id}` returns the
+meetings a conversation can rebuild a card for, with the counts already in the row so a
+collapsed card needs no second call. The pairing is recorded in `ms_threads` when the meeting
+**starts**, not when it stops: a meeting interrupted by a server restart should still bring its
+card back, and nothing on a chat message says which meeting produced it.
+
+**New thread from this meeting.** `POST /v1/meetingsense/{id}/thread` mints a conversation and
+writes a brief into it. The brief is deliberately not the summary message: that one is written
+where the reader has just been in the meeting, and this one opens a conversation whose reader
+may be a week late with no context. So it leads with what is *still open* — unresolved
+questions, unfinished actions — and ends with a line saying the transcript is searchable,
+without which the reader's first message is "can you see the meeting?" rather than a question
+about the meeting. It is written as an **assistant** message, so History labels the new thread
+with the meeting it came from before anybody has said anything in it.
+
+**Attach to a project.** `POST /v1/meetingsense/{id}/attach` writes the Markdown export into
+the upload directory and hands it to `vectordb.process_and_add_file` — the same function the
+project upload button calls. That is the point rather than a shortcut: the project already
+knows how to extract, chunk, embed and list a Markdown file, so **this needs no new job type**.
+It is also the only route by which a meeting reaches project jobs. Being recorded does not put
+a meeting into a project (D4); somebody deciding it should be does.
+
+The file is named `meeting-<title>-<id8>.md` and listed in the project's own files, because it
+lands beside the user's own uploads and a uuid there is a row nobody can decide whether to
+delete.
+
+Two more tables — `ms_threads` and `ms_artifacts` — and the delete path clears both, on the
+same rule as the other three: a thread row left behind hydrates a card for a meeting that no
+longer exists.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -469,6 +552,9 @@ the sheet exists to prevent.
 | Route | What it gives |
 |---|---|
 | `GET /v1/meetingsense/{id}` | meeting, segments, keyframes, notes, and whether it is live — the card hydrates from this rather than replaying the socket |
+| `GET /v1/meetingsense/conversations/{id}` | the meetings a chat can bring a card back for (MS16). Never errors; empty with the flag off |
+| `POST /v1/meetingsense/{id}/thread` | open a new conversation from this meeting, with a brief (MS16) |
+| `POST /v1/meetingsense/{id}/attach` | push the transcript into a project's knowledge base (MS16) |
 | `GET /v1/meetingsense/{id}/export?fmt=md` | Markdown to paste into a document |
 | `…?fmt=srt` | real cues from `t0`/`t1`, to lay over a recording |
 | `…?fmt=json` | everything, in the shape it is stored |
@@ -796,7 +882,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 506
+cd backend && python3 -m pytest tests/meetingsense -q   # 576
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -821,6 +907,8 @@ cd backend && python3 -m pytest tests/avatar -q                              # t
 cd ../ollabridge && python3 -m pytest tests/avatar -q                        # 61  (MS8: the pipe)
 cd backend && python3 -m pytest tests/meetingsense/test_ask.py -q            # 45  (MS13)
 cd backend && python3 -m pytest tests/meetingsense/test_keyframes.py -q     # 26  (MS9)
+cd backend && python3 -m pytest tests/meetingsense/test_retrieval.py -q     # 37  (MS15)
+cd backend && python3 -m pytest tests/meetingsense/test_binding.py -q       # 33  (MS16)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 84  (MS4, MS4-a, MS9)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 55  (MS5 + MS11)
 cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 90  (MS6 + MS10)

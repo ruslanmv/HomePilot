@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse, Response
 
 from . import ask as ask_mod
 from . import audio as audio_wire
+from . import binding as binding_mod
 from . import export as export_mod
 from . import keyframes as keyframes_mod
 from . import retention as retention_mod
@@ -444,6 +445,29 @@ def _require_meeting(meeting_id: str) -> Dict[str, Any]:
     return meeting
 
 
+@router.get("/v1/meetingsense/conversations/{conversation_id}")
+async def meetings_in_conversation(conversation_id: str) -> Dict[str, Any]:
+    """The meetings a conversation can bring a card back for (MS16).
+
+    Declared **above** ``/{meeting_id}``: FastAPI matches in declaration order, and a path
+    parameter placed first would swallow "conversations" as a meeting id and 404 on every
+    call. That is the kind of bug that looks like a missing feature.
+
+    Never 404s. A conversation with no meetings in it is the normal case, and the chat load
+    path asks this on every open — an error there would be a red toast on a chat that is fine.
+    """
+    empty = {"conversation_id": conversation_id, "meetings": []}
+    # Gated like every other read, but *empty* rather than 404: turning the flag off leaves
+    # the tables where they are, and a chat that used to host a meeting should stop showing
+    # its card rather than start erroring.
+    if not load_config().enabled:
+        return empty
+    try:
+        return {"conversation_id": conversation_id, "meetings": binding_mod.hydrate(conversation_id)}
+    except Exception:  # noqa: BLE001 — an install with no tables has no meetings
+        return empty
+
+
 @router.get("/v1/meetingsense/{meeting_id}")
 async def get_meeting(meeting_id: str) -> Dict[str, Any]:
     """Everything the card needs to rebuild itself.
@@ -553,3 +577,36 @@ async def ask_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
     from .notes_engine import call_model
 
     return await ask_mod.answer(meeting_id, question, call=call_model)
+
+
+@router.post("/v1/meetingsense/{meeting_id}/thread")
+async def branch_meeting(meeting_id: str, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Open a new conversation from a meeting, with a brief (MS16).
+
+    Returns the conversation id the client should navigate to. The brief is written as an
+    assistant message, so History labels the new thread with the meeting it came from even
+    before anybody says anything in it.
+    """
+    _require_meeting(meeting_id)
+    result = binding_mod.branch(meeting_id, conversation_id=(body or {}).get("conversation_id"))
+    if result is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return result
+
+
+@router.post("/v1/meetingsense/{meeting_id}/attach")
+async def attach_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Push a meeting's transcript into a project's knowledge base (MS16).
+
+    A deliberate act, and the only route by which a meeting reaches project jobs (D4): being
+    recorded does not put a meeting into a project, and this endpoint is somebody deciding it
+    should be.
+    """
+    _require_meeting(meeting_id)
+    project_id = str((body or {}).get("project_id") or "").strip()
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    result = binding_mod.attach_to_project(meeting_id, project_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return result

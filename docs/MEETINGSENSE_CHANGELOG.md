@@ -17,6 +17,52 @@ this is reachable and no table is created.
 
 ---
 
+## W5 — Memory
+
+### MS16 — binding, resume and branching · `PENDING`
+
+- `ms_threads` and `ms_artifacts` (schema 3), a new `binding.py`, and three endpoints:
+  `GET /conversations/{id}` to bring a card back, `POST /{id}/thread` to branch, and
+  `POST /{id}/attach` to push the transcript into a project.
+- **The origin thread is recorded when a meeting starts, not when it stops.** A meeting
+  interrupted by a server restart should still bring its card back, and nothing on a chat
+  message says which meeting produced it.
+- **The conversation route is declared above `/{meeting_id}`.** FastAPI matches in declaration
+  order; a path parameter first swallows "conversations" as a meeting id and 404s every
+  hydration — a bug that looks like a missing feature.
+- **The brief is not the summary message.** The summary is written where the reader has just
+  been in the meeting; the brief opens a conversation whose reader may be a week late, so it
+  leads with what is still open and ends by saying the transcript is searchable.
+- **Attach goes through `process_and_add_file`**, the function the project upload button
+  calls, which is why it needs no new job type — asserted, because "we reuse X" is the kind of
+  claim that quietly stops being true.
+- **A hole found by mutation, twice over:** a section whose items all render blank still
+  printed its heading. MS14's note sections had the identical bug and its guard was copied
+  without its test.
+
+### MS15 — embeddings and cross-meeting retrieval · `PENDING`
+
+- New `retrieval.py`. On stop a meeting is embedded — after `final`, so nobody waits on it —
+  into a Chroma namespace of its own, and `ms_search(query, meeting_id?, k)` returns rows
+  carrying their own `<title> · hh:mm:ss` citation.
+- `vectordb.py` gained a `namespace` parameter whose default produces the byte-identical
+  collection name it always produced, and `collection_name()` is now the single place that
+  name is built — two copies of a naming rule is how a delete stops matching its create.
+- **One collection filtered by `meeting_id`, not one per meeting**, which is a deliberate
+  deviation from the batch row: both queries a per-meeting collection would serve are the
+  global one with and without a filter, the delete runs filtered either way, and the second
+  copy would double every index for no capability.
+- **Both retrievers run, interleaved by rank.** Embeddings find the passage worded differently
+  from the question; keyword finds the exact token somebody asked about. Interleaved rather
+  than merged, because a cosine distance and a length-normalised term count share no scale.
+- **Delete now clears three stores.** A meeting left in the index answers questions after the
+  user deleted it.
+- **Two weak tests, found by mutation:** the over-fetch before the verbatim filter and the
+  time-order sort both survived their mutants, because in each fixture the retriever's scores
+  happened to agree with the property under test. Rewritten so rank and time disagree.
+
+---
+
 ## W3 — Eyes
 
 ### MS11 — desktop system audio · `e3e7937`
