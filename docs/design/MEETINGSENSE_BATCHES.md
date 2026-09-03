@@ -182,7 +182,7 @@ not done while any of its rows is untested.
 | **W0** | Foundation | MS0 ✅ → MS1 ✅ → MS1-a ✅ | Flags, status endpoint; STT that returns timed spans — locally and remotely — names its device, loads once. One item carried: **MS1-b**, the measurement |
 | **W1** | Recorder (local) | MS2 ✅ → MS3 ✅ → MS4 ✅ → MS5 ✅ → MS3-a ✅ → MS4-a ✅ → MS6 ✅ | Screen + audio → live transcript in a chat card, export, resume on reconnect. **Pilot for a week here** |
 | **W2** | Reach | MS7 ✅ → MS8 ✅ | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
-| **W3** | Eyes | MS9 → MS11 | Slide-aware keyframes captioned locally; desktop loopback (Windows) |
+| **W3** | Eyes | MS9 ✅ → MS10 ✅ → MS11 ✅ | Slide-aware keyframes captioned locally, joined to the transcript in the card; desktop loopback (Windows). Carried: **matrix rows 11–15**, and **MS12-a** (the notes engine is constructed by nothing) |
 | **W4** | Brain | MS12 ✅ → MS13 ✅ → MS14 ✅ | Rolling notes, "ask about this meeting", final summary + retention |
 | **W5** | Memory | MS15 → MS17 | Retrieval namespace, binding/resume/branch, auto-metadata |
 | **W6** | Together | MS18 → MS20 | Live grounded chat, meeting as 8th 👥 activity, card on avatar surface |
