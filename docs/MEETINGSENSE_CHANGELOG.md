@@ -19,6 +19,23 @@ this is reachable and no table is created.
 
 ## W6 — Together
 
+### MS20 — the card on the avatar surface · `PENDING`
+
+- New `panel.py`: the same store rows become a `display` message of the existing `cards`
+  kind — a third renderer, not a third source — and a `meeting_panel` frame on the avatar
+  session asks for one.
+- **A summary projection, never the transcript.** A 400-segment meeting arrives as what it is,
+  what was decided, what is still open, what is on screen, and at most the last two lines so a
+  live panel does not look frozen.
+- **The row cap is read from `panels.MAX_ROWS`, not retyped**, so a change to the renderer's
+  cap cannot leave this sending panels that get refused. Cards truncate from the end, so the
+  header is dropped last and the first rows do not reshuffle as the meeting grows.
+- A panel the channel refuses is dropped, not escalated: the meeting records either way, and a
+  card that could not be drawn is not a reason to send an error into a live session.
+- **The first-occurrence trap again**, twice: two mutations aimed at `_panel` matched identical
+  guard lines in `_audio` and `_stop` and survived. Unique anchors, and both real behaviours
+  now have tests.
+
 ### MS19 — the eighth activity · `3b7af51` (avatar) + `51bff81`
 
 - `meeting.js` joins the 👥 launcher. It cannot obtain a stream: no `navigator`, no media

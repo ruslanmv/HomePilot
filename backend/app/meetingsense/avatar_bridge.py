@@ -144,6 +144,8 @@ class MeetingBridge:
                 await self._audio(message)
             elif kind == "meeting_stop":
                 await self._stop()
+            elif kind == "meeting_panel":
+                await self._panel()
             # Anything else queued here is a type a later wave added. Ignored, per §6.9.
         except session_mod.MeetingSessionError as exc:
             await self._refuse(exc.code, exc.detail)
@@ -191,6 +193,32 @@ class MeetingBridge:
         from .routes import _handle_audio
 
         await _handle_audio(self.session, message, self.session.audio_channels)
+
+    async def _panel(self) -> None:
+        """Draw the meeting card on the avatar surface (MS20).
+
+        Sent as an ordinary `display` message of the existing `cards` kind, through the
+        outbox everything else here uses — one data source, two renderers, and no new channel
+        for the client to learn. A panel the channel refuses is dropped rather than escalated:
+        the meeting is recording either way, and a card that could not be drawn is not a
+        reason to interrupt it.
+        """
+        if self.session is None:
+            raise session_mod.MeetingSessionError("not_live", "no meeting has been started")
+        from . import panel as panel_mod
+
+        message = panel_mod.display(
+            self.session.meeting_id,
+            live=self.session.state == session_mod.MeetingState.LIVE,
+            elapsed_ms=self.session.elapsed_ms,
+        )
+        if message is None:
+            log.debug("meetingsense: no panel for %s", self.session.meeting_id)
+            return
+        # Not wrapped in `envelope()`: a `display` is the director's own message type and the
+        # client's panel renderer already knows it. Wrapping it as a meeting frame would need
+        # a second renderer for a card that already has one.
+        self.outbox.append(message)
 
     async def _stop(self) -> None:
         if self.session is None:

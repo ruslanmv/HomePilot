@@ -567,6 +567,28 @@ declines it should not already have granted a microphone they now have no use fo
 stops the recorder synchronously — the epoch makes every grant read dead in the same tick, and
 a revoke that waits on a network round trip is a revoke that has not happened yet.
 
+### The card on the avatar surface (MS20)
+
+A third *renderer*, not a third source. The same store rows become a `display` message of the
+existing `cards` kind, drawn by the avatar client's own panel renderer — no new channel for it
+to learn, and a `meeting_panel` frame on the avatar session asks for one.
+
+**A panel is a screen, not a document.** The channel caps a panel at 64 KB and a `cards` panel
+at twelve rows, so a four-hundred-segment meeting arrives as a **summary projection**: what the
+meeting is, what was decided, what is still open, what is on screen — and at most the last two
+lines spoken, so a live panel does not look frozen. The transcript is never rows; the web card,
+the export and `ask` are all better at it.
+
+The row cap is **read from `panels.MAX_ROWS`**, not retyped, so a change to the renderer's cap
+cannot leave this sending panels that get refused. Cards are built in the order they matter and
+truncated from the end, so the first rows a reader glances at are the same ones whether the
+meeting is a minute or three hours old — a panel that reshuffles as it grows is one nobody can
+glance at.
+
+`panels.build` is what decides whether a panel is legal, and it is called rather than
+reimplemented. A panel it refuses is dropped: the meeting is recording either way, and a card
+that could not be drawn is not a reason to send an error into a live session.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -983,7 +1005,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 685
+cd backend && python3 -m pytest tests/meetingsense -q   # 706
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -1013,6 +1035,7 @@ cd backend && python3 -m pytest tests/meetingsense/test_binding.py -q       # 33
 cd backend && python3 -m pytest tests/meetingsense/test_metadata.py -q      # 72  (MS17)
 cd backend && python3 -m pytest tests/meetingsense/test_notes_wiring.py -q  # 11  (MS12-a)
 cd backend && python3 -m pytest tests/meetingsense/test_live_context.py -q  # 26  (MS18)
+cd backend && python3 -m pytest tests/meetingsense/test_panel.py -q         # 21  (MS20)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 90  (MS4, MS4-a, MS9, MS19)
 cd ../3D-Avatar-Chatbot && npx jest tests/behavior/meeting.test.js           # 21  (MS19)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 55  (MS5 + MS11)
@@ -1024,7 +1047,7 @@ MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to in
 phone/call primitives suite among them — which had never run in CI since they were written.
 All of them pass; nothing was fixed to make that true.
 
-**W0 through W5 are complete.** A meeting records, resumes, transcribes, takes rolling notes,
+**W0 through W6 are complete.** A meeting records, resumes, transcribes, takes rolling notes,
 answers questions, summarises itself into History, exports, deletes, works from a hosted page,
 captures its slides, captions them, shows each one beside what was said while it was up, and on
 Windows in the desktop app records the call itself rather than whatever the share dialog offered.
