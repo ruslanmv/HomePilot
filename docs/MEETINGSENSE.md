@@ -151,7 +151,47 @@ To force local transcription, unset `STT_BASE_URL` and set `WHISPER_MODEL=small`
 
 ---
 
-## Verifying MS0 and MS1
+## What MS2 added, and what it still cannot do
+
+MS2 is three modules and no route. Nothing in it is reachable over HTTP yet — that is MS3's
+job — so turning the flag on after MS2 changes nothing a user can see. What it buys is the
+shape everything above it is written against.
+
+**`store.py`** — four tables (`ms_meetings`, `ms_segments`, `ms_keyframes`, `ms_notes`) in
+HomePilot's existing SQLite file, reached through `storage._get_db_path()` rather than a
+database of their own. Every statement is `CREATE TABLE IF NOT EXISTS`, and `migrate()` runs
+**only when the flag is on**: an install that never enables MeetingSense never grows the
+tables.
+
+**`transcript.py`** — the utterance assembler. Chunks overlap by 200 ms because cutting on
+silence still cuts words, and the overlap is therefore transcribed twice. The assembler trims
+the **head of the later** span, never the tail of the earlier one: a segment already sent to
+the client and written to the store must not change afterwards, or the live card flickers and
+the reader stops trusting what they read a moment ago. Two words is the floor for calling a
+match an overlap — one shared word between utterances is ordinary English.
+
+**`session.py`** — `MeetingSession`, `idle → live → ended`, one way. A stopped meeting is a
+record; a second `stop` is a no-op rather than an error, because both ends of a socket notice
+a disconnect and both will try.
+
+The load-bearing constraint is one line long:
+
+> **`session.py` must never import FastAPI.**
+
+MeetingSense has to run over two transports — a WebSocket the browser opens directly (MS3),
+and the avatar session OllaBridge proxies for a hosted page (MS7). A core that knows about
+either one has to be written twice. So it knows about a `Transport` instead, which is `send`
+and `close` and deliberately nothing else: the peer address, the negotiated capabilities,
+whether the socket is still open are all knowledge the core would start branching on, and
+branching on it is how one core becomes two. A test asserts the protocol has exactly those
+two methods, and another reads `session.py`'s own source to check the import never appears.
+
+Not yet done, and not in MS2's scope: a route, a microphone, a UI, captioning a keyframe
+(MS9), or generating notes (MS12).
+
+---
+
+## Verifying MS0, MS1 and MS2
 
 With the flag off — the shipped state:
 
@@ -169,7 +209,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q
+cd backend && python3 -m pytest tests/meetingsense -q   # 151
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -181,9 +221,16 @@ cd backend && python3 -m pytest tests/meetingsense/test_stt_capability.py -q  # 
 cd backend && python3 -m pytest tests/test_voice.py tests/test_voice_call*.py -q
 ```
 
-What MS0 and MS1 deliberately do **not** do: mount a session route, create a table, write a
-message, or read a microphone. The package imports one router and a dataclass, and the
-speech layer only grows methods beside the ones that were already there.
+MS2 adds 68 of those tests and touches nothing outside `backend/app/meetingsense/`:
+
+```bash
+cd backend && python3 -m pytest tests/meetingsense/test_transcript.py -q     # 31
+cd backend && python3 -m pytest tests/meetingsense/test_session_core.py -q   # 37
+```
+
+What MS0, MS1 and MS2 deliberately do **not** do: mount a session route, write a message, or
+read a microphone. The package imports one router, a dataclass and a store nothing calls yet;
+the speech layer only grows methods beside the ones that were already there.
 
 ---
 
