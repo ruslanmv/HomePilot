@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W3 — Eyes
 
-### MS9 — the keyframe scheduler, and captions · `PENDING`
+### MS9 — the keyframe scheduler, and captions · `0e0281f`
 
 - **Client** (`homepilot-meetingsense.js`, mirrored): a 500 ms sampler → 64×36 gray → dHash and
   a changed-pixel ratio; motion gate > 35 % *against the last capture*, 1.5 s stability, an 8 s
