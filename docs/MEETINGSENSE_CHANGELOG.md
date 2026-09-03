@@ -17,6 +17,32 @@ this is reachable and no table is created.
 
 ---
 
+## W7 — Capability
+
+### MS21 — the MCP server · `ed38c7f`
+
+- `agentic/integrations/mcp/meetingsense_server.py` on **9107**, ten `ms.*` tools, in
+  `docker-compose.mcp.yml` and the Makefile (`start-`, `stop-`, `health-meetingsense`).
+- **The transport is HTTP, not an in-process import** — a deliberate change from what the
+  batch row implies. The MCP image contains `agentic/` and no `backend/`, so importing the
+  meeting store would have worked from the Makefile and failed in every container. Four
+  backend routes were added to make one transport possible: `GET /meetings`, `GET /search`,
+  `GET /conversations/{id}/live`, `POST /{id}/notes`.
+- **Reads open, four writes gated**, with `local-notes`' exact wording so an operator
+  recognises the refusal and knows which variable to set.
+- The tests run the **real backend router** behind an httpx ASGI transport rather than a stub:
+  a tool naming a route the backend does not serve is the bug this batch can introduce, and a
+  stub would answer it happily.
+- **Two weak tests found by mutation:** the transcript cap was exercised on a two-segment
+  fixture so it never bound, and an unknown mode was refused by the *backend's* 400 either
+  way — the client-side check exists to hand the agent the list of modes, so the test now
+  asserts the message rather than only the refusal.
+- Written with sync tests. `test_mcp_servers.py` is entirely `async def` with no asyncio
+  plugin configured and fails 164/164 on a clean tree — one of the 18 pre-existing failures,
+  and a blocker for MS22's "make test-mcp-servers green".
+
+---
+
 ## W6 — Together
 
 ### MS20 — the card on the avatar surface · `8640ad4`
