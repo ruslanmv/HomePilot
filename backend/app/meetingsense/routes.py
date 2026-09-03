@@ -1,7 +1,7 @@
-"""MeetingSense HTTP routes (batch MS0).
+"""MeetingSense HTTP routes (batches MS0, MS3).
 
-Today this is one endpoint: ``GET /v1/meetingsense/status``. The session WebSocket arrives
-in MS3, the per-meeting reads in MS6.
+``GET /v1/meetingsense/status`` and ``WS /v1/meetingsense/session``. The per-meeting reads
+arrive in MS6.
 
 **Status answers even when MeetingSense is off, and that is the point.** A frontend needs to
 know three different things apart: the feature is disabled, the feature is enabled but this
@@ -17,12 +17,18 @@ missing has failed at the one job it has: reporting what is missing.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from . import audio as audio_wire
+from . import session as session_mod
+from . import store
 from .config import load_config
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["meetingsense"])
 
@@ -145,3 +151,175 @@ async def meetingsense_status() -> Dict[str, Any]:
             "max_keyframes_per_hour": cfg.vision.max_keyframes_per_hour,
         },
     }
+
+
+# ── WS /v1/meetingsense/session (MS3) ───────────────────────────────────────
+
+
+class WebSocketTransport:
+    """MS2's :class:`~.session.Transport`, over a FastAPI WebSocket.
+
+    The whole implementation is two forwarding methods, which is the point: MS2's core was
+    written against this protocol precisely so the second transport (MS7, over the avatar
+    session OllaBridge proxies) is another two methods rather than a second copy of the core.
+    """
+
+    def __init__(self, websocket: WebSocket) -> None:
+        self._ws = websocket
+
+    async def send(self, frame: Dict[str, Any]) -> None:
+        await self._ws.send_json(frame)
+
+    async def close(self) -> None:
+        await self._ws.close()
+
+
+def _stt_bridge(provider):
+    """Adapt an STT provider to the callable :class:`~.session.MeetingSession` wants.
+
+    One provider is held for the whole connection, the way ``voice/routes.py`` holds one:
+    the model lives on the instance, so fetching a provider per utterance reloads it. MS1's
+    cache makes a second fetch cheap rather than catastrophic, and this makes it unnecessary.
+    """
+
+    async def transcribe(data: bytes, *, fmt: str = "wav", duration_s=None):
+        return await provider.transcribe_segments(data, fmt=fmt, duration_s=duration_s)
+
+    return transcribe
+
+
+async def _handle_audio(session, message: Dict[str, Any], channels: int) -> None:
+    """Split one wire frame into per-speaker tracks and push each through the session.
+
+    A stereo frame is two people, so it is two transcriptions. Deciding that here rather than
+    inside the session keeps the core free of the wire format, which is the one thing it must
+    not learn.
+    """
+    tracks = audio_wire.tracks(message, declared_channels=channels)
+    partial = bool(message.get("partial"))
+    for track in tracks:
+        frame = {
+            **message,
+            "audio_bytes": track.wav,
+            "format": "wav",
+            # A mono recording cannot say who is talking, so the frame's own claim stands.
+            "speaker": track.speaker or message.get("speaker"),
+        }
+        if partial:
+            await session.on_partial(frame)
+        else:
+            await session.on_audio(frame)
+
+
+@router.websocket("/v1/meetingsense/session")
+async def meetingsense_session(websocket: WebSocket) -> None:
+    """Record one meeting.
+
+    Refuses when the flag is off exactly the way ``/v1/voice/session`` does — accept, say why,
+    close 1008 — rather than rejecting the handshake. A client that gets a bare connection
+    failure cannot tell "disabled" from "wrong URL" from "server down", and the popover would
+    have nothing to explain to the user.
+
+    Unknown frame types are ignored in both directions, the same rule the voice-call envelopes
+    follow: a newer client talking to an older server should lose the feature it asked for,
+    not the meeting it is recording.
+    """
+    await websocket.accept()
+    cfg = load_config()
+
+    if not cfg.enabled:
+        await websocket.send_json(
+            {"type": "error", "code": "disabled", "msg": "MeetingSense is disabled on this server"}
+        )
+        await websocket.close(code=1008)
+        return
+
+    # Tables are created on the first connection rather than at import, so an install that
+    # never turns the flag on never grows them. `CREATE TABLE IF NOT EXISTS`, so the second
+    # connection costs a no-op.
+    try:
+        store.migrate_if_enabled(cfg)
+    except Exception as exc:  # noqa: BLE001 — a broken store is the one thing that is fatal
+        await websocket.send_json({"type": "error", "code": "store_unavailable", "msg": str(exc)})
+        await websocket.close(code=1011)
+        return
+
+    provider = None
+    try:
+        from ..voice.providers import get_stt_provider
+
+        candidate = get_stt_provider()
+        if getattr(candidate, "available", False):
+            provider = candidate
+    except Exception as exc:  # noqa: BLE001
+        log.warning("meetingsense: no speech provider (%s)", exc)
+
+    session = session_mod.MeetingSession(
+        transport=WebSocketTransport(websocket),
+        config=cfg,
+        # None when nothing can transcribe. The session then reports `stt: false` in `ready`
+        # and refuses audio with a code — a meeting that records slides and markers without a
+        # transcript is still a meeting, and is a better answer than refusing the connection.
+        transcribe=_stt_bridge(provider) if provider is not None else None,
+    )
+    channels = 1
+
+    try:
+        while True:
+            message = await websocket.receive_json()
+            kind = (message or {}).get("type")
+
+            try:
+                if kind == "start":
+                    declared = message.get("audio")
+                    if isinstance(declared, dict):
+                        channels = int(declared.get("channels") or 1)
+                    await session.start(message)
+                    session_mod.register(session)
+
+                elif kind == "audio":
+                    await _handle_audio(session, message, channels)
+
+                elif kind == "keyframe":
+                    await session.on_keyframe(message)
+
+                elif kind == "mute":
+                    await session.on_mute(message)
+
+                elif kind == "status":
+                    await session.send_status()
+
+                elif kind == "stop":
+                    await session.stop()
+                    session_mod.unregister(session.meeting_id)
+                    break
+
+                elif kind == "ping":
+                    await websocket.send_json({"type": "pong"})
+
+                # Anything else is ignored on purpose — `marker` and `ask` belong to waves
+                # that are not built, and a client sending them early should not be hung up
+                # on mid-meeting.
+
+            except audio_wire.AudioFrameError as exc:
+                await session.send_error(exc.code, exc.detail)
+            except session_mod.MeetingSessionError as exc:
+                await session.send_error(exc.code, exc.detail)
+            except Exception as exc:  # noqa: BLE001
+                # One bad frame must not end a recording in progress. The socket stays up and
+                # the client is told which frame failed.
+                log.exception("meetingsense: %s frame failed", kind)
+                await session.send_error("frame_failed", f"{kind} failed: {exc}")
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        # A dropped socket ends the meeting rather than leaving it live forever: the session
+        # is the socket, and nothing is going to reconnect to it. What survives is in the
+        # store.
+        if session.state == session_mod.MeetingState.LIVE:
+            try:
+                await session.stop()
+            except Exception:  # noqa: BLE001 — the socket is already gone
+                log.debug("meetingsense: could not send the final frame", exc_info=True)
+        session_mod.unregister(session.meeting_id)

@@ -118,7 +118,11 @@ class MeetingSession:
         self.conversation_id: Optional[str] = None
         self.audio_mode: Optional[str] = None
         self.mic_muted = False
-        self.assembler = UtteranceAssembler()
+        # One assembler per speaker. The 200 ms overlap is an artefact of how *one* stream
+        # was chunked, so removing it across streams would compare the microphone against
+        # the system audio and drop whichever of two people said the same words second —
+        # picking the speaker by which channel happened to be transcribed first.
+        self.assemblers: Dict[str, UtteranceAssembler] = {}
         self.segment_count = 0
         self.keyframe_count = 0
 
@@ -192,6 +196,32 @@ class MeetingSession:
 
     # ── audio in, segments out ──────────────────────────────────────────────
 
+    def assembler_for(self, speaker: Optional[str]) -> UtteranceAssembler:
+        """The assembler for one speaker, created on first sight of them."""
+        key = speaker or ""
+        if key not in self.assemblers:
+            self.assemblers[key] = UtteranceAssembler()
+        return self.assemblers[key]
+
+    async def _spans(self, message: Frame) -> Sequence[Dict[str, Any]]:
+        """Transcribe one frame's audio. Shared by the stored path and the provisional one."""
+        if self._transcribe is None:
+            raise MeetingSessionError("stt_unavailable", "no speech provider is configured")
+        audio = message.get("audio_bytes")
+        if not audio:
+            raise MeetingSessionError("audio_missing", "an audio frame needs audio")
+        t1 = message.get("t1")
+        t0_ms = int(message.get("t0") or 0)
+        duration_s = None if t1 is None else max(0.0, (float(t1) - t0_ms) / 1000.0)
+        return await self._transcribe(
+            audio,
+            fmt=message.get("format") or "wav",
+            # The client framed this audio and knows how long it is; the provider may not,
+            # and a provider that only returns text would otherwise report `t1: None` for a
+            # span whose length was never in doubt.
+            duration_s=duration_s,
+        )
+
     async def on_audio(self, message: Frame) -> List[Frame]:
         """Transcribe one chunk and emit whatever it added.
 
@@ -200,26 +230,12 @@ class MeetingSession:
         not a failure.
         """
         self._require_live()
-        if self._transcribe is None:
-            raise MeetingSessionError("stt_unavailable", "no speech provider is configured")
-
-        audio = message.get("audio_bytes")
-        if not audio:
-            raise MeetingSessionError("audio_missing", "an audio frame needs audio")
-
-        t0_ms = int(message.get("t0") or 0)
-        t1 = message.get("t1")
-        duration_s = None if t1 is None else max(0.0, (float(t1) - t0_ms) / 1000.0)
-
-        spans = await self._transcribe(
-            audio,
-            fmt=message.get("format") or "wav",
-            duration_s=duration_s,
-        )
-        fresh = self.assembler.push(
+        speaker = message.get("speaker")
+        spans = await self._spans(message)
+        fresh = self.assembler_for(speaker).push(
             spans or [],
-            chunk_t0_ms=t0_ms,
-            speaker=message.get("speaker"),
+            chunk_t0_ms=int(message.get("t0") or 0),
+            speaker=speaker,
         )
         if not fresh:
             return []
@@ -237,6 +253,33 @@ class MeetingSession:
                 "speaker": seg.get("speaker"),
                 "text": seg["text"],
                 "conf": seg.get("conf"),
+            }
+            await self.transport.send(frame)
+            sent.append(frame)
+        return sent
+
+    async def on_partial(self, message: Frame) -> List[Frame]:
+        """Transcribe a frame provisionally: emit ``partial``, store nothing, remember nothing.
+
+        A partial is the client saying "this utterance is still open, here is what I have so
+        far". The same audio arrives again when the utterance closes, so feeding it to the
+        assembler would make the closing chunk look like a duplicate of itself and the real
+        segment would be trimmed away. Provisional text is shown and then replaced; it is
+        never a record.
+        """
+        self._require_live()
+        t0_ms = int(message.get("t0") or 0)
+        spans = await self._spans(message)
+        sent: List[Frame] = []
+        for span in spans or []:
+            text = (span.get("text") or "").strip()
+            if not text:
+                continue
+            frame = {
+                "type": "partial",
+                "t0": int(round(float(span.get("t0") or 0.0) * 1000)) + t0_ms,
+                "speaker": span.get("speaker") or message.get("speaker"),
+                "text": text,
             }
             await self.transport.send(frame)
             sent.append(frame)
