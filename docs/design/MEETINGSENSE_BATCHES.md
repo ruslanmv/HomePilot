@@ -182,9 +182,9 @@ not done while any of its rows is untested.
 | **W0** | Foundation | MS0 ✅ → MS1 ✅ → MS1-a ✅ | Flags, status endpoint; STT that returns timed spans — locally and remotely — names its device, loads once. One item carried: **MS1-b**, the measurement |
 | **W1** | Recorder (local) | MS2 ✅ → MS3 ✅ → MS4 ✅ → MS5 ✅ → MS3-a ✅ → MS4-a ✅ → MS6 ✅ | Screen + audio → live transcript in a chat card, export, resume on reconnect. **Pilot for a week here** |
 | **W2** | Reach | MS7 ✅ → MS8 ✅ | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
-| **W3** | Eyes | MS9 ✅ → MS10 ✅ → MS11 ✅ | Slide-aware keyframes captioned locally, joined to the transcript in the card; desktop loopback (Windows). Carried: **matrix rows 11–15**, and **MS12-a** (the notes engine is constructed by nothing) |
+| **W3** | Eyes | MS9 ✅ → MS10 ✅ → MS11 ✅ | Slide-aware keyframes captioned locally, joined to the transcript in the card; desktop loopback (Windows). Carried: **matrix rows 11–15** |
 | **W4** | Brain | MS12 ✅ → MS13 ✅ → MS14 ✅ | Rolling notes, "ask about this meeting", final summary + retention |
-| **W5** | Memory | MS15 ✅ → MS16 ✅ → MS17 ✅ | Retrieval namespace, binding/resume/branch, auto-metadata. Carried: **matrix rows 11–16**, and **MS12-a** (the notes engine is constructed by nothing) |
+| **W5** | Memory | MS15 ✅ → MS16 ✅ → MS17 ✅ | Retrieval namespace, binding/resume/branch, auto-metadata. Carried: **matrix rows 11–16** |
 | **W6** | Together | MS18 → MS20 | Live grounded chat, meeting as 8th 👥 activity, card on avatar surface |
 | **W7** | Capability | MS21 → MS22 | MeetingSense MCP server (9107) + Forge; Teams server or explicit defer |
 | **W8** | Engine | MS23 → MS24 | LangGraph agent, output-identical to the fixed loop in Note-taker |
@@ -238,7 +238,7 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 |---|---|---|---|---|
 | **MS9** | Keyframe scheduler | In the addon: 500 ms sampler → 64×36 gray → dHash + changed-pixel ratio; motion gate (> 35 %), 1.5 s stability, 8 s min interval, 5 min heartbeat, hourly cap; JPEG → `/upload` → `keyframe` frame. Server `keyframes.py` stores and calls `analyze_image()` (`persist=false`) with the slide prompt → `slide` frame | vitest: synthetic sequences (slide flip / scroll / video / cursor wiggle) → expected decisions — **this test earns the thresholds**; pytest: keyframe → caption with a vision stub | ✅ |
 | **MS10** | Slides in the card | `SlideStrip.tsx`; lightbox joins caption to the transcript spoken while the slide was up (join on `t0`) | vitest: the join picks the right segments at a boundary | ✅ |
-| **MS12-a** | Wire `NotesEngine` into both transports. MS12's engine is built, tested and **constructed by nothing** — `start` echoes `notes: true` and no meeting has ever emitted a `notes` frame. Found during MS9, four lines in `routes.py` and `avatar_bridge.py` | pytest: a live meeting with `notes: true` emits a `notes` frame | ⬜ |
+| **MS12-a** | Wire `NotesEngine` into both transports. MS12's engine is built, tested and **constructed by nothing** — `start` echoes `notes: true` and no meeting has ever emitted a `notes` frame. Found during MS9, four lines in `routes.py` and `avatar_bridge.py` | 11 tests, seven mutations each fail. Driven through a **real socket** and a **real avatar bridge**, because MS12's suite tested the engine and MS3's tested the socket and the gap was between them. `ready` now reports whether notes are *running*, not whether they were *requested* — the half of the bug that hid the other half | ✅ |
 | **MS11** ∥ | Desktop loopback | `desktop/main.js` `setDisplayMediaRequestHandler(..., audio:'loopback', useSystemPicker)`; `preload.js` exposes `meetingSenseAudio`; mic permission request. **macOS on Electron 33: no loopback — mic or virtual device, stated in the popover** | manual QA Windows + macOS (**matrix rows 13–15, unsigned**); desktop build unchanged with flag off — the platform table and the flag-off guarantee are unit-tested in Node via `desktop/meetingsense-audio.js` | ✅ |
 
 ### W4 — Brain

@@ -165,6 +165,7 @@ class MeetingBridge:
         transcribe = self._provider()
         kwargs = {"now": self._now} if self._now is not None else {}
         from . import keyframes as keyframes_mod
+        from . import notes_engine as notes_engine_mod
 
         self.session = session_mod.MeetingSession(
             transport=AvatarTransport(self.outbox),
@@ -174,6 +175,9 @@ class MeetingBridge:
             # hosted page captions its slides on this machine's vision model, because that is
             # the only machine in the picture that has one.
             vision=keyframes_mod.vision_bridge(self.config),
+            # MS12-a, and the same factory the local socket uses: a meeting proxied in from a
+            # hosted page takes notes on this machine's model, like everything else it does.
+            notes_factory=notes_engine_mod.engine_factory(self.config),
             **kwargs,
         )
         await self.session.start(message)

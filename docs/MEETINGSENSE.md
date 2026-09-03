@@ -984,18 +984,13 @@ project — and it names itself.
 What is left before the pilot can be signed off is not code: the sixteen-row matrix below,
 none of which anybody has run.
 
-**Two wiring seams are open**, and it is worth being exact about which:
+**One wiring seam is open**, and it is worth being exact about which:
 
 
 1. MS5's **Start session** calls an `onStart` callback and the host application decides what
    to mount it against. Everything it needs — the hook, the card, the pill, the consent sheet
    — exists and is tested. Deliberate.
-2. **MS12's `NotesEngine` is not constructed by either transport.** `start` echoes
-   `notes: true` back to a client, `MeetingSession` accepts a `notes=` engine and drives it
-   correctly, and no route builds one — so no meeting has ever produced a `notes` frame. The
-   engine and its 60 tests are right; the four lines that hand one to the session are missing.
-   Found while wiring MS9's vision bridge through the same constructor, and left for whoever
-   picks up MS10, which is the batch that renders what it produces.
+
 
 ---
 

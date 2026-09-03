@@ -32,6 +32,7 @@ from . import audio as audio_wire
 from . import binding as binding_mod
 from . import export as export_mod
 from . import keyframes as keyframes_mod
+from . import notes_engine as notes_engine_mod
 from . import retention as retention_mod
 from . import session as session_mod
 from . import store
@@ -285,6 +286,9 @@ async def meetingsense_session(websocket: WebSocket) -> None:
         # with no multimodal module: slides are then recorded with timestamps and no captions,
         # which is a complete meeting rather than a degraded one.
         vision=keyframes_mod.vision_bridge(cfg),
+        # MS12-a. Built on `start` when the client asks for notes — the wiring MS12 shipped
+        # without, which left `notes: true` echoed back over a meeting that produced none.
+        notes_factory=notes_engine_mod.engine_factory(cfg),
     )
     channels = 1
 

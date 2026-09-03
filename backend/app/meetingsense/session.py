@@ -134,6 +134,7 @@ class MeetingSession:
         config: Any,
         transcribe: Optional[Callable[..., Awaitable[Sequence[Dict[str, Any]]]]] = None,
         notes: Any = None,
+        notes_factory: Optional[Callable[[str], Any]] = None,
         vision: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,
         calendar: Optional[Callable[..., Awaitable[Any]]] = None,
         now: Callable[[], float] = time.time,
@@ -145,6 +146,10 @@ class MeetingSession:
         #: MS12's engine, or None. Injected like `transcribe` and for the same reason: a test
         #: needs no model, and the core keeps no opinion about where notes come from.
         self.notes = notes
+        #: MS12-a. Builds the engine when `start` asks for notes, because the session is
+        #: constructed before the start frame arrives and an engine holds one meeting's state.
+        #: Injected like everything else here, so a test needs no model.
+        self._notes_factory = notes_factory
         #: MS9's ``analyze_image``, or None. None means slides are recorded and not captioned,
         #: which is a complete meeting on an install with no vision model — not a degraded one.
         self.vision = vision
@@ -230,6 +235,16 @@ class MeetingSession:
         except Exception:  # noqa: BLE001 — a missing link is a card that does not hydrate
             log.exception("meetingsense: could not record the thread for %s", self.meeting_id)
 
+        # MS12-a. The engine is built here rather than in the constructor because whether
+        # notes are wanted arrives in this frame — and because it was built *nowhere* until
+        # this batch: `start` echoed `notes: true` back to clients and nothing ever produced
+        # a `notes` frame.
+        if message.get("notes") and self.notes is None and self._notes_factory is not None:
+            try:
+                self.notes = self._notes_factory(self.meeting_id)
+            except Exception:  # noqa: BLE001 — a meeting without notes is still a meeting
+                log.exception("meetingsense: could not build a notes engine for %s", self.meeting_id)
+
         # MS17. Scheduled, not awaited: a calendar round trip before `ready` is a dialog-free
         # start turned back into a wait, and the recording is what the user pressed the button
         # for. The name arrives moments later as a `meta` frame.
@@ -240,7 +255,10 @@ class MeetingSession:
                 "type": "ready",
                 "meeting_id": self.meeting_id,
                 "stt": self._transcribe is not None,
-                "notes": bool(message.get("notes")),
+                # What the server *will actually do*, not what the client asked for. Echoing
+                # the request is what let MS12's engine go unbuilt without anyone noticing:
+                # every client was told notes were on.
+                "notes": self.notes is not None,
                 "watch": bool(message.get("watch")),
             }
         )

@@ -17,6 +17,25 @@ this is reachable and no table is created.
 
 ---
 
+## Carried work
+
+### MS12-a — the notes engine, actually connected · `PENDING`
+
+- MS12 shipped an engine that was complete, tested, and **constructed by nothing**. `start`
+  echoed `notes: true` straight back, `MeetingSession` drove a `notes=` engine correctly, and
+  no route ever built one — so for four batches no meeting on any install produced a `notes`
+  frame, and every client was told notes were on.
+- One `engine_factory(config)` in `notes_engine.py`, wired into both transports. Two call
+  sites building one each would be two places for this to happen again.
+- **`ready` now reports whether notes are running, not whether they were requested.** That is
+  the half of the bug that hid the other half: a server answering with the client's own
+  question can be wrong indefinitely without anybody noticing.
+- The tests go through a **real socket** and a **real avatar bridge** rather than the session
+  core, because MS12's suite tested the engine, MS3's tested the socket, and the gap was
+  between them.
+
+---
+
 ## W5 — Memory
 
 ### MS17 — naming a meeting without asking · `d3facbe`

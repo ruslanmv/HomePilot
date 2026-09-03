@@ -281,6 +281,32 @@ class NotesEngine:
         return cap_words(raw.strip())
 
 
+def engine_factory(config: Any) -> Callable[[str], "NotesEngine"]:
+    """``(meeting_id) -> NotesEngine``, configured — the one place both transports build one.
+
+    This function is the fix for MS12's real gap: the engine shipped complete and tested and
+    was **constructed by nothing**, so `start` echoed ``notes: true`` back to clients and no
+    meeting ever produced a `notes` frame. Two call sites building one each would be two
+    places for that to happen again, so there is one.
+
+    Returns a factory rather than an engine because an engine holds one meeting's rolling
+    state, and a connection can record more than one meeting in sequence.
+    """
+    notes_config = getattr(config, "notes", None)
+
+    def build(meeting_id: str) -> "NotesEngine":
+        return NotesEngine(
+            meeting_id,
+            call=lambda messages, **kw: call_model(
+                messages, model=getattr(notes_config, "model", "") or "", **kw
+            ),
+            interval_s=getattr(notes_config, "interval_s", None),
+            max_words=getattr(notes_config, "max_words", None),
+        )
+
+    return build
+
+
 async def call_model(messages: List[Dict[str, str]], *, temperature: float = 0.2, model: str = "") -> str:
     """The default model call: the same router `jobs.py` uses.
 
