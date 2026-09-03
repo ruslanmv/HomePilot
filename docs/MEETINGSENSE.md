@@ -329,7 +329,57 @@ one a short test cannot substitute for.
 
 ---
 
-## Verifying MS0 – MS4
+## The entry point (MS5)
+
+`frontend/src/ui/meetingsense/entryPoint.ts`. When the backend reports MeetingSense enabled,
+the existing ScreenSense button gains a popover — *Watch screen · Record audio · Live AI notes*,
+with **Start session** and **Ask once**. When it does not, the button is untouched.
+
+"Untouched" is literal and asserted: `attach()` returns `null` before it sets an attribute,
+adds a listener or appends a node, and a test compares the button's `outerHTML` before and
+after. A status the frontend cannot read counts as disabled — silence reads as "off", never as
+"probably fine", so a stale build can never offer a control the backend would refuse.
+
+**"Ask once" keeps its exact path**, and this took some care. ScreenSense's own click handler
+is still on that button, so without intervention one click would both fire a question and open
+the popover. ScreenSense is not edited by any batch, so the handler is suppressed in the
+capture phase and re-fired by the popover's "Ask once" button, which re-dispatches the click
+ScreenSense was written for rather than reimplementing what it does. `destroy()` puts the
+button back.
+
+### Every disabled control says why, and what to set
+
+This is the §2a bar the batch exists to meet. A greyed-out toggle with no explanation is worse
+than no toggle. Each state has its own sentence and a stable id:
+
+| id | When | What it says |
+|---|---|---|
+| `disabled` | flag off | names `MEETINGSENSE_ENABLED` |
+| `stt-unavailable` | no speech provider | **the server's own hint, verbatim** — it already names the variable, and a second copy in the client is a second place to keep in step |
+| `stt-remote` | `STT_BASE_URL` is set | names the provider, says audio leaves this machine — never echoes the endpoint, which can carry a key |
+| `stt-no-timestamps` | `supports_segments: false` | the transcript will have no timestamps to cite |
+| `stt-device` | `device_note` present | e.g. *requested cuda, running on cpu* — the silent fallback that makes people think the latency budget is unreachable |
+| `capture-mac` | macOS | records the microphone only unless a virtual audio device is added |
+| `capture-linux` | Linux | share a tab with "Share tab audio"; a window share carries no audio |
+| `capture-mobile` | phone or tablet | needs a desktop browser; the capture toggles are **hidden**, not greyed — a disabled control on a phone invites tapping it |
+| `capture-unsupported` | desktop without `getDisplayMedia` | Chrome or Edge can |
+| `vision-unavailable` | no vision model | slides will not be captioned; tone is *info*, because a meeting records fine without them |
+
+A test greps the module for generic prose — "not available", "Unavailable", "Not supported" —
+so the bar cannot be quietly lowered later.
+
+### Keyboard and screen reader
+
+`Esc` closes the popover and returns focus to the button; opening moves focus to the first
+enabled control. The button carries `aria-expanded`, `aria-controls` and `aria-haspopup`, and
+the popover is a labelled `<section>` rather than a `<dialog>` — a modal backdrop over a live
+meeting would be the wrong thing. axe-core runs over both the healthy and the degraded trees
+with zero violations (`color-contrast` is off, since jsdom neither lays out nor paints; that
+check belongs to the manual matrix).
+
+---
+
+## Verifying MS0 – MS5
 
 With the flag off — the shipped state:
 
@@ -366,6 +416,7 @@ cd backend && python3 -m pytest tests/meetingsense/test_transcript.py -q     # 3
 cd backend && python3 -m pytest tests/meetingsense/test_session_core.py -q   # 37
 cd backend && python3 -m pytest tests/meetingsense/test_session_ws.py -q     # 40  (MS3)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 39  (MS4)
+cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 39  (MS5)
 ```
 
 MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to include `js` and
@@ -373,9 +424,11 @@ MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to in
 phone/call primitives suite among them — which had never run in CI since they were written.
 All of them pass; nothing was fixed to make that true.
 
-What MS0 – MS4 deliberately do **not** do: draw a UI, caption a slide (MS9), or write a
-message into the conversation (MS12). There is now a recorder and a socket for it to talk to,
-and nothing yet that offers either to a user — the entry point is MS5.
+What MS0 – MS5 deliberately do **not** do: show a transcript, caption a slide (MS9), or write
+a message into the conversation (MS12). There is a recorder, a socket, and a control that
+offers them — but pressing **Start session** currently calls an `onStart` callback that nothing
+has wired to `hpMeetingSense.start()` yet. The live card, the recording pill and the consent
+sheet are MS6, and that wiring lands with them.
 
 ---
 

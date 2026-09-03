@@ -5,24 +5,36 @@ Same discipline as `docs/design/MONOREPO_BATCHES.md`: small, additive, flag-gate
 independently shippable batches. **Every batch leaves the existing app green with all
 flags off.** One batch = one Claude Code session = one PR.
 
-**Revision 4 — after MS1.** Supersedes revisions 1–3, which it keeps almost entirely: the
-structure, the decisions D1–D7 and the MS numbering are rev 3's. What changed is what
-implementing MS0 and MS1 taught, and one row of §1 that was **wrong**.
+**Revision 5 — after MS3.** Supersedes revisions 1–4 and keeps their structure, decisions
+D1–D7 and MS numbering. What changed is what implementing MS2 and MS3 taught, plus three
+decisions (D8–D10) and one section (§2a) that fix the *experience* bar before the first
+user-facing batch (MS4) is written.
 
-Reflects the branch at `3b8e1a8` — MS0 and MS1 landed, 83 tests under
-`backend/tests/meetingsense/`. Where this file and a design document disagree, **this file
+Reflects the branch at `be286c0` — MS0–MS3 landed, **191 tests** under
+`backend/tests/meetingsense/`; the backend now has a session core, a store and a local
+WebSocket that transcribes two-channel audio into timed, speaker-tagged segments. Nothing is
+visible to a user yet: MS4–MS6 are the first batches that touch the frontend. Where this file and a design document disagree, **this file
 wins**; the design documents are the spec for *what*, this file is the contract for *how and
 in what order*.
 
-Changed in rev 4, all of it measured rather than assumed:
+Changed in rev 5:
 
-* §1 row 4 claimed STT is CPU-only. **It is not** — faster-whisper's `device` default is
-  already `auto`. Corrected, with the evidence, and with the real problem stated instead.
-* §1 gains two rows that will bite a future batch: the test-suite module purge, and a
-  cosmetic wart in `transcribe()` that must **not** be tidied.
-* MS1's row records the two acceptance items it did **not** meet, rather than reporting done
-  and losing them.
-* §7 gains the two contracts MS1 created.
+* **§2a Experience quality bar** — the industry-standard behaviours a live-transcription UI is
+  judged on (latency states, no layout jumps, reconnect with resume, degraded-mode honesty,
+  accessibility, undo). Each is assigned to the batch that first puts it at risk, so it is
+  tested there rather than remembered later.
+* **D8 Memory is storage + retrieval, never agent-managed.** Closes the "do we need deep
+  agents for memory" question: no.
+* **D9 Context compaction is three tiers with one budget** — the same shape Claude and ChatGPT
+  use — because HomePilot's chat path passes only the last 6 messages (`main.py:4951`) and
+  drops the rest, which is fatal for a two-hour meeting. Lands as a `recap` field in MS12, a
+  budget assertion in MS18, and an idempotent resume in MS3-a/MS4.
+* **D10 Reconnect resumes, never restarts.** A dropped socket ends the meeting today (MS3);
+  from MS4 on, the client must be able to resume the same `meeting_id` within a grace window.
+* §1 gains the rows MS2/MS3 produced (wire names, error shape, `audio.py`) and one new
+  fact: the chat history window.
+* MS2/MS3 rows record their real acceptance; MS3-a carried.
+* §7 gains the transport contracts MS3 created.
 
 ---
 
@@ -60,6 +72,9 @@ Rules:
     patch lands on one and the code runs in the other. This passes alone and fails in the
     suite, which is the worst way for it to fail. MS0's tests hit it; MS1 fixed them.
   - Consent + always-visible recording indicator are never weakened by any UI batch.
+  - Every UI batch checks its rows in §2a (experience quality bar) and ships the test named there.
+  - Memory and context follow D8/D9: no agent decides what is remembered; the prompt budget for
+    meeting context is fixed and asserted; the transcript is never in the prompt, it is retrieved.
   - Finish by updating the Status column of this file and writing a short CHANGELOG entry.
   - Do not start the next batch. Stop, report what was verified, how to run it, and what
     you could not verify from here.
@@ -87,13 +102,14 @@ Every row below was checked against the working tree. Each is now a batch or a c
 | `hp-teams` (9106) is registered in Forge but has no implementation; `microsoft_graph_server.py` exists | `seed_all.py:67`, `ls agentic/integrations/mcp/` | MS22 builds it or defers tier 2; never "reuse" |
 | `prompt_builder.py` lives at `backend/app/personalities/prompt_builder.py` | tree | MS18 path fixed |
 | The ScreenSense addon ships twice, byte-identical; `index.html:15` loads the public copy | `cmp` of both files | MS4 mirrors + a test asserts identity |
-| `frontend/vitest.config.ts` had `include: ['src/**/*.test.{ts,tsx}']`, so **17 test files and 124 tests never ran** — every `.test.js` and `.test.jsx` in the tree, the whole phone/call primitives suite among them | `vitest.config.ts:9`, `find src -name '*.test.js*'` | MS4 ✅ — glob widened to `{ts,tsx,js,jsx}`. All 124 passed unchanged; nothing was fixed to make that true |
 | Electron `^33.3.1`: `audio:'loopback'` is Windows-only | `desktop/package.json:27` | MS11 documents macOS = mic or virtual device. Resolved: **no** |
 | A hosted page (yourfriend.online) cannot open `ws://localhost`; OllaBridge already proxies `/v1/avatar/session` as a pipe; the avatar protocol ignores unknown types | `avatar_director/protocol.py`, OllaBridge proxy | Two transports over one core: MS2 `Transport`, MS7/MS8 |
 | The 👥 launcher's `screen-insight.js` already owns a consent machine + `CapturePipeline` | avatar client | MS19 borrows it; no third capture path |
 | Part 1 §5.2 spells the audio field `pcm16_b64`; **D6 fixed `data_b64` + `format`** so a meeting frame and a voice frame are one shape | `voice/routes.py:81`, D6 | MS3 ✅ — `data_b64` is the contract, `pcm16_b64` accepted so a client written from the design doc still works |
 | Part 1 §5.2 says `ready` carries `session_id` and `final` carries `summary_message_id`/`transcript_url` | design vs. MS2 `session.py` | MS3 ships MS2's `meeting_id` and counts. The summary is MS12's and the export URL is MS6's — neither exists to name yet, and inventing the keys early means two places to change |
 | Part 1 §5.2 says `error` carries `error`; MS2 chose `{code, msg}` to match the avatar protocol so one client handles both surfaces | `avatar_director/protocol.py`, MS2 `send_error` | MS3 ✅ — `{code, msg}`, and every refusal has a stable code |
+| HomePilot's chat path has **no compaction**: it passes `get_recent(cid, limit=6)` and drops everything older. A meeting thread longer than six messages loses the meeting unless the meeting context is self-contained | `main.py:4951` | D9: MS14's summary message is self-sufficient; MS18 injects a bounded block; older material is retrieval-only. `limit=6` is **not** edited |
+| MS3 ends the meeting when the socket drops. Correct for the store (no row says "in progress" forever) but a Wi-Fi blip mid-meeting must not lose the recording | MS3 `routes.py` | D10: MS3-a adds a grace window + `resume` frame; MS4 reconnects with backoff |
 | Part 1 §5.1 puts 2-channel speaker tagging in `transcript.py` | design file list | MS3 puts the byte work in a new `audio.py`: `transcript.py` is pure string comparison and its tests need no audio, which is worth keeping |
 
 ---
@@ -109,6 +125,33 @@ Every row below was checked against the working tree. Each is now a batch or a c
 | **D5** | Where does the catalog live? | **History.** Meeting = conversation, auto-titled `🎙 <title> · <source> · <date>`. Sidebar tab (MS28) only if History gets crowded | Zero nav change; reuses `/conversations/{id}/search` |
 | **D6** | Wire format for audio | **Identical to voice**: `format:"wav"`, `data_b64`; optional `seq/t0/t1` | One contract to debug |
 | **D7** | Local pilot vs. hosted reach first | **W1 → one-week pilot on localhost → W2.** The `Transport` protocol in MS2 makes the order free | Fastest real feedback; W2 is still mandatory before W3 |
+| **D8** | Do we need deep agents for memory? | **No.** Memory is three deterministic stores: working (rolling 10 min in-session), episodic (`ms_*` tables + one summary message), semantic (vector namespace, `ms.search`, cited). The LangGraph graph (W8) *consumes* memory through a `Recall` node; it never decides what is stored | Agent-managed memory is non-deterministic and unexplainable ("why did it remember X?"). MS23's acceptance — graph output identical to the fixed loop — is only possible if memory lives outside the graph. W1–W7 ship with no agent at all |
+| **D9** | How is context kept short? | **Three tiers, one budget (≤ 900 tokens).** (1) verbatim: last 90 s + current slide caption; (2) compressed: rolling notes + a `recap` (3–5 sentences, regenerated from previous recap + new chunk, never from the full transcript); (3) retrieval: everything older via `ms.search`, cited. Pre-compaction pruning is deterministic: VAD silence, filler/sub-3-word segments, duplicate slides (dHash), images never in the prompt — captions only | Same architecture Claude/ChatGPT use for long threads. Inspectable at every tier. The chat path's `limit=6` is untouched: the summary message carries the recap so the persona knows the meeting even when it is the only meeting message in the window |
+| **D10** | What happens when the socket drops? | **Resume, never restart.** Server keeps an ended-by-disconnect meeting resumable for a grace window (default 120 s, `MEETINGSENSE_RESUME_GRACE_S`); client reconnects with exponential backoff and a `resume` frame carrying `meeting_id` + last `seq`; server replays nothing (client already has it) and continues numbering. After the window, the meeting is final and a new one starts | Otter/Zoom/Teams all survive a network blip without a split recording. A user who loses ten minutes of a board meeting to Wi-Fi does not come back |
+
+---
+
+## 2a. Experience quality bar (what the UI is judged on)
+
+These are the behaviours users of Otter, Fireflies, Teams Copilot and Zoom AI Companion take
+for granted. Each row names the batch that owns it and the test that proves it. A UI batch is
+not done while any of its rows is untested.
+
+| Behaviour | Standard | Owner | Test |
+|---|---|---|---|
+| **Time-to-first-word** | ≤ 3 s from speech to a `partial` on screen (GPU); if slower, the card shows *"catching up · 12 s behind"* rather than silence | MS4 / MS6 | e2e measures lag from synthetic audio; a stalled STT stub triggers the label |
+| **No layout jump** | Partials render in muted colour at fixed line height and solidify in place; the transcript never scrolls under the reader unless they are at the bottom (sticky-scroll with "↓ new lines" pill) | MS6 | vitest: DOM height identical before/after partial→segment; scroll position preserved when not at bottom |
+| **Nothing already shown changes** | Segments are append-only; notes correct by strikethrough, never rewrite (MS2 already trims the *later* span for this reason) | MS6 / MS12 | vitest: a re-rendered card contains every previously rendered segment text |
+| **Recording state is unmissable** | Red pill with elapsed time, live level meter, provider name and audio mode; visible on every scroll position; browser's own share indicator never hidden | MS6 | vitest: pill present in all card/scroll states; a11y role `status`, `aria-live="polite"` |
+| **Honest degraded modes** | Every unavailable capability says *why* and *what to set*: no STT → env var; no system audio on macOS → "mic only — see how to add a virtual device"; remote STT → named, with "timestamps unavailable" if `supports_segments` is false | MS5 | vitest: each `/status` shape renders the matching sentence; no generic "unavailable" string exists in the bundle |
+| **Reconnect resumes** | A dropped socket shows *"reconnecting…"* and resumes the same meeting (D10); the pill keeps counting; no duplicate segments | MS3-a / MS4 | pytest: resume within grace continues `seq`; after grace, a new meeting; vitest: backoff schedule 1-2-4-8 s capped at 15 s |
+| **One-tap stop, one-tap undo** | Stop asks nothing; the card offers *Undo · 10 s* before the summary job starts; delete is one click and removes rows and files per retention | MS6 / MS14 | e2e: undo within 10 s re-opens the session; delete leaves no `ms_*` rows and no files |
+| **Consent that informs** | First-run sheet names the STT provider, where audio goes, what is kept, and reminds to tell participants; "don't show again" is per-machine; a one-line reminder still appears in the pill on every start | MS6 | vitest: the sheet text contains the resolved provider from `/status`; a cloud provider renders the cloud sentence |
+| **Keyboard + screen reader** | `⌘/Ctrl+Shift+M` mute, `Esc` from popover, focus trap in consent sheet; transcript is a `<section aria-label="Live transcript">` with each segment a `<p>` carrying `data-t0`; colour contrast ≥ 4.5:1 in both themes | MS5 / MS6 | axe-core in vitest with zero violations; keyboard e2e |
+| **Mobile degrades, does not break** | Capture is unavailable on mobile browsers (no `getDisplayMedia` audio); the popover says so; the card collapses to summary + last 3 lines and still hydrates from `/v1/meetingsense/{id}` | MS5 / MS6 | vitest at 380 px width: no horizontal scroll; capture control hidden with the explanatory line |
+| **Export is complete and portable** | `.md` (summary → slides timeline → transcript with `hh:mm:ss` and speaker), `.srt` (real cues from `t0/t1`), `.json` (everything). Exports work for meetings with `t1: None` by using segment order | MS6 | pytest: round-trip fixtures; an SRT validator passes; a `t1: None` meeting exports without error |
+| **Slides you can trust** | A slide thumbnail opens the caption *and* the words spoken while it was up; a re-shown slide is not a new slide | MS9 / MS10 | vitest: join on `t0` at a boundary; dHash equality reuses the caption |
+| **Latency is measured, not assumed** | Real-time factor recorded for the reference GPU and CPU fallback in `docs/MEETINGSENSE.md`; the "catching up" label threshold derives from it | MS1-b | the number exists in the doc |
 
 ---
 
@@ -117,7 +160,7 @@ Every row below was checked against the working tree. Each is now a batch or a c
 | Wave | Theme | Batches | Exit criterion |
 |---|---|---|---|
 | **W0** | Foundation | MS0 ✅ → MS1 ✅ | Flags, status endpoint; STT that returns timed spans, names its device, loads once. Two items carried: MS1-a, MS1-b |
-| **W1** | Recorder (local) | MS2 → MS6 | Screen + audio → live transcript in a chat card, export. **Pilot for a week here** |
+| **W1** | Recorder (local) | MS2 ✅ → MS3 ✅ → MS4 🔄 → MS5 ✅ → MS3-a → MS4-a → MS6 | Screen + audio → live transcript in a chat card, export, resume on reconnect. **Pilot for a week here** |
 | **W2** | Reach | MS7 → MS8 | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
 | **W3** | Eyes | MS9 → MS11 | Slide-aware keyframes captioned locally; desktop loopback (Windows) |
 | **W4** | Brain | MS12 → MS14 | Rolling notes, "ask about this meeting", final summary + retention |
@@ -151,9 +194,11 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 |---|---|---|---|---|
 | **MS2** | Store + session core | `store.py` (`ms_meetings ms_segments ms_keyframes ms_notes`, `CREATE TABLE IF NOT EXISTS`, `migrate_if_enabled()` so an install that never turns the flag on never grows the tables; reuses `storage._get_db_path()` rather than a second database); `session.py` `MeetingSession` (`idle→live→ended`, one way; `stop` idempotent because both ends of a socket notice a disconnect and both will try), in-memory registry, `elapsed_ms` frozen at end; `transcript.py` utterance assembler — 200 ms overlap, `MIN_OVERLAP_WORDS=2` (one shared word is ordinary English), and the window is over **emitted** words, not the last surviving fragment. **The core takes a `Transport` protocol (`send(frame)`, `close()`) and never imports FastAPI** — two transports, one core | 68 tests (31 assembler, 37 core). Mutations: a `fastapi` import, a third `Transport` method, a non-idempotent `stop` and a dropped dedupe each fail the suite. `dedupe()` now takes the assembler's own window, so the streaming and batch cases are one implementation of the rule rather than two. Full backend run unchanged against the 18-file baseline | ✅ `82c8ff4` |
 | **MS3** | Local WebSocket transport | `WS /v1/meetingsense/session` in `routes.py` + new `audio.py` (wire format). Client `start/audio/keyframe/mute/status/stop/ping`, server `ready/partial/segment/status/final/error`; unknown types ignored both ways. PCM16 wrapped in a RIFF header server-side; `transcribe_segments(..., duration_s=<frame length>)`; **one provider held per connection**; stereo split per channel with **ch0 → `them`, ch1 → `me`** and one assembler each; refuses flag-off the way the voice route does (accept, say why, close 1008). A dropped socket ends the meeting in the store rather than leaving a row that says "in progress" forever | 40 tests. Eight mutations: swapped channels, unwrapped PCM, a stored partial, a shared assembler, a leaked live session, a dropped `duration_s`, migration before the flag check, and no flag check — each fails, and each fails *as an assertion* (a missing frame used to hang the suite; the helper now provokes a `pong` end-marker). 191 green in `tests/meetingsense`; full backend run unchanged against the 18-file baseline | ✅ `15b2b24` |
-| **MS4** | Audio capture addon | `frontend/public/js/homepilot-meetingsense.js` + byte-identical `community/addons/meetingsense/`; `hpMeetingSense.start/stop/muteMic`; own `getDisplayMedia({video,audio})` + `getUserMedia` (D1); AudioContext mixer on **separate gain nodes** into a channel merger (ch0 = call, ch1 = mic — never summed); AudioWorklet via a Blob URL → 16 kHz PCM16 20 ms frames; energy VAD, 350 ms close over a 1 s floor, 8 s hard cut; WAV-wrapped chunks per D6; `audioMode ∈ {system+mic, system, mic, none}`; DOM events `ms:segment ms:partial ms:status ms:audio_lost`. **Only the hard cut carries the 200 ms overlap** — a close on silence cut nothing, and carrying one there is what turned a 200 ms overlap into a 140 ms one in the first draft | 39 vitest tests over synthetic buffers + a sha256 identity check on the two copies. Eight mutations (swapped WAV channels, dropped framer remainder, no overlap after a hard cut, no clamp, averaged VAD channels, no hard cut, unchunked base64, no minimum utterance) each fail. **The capture graph itself is untested** — jsdom has no AudioContext/AudioWorklet/getDisplayMedia — so a 10-row manual matrix in `docs/MEETINGSENSE.md` is unsigned and blocks the W1 pilot | ✅ `6ee54ab` |
-| **MS5** | Entry point | The ScreenSense button becomes the two-toggle popover (Part 1 §2.1): *Watch screen / Record audio (source) / Live notes*. **"Ask once" keeps its exact current path.** Popover shows the resolved STT provider from `/status` and greys "Record audio" with the env var that would enable it | flag off → rendered button byte-identical to today (asserted); flag on → popover; "Ask once" e2e unchanged | ⬜ |
-| **MS6** | Live card + export | `frontend/src/ui/meetingsense/{useMeetingSense.ts, MeetingCard.tsx, RecordingPill.tsx, ConsentSheet.tsx}`; card renders for assistant messages beginning `[Meeting]`, plain-text fallback preserved; pill always visible while live (timer, mute, stop); **consent sheet names the STT provider and where audio goes**, remembers "don't show again", reminds to inform participants; `GET /v1/meetingsense/{id}`, `/export?fmt=md\|srt\|json`; on stop: `add_message(cid,"assistant","[Meeting]…")` and auto-title the conversation `🎙 <title> · <source> · <date>` (D5) | vitest snapshots for card states; e2e: start → speak → segments → stop → export; History shows the titled conversation | ⬜ |
+| **MS3-a** | Resume on reconnect (D10) | Server side only, before any client exists to need it: on socket drop the meeting enters `suspended` for `MEETINGSENSE_RESUME_GRACE_S` (default 120) instead of `ended`; new client frame `resume {meeting_id, last_seq}` re-attaches the socket to the live `MeetingSession` (same assemblers, same provider, `seq` continues); after the grace window the existing end path runs unchanged. Store gains `suspended_at`. `status` frame carries `resumable_until` | pytest: drop → resume within grace → segments continue with no duplicate and no gap in `seq`; drop → grace expires → row ended exactly as MS3 does today; resume with a wrong `meeting_id` → stable error code, socket stays up | ⬜ **next** |
+| **MS4** | Audio capture addon | **Landed against the rev-4 scope, before rev 5 expanded it.** Built: the mirrored addon pair, `start/stop/muteMic`, own `getDisplayMedia`+`getUserMedia`, separate gain nodes into a channel merger (ch0 call / ch1 mic, never summed), AudioWorklet via Blob URL → 16 kHz PCM16 20 ms frames, energy VAD (350 ms close over a 1 s floor, 8 s hard cut), WAV chunks per D6, `audioMode`, and `ms:segment ms:partial ms:status ms:audio_lost`. **Only the hard cut carries the 200 ms overlap** — a close on silence cut nothing, and carrying one there turned a 200 ms overlap into 140 ms in the first draft | 39 vitest tests + a sha256 identity check on the two copies (it caught a real drift). Eight mutations each fail. Capture graph untested — jsdom has no AudioContext/AudioWorklet/getDisplayMedia — so the 10-row manual matrix in `docs/MEETINGSENSE.md` is **unsigned and blocks the pilot** | 🔄 `6ee54ab` — see **MS4-a** |
+| **MS4-a** | *Carried from MS4 — the rev-5 delta* | Four things rev 5 added to MS4 after it was built, none of them in the shipped addon: **reconnect with backoff 1-2-4-8 s (cap 15 s) sending `resume` per D10** and the `ms:reconnecting` / `ms:resumed` events; **per-channel RMS exposed** for the pill's level meter; **backpressure** — over 2 s of buffered audio, drop the oldest silence-flagged frames first and raise `ms:status {behind_ms}`. Depends on MS3-a, which is why rev 5 orders it first | vitest: backoff schedule; a dropped fake socket resumes the same `meeting_id`; a saturated socket drops silence before speech and reports `behind_ms` | ⬜ **with or after MS3-a; before the pilot** |
+| **MS5** | Entry point | `frontend/src/ui/meetingsense/entryPoint.ts` — framework-free DOM, so it attaches to the button ScreenSense already mounted instead of replacing it. Popover per Part 1 §2.1 (*Watch screen · Record audio · Live AI notes*, **Start session** + **Ask once**); `describe()` is a pure `/status` → sentences function with a stable id per state; `Esc` closes and returns focus; `aria-expanded`/`-controls`/`-haspopup`; capture toggles **hidden** on mobile, not greyed. **"Ask once" needed real care**: ScreenSense's own click handler is still on that button, so one click would have both asked a question and opened the popover — it is suppressed in the capture phase and re-fired by the popover's button re-dispatching the click ScreenSense was written for, since the file may not be edited | 39 tests. Flag off → `outerHTML` byte-identical and nothing appended (asserted, not "no popover appears"); unreachable `/status` reads as off; each `/status` shape renders its sentence; a grep asserts no generic "unavailable" prose survives; axe-core zero violations on **both** the healthy and degraded trees. Eleven mutations each fail. 346 frontend tests green; `npm run build` and `tsc --noEmit` clean | ✅ `1ee3227` |
+| **MS6** | Live card + export | `frontend/src/ui/meetingsense/{useMeetingSense.ts, MeetingCard.tsx, RecordingPill.tsx, ConsentSheet.tsx}`; card renders for assistant messages beginning `[Meeting]`, plain-text fallback preserved; pill always visible while live (timer, mute, stop); **consent sheet names the STT provider and where audio goes**, remembers "don't show again", reminds to inform participants; `GET /v1/meetingsense/{id}`, `/export?fmt=md\|srt\|json`; on stop: **Undo · 10 s**, then `add_message(cid,"assistant","[Meeting]…")` and auto-title the conversation `🎙 <title> · <source> · <date>` (D5). Card implements §2a: partials at fixed line height, sticky-scroll with "↓ new lines" pill, *"catching up · N s behind"* from `behind_ms`, *"reconnecting…"* state, level meter + provider + audio mode in the pill, `aria-live` transcript, mobile collapse | vitest snapshots for card states incl. catching-up / reconnecting / mobile; DOM-height and scroll-position tests; axe-core zero violations; e2e: start → speak → segments → stop → undo → stop → export (md validates, srt validates, `t1: None` fixture exports); History shows the titled conversation | ⬜ |
 
 **W1 exit:** a working recorder for anyone whose browser and backend are the same machine.
 **→ Pilot for one week in real meetings before W2 (D7). Record what hurt in `docs/MEETINGSENSE.md`.**
@@ -179,9 +224,9 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 
 | # | Batch | Scope | Acceptance | Status |
 |---|---|---|---|---|
-| **MS12** | Notes engine | `notes_engine.py` + `prompts.py`: every 60 s / 400 words, JSON-delta prompt (add/resolve decisions, actions, questions, summary) with `t0` citations, merged server-side into `ms_notes`, pushed as `notes`; card uses append + strikethrough, never rewrite | pytest with LLM stub → merge correctness; malformed JSON tolerated without dropping the session | ⬜ |
-| **MS13** | Ask about this meeting | `ask` frame → recent window + keyword retrieval over `ms_segments`/`ms_keyframes` → LLM → `answer`; `POST /v1/meetingsense/{id}/ask` for ended meetings | pytest: the answer cites timestamps present in the fixture | ⬜ |
-| **MS14** | Final summary + retention | On stop: summary assistant message with slide thumbnails in `media.images`; retention `text` / `text+frames` / `all`; one-click delete endpoint. **Per D4: no job is enqueued, no LTM extraction; the persona's route to a meeting is retrieval (MS15).** Docs say so explicitly | pytest: stop produces the summary message; delete removes rows + files per retention; **a test asserts nothing is enqueued in `jobs`** | ⬜ |
+| **MS12** | Notes engine + recap (D9 tier 2) | `notes_engine.py` + `prompts.py`: every 60 s / 400 words, JSON-delta prompt (add/resolve decisions, actions, questions, summary) with `t0` citations, merged server-side into `ms_notes`, pushed as `notes`; **`recap`: 3–5 sentences regenerated from previous recap + new chunk only — never from the full transcript — and capped at 120 words**; the engine compresses itself when notes exceed their token share; small talk yields an empty delta and stores nothing; card uses append + strikethrough, never rewrite | pytest with LLM stub → merge correctness; malformed JSON tolerated without dropping the session; **recap prompt receives only previous recap + window (asserted on the stub's input)**; recap length cap enforced | ⬜ |
+| **MS13** | Ask about this meeting (D9 tier 3) | `ask` frame → verbatim window + recap + top-k retrieved segments/captions (k ≤ 12) → LLM → `answer` with `t0` citations; `POST /v1/meetingsense/{id}/ask` for ended meetings. **The full transcript is never placed in the prompt** | pytest: the answer cites timestamps present in the fixture; a 2-hour fixture produces a prompt under the budget; the stub's input never contains more than k segments | ⬜ |
+| **MS14** | Final summary + retention | On stop (after the 10 s undo window): summary assistant message that is **self-sufficient per D9** — recap, decisions, actions with owners, open questions, slide timeline — so the persona knows the meeting even when this is the only meeting message inside the chat path's 6-message window; slide thumbnails in `media.images`; retention `text` / `text+frames` / `all`; one-click delete endpoint. **Per D4: no job is enqueued, no LTM extraction; the persona's route to a meeting is retrieval (MS15).** Docs say so explicitly | pytest: stop produces the summary message; delete removes rows + files per retention; **a test asserts nothing is enqueued in `jobs`** | ⬜ |
 
 ### W5 — Memory
 
@@ -195,7 +240,7 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 
 | # | Batch | Scope | Acceptance | Status |
 |---|---|---|---|---|
-| **MS18** | Live context provider | Optional hook in `backend/app/personalities/prompt_builder.py`: when a conversation has a live `meeting_id`, prepend `[LIVE MEETING CONTEXT]` (last 90 s + notes + current slide, ≤ 900 tokens); behind `_TOGETHER` | pytest: prompt byte-identical when no live meeting or flag off; block present otherwise; budget holds on a long fixture | ⬜ |
+| **MS18** | Live context provider | Optional hook in `backend/app/personalities/prompt_builder.py`: when a conversation has a live `meeting_id`, prepend `[LIVE MEETING CONTEXT]` — D9 tiers 1+2 only: last 90 s verbatim, current slide caption, notes, recap — **hard-capped at 900 tokens, truncating verbatim first and never the recap**; behind `_TOGETHER`. `limit=6` in `main.py` is not touched | pytest: prompt byte-identical when no live meeting or flag off; block present otherwise; **a 3-hour fixture stays ≤ 900 tokens and still contains the recap**; the transcript body never appears in the prompt | ⬜ |
 | **MS19** | The eighth activity | `meeting.js` joins the 👥 launcher. **Borrows B11's consent machine and `CapturePipeline`** rather than calling `getDisplayMedia` — asks for screen + mic after the choice, never before; revocation stops capture within a frame | vitest: exactly screen + mic requested; revoke mid-meeting stops capture; the other seven activities untouched | ⬜ |
 | **MS20** | Card on the avatar surface | Meeting card rendered through the existing `display` panel as a `cards` kind — one data source, two renderers. Panels are capped (64 KB, row-limited) so the live card sends a **summary projection**, not the transcript | pytest: a panel from a 400-segment meeting passes `panels.validate()` and is not 400 rows | ⬜ |
 
@@ -263,6 +308,8 @@ from here. Do not begin the next batch.
 - [ ] Audio wire frame matches `/v1/voice/session` (D6)
 - [ ] From W2 onward: works on **both** transports, or states explicitly why it is local-only
 - [ ] Addon pair byte-identical (test from MS4 still green)
+- [ ] §2a rows owned by this batch are tested; axe-core zero violations for any new UI
+- [ ] Meeting context stays within the D9 budget; nothing decides memory contents but code (D8)
 - [ ] Status updated here; CHANGELOG entry
 
 ---
@@ -280,6 +327,10 @@ from here. Do not begin the next batch.
 * **`transcribe()`'s output is frozen, warts included.** It returns `"hello  there"` — segment text carries a leading space and `" ".join()` adds another. Tidying that is a behaviour change in a path voice calls share, and it is the widening §0 forbids. `transcribe_segments()` strips per span, so a transcript never inherits it. A test pins the double space on purpose.
 * **"Can it time?" is `supports_segments`, never "does the method exist".** `transcribe_segments` is concrete on the ABC so no caller has to branch — which means it exists on every provider, and asking for the method answers yes even for one that only guesses. MS0's probe asked the wrong question and its own test caught it when MS1 landed.
 
+**The meeting wire (MS3).** `data_b64` + `format` is the audio contract (D6); `pcm16_b64` is accepted for clients written from the design doc. Errors are `{code, msg}` with stable codes and the socket stays up; only a dropped socket or `stop` ends a meeting. Channel order is fixed: **ch0 → `them`, ch1 → `me`**. Unknown frame types are ignored in both directions. From MS3-a, `resume` is part of this contract and an old client that never sends it behaves exactly as today.
+
+**Context budget (D9).** The meeting block a persona sees is ≤ 900 tokens and never contains the transcript body. Any batch that needs more context adds a retrieval call, not tokens.
+
 **ScreenSense.** Not edited by any batch. `audio: false` stays; the "Ask once" path stays.
 
 ---
@@ -287,8 +338,10 @@ from here. Do not begin the next batch.
 ## 8. Cadence
 
 1. ~~MS1~~ ✅ `3b8e1a8`. Two items carried out of it, **MS1-a** and **MS1-b** — neither blocks MS2, and both have a deadline in the table rather than a hope.
-2. **MS2 next**, then MS3–MS6 — five sessions to a usable local recorder. MS2 is the one to get right: the `Transport` protocol it defines is what makes W2's second transport free instead of a rewrite, so the core must be testable with a list-backed fake and must not import FastAPI.
-3. **Pilot one week.** Use it in real Teams/Zoom meetings. Write down what hurt — and take **MS1-b**'s measurement here, on the machine that will actually run meetings.
-4. **MS7–MS8** — reach, before any new capability, so everything after is written once.
-5. **Order W3 vs W4 by the pilot notes** (missing slides vs. missing notes).
-6. W5–W7 deliver the "together" and "capability" value; W8–W10 are refinement and can be reordered or dropped.
+2. ~~MS2~~ ✅ `82c8ff4`, ~~MS3~~ ✅ `15b2b24`. The core and the local wire exist; 191 tests.
+3. ~~MS4~~ 🔄 `6ee54ab`, ~~MS5~~ ✅. Built out of rev-5 order — MS4 landed against the rev-4 scope and MS5 followed — so **MS3-a and MS4-a are now the debt**, not the next step. Neither blocks MS6, and both block the pilot: a Wi-Fi blip in a real meeting currently loses the recording, which is exactly the thing the pilot is meant to survive.
+4. **MS3-a → MS4-a → MS6.** Resume is still cheaper on the server before more clients depend on it, and MS4-a is the client half of the same decision. MS6 is the first thing a user sees; do not ship it without the §2a tests.
+5. **Pilot one week.** Use it in real Teams/Zoom meetings. Write down what hurt — and take **MS1-b**'s measurement here, on the machine that will actually run meetings.
+6. **MS7–MS8** — reach, before any new capability, so everything after is written once.
+7. **Order W3 vs W4 by the pilot notes** (missing slides vs. missing notes).
+8. W5–W7 deliver the "together" and "capability" value; W8–W10 are refinement and can be reordered or dropped.
