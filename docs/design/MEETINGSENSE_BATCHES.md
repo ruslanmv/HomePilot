@@ -175,7 +175,7 @@ not done while any of its rows is untested.
 
 | Wave | Theme | Batches | Exit criterion |
 |---|---|---|---|
-| **W0** | Foundation | MS0 ✅ → MS1 ✅ | Flags, status endpoint; STT that returns timed spans, names its device, loads once. Two items carried: MS1-a, MS1-b |
+| **W0** | Foundation | MS0 ✅ → MS1 ✅ → MS1-a ✅ | Flags, status endpoint; STT that returns timed spans — locally and remotely — names its device, loads once. One item carried: **MS1-b**, the measurement |
 | **W1** | Recorder (local) | MS2 ✅ → MS3 ✅ → MS4 ✅ → MS5 ✅ → MS3-a ✅ → MS4-a ✅ → MS6 ✅ | Screen + audio → live transcript in a chat card, export, resume on reconnect. **Pilot for a week here** |
 | **W2** | Reach | MS7 ✅ → MS8 ✅ | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
 | **W3** | Eyes | MS9 → MS11 | Slide-aware keyframes captioned locally; desktop loopback (Windows) |
@@ -201,7 +201,7 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 |---|---|---|---|---|
 | **MS0** | Skeleton + flags | `backend/app/meetingsense/{__init__,config,routes}.py`; `MEETINGSENSE_ENABLED` + sub-flags `_REMOTE _TOGETHER _CATALOG _MCP _AGENT _MODES` (none implied by the master); `GET /v1/meetingsense/status` always mounted, always 200, returning seven keys: `{enabled, ready, retention, flags, stt, vision, limits}`; probes run through a wrapper that turns any escape into "unknown" (never 500s); provider named, endpoint/credential never echoed; router in `main.py` (+2 lines); `VITE_MEETINGSENSE_ENABLED`; design docs in `docs/design/`; `docs/MEETINGSENSE.md` | 55 tests green; `make test` green | ✅ `6ad44e7` |
 | **MS1** | STT capability layer | **The one sanctioned exception — spent.** In `voice/providers.py`, no existing signature changed: `WHISPER_DEVICE`/`WHISPER_COMPUTE` (defaults `auto`/`default`) passed to `WhisperModel`; the **resolved** device read back off the loaded model and reported (`device`, plus `device_note` when it differs from the request); `transcribe_segments(audio, fmt, duration_s=None) -> [{t0,t1,text,conf}]` **concrete on the ABC** with a one-span fallback; `WhisperLocalSTTProvider` returns real `seg.start/end` and `conf = exp(avg_logprob)`; `get_stt_provider()` cached on a config key, with `reset_stt_provider_cache()` for tests | 28 tests. `transcribe()` byte-identical (incl. its double space); spans returned; same object twice; text-only degrades to one span with `t1: None`; 122 green with every voice suite alongside; full backend run unchanged against baseline | ✅ `3b8e1a8` |
-| **MS1-a** | *Carried from MS1* | `OpenAICompatSTTProvider.transcribe_segments` using `verbose_json` for real remote timings. **Not built** — it inherits the one-span fallback, so a remote-STT install gets `t1: None` and `supports_segments: false`. Correct and honest, but a meeting transcribed remotely cannot cite timestamps | a remote fixture returns spans with real `t0/t1`; `supports_segments` becomes true for that provider | ⬜ before W4 (MS12 cites `t0` per note) |
+| **MS1-a** | *Carried from MS1* | `OpenAICompatSTTProvider.transcribe_segments` asking for `response_format=verbose_json`, plus a shared `_spans_from_verbose_json()` parser. **A second call site, not a modified one** — `transcribe()` still sends the default format, because changing it would alter a return value the voice call shares. `supports_segments` is now true for this provider. `verbose_json` is documented, not guaranteed, so every degraded shape falls back to the one-span answer: no `segments` key, a proxy that rewrote it, junk in the list, a body that is not JSON at all. **A segment the server did not time is skipped, never given `t0: 0`** — these get cited in notes, and a citation pointing at the wrong minute is worse than a note without one | 28 tests. Seven mutations each fail, including one that gives an untimed segment `t0: 0` and one that changes `transcribe()` to `verbose_json`. 383 green across the voice suites and `tests/meetingsense` together; backend baseline unchanged | ✅ `PENDING` |
 | **MS1-b** | *Carried from MS1* | **Measure the real-time factor on the reference GPU** and record it in `docs/MEETINGSENSE.md`. Could not be done from the build container: no CUDA, and `faster_whisper` is not installed there. Part 2 §F's latency budget stays a hypothesis until this number exists | one measured RTF for the chosen `WHISPER_MODEL`, on the machine that will run meetings | ⬜ at the end of W1's pilot |
 
 ### W1 — Recorder (local transport)
@@ -353,7 +353,7 @@ from here. Do not begin the next batch.
 
 ## 8. Cadence
 
-1. ~~MS1~~ ✅ `3b8e1a8`. Two items carried out of it, **MS1-a** and **MS1-b** — neither blocks MS2, and both have a deadline in the table rather than a hope.
+1. ~~MS1~~ ✅ `3b8e1a8`, ~~MS1-a~~ ✅. One item still carried: **MS1-b**, which only a real machine can close.
 2. ~~MS2~~ ✅ `82c8ff4`, ~~MS3~~ ✅ `15b2b24`. The core and the local wire exist; 191 tests.
 3. ~~MS4~~ ✅ `6ee54ab`, ~~MS5~~ ✅ `1ee3227`, ~~MS3-a~~ ✅ `ada9408`, ~~MS4-a~~ ✅. Built out of rev-5 order — MS4 and MS5 landed against rev 4, then the resume pair caught up. A Wi-Fi blip no longer loses a recording, which was the pilot's largest exposure.
 4. ~~MS6~~ ✅. **W1 is complete**: a recorder, a socket that survives a dropped connection, an entry point, a live card, a pill, consent, and export in three formats.

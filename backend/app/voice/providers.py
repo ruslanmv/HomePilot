@@ -284,6 +284,58 @@ class NullSTTProvider(STTProvider):
         raise NotImplementedError("speech-to-text provider not configured")
 
 
+def _verbose_json_conf(segment: Dict[str, Any]) -> float | None:
+    """``exp(avg_logprob)``, read the way the local provider reads it.
+
+    Kept identical on purpose: two providers reporting a number called ``conf`` that meant
+    different things would be worse than one of them reporting nothing.
+    """
+    logprob = segment.get("avg_logprob")
+    if not isinstance(logprob, (int, float)):
+        return None
+    try:
+        return round(min(1.0, max(0.0, math.exp(logprob))), 4)
+    except (OverflowError, ValueError):
+        return None
+
+
+def _spans_from_verbose_json(body: Any, *, duration_s: float | None = None) -> List[Span]:
+    """Pull timed spans out of an OpenAI-compatible ``verbose_json`` body.
+
+    Returns ``[]`` when the body carries nothing usable, which is the signal for the caller to
+    degrade to a single span. Separated from the provider so the tolerance below can be tested
+    against real-world response shapes without a socket.
+
+    Tolerant in three specific ways, each because a compatible server was observed to do it:
+
+    * ``segments`` missing entirely — an older server, or one ignoring ``response_format``.
+    * a segment with text but no ``start``/``end`` — timings the server did not compute. That
+      segment is *skipped* rather than given ``t0: 0``, because a wrong timestamp is worse than
+      a missing one: MeetingSense cites these.
+    * ``end`` before ``start``, or either non-numeric — dropped for the same reason.
+    """
+    if not isinstance(body, dict):
+        return []
+    segments = body.get("segments")
+    if not isinstance(segments, list):
+        return []
+
+    spans: List[Span] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        text = (segment.get("text") or "").strip()
+        if not text:
+            continue
+        start, end = segment.get("start"), segment.get("end")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            continue
+        if end < start:
+            continue
+        spans.append({"t0": float(start), "t1": float(end), "text": text, "conf": _verbose_json_conf(segment)})
+    return spans
+
+
 class OpenAICompatSTTProvider(STTProvider):
     """Speech-to-text via an OpenAI-compatible ``/audio/transcriptions`` endpoint
     (OpenAI Whisper API, a local whisper.cpp server, Groq, …). Configured by env:
@@ -301,6 +353,18 @@ class OpenAICompatSTTProvider(STTProvider):
     def available(self) -> bool:
         return bool(self.base_url)
 
+    @property
+    def supports_segments(self) -> bool:
+        """True: ``verbose_json`` returns real segment boundaries.
+
+        Claimed here rather than discovered per call because the question the status endpoint
+        and the popover ask is "can this install cite a timestamp", which has to be answerable
+        before any audio has been sent. A remote endpoint that turns out not to honour
+        ``verbose_json`` degrades to one span at call time — see below — and that is a worse
+        answer than promised, never a wrong shape.
+        """
+        return True
+
     async def transcribe(self, audio: bytes, *, fmt: str = "wav") -> str:
         import httpx
 
@@ -313,6 +377,56 @@ class OpenAICompatSTTProvider(STTProvider):
             )
             r.raise_for_status()
             return (r.json().get("text") or "").strip()
+
+    async def transcribe_segments(
+        self, audio: bytes, *, fmt: str = "wav", duration_s: float | None = None
+    ) -> List[Span]:
+        """The same endpoint, asked for timings (MS1-a).
+
+        The only difference from :meth:`transcribe` is ``response_format=verbose_json``, which
+        the OpenAI transcription API and every compatible server (whisper.cpp's, Groq's,
+        LocalAI's) answer with a ``segments`` array carrying ``start`` and ``end``. Asking for
+        it in :meth:`transcribe` instead would have changed a return value the voice call
+        shares, which is the widening §0 forbids — so this is a second call site, not a
+        modified one.
+
+        **Compatibility is not assumed.** ``verbose_json`` is a documented format, not a
+        guaranteed one: a proxy or an older server may answer with plain ``{"text": …}``, or
+        with segments that carry no timings at all. Every one of those degrades to the same
+        single span the base class would have produced, because a transcript with one honest
+        span is usable and a transcript with invented timings is not.
+
+        ``conf`` comes from ``avg_logprob`` where the server reports it, read the same way
+        :class:`WhisperLocalSTTProvider` reads it so the two providers mean the same thing by
+        the number. Servers that omit it get ``None`` rather than a reassuring default.
+        """
+        import httpx
+
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        files = {"file": (f"audio.{fmt}", audio, f"audio/{fmt}")}
+        data = {"model": self.model, "response_format": "verbose_json"}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(
+                f"{self.base_url}/audio/transcriptions", headers=headers, files=files, data=data
+            )
+            r.raise_for_status()
+            try:
+                body = r.json()
+            except ValueError:
+                # A server that answered `verbose_json` with plain text. Nothing to time.
+                body = {"text": r.text}
+
+        spans = _spans_from_verbose_json(body, duration_s=duration_s)
+        if spans:
+            return spans
+
+        # No usable segments — an older server, a proxy that rewrote the format, or genuine
+        # silence. Fall back to the whole-clip span rather than returning nothing, so the
+        # caller sees the same shape it would from any other provider.
+        text = (body.get("text") or "").strip() if isinstance(body, dict) else ""
+        if not text:
+            return []
+        return [{"t0": 0.0, "t1": duration_s, "text": text, "conf": None}]
 
 
 class WhisperLocalSTTProvider(STTProvider):
