@@ -8,9 +8,9 @@ or from a hosted avatar page through OllaBridge; a live transcript card with a r
 and a consent sheet; resume across a dropped connection; export as Markdown, SRT or JSON; and
 the meeting landing in History as a titled conversation.
 
-**What does not, yet:** captioning slides (W3), and asking questions about a meeting mid-flight
-(MS13). Rolling notes and a real summary now exist — the message a meeting leaves carries its
-recap, decisions, actions and open questions, and a meeting can be deleted in one call.
+**What does not, yet:** captioning slides — that is W3, the last wave outstanding. Everything
+else in the recorder works: rolling notes, a summary that carries its own recap and decisions,
+asking a question about a meeting live or afterwards, export, and one-call deletion.
 
 The order of work, and the reasoning behind each decision, is
 [`docs/design/MEETINGSENSE_BATCHES.md`](design/MEETINGSENSE_BATCHES.md). What changed when is

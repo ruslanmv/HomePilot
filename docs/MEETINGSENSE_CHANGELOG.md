@@ -19,6 +19,21 @@ this is reachable and no table is created.
 
 ## W4 — Brain
 
+### MS13 — asking about a meeting · `27e75d9`
+
+- `ask.py`: the `ask` frame on the live socket and `POST /v1/meetingsense/{id}/ask` for ended
+  meetings, both through one function. Three tiers — verbatim last 90 s, MS12's recap, top-k
+  keyword retrieval (k ≤ 12) — with the verbatim window excluded from retrieval.
+- **Trim order is D9's priority made executable:** retrieval first, verbatim second, the recap
+  never.
+- The frame reports the citations the answer *actually used* from what it was offered, so an
+  invented timestamp is never presented as real.
+- **The headline test passed for the wrong reason:** the two-hour fixture's segments did not
+  match the question, so the prompt was small because retrieval found nothing — it passed with
+  the budget *and* `k` removed.
+- **A real scoring bug its own test caught:** normalising by *distinct* words made a segment
+  repeating one word score highest in the meeting.
+
 ### MS14 — a self-sufficient summary, and deleting a meeting · `f537783`
 
 - The summary message carries the recap, decisions, actions with owners and citations, open
