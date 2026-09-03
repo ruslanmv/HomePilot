@@ -161,9 +161,9 @@ def meeting(store, backend):
 
 
 TOOLS = [
-    "ms.list_meetings", "ms.get_meeting", "ms.get_transcript", "ms.search",
-    "ms.get_live_context", "ms.get_slide", "ms.update_action", "ms.suggest",
-    "ms.set_mode", "ms.export",
+    "hp.ms.list_meetings", "hp.ms.get_meeting", "hp.ms.get_transcript", "hp.ms.search",
+    "hp.ms.get_live_context", "hp.ms.get_slide", "hp.ms.update_action", "hp.ms.suggest",
+    "hp.ms.set_mode", "hp.ms.export",
 ]
 
 
@@ -174,11 +174,11 @@ def test_the_ten_tools_are_listed(client):
 
 
 def test_the_names_match_the_design_table(client):
-    # Part 2 §D.1 calls them `ms.search` and so on. A persona prompt that names a tool has to
+    # Part 2 §D.1 calls them `hp.ms.search` and so on. A persona prompt that names a tool has to
     # name the same thing the catalog does, so the prefix is `ms.` rather than `hp.`.
     res = _rpc(client, "tools/list")
     for tool in res.json()["result"]["tools"]:
-        assert tool["name"].startswith("ms.")
+        assert tool["name"].startswith("hp.ms.")
 
 
 def test_it_answers_health_and_initialize(client):
@@ -192,17 +192,17 @@ def test_it_answers_health_and_initialize(client):
 
 class TestReads:
     def test_list_meetings(self, client, meeting):
-        result = call(client, "ms.list_meetings")
+        result = call(client, "hp.ms.list_meetings")
         assert [m["meeting_id"] for m in result["meta"]["meetings"]] == ["m1"]
         assert "Q3 planning" in said(result)
 
     def test_list_meetings_by_conversation(self, client, meeting):
-        assert call(client, "ms.list_meetings", conversation_id="conv-1")["meta"]["meetings"]
-        assert call(client, "ms.list_meetings",
+        assert call(client, "hp.ms.list_meetings", conversation_id="conv-1")["meta"]["meetings"]
+        assert call(client, "hp.ms.list_meetings",
                     conversation_id="nowhere")["meta"]["meetings"] == []
 
     def test_get_meeting_answers_with_the_recap(self, client, meeting):
-        result = call(client, "ms.get_meeting", meeting_id="m1")
+        result = call(client, "hp.ms.get_meeting", meeting_id="m1")
         assert "forty a seat" in said(result)
         # Counts, not rows: a `get` that returned the transcript would make `get_transcript`
         # and its cap pointless.
@@ -210,13 +210,13 @@ class TestReads:
         assert "segments" not in result["meta"]
 
     def test_get_transcript_pages_rather_than_dumping(self, client, meeting):
-        result = call(client, "ms.get_transcript", meeting_id="m1", limit=1)
+        result = call(client, "hp.ms.get_transcript", meeting_id="m1", limit=1)
         assert result["meta"]["total"] == 2
         assert result["meta"]["has_more"] is True
         # Said in the text, not only the metadata: the model reading the content is the one
         # deciding whether to page or to search.
-        assert "ms.search" in said(result)
-        second = call(client, "ms.get_transcript", meeting_id="m1", offset=1, limit=1)
+        assert "hp.ms.search" in said(result)
+        second = call(client, "hp.ms.get_transcript", meeting_id="m1", offset=1, limit=1)
         assert second["meta"]["has_more"] is False
         assert "forty a seat" in said(second)
 
@@ -229,21 +229,21 @@ class TestReads:
             {"t0_ms": i * 4_000, "t1_ms": i * 4_000 + 3_000, "text": f"line {i}", "speaker": "them"}
             for i in range(server.MAX_SEGMENTS + 50)
         ])
-        result = call(client, "ms.get_transcript", meeting_id="long", limit=100_000)
+        result = call(client, "hp.ms.get_transcript", meeting_id="long", limit=100_000)
         assert result["meta"]["total"] == server.MAX_SEGMENTS + 50
         assert len(result["meta"]["segments"]) == server.MAX_SEGMENTS
 
     def test_search_says_why_a_live_meeting_finds_nothing(self, client, meeting):
         # Meetings are indexed on stop. Without this sentence "nothing matched" reads as
         # "it was not said", which is a different and wrong answer.
-        result = call(client, "ms.search", query="pricing")
-        assert "ms.get_live_context" in said(result)
+        result = call(client, "hp.ms.search", query="pricing")
+        assert "hp.ms.get_live_context" in said(result)
 
     def test_search_needs_a_query(self, client, meeting):
-        assert call(client, "ms.search")["meta"]["ok"] is False
+        assert call(client, "hp.ms.search")["meta"]["ok"] is False
 
     def test_get_live_context_when_nothing_is_recording(self, client, meeting):
-        result = call(client, "ms.get_live_context", conversation_id="conv-1")
+        result = call(client, "hp.ms.get_live_context", conversation_id="conv-1")
         assert result["meta"]["live"] is False
 
     def test_get_live_context_returns_the_bounded_block(self, client, meeting, store,
@@ -262,25 +262,25 @@ class TestReads:
         import app.meetingsense.session as session_mod
 
         monkeypatch.setattr(session_mod, "for_conversation", lambda cid: Live())
-        result = call(client, "ms.get_live_context", conversation_id="conv-1")
+        result = call(client, "hp.ms.get_live_context", conversation_id="conv-1")
         assert result["meta"]["live"] is True
         # The same block MS18 puts in a prompt, not a bigger one: a tool that returned more
         # would be a way around D9's budget.
         assert said(result).startswith(live_mod.BLOCK_HEADER)
 
     def test_get_slide_lists_them(self, client, meeting):
-        result = call(client, "ms.get_slide", meeting_id="m1")
+        result = call(client, "hp.ms.get_slide", meeting_id="m1")
         assert [s["caption"] for s in result["meta"]["slides"]] == ["Title slide.", "The pricing chart."]
 
     def test_get_slide_at_a_moment_is_the_one_that_was_up(self, client, meeting):
         # The last slide taken at or before it — not the nearest, which on a deck clicked
         # through quickly is often the one that came next.
-        result = call(client, "ms.get_slide", meeting_id="m1", at_ms=299_999)
+        result = call(client, "hp.ms.get_slide", meeting_id="m1", at_ms=299_999)
         assert [s["caption"] for s in result["meta"]["slides"]] == ["Title slide."]
-        result = call(client, "ms.get_slide", meeting_id="m1", at_ms=300_000)
+        result = call(client, "hp.ms.get_slide", meeting_id="m1", at_ms=300_000)
         assert [s["caption"] for s in result["meta"]["slides"]] == ["The pricing chart."]
 
-    @pytest.mark.parametrize("tool", ["ms.get_meeting", "ms.get_transcript", "ms.get_slide"])
+    @pytest.mark.parametrize("tool", ["hp.ms.get_meeting", "hp.ms.get_transcript", "hp.ms.get_slide"])
     def test_a_meeting_that_is_not_there(self, client, meeting, tool):
         assert call(client, tool, meeting_id="nope")["meta"]["ok"] is False
 
@@ -289,10 +289,10 @@ class TestReads:
 
 
 WRITES = [
-    ("ms.update_action", {"meeting_id": "m1", "text": "Send the terms"}),
-    ("ms.suggest", {"meeting_id": "m1", "text": "Ask legal about October"}),
-    ("ms.set_mode", {"meeting_id": "m1", "mode": "note-taker"}),
-    ("ms.export", {"meeting_id": "m1", "format": "md"}),
+    ("hp.ms.update_action", {"meeting_id": "m1", "text": "Send the terms"}),
+    ("hp.ms.suggest", {"meeting_id": "m1", "text": "Ask legal about October"}),
+    ("hp.ms.set_mode", {"meeting_id": "m1", "mode": "note-taker"}),
+    ("hp.ms.export", {"meeting_id": "m1", "format": "md"}),
 ]
 
 
@@ -307,25 +307,25 @@ class TestWriteGate:
         assert "WRITE_ENABLED=true" in said(result)
 
     def test_the_refusal_says_nothing_was_changed(self, client, meeting):
-        assert "no changes made" in said(call(client, "ms.suggest",
+        assert "no changes made" in said(call(client, "hp.ms.suggest",
                                               meeting_id="m1", text="anything")).lower()
 
     def test_a_refused_write_leaves_the_notes_alone(self, client, meeting, store, backend):
         before = store.get_notes("m1")
-        call(client, "ms.update_action", meeting_id="m1", text="Send the terms", done=True)
+        call(client, "hp.ms.update_action", meeting_id="m1", text="Send the terms", done=True)
         assert store.get_notes("m1") == before
 
     @pytest.mark.parametrize("tool,args", WRITES)
     def test_no_read_tool_is_gated(self, client, meeting, tool, args):
         # The other side of the same claim: reads answer with the flag off, because a meeting
         # is the user's own recording on the user's own machine.
-        assert call(client, "ms.get_meeting", meeting_id="m1")["meta"]["ok"] is True
+        assert call(client, "hp.ms.get_meeting", meeting_id="m1")["meta"]["ok"] is True
 
 
 class TestWrites:
     def test_update_action_closes_one(self, writable, meeting, store, backend):
         client = TestClient(writable.app)
-        result = call(client, "ms.update_action", meeting_id="m1",
+        result = call(client, "hp.ms.update_action", meeting_id="m1",
                       text="Send the vendor the revised terms", done=True)
         assert result["meta"]["ok"] is True
         actions = store.get_notes("m1")["notes"]["actions"]
@@ -336,7 +336,7 @@ class TestWrites:
         # An agent that has just done something the meeting did not record has still done it,
         # and a notes list that cannot grow is a notes list nobody keeps current.
         client = TestClient(writable.app)
-        call(client, "ms.update_action", meeting_id="m1", text="Book the room", owner="Sam")
+        call(client, "hp.ms.update_action", meeting_id="m1", text="Book the room", owner="Sam")
         actions = store.get_notes("m1")["notes"]["actions"]
         assert any(a["text"] == "Book the room" and a["owner"] == "Sam" for a in actions)
 
@@ -344,7 +344,7 @@ class TestWrites:
         # A suggestion is something an agent thinks; the notes are what the meeting said.
         # Merging them would make the transcript's own record unciteable.
         client = TestClient(writable.app)
-        call(client, "ms.suggest", meeting_id="m1", text="Ask legal about October")
+        call(client, "hp.ms.suggest", meeting_id="m1", text="Ask legal about October")
         assert [a["ref"] for a in store.artifacts_for_meeting("m1", kind="suggestion")] == \
                ["Ask legal about October"]
         assert "Ask legal" not in str(store.get_notes("m1"))
@@ -353,25 +353,25 @@ class TestWrites:
         # W9 owns what a mode *does*; a mode nobody implements yet is still a mode, and a
         # typo is not.
         client = TestClient(writable.app)
-        refused = call(client, "ms.set_mode", meeting_id="m1", mode="cheerleader")
+        refused = call(client, "hp.ms.set_mode", meeting_id="m1", mode="cheerleader")
         assert refused["meta"]["ok"] is False
         # Refused *here* rather than by the backend's 400, so the agent is handed the list of
         # modes instead of spending a round trip to learn it typed one wrong.
         assert "note-taker" in said(refused)
         assert "practice" in said(refused)
-        assert call(client, "ms.set_mode", meeting_id="m1", mode="coach")["meta"]["ok"] is True
+        assert call(client, "hp.ms.set_mode", meeting_id="m1", mode="coach")["meta"]["ok"] is True
         assert [a["target"] for a in store.artifacts_for_meeting("m1", kind="mode")] == ["coach"]
 
     @pytest.mark.parametrize("fmt,marker", [("md", "# "), ("srt", "-->"), ("json", "\"segments\"")])
     def test_export_in_each_format(self, writable, meeting, backend, fmt, marker):
         client = TestClient(writable.app)
-        result = call(client, "ms.export", meeting_id="m1", format=fmt)
+        result = call(client, "hp.ms.export", meeting_id="m1", format=fmt)
         assert result["meta"]["ok"] is True
         assert marker in said(result)
 
     def test_export_refuses_a_format_it_does_not_have(self, writable, meeting, backend):
         client = TestClient(writable.app)
-        assert call(client, "ms.export", meeting_id="m1", format="pdf")["meta"]["ok"] is False
+        assert call(client, "hp.ms.export", meeting_id="m1", format="pdf")["meta"]["ok"] is False
 
 
 # ── an install without MeetingSense ─────────────────────────────────────────
@@ -395,12 +395,12 @@ class TestNotInstalled:
         return TestClient(server.app)
 
     @pytest.mark.parametrize("tool,args", [
-        ("ms.list_meetings", {}),
-        ("ms.get_meeting", {"meeting_id": "m1"}),
-        ("ms.get_transcript", {"meeting_id": "m1"}),
-        ("ms.search", {"query": "x"}),
-        ("ms.get_live_context", {"conversation_id": "c1"}),
-        ("ms.get_slide", {"meeting_id": "m1"}),
+        ("hp.ms.list_meetings", {}),
+        ("hp.ms.get_meeting", {"meeting_id": "m1"}),
+        ("hp.ms.get_transcript", {"meeting_id": "m1"}),
+        ("hp.ms.search", {"query": "x"}),
+        ("hp.ms.get_live_context", {"conversation_id": "c1"}),
+        ("hp.ms.get_slide", {"meeting_id": "m1"}),
     ])
     def test_every_read_answers_in_a_sentence(self, absent, tool, args):
         result = call(absent, tool, **args)
@@ -418,7 +418,7 @@ class TestNotInstalled:
         # Two different answers a persona would say differently. The backend answers 404 for
         # both "no such meeting" and "the feature is off", so the tool distinguishes them by
         # whether it was asked about one.
-        result = call(client, "ms.get_meeting", meeting_id="nope")
+        result = call(client, "hp.ms.get_meeting", meeting_id="nope")
         assert result["meta"]["available"] is True
         assert "No meeting 'nope'" in said(result)
 

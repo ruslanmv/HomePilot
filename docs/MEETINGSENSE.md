@@ -592,9 +592,15 @@ that could not be drawn is not a reason to send an error into a live session.
 ### A meeting as tools (MS21)
 
 `agentic/integrations/mcp/meetingsense_server.py`, port **9107**, ten tools:
-`ms.list_meetings`, `get_meeting`, `get_transcript`, `search`, `get_live_context`, `get_slide`,
-`update_action`, `suggest`, `set_mode`, `export`. `make start-meetingsense` runs it;
-`stop-meetingsense` and `health-meetingsense` do what they say.
+`hp.ms.list_meetings`, `get_meeting`, `get_transcript`, `search`, `get_live_context`,
+`get_slide`, `update_action`, `suggest`, `set_mode`, `export`. `make start-meetingsense` runs
+it; `stop-meetingsense` and `health-meetingsense` do what they say.
+
+**The prefix is `hp.ms.`, not the design document's `ms.`.** `test_agentic_health.py` requires
+every Forge tool prefix to start with `hp.` — that is what stops a virtual server's allow-list
+from admitting a namespace nobody registered — and a tested repo-wide invariant beats a design
+document's shorthand. The `ms` segment stays, so `hp.ms.search` still reads as MeetingSense's
+search, and the design doc's `ms.search` should be read as naming this.
 
 **Nothing here computes anything**, which is the point of the batch landing last. Every tool is
 one HTTP call to the backend — the way `inventory` does it — because the MCP image contains
@@ -622,6 +628,42 @@ Every tool answers "MeetingSense is not available on this install" rather than r
 backend is off, absent or has the flag down — a persona can pass that on and cannot pass on a
 tool error. A *missing meeting* is told apart from a missing install, because those are two
 different sentences.
+
+### Finding it: Forge, the catalog, and Teams (MS22)
+
+MS21 built a server; MS22 is what makes anything find it. Four registration points, each a
+file a human edits and therefore a file a human forgets:
+
+| where | what |
+|---|---|
+| `agentic/forge/seed/seed_all.py` | `hp-meetingsense`, 9107, so the seeder registers its tools |
+| `agentic/forge/templates/gateways.yaml` | the gateway pointing at `localhost:9107/rpc` |
+| `agentic/forge/templates/server_catalog.yaml` | the tile, marked `write_gated` |
+| `agentic/forge/templates/virtual_servers.yaml` | `hp-meetings-readonly` and `hp-meetings-all` |
+
+The read-only bundle excludes the four write tools **as well as** the server gating them: the
+gate is the operator's decision and the bundle is the persona's, and a suite named read-only
+that could call `hp.ms.export` would be misnamed. A test builds the exclusion list from the
+server's own tool definitions, so a fifth write tool cannot quietly appear in it.
+
+The **Chief-of-Staff** A2A agent now asks `hp.ms.search` when a question is about meetings, and
+puts the answers in their own bullet — meeting rows carry a `meeting · hh:mm:ss` citation and
+workspace hits do not, and a reader who cannot tell them apart cannot check either. Best-effort,
+like the workspace search beside it: with MeetingSense unseeded the briefing reads exactly as
+it did before.
+
+**Teams tier 2 is paused, and says so.** The batch offered two ways — build the thin `hp-teams`
+server, or mark tier 2 unavailable and make the UI say so rather than fail at click time. This
+takes the second, because the catalog entry for `hp-teams` already declares an *external*
+source (`github.com/ruslanmv/teams-mcp-server`), and a local server behind the same id would
+put two implementations behind one identifier.
+
+Marking it only mattered because something now reads the mark: the catalog loader dropped
+unknown keys, so `availability` and `unavailable_reason` were added to `ServerDef`, are always
+present in the API, and `install()` refuses with the reason. Without that, the tile looked like
+every other one and failed on a timeout while starting a process for a module that is not
+there. Meetings record, transcribe, caption and export without it; what is unavailable is
+posting back into the Teams chat.
 
 ### What the automated tests cover, and what they cannot
 
@@ -1075,6 +1117,7 @@ cd backend && python3 -m pytest tests/meetingsense/test_notes_wiring.py -q  # 11
 cd backend && python3 -m pytest tests/meetingsense/test_live_context.py -q  # 26  (MS18)
 cd backend && python3 -m pytest tests/meetingsense/test_panel.py -q         # 21  (MS20)
 cd backend && python3 -m pytest tests/test_mcp_meetingsense_rpc.py -q       # 48  (MS21)
+cd backend && python3 -m pytest tests/test_mcp_meetingsense_registration.py -q  # 18  (MS22)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 90  (MS4, MS4-a, MS9, MS19)
 cd ../3D-Avatar-Chatbot && npx jest tests/behavior/meeting.test.js           # 21  (MS19)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 55  (MS5 + MS11)
@@ -1086,7 +1129,7 @@ MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to in
 phone/call primitives suite among them — which had never run in CI since they were written.
 All of them pass; nothing was fixed to make that true.
 
-**W0 through W6 are complete.** A meeting records, resumes, transcribes, takes rolling notes,
+**W0 through W7 are complete.** A meeting records, resumes, transcribes, takes rolling notes,
 answers questions, summarises itself into History, exports, deletes, works from a hosted page,
 captures its slides, captions them, shows each one beside what was said while it was up, and on
 Windows in the desktop app records the call itself rather than whatever the share dialog offered.

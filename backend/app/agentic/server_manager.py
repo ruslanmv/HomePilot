@@ -78,6 +78,17 @@ class ServerDef:
         self.requires_config: Optional[str] = data.get("requires_config")
         self.source: Optional[Dict[str, Any]] = data.get("source")
         self.is_core: bool = is_core
+        # MS22. A catalog entry can be registered and not buildable — `hp-teams` points at an
+        # external repository that is not vendored here. Without these two fields the UI shows
+        # a tile that looks like every other one and fails when it is clicked, on a dependency
+        # nobody was told about. Default "available", so every existing entry is unchanged.
+        self.availability: str = str(data.get("availability") or "available")
+        self.unavailable_reason: str = str(data.get("unavailable_reason") or "").strip()
+
+    @property
+    def installable(self) -> bool:
+        return self.availability != "unavailable"
+
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -90,7 +101,13 @@ class ServerDef:
             "icon": self.icon,
             "requires_config": self.requires_config,
             "is_core": self.is_core,
+            # Always present, so a client can grey a tile without knowing which entries have
+            # the field. A missing key is one more thing for a renderer to get wrong.
+            "availability": self.availability,
+            "installable": self.installable,
         }
+        if self.unavailable_reason:
+            d["unavailable_reason"] = self.unavailable_reason
         if self.source:
             d["source"] = self.source
         return d
@@ -375,6 +392,15 @@ class ServerManager:
             return {"ok": False, "error": f"Unknown server: {server_id}"}
         if server.is_core:
             return {"ok": False, "error": f"'{server_id}' is a core server (always running)"}
+        if not server.installable:
+            # Refused here as well as greyed in the UI: the endpoint is reachable directly and
+            # an install that got as far as starting a process for a module that does not
+            # exist would leave a dead port behind and a confusing error.
+            return {
+                "ok": False,
+                "error": server.unavailable_reason or f"'{server_id}' is not available yet",
+                "availability": server.availability,
+            }
         if self.is_installed(server_id):
             # Already installed — check if healthy
             healthy = await self.server_healthy(server_id)

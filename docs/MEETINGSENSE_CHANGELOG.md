@@ -19,9 +19,36 @@ this is reachable and no table is created.
 
 ## W7 — Capability
 
+### MS22 — Forge registration, and the Teams decision · `PENDING`
+
+- `hp-meetingsense` / 9107 registered in all four places that need it: the Forge seeder, the
+  gateway list, the server catalog (marked `write_gated`) and the virtual servers
+  (`hp-meetings-readonly`, `hp-meetings-all`). The read-only bundle's exclusion list is built
+  from the server's own tool definitions in a test, so a fifth write tool cannot quietly
+  appear in a suite named read-only.
+- **Chief-of-Staff** asks `hp.ms.search` when a question is about meetings and puts the answers
+  in their own bullet — meeting rows carry a citation and workspace hits do not.
+- **Teams tier 2 is deferred, not built** — the second option the row offered. The `hp-teams`
+  catalog entry already declares an *external* source, and a local server behind the same id
+  would put two implementations behind one identifier.
+- **Marking it only mattered because something now reads the mark.** The catalog loader
+  dropped unknown keys, so `availability` and `unavailable_reason` were added to `ServerDef`,
+  are always present in the API, and `install()` refuses with the reason. Without that the
+  tile looked like every other one and failed on a timeout while starting a process for a
+  module that is not there.
+- **The tools were renamed `ms.*` → `hp.ms.*` here.** `test_agentic_health.py` requires every
+  Forge tool prefix to start with `hp.`, which is what stops a virtual server's allow-list from
+  admitting a namespace nobody registered. MS21 shipped the design document's `ms.` shorthand;
+  a tested repo-wide invariant beats it, and the `ms` segment stays so the names still read.
+  Caught by the full-suite baseline check, not by either batch's own tests.
+- **The acceptance is not fully met and is not claimed to be.** `make test-mcp-servers` is
+  red: `tests/test_mcp_servers.py` is entirely `async def` with no asyncio plugin configured
+  and fails 164/164 on a clean tree. It is one of the 18 pre-existing failures and outside
+  this batch.
+
 ### MS21 — the MCP server · `ed38c7f`
 
-- `agentic/integrations/mcp/meetingsense_server.py` on **9107**, ten `ms.*` tools, in
+- `agentic/integrations/mcp/meetingsense_server.py` on **9107**, ten `hp.ms.*` tools, in
   `docker-compose.mcp.yml` and the Makefile (`start-`, `stop-`, `health-meetingsense`).
 - **The transport is HTTP, not an in-process import** — a deliberate change from what the
   batch row implies. The MCP image contains `agentic/` and no `backend/`, so importing the

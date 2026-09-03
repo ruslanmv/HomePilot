@@ -62,7 +62,7 @@ DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 #: an install with four hundred of them should not put four hundred into a prompt.
 MAX_LIST = 25
 
-#: Most transcript segments one call returns. Beyond this the answer is `ms.search`, which is
+#: Most transcript segments one call returns. Beyond this the answer is `hp.ms.search`, which is
 #: what retrieval is for — a tool that can return an entire two-hour transcript is a tool that
 #: will, into a context window that cannot hold it.
 MAX_SEGMENTS = 200
@@ -230,9 +230,9 @@ async def get_transcript(args: Json) -> Json:
     more = offset + len(window) < total
     if more:
         # Said in the text, not only in the metadata: a model reading the content is the one
-        # that has to decide whether to page or to search, and `ms.search` is usually right.
+        # that has to decide whether to page or to search, and `hp.ms.search` is usually right.
         body += (f"\n\n… {total - offset - len(window)} more segments. Page with 'offset', or "
-                 "use ms.search to find the part you want.")
+                 "use hp.ms.search to find the part you want.")
     return _text(body or "Nothing was transcribed.", ok=True, segments=rows, total=total,
                  offset=offset, has_more=more)
 
@@ -251,7 +251,7 @@ async def search(args: Json) -> Json:
     if not rows:
         return _text(
             "Nothing matched. Meetings are indexed when they stop, so a meeting still running "
-            "is not searchable yet — ask about it with ms.get_live_context.",
+            "is not searchable yet — ask about it with hp.ms.get_live_context.",
             ok=True, results=[],
         )
     lines = [f"{len(rows)} match{'' if len(rows) == 1 else 'es'}:"]
@@ -304,7 +304,7 @@ async def get_slide(args: Json) -> Json:
 
 
 async def update_action(args: Json) -> Json:
-    refused = _write_gate("ms.update_action")
+    refused = _write_gate("hp.ms.update_action")
     if refused:
         return refused
     meeting_id = str(args.get("meeting_id", "") or "").strip()
@@ -324,7 +324,7 @@ async def update_action(args: Json) -> Json:
 
 
 async def suggest(args: Json) -> Json:
-    refused = _write_gate("ms.suggest")
+    refused = _write_gate("hp.ms.suggest")
     if refused:
         return refused
     meeting_id = str(args.get("meeting_id", "") or "").strip()
@@ -344,7 +344,7 @@ async def suggest(args: Json) -> Json:
 
 
 async def set_mode(args: Json) -> Json:
-    refused = _write_gate("ms.set_mode")
+    refused = _write_gate("hp.ms.set_mode")
     if refused:
         return refused
     meeting_id = str(args.get("meeting_id", "") or "").strip()
@@ -372,7 +372,7 @@ EXPORT_FORMATS = ("md", "srt", "json")
 
 
 async def export_meeting(args: Json) -> Json:
-    refused = _write_gate("ms.export")
+    refused = _write_gate("hp.ms.export")
     if refused:
         return refused
     meeting_id = str(args.get("meeting_id", "") or "").strip()
@@ -398,53 +398,58 @@ _MEETING_ID = {"meeting_id": {"type": "string", "description": "The meeting's id
 def register_tools() -> List[ToolDef]:
     """The ten tools, six read and four gated.
 
-    Named `ms.*` rather than `hp.meetingsense.*`: the design's tool table (part 2, §D.1) calls
-    them `ms.search` and so on, and a persona prompt that names one has to name the same thing
-    the catalog does.
+    Named ``hp.ms.*``. The design's tool table (part 2, §D.1) writes them as ``hp.ms.search``, and
+    that shorthand is what MS21 shipped — until `test_agentic_health.py` pointed out that every
+    Forge tool prefix must start with ``hp.``, which is what keeps a virtual server's allow-list
+    from admitting a namespace nobody registered.
+
+    A tested repo-wide invariant beats a design document's shorthand, so the tools carry the
+    prefix and keep the ``ms`` segment: ``hp.ms.search`` still reads as MeetingSense's search,
+    and a persona prompt naming it names what the catalog does.
     """
     return [
-        ToolDef("ms.list_meetings", "Recent meetings, or the meetings in one conversation",
+        ToolDef("hp.ms.list_meetings", "Recent meetings, or the meetings in one conversation",
                 {"type": "object", "properties": {
                     "limit": {"type": "integer"}, "conversation_id": {"type": "string"}}},
                 list_meetings),
-        ToolDef("ms.get_meeting", "One meeting: its recap, notes and counts",
+        ToolDef("hp.ms.get_meeting", "One meeting: its recap, notes and counts",
                 {"type": "object", "properties": dict(_MEETING_ID), "required": ["meeting_id"]},
                 get_meeting),
-        ToolDef("ms.get_transcript", "A page of one meeting's transcript",
+        ToolDef("hp.ms.get_transcript", "A page of one meeting's transcript",
                 {"type": "object", "properties": {
                     **_MEETING_ID, "offset": {"type": "integer"}, "limit": {"type": "integer"}},
                  "required": ["meeting_id"]},
                 get_transcript),
-        ToolDef("ms.search", "Search across meetings, or inside one; answers cite meeting and time",
+        ToolDef("hp.ms.search", "Search across meetings, or inside one; answers cite meeting and time",
                 {"type": "object", "properties": {
                     "query": {"type": "string"}, **_MEETING_ID, "k": {"type": "integer"}},
                  "required": ["query"]},
                 search),
-        ToolDef("ms.get_live_context", "What is happening in the meeting running in a conversation",
+        ToolDef("hp.ms.get_live_context", "What is happening in the meeting running in a conversation",
                 {"type": "object", "properties": {"conversation_id": {"type": "string"}},
                  "required": ["conversation_id"]},
                 get_live_context),
-        ToolDef("ms.get_slide", "A meeting's slides, or the one on screen at a moment",
+        ToolDef("hp.ms.get_slide", "A meeting's slides, or the one on screen at a moment",
                 {"type": "object", "properties": {**_MEETING_ID, "at_ms": {"type": "integer"}},
                  "required": ["meeting_id"]},
                 get_slide),
-        ToolDef("ms.update_action", "Close or reopen an action item [write-gated]",
+        ToolDef("hp.ms.update_action", "Close or reopen an action item [write-gated]",
                 {"type": "object", "properties": {
                     **_MEETING_ID, "text": {"type": "string"}, "done": {"type": "boolean"},
                     "owner": {"type": "string"}},
                  "required": ["meeting_id", "text"]},
                 update_action),
-        ToolDef("ms.suggest", "Leave a suggestion against a meeting [write-gated]",
+        ToolDef("hp.ms.suggest", "Leave a suggestion against a meeting [write-gated]",
                 {"type": "object", "properties": {
                     **_MEETING_ID, "text": {"type": "string"}, "kind": {"type": "string"}},
                  "required": ["meeting_id", "text"]},
                 suggest),
-        ToolDef("ms.set_mode", "Set a meeting's helper mode [write-gated]",
+        ToolDef("hp.ms.set_mode", "Set a meeting's helper mode [write-gated]",
                 {"type": "object", "properties": {
                     **_MEETING_ID, "mode": {"type": "string", "enum": list(MODES)}},
                  "required": ["meeting_id", "mode"]},
                 set_mode),
-        ToolDef("ms.export", "A meeting as Markdown, SRT or JSON [write-gated]",
+        ToolDef("hp.ms.export", "A meeting as Markdown, SRT or JSON [write-gated]",
                 {"type": "object", "properties": {
                     **_MEETING_ID, "format": {"type": "string", "enum": ["md", "srt", "json"]}},
                  "required": ["meeting_id"]},
