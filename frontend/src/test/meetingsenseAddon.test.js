@@ -415,3 +415,319 @@ describe('hpMeetingSense', () => {
         expect((await window.hpMeetingSense.stop()).ok).toBe(false);
     });
 });
+
+// ── reconnect, backpressure and levels (MS4-a) ──────────────────────────────
+
+describe('backoffDelay', () => {
+    it('follows the 1-2-4-8 schedule', () => {
+        expect([1, 2, 3, 4].map(ms.backoffDelay)).toEqual([1000, 2000, 4000, 8000]);
+    });
+
+    it('caps rather than doubling forever', () => {
+        // An outage that lasts an hour must not drift to hourly retries and miss the moment
+        // the network comes back.
+        expect(ms.backoffDelay(5)).toBe(15000);
+        expect(ms.backoffDelay(50)).toBe(15000);
+    });
+
+    it('is zero before the first attempt', () => {
+        expect(ms.backoffDelay(0)).toBe(0);
+    });
+});
+
+describe('shedQueue', () => {
+    const item = (durationMs, silent = false) => ({ durationMs, silent, frame: {} });
+
+    it('keeps everything inside the budget', () => {
+        const queue = [item(800), item(900)];
+        const result = ms.shedQueue(queue, ms.constants.MAX_QUEUE_MS);
+        expect(result.dropped).toEqual([]);
+        expect(result.behindMs).toBe(1700);
+    });
+
+    it('drops the near-silent chunk first', () => {
+        // The sentence is *older* than the cough, and the cough still goes. That ordering is
+        // the whole test: with the cough first, dropping by age alone gives the same answer
+        // and the policy could be missing entirely without anything noticing.
+        const speech = item(1500);
+        const cough = item(1200, true);
+        const result = ms.shedQueue([speech, cough], ms.constants.MAX_QUEUE_MS);
+        expect(result.dropped).toEqual([cough]);
+        expect(result.kept).toEqual([speech]);
+    });
+
+    it('drops the oldest silent chunk when there are several', () => {
+        // Speech first again, so "oldest silent" is genuinely different from "oldest".
+        const speech = item(900);
+        const first = item(900, true);
+        const second = item(900, true);
+        const result = ms.shedQueue([speech, first, second], ms.constants.MAX_QUEUE_MS);
+        expect(result.dropped[0]).toBe(first);
+        expect(result.kept).toContain(speech);
+    });
+
+    it('falls back to the oldest when nothing is silent', () => {
+        const oldest = item(1500);
+        const newest = item(1500);
+        const result = ms.shedQueue([oldest, newest], ms.constants.MAX_QUEUE_MS);
+        expect(result.dropped).toEqual([oldest]);
+    });
+
+    it('never drops the last chunk, however far behind it is', () => {
+        // Shedding down to nothing would mean a saturated connection records silence and says
+        // it is fine. One chunk in hand is the floor.
+        const only = item(30000);
+        const result = ms.shedQueue([only], ms.constants.MAX_QUEUE_MS);
+        expect(result.kept).toEqual([only]);
+        expect(result.dropped).toEqual([]);
+    });
+
+    it('reports how far behind the survivors leave us', () => {
+        const result = ms.shedQueue([item(900, true), item(900), item(900)], 2000);
+        expect(result.behindMs).toBe(1800);
+    });
+
+    it('leaves an empty queue alone', () => {
+        expect(ms.shedQueue([], 2000)).toEqual({ kept: [], dropped: [], behindMs: 0 });
+    });
+});
+
+describe('the segmenter measures how much speech an utterance carries', () => {
+    it('counts a full utterance as speech', () => {
+        const seg = new ms.Segmenter({});
+        const { utterances } = feed(seg, [...repeat(frame(LOUD), 60), ...repeat(frame(QUIET), 20)]);
+        expect(utterances[0].speechMs).toBeGreaterThanOrEqual(60 * FRAME_MS);
+    });
+
+    it('marks a chunk that barely cleared the threshold', () => {
+        // 200 ms of noise inside a long quiet stretch: the hard cut eventually closes it, and
+        // what it carries is not a sentence.
+        const seg = new ms.Segmenter({});
+        const { utterances } = feed(seg, [
+            ...repeat(frame(LOUD), 10),
+            ...repeat(frame(QUIET), 500),
+        ]);
+        expect(utterances.length).toBe(1);
+        expect(utterances[0].speechMs).toBeLessThan(ms.constants.MIN_SPEECH_MS);
+    });
+});
+
+// ── the wiring (MS4-a) ──────────────────────────────────────────────────────
+//
+// Everything above is a pure function, and a pure function can be perfect and never called.
+// These drive the recorder's own socket handling against a fake WebSocket, because the bug
+// that matters here is not "the backoff schedule is wrong" — it is "nothing ever reconnects".
+
+describe('reconnect and backpressure, wired', () => {
+    let sockets;
+    let recorder;
+    let events;
+
+    class FakeSocket {
+        constructor(url) {
+            this.url = url;
+            this.readyState = 0;
+            this.sent = [];
+            this.bufferedAmount = 0;
+            sockets.push(this);
+        }
+        send(data) {
+            this.sent.push(JSON.parse(data));
+        }
+        close() {
+            this.drop();
+        }
+        open() {
+            this.readyState = 1;
+            this.onopen?.();
+        }
+        deliver(frame) {
+            this.onmessage?.({ data: JSON.stringify(frame) });
+        }
+        drop() {
+            this.readyState = 3;
+            this.onclose?.();
+        }
+    }
+
+    let listeners;
+
+    function listen(name) {
+        const handler = (e) => events.push({ name, detail: e.detail });
+        window.addEventListener(name, handler);
+        // Tracked so it can be removed: a handler left attached closes over the `events`
+        // variable, not the array it held, so every earlier test's listener starts pushing
+        // into the current test's array and each event is counted once per test that ran
+        // before it. That failed as "expected [1000, 1000, 1000] to equal [1000]".
+        listeners.push([name, handler]);
+    }
+
+    beforeEach(() => {
+        sockets = [];
+        events = [];
+        listeners = [];
+        vi.useFakeTimers();
+        vi.stubGlobal('WebSocket', FakeSocket);
+        // A fresh recorder per test: the addon exports a singleton, and socket state left over
+        // from one test would quietly decide the next.
+        // eslint-disable-next-line no-new-func
+        new Function(readFileSync(SHIPPED, 'utf8')).call(window);
+        recorder = window.hpMeetingSense;
+        for (const name of ['ms:reconnecting', 'ms:resumed', 'ms:status', 'ms:segment']) listen(name);
+    });
+
+    afterEach(() => {
+        for (const [name, handler] of listeners) window.removeEventListener(name, handler);
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    const of = (name) => events.filter((e) => e.name === name);
+
+    /** Open a socket and complete the handshake — the state every test below starts from. */
+    async function openMeeting(opts = { conversationId: 'c1' }) {
+        const promise = recorder._connect(opts);
+        const ws = sockets[sockets.length - 1];
+        ws.open();
+        ws.deliver({ type: 'ready', meeting_id: 'm1' });
+        await promise;
+        return ws;
+    }
+
+    it('opens with a start frame when there is no meeting yet', async () => {
+        const promise = recorder._connect({ conversationId: 'c1' });
+        const ws = sockets[0];
+        ws.open();
+        expect(ws.sent[0].type).toBe('start');
+        expect(ws.sent[0].conversation_id).toBe('c1');
+        ws.deliver({ type: 'ready', meeting_id: 'm1' });
+        expect((await promise).ok).toBe(true);
+        expect(recorder.meetingId).toBe('m1');
+    });
+
+    it('opens with a resume frame once a meeting exists', async () => {
+        await openMeeting();
+        sockets[0].deliver({ type: 'segment', seq: 4, text: 'hello' });
+
+        recorder.recording = true;
+        sockets[0].drop();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const reconnected = sockets[1];
+        expect(reconnected).toBeDefined();
+        reconnected.open();
+        // The last sequence it actually saw — the server replays anything above it, which is
+        // the only way the frames that died in the old socket come back.
+        expect(reconnected.sent[0]).toMatchObject({ type: 'resume', meeting_id: 'm1', last_seq: 4 });
+    });
+
+    it('reconnects on the documented schedule', async () => {
+        await openMeeting();
+        recorder.recording = true;
+
+        sockets[0].drop();
+        expect(of('ms:reconnecting').map((e) => e.detail.delay)).toEqual([1000]);
+
+        // Each failed attempt lengthens the wait rather than hammering the server.
+        await vi.advanceTimersByTimeAsync(1000);
+        sockets[1].drop();
+        await vi.advanceTimersByTimeAsync(2000);
+        sockets[2].drop();
+        expect(of('ms:reconnecting').map((e) => e.detail.delay)).toEqual([1000, 2000, 4000]);
+    });
+
+    it('announces a successful resume and resets the backoff', async () => {
+        await openMeeting();
+        recorder.recording = true;
+        sockets[0].drop();
+        await vi.advanceTimersByTimeAsync(1000);
+        sockets[1].open();
+        sockets[1].deliver({ type: 'resumed', meeting_id: 'm1', seq: 4 });
+
+        expect(of('ms:resumed').length).toBe(1);
+        expect(recorder.reconnecting).toBe(false);
+        // A later blip starts from 1 s again, not from where the last outage left off.
+        sockets[1].drop();
+        expect(of('ms:reconnecting').at(-1).detail.delay).toBe(1000);
+    });
+
+    it('gives up when the meeting is past saving', async () => {
+        // The grace window closed or the server restarted. Retrying forever would leave a
+        // recording indicator on over a socket that will never accept audio again.
+        await openMeeting();
+        recorder.recording = true;
+        sockets[0].drop();
+        await vi.advanceTimersByTimeAsync(1000);
+        sockets[1].open();
+        sockets[1].deliver({ type: 'error', code: 'not_resumable', msg: 'gone' });
+
+        expect(recorder.recording).toBe(false);
+        expect(recorder.meetingId).toBeNull();
+        // And the pill stops saying "reconnecting…": a permanent "reconnecting" over a
+        // meeting that is gone is worse than saying nothing, because the user keeps waiting.
+        expect(recorder.reconnecting).toBe(false);
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(sockets.length).toBe(2);
+    });
+
+    it('does not reconnect after a deliberate stop', async () => {
+        await openMeeting();
+        recorder.recording = false; // what stop() sets before the socket closes
+        sockets[0].drop();
+        await vi.advanceTimersByTimeAsync(30000);
+        expect(sockets.length).toBe(1);
+        expect(of('ms:reconnecting')).toEqual([]);
+    });
+
+    it('holds audio while the socket is gone and sends it on resume', async () => {
+        await openMeeting();
+        recorder.recording = true;
+        sockets[0].drop();
+
+        // Said during the outage: the part someone most wants back.
+        recorder._queue.push({ frame: { type: 'audio', t0: 0 }, durationMs: 900, silent: false });
+        recorder._pump();
+        expect(recorder.behindMs).toBe(900);
+
+        await vi.advanceTimersByTimeAsync(1000);
+        sockets[1].open();
+        sockets[1].deliver({ type: 'resumed', meeting_id: 'm1' });
+        expect(sockets[1].sent.filter((f) => f.type === 'audio').length).toBe(1);
+        expect(recorder.behindMs).toBe(0);
+    });
+
+    it('sheds and reports when the queue outgrows the budget', async () => {
+        await openMeeting();
+        recorder.recording = true;
+        sockets[0].drop();
+
+        recorder._queue.push({ frame: { type: 'audio' }, durationMs: 1200, silent: true });
+        recorder._queue.push({ frame: { type: 'audio' }, durationMs: 1500, silent: false });
+        recorder._pump();
+
+        const status = of('ms:status').at(-1).detail;
+        expect(status.dropped).toBe(1);
+        expect(status.behind_ms).toBe(1500);
+        expect(recorder._queue.map((q) => q.silent)).toEqual([false]);
+    });
+
+    it('stops feeding a socket whose own buffer is full', async () => {
+        // Without this the queue looks empty while the browser holds seconds of audio, and
+        // behind_ms reports a number that is not true.
+        await openMeeting();
+        sockets[0].bufferedAmount = 10 * 1024 * 1024;
+        recorder._queue.push({ frame: { type: 'audio' }, durationMs: 900, silent: false });
+        recorder._pump();
+        expect(sockets[0].sent.filter((f) => f.type === 'audio')).toEqual([]);
+        expect(recorder.behindMs).toBe(900);
+    });
+
+    it('tracks the highest sequence it has seen, not the latest frame', async () => {
+        // Frames can arrive out of order across a resume; taking the last one would move the
+        // marker backwards and ask the server to replay what the client already has.
+        await openMeeting();
+        sockets[0].deliver({ type: 'segment', seq: 7 });
+        sockets[0].deliver({ type: 'segment', seq: 3, replayed: true });
+        expect(recorder._lastSeq).toBe(7);
+    });
+});

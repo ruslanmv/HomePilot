@@ -329,6 +329,57 @@ one a short test cannot substitute for.
 
 ---
 
+## When the network goes (MS3-a + MS4-a)
+
+MS3 ended a meeting when its socket dropped. Right for the store — no row saying "in progress"
+forever — and wrong for the person whose Wi-Fi blinked forty minutes into a board meeting.
+
+A drop now **suspends** the meeting for a grace window rather than ending it:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `MEETINGSENSE_RESUME_GRACE_S` | `120` | how long a dropped meeting stays resumable. **`0` reproduces the old behaviour exactly** — a drop is final |
+| `MEETINGSENSE_RESUME_MAX_REPLAY` | `200` | most segments a single resume will replay |
+
+The client keeps capturing, queues what is said, and reconnects on a **1-2-4-8 s backoff
+capped at 15 s**, sending `resume {meeting_id, last_seq}`. The server holds the session with
+everything that makes the transcript continuous — the per-speaker assemblers with their 200 ms
+overlap windows, the counters, the sequence. Rebuilding the assemblers would restart the
+dedupe with an empty window and duplicate a line at every reconnection.
+
+**What died in the socket comes back.** D10 says the server replays nothing because the client
+already has it — true of everything that arrived, and false of exactly the frames that were in
+flight when the socket died. Those exist only in the store, so segments above the client's
+`last_seq` are replayed, marked `replayed: true`. Ordered by `seq`, never by time: two channels
+of one chunk share a `t0`, so time is not a numbering.
+
+A meeting recorded before this batch has `seq = NULL` on its segments and cannot be resumed,
+which is correct — it was recorded by a server that had no resume.
+
+### When reconnecting is not winning
+
+If the queue outgrows **two seconds** something has to give, and the choice is made by how much
+speech a chunk carries rather than by how old it is: a cough, a chair or a keyboard that
+cleared the VAD by accident goes first, oldest of those first, never the newest — the newest is
+what the reader is waiting for. One chunk is always kept, so a saturated connection cannot
+quietly record silence. `behind_ms` on `ms:status` says how far behind that leaves the
+transcript, and is what MS6's *"catching up · N s behind"* label reads.
+
+`hpMeetingSense.levels` carries an RMS per channel for the recording pill's meter — a property
+polled on the pill's own frame loop, not an event, because pushing fifty events a second at a
+meter that repaints sixty times a second is noise rather than data.
+
+Two new events: `ms:reconnecting {attempt, delay, meetingId}` and `ms:resumed`. When the grace
+window has closed the server answers `not_resumable`; the client stops retrying and clears
+`reconnecting`, because a pill that says "reconnecting…" forever over a meeting that is gone is
+worse than one that says nothing.
+
+**Not covered:** a server restart loses the in-memory sessions, so meetings left `live` or
+`suspended` in the store are stale until something reconciles them at startup. MS3 had the same
+gap for `live` and it is still open.
+
+---
+
 ## The entry point (MS5)
 
 `frontend/src/ui/meetingsense/entryPoint.ts`. When the backend reports MeetingSense enabled,
@@ -379,7 +430,7 @@ check belongs to the manual matrix).
 
 ---
 
-## Verifying MS0 – MS5
+## Verifying MS0 – MS5 (+ MS3-a, MS4-a)
 
 With the flag off — the shipped state:
 
@@ -397,7 +448,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 191
+cd backend && python3 -m pytest tests/meetingsense -q   # 231
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -415,7 +466,8 @@ MS2 adds 68 of those tests and touches nothing outside `backend/app/meetingsense
 cd backend && python3 -m pytest tests/meetingsense/test_transcript.py -q     # 31
 cd backend && python3 -m pytest tests/meetingsense/test_session_core.py -q   # 37
 cd backend && python3 -m pytest tests/meetingsense/test_session_ws.py -q     # 40  (MS3)
-cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 39  (MS4)
+cd backend && python3 -m pytest tests/meetingsense/test_resume.py -q         # 50  (MS3-a)
+cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 61  (MS4 + MS4-a)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 39  (MS5)
 ```
 

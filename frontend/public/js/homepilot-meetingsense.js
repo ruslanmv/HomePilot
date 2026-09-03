@@ -1,5 +1,5 @@
 /**
- * HomePilot MeetingSense — audio capture for the meeting recorder (batch MS4).
+ * HomePilot MeetingSense — audio capture for the meeting recorder (batches MS4, MS4-a).
  *
  * Opens its own screen + microphone capture, turns it into 16 kHz PCM16, cuts it into
  * utterances on silence, and streams them to `WS /v1/meetingsense/session`.
@@ -36,19 +36,35 @@
  * speaker who pauses mid-phrase puts the boundary inside "recog-"/"-nition". Overlapping means
  * the word is whole in at least one chunk, and the server removes the duplicate.
  *
+ * ── When the network goes (MS4-a, decision D10) ───────────────────────────────────────────
+ *
+ * A dropped socket does not stop the recording. Capture keeps running, chunks queue, and the
+ * client reconnects on a 1-2-4-8 s backoff capped at 15 s, sending `resume` with the last
+ * sequence number it actually saw. The server holds the meeting for a grace window and replays
+ * whatever died in the old socket, so a Wi-Fi blip costs nothing.
+ *
+ * If the queue outgrows two seconds the reconnect is not winning, and something has to give.
+ * What goes is the chunk carrying the least speech — a cough, a chair, a keyboard — oldest
+ * first, never the newest, which is what the reader is waiting for. `behind_ms` says how far
+ * behind that leaves the transcript, which is what the card's "catching up" label reads.
+ *
  * ── Public API ───────────────────────────────────────────────────────────────────────────
  *
  *   await hpMeetingSense.start({ conversationId, title, source, apiKey });
  *   hpMeetingSense.muteMic(true);          // your side only; the call keeps recording
  *   await hpMeetingSense.stop();
  *   hpMeetingSense.audioMode                // 'system+mic' | 'system' | 'mic' | 'none'
+ *   hpMeetingSense.levels                   // RMS per channel, for the pill's meter
+ *   hpMeetingSense.behindMs                 // unsent audio, for "catching up · N s behind"
  *
  * ── DOM events, on `window` ──────────────────────────────────────────────────────────────
  *
  *   ms:segment     a transcribed line          detail: {id, t0, t1, speaker, text, conf}
  *   ms:partial     provisional text            detail: {t0, speaker, text}
- *   ms:status      counters and mute state     detail: {elapsed, segments, slides, ...}
+ *   ms:status      counters, mute, behind_ms   detail: {elapsed, segments, slides, ...}
  *   ms:audio_lost  a track ended mid-meeting   detail: {track, audioMode}
+ *   ms:reconnecting  the socket dropped        detail: {attempt, delay, meetingId}
+ *   ms:resumed       the meeting continued     detail: {meeting_id, segments, seq}
  *
  * Events rather than callbacks so more than one surface can listen — the chat card and the
  * recording pill are different components and neither owns the recorder.
@@ -83,6 +99,24 @@
     /** RMS below this is treated as silence. Deliberately low: a false "speech" costs one
      *  wasted transcription, a false "silence" costs a lost sentence. */
     const SILENCE_RMS = 0.008;
+
+    /** Reconnect backoff, per D10. Capped so a long outage retries steadily rather than
+     *  drifting to hourly and missing the moment the network comes back. */
+    const BACKOFF_MS = [1000, 2000, 4000, 8000];
+    const BACKOFF_CAP_MS = 15000;
+
+    /** How much unsent audio may pile up before the queue starts shedding. Two seconds is
+     *  about one utterance: past that the transcript is visibly behind and dropping the least
+     *  valuable chunk beats falling further behind on every one after it. */
+    const MAX_QUEUE_MS = 2000;
+
+    /** An utterance carrying less speech than this cleared the VAD by accident — a cough, a
+     *  chair, a keyboard. These are what a saturated queue sheds first. */
+    const MIN_SPEECH_MS = 300;
+
+    /** Stop feeding the socket while this much is still in its own buffer. Without it the
+     *  queue looks empty while the browser holds seconds of audio, and `behind_ms` lies. */
+    const SOCKET_HIGH_WATER = 256 * 1024;
 
     const API_BASE = window.HOMEPILOT_API_BASE || '';
 
@@ -193,6 +227,42 @@
         return btoa(binary);
     }
 
+    /**
+     * How long to wait before reconnect attempt ``n`` (1-based).
+     *
+     * A pure function because the schedule is a promise to the user — "it is coming back" —
+     * and a schedule that quietly drifts is indistinguishable from one that gave up.
+     */
+    function backoffDelay(attempt) {
+        if (attempt < 1) return 0;
+        return attempt <= BACKOFF_MS.length ? BACKOFF_MS[attempt - 1] : BACKOFF_CAP_MS;
+    }
+
+    /**
+     * Shed audio from a saturated queue, and say how far behind it leaves us.
+     *
+     * Returns ``{kept, dropped, behindMs}``. What is dropped is the least speech-bearing
+     * chunk, oldest first — never the newest, because the newest is what the reader is
+     * waiting to see, and never in time order alone, because that would throw away a sentence
+     * to keep a cough.
+     *
+     * Pure, so the policy is testable without a socket. Getting this wrong is not visible in
+     * a demo: it shows up an hour into a real meeting on a bad connection.
+     */
+    function shedQueue(queue, maxMs) {
+        const total = (items) => items.reduce((n, item) => n + item.durationMs, 0);
+        const kept = queue.slice();
+        const dropped = [];
+        while (total(kept) > maxMs && kept.length > 1) {
+            // Oldest first among the near-silent; only if there are none does a real
+            // utterance go, and then the oldest, which is the one already least useful live.
+            let index = kept.findIndex((item) => item.silent);
+            if (index === -1) index = 0;
+            dropped.push(kept.splice(index, 1)[0]);
+        }
+        return { kept: kept, dropped: dropped, behindMs: total(kept) };
+    }
+
     /** What the consent sheet and the popover say we are recording. */
     function pickAudioMode(hasSystem, hasMic) {
         if (hasSystem && hasMic) return 'system+mic';
@@ -264,6 +334,7 @@
             this._inSpeech = false;
             this._quietMs = 0;
             this._startMs = 0;
+            this._speechMs = 0;
         }
 
         /**
@@ -292,11 +363,19 @@
                 this._ring = [];
                 this._inSpeech = true;
                 this._quietMs = 0;
+                this._speechMs = this.frameMs;
                 return null;
             }
 
             this._frames.push(frame);
-            this._quietMs = level < this.threshold ? this._quietMs + this.frameMs : 0;
+            if (level < this.threshold) {
+                this._quietMs += this.frameMs;
+            } else {
+                this._quietMs = 0;
+                // Counted so a saturated queue can tell an utterance carrying a sentence from
+                // one that cleared the threshold on a cough.
+                this._speechMs += this.frameMs;
+            }
 
             const durationMs = this._frames.length * this.frameMs;
             if (durationMs >= this.hardCutMs) return this._close(true);
@@ -329,12 +408,14 @@
                 t0: this._startMs,
                 t1: this._startMs + frames.length * this.frameMs,
                 hardCut: !!hardCut,
+                speechMs: this._speechMs,
             };
             this._carry = hardCut ? frames.slice(Math.max(0, frames.length - this.overlapFrames)) : [];
             this._ring = [];
             this._frames = [];
             this._inSpeech = false;
             this._quietMs = 0;
+            this._speechMs = 0;
             return utterance;
         }
     }
@@ -391,6 +472,17 @@
             this.recording = false;
             this.meetingId = null;
             this.micMuted = false;
+            /** RMS per channel, index 0 the call and index 1 this microphone. Read by the
+             *  pill's level meter on its own frame loop — pushing 50 events a second for a
+             *  meter that repaints 60 times a second would be noise, not data. */
+            this.levels = [0];
+            /** Unsent audio, in milliseconds. What the card's "catching up" label reads. */
+            this.behindMs = 0;
+            this.reconnecting = false;
+            this._lastSeq = 0;
+            this._queue = [];
+            this._attempt = 0;
+            this._reconnectTimer = null;
             this._ws = null;
             this._ctx = null;
             this._nodes = [];
@@ -451,6 +543,8 @@
                 return { ok: false, error: String(err && err.message ? err.message : err) };
             }
 
+            // Held for the reconnect: a resume needs the same options a start was given.
+            this._opts = opts;
             const opened = await this._connect(opts);
             if (!opened.ok) {
                 this._teardown();
@@ -470,8 +564,12 @@
 
         async stop() {
             if (!this.recording) return { ok: false, error: 'not recording' };
+            // Cleared first: `recording` is what tells `onclose` a drop was a network event
+            // rather than a deliberate stop, so a stop must not schedule a reconnect.
             this.recording = false;
+            this._stopReconnecting();
             this._flush();
+            this._pump();
             this._send({ type: 'stop' });
             // The socket is left to close on the server's `final`; closing it here would race
             // the frame that carries the counts the card is about to show.
@@ -557,6 +655,7 @@
 
             for (let i = 0; i < frameCount; i++) {
                 const frame = perChannel.map((frames) => frames[i]);
+                this.levels = frame.map(rms);
                 const tMs = Math.round((this._elapsedSamples / TARGET_RATE) * 1000);
                 this._elapsedSamples += frame[0].length;
                 const utterance = this._segmenter.push(frame, tMs);
@@ -572,13 +671,46 @@
 
         _sendUtterance(utterance) {
             const wav = utteranceToWav(utterance.frames, TARGET_RATE);
-            this._send({
-                type: 'audio',
-                format: 'wav',
-                data_b64: bytesToBase64(wav),
-                t0: utterance.t0,
-                t1: utterance.t1,
+            this._queue.push({
+                frame: {
+                    type: 'audio',
+                    format: 'wav',
+                    data_b64: bytesToBase64(wav),
+                    t0: utterance.t0,
+                    t1: utterance.t1,
+                },
+                durationMs: utterance.t1 - utterance.t0,
+                // An utterance carrying almost no speech cleared the VAD by accident. When the
+                // queue has to shed, these go first: dropping a cough to keep a sentence.
+                silent: (utterance.speechMs || 0) < MIN_SPEECH_MS,
             });
+            this._pump();
+        }
+
+        /**
+         * Move the queue into the socket, shedding first if it has grown past the budget.
+         *
+         * Nothing is dropped while the socket is merely closed for a moment — a reconnect is
+         * expected to succeed, and the queue is what makes the gap invisible. It is the queue
+         * outgrowing two seconds that forces a choice, and then the choice is made by how much
+         * speech a chunk carries rather than by how old it is.
+         */
+        _pump() {
+            const shed = shedQueue(this._queue, MAX_QUEUE_MS);
+            const dropped = shed.dropped.length;
+            this._queue = shed.kept;
+
+            while (this._queue.length && this._ws && this._ws.readyState === 1) {
+                if (this._ws.bufferedAmount > SOCKET_HIGH_WATER) break;
+                this._ws.send(JSON.stringify(this._queue[0].frame));
+                this._queue.shift();
+            }
+
+            const behind = this._queue.reduce((n, item) => n + item.durationMs, 0);
+            if (behind !== this.behindMs || dropped) {
+                this.behindMs = behind;
+                emit('ms:status', { behind_ms: behind, dropped: dropped, reconnecting: this.reconnecting });
+            }
         }
 
         _onTrackEnded(track) {
@@ -592,8 +724,18 @@
             emit('ms:audio_lost', { track: track.kind, audioMode: this.audioMode });
         }
 
+        /**
+         * Open the socket and either start a meeting or resume the one already running.
+         *
+         * One function for both because everything after the handshake is identical, and the
+         * only difference that matters is which frame goes first — a `start` that creates a
+         * meeting, or a `resume` that re-attaches to one (D10). Splitting them would mean two
+         * copies of the message handler, which is two places for a new frame type to be
+         * forgotten.
+         */
         _connect(opts) {
             return new Promise((resolve) => {
+                const resuming = !!this.meetingId;
                 let ws;
                 try {
                     ws = new WebSocket(wsUrl(API_BASE + '/v1/meetingsense/session'));
@@ -603,23 +745,32 @@
                 }
                 this._ws = ws;
                 let settled = false;
+                const settle = (result) => {
+                    if (settled) return;
+                    settled = true;
+                    resolve(result);
+                };
 
                 ws.onopen = () => {
                     ws.send(
-                        JSON.stringify({
-                            type: 'start',
-                            conversation_id: opts.conversationId,
-                            project_id: opts.projectId,
-                            title: opts.title,
-                            source: opts.source,
-                            notes: !!opts.notes,
-                            watch: !!opts.watch,
-                            audio: {
-                                rate: TARGET_RATE,
-                                channels: this._channels || 1,
-                                mode: this.audioMode,
-                            },
-                        }),
+                        JSON.stringify(
+                            resuming
+                                ? { type: 'resume', meeting_id: this.meetingId, last_seq: this._lastSeq }
+                                : {
+                                      type: 'start',
+                                      conversation_id: opts.conversationId,
+                                      project_id: opts.projectId,
+                                      title: opts.title,
+                                      source: opts.source,
+                                      notes: !!opts.notes,
+                                      watch: !!opts.watch,
+                                      audio: {
+                                          rate: TARGET_RATE,
+                                          channels: this._channels || 1,
+                                          mode: this.audioMode,
+                                      },
+                                  },
+                        ),
                     );
                 };
 
@@ -632,19 +783,34 @@
                     }
                     if (frame.type === 'ready') {
                         this.meetingId = frame.meeting_id;
-                        settled = true;
-                        resolve({ ok: true });
+                        settle({ ok: true });
+                    } else if (frame.type === 'resumed') {
+                        this.reconnecting = false;
+                        this._attempt = 0;
+                        emit('ms:resumed', frame);
+                        settle({ ok: true });
+                        // Whatever piled up while the socket was gone goes now, in order.
+                        this._pump();
                     } else if (frame.type === 'segment') {
+                        // Tracked so a resume can tell the server what actually arrived. The
+                        // server replays anything above it — the frames that died in the old
+                        // socket exist only in the store.
+                        if (typeof frame.seq === 'number') this._lastSeq = Math.max(this._lastSeq, frame.seq);
                         emit('ms:segment', frame);
                     } else if (frame.type === 'partial') {
                         emit('ms:partial', frame);
                     } else if (frame.type === 'status' || frame.type === 'final') {
                         emit('ms:status', frame);
                     } else if (frame.type === 'error') {
-                        if (!settled) {
-                            settled = true;
-                            resolve({ ok: false, error: frame.msg || frame.code });
+                        if (frame.code === 'not_resumable') {
+                            // The grace window closed, or the server restarted. Nothing here
+                            // can recover the meeting, and retrying forever would leave a
+                            // recording indicator on over a socket that will never take audio.
+                            this.meetingId = null;
+                            this.recording = false;
+                            this._stopReconnecting();
                         }
+                        settle({ ok: false, error: frame.msg || frame.code });
                         emit('ms:status', frame);
                     }
                     // Anything else is a frame from a wave this client does not know about.
@@ -652,13 +818,47 @@
                 };
 
                 ws.onclose = () => {
-                    if (!settled) {
-                        settled = true;
-                        resolve({ ok: false, error: 'the session socket closed' });
+                    settle({ ok: false, error: 'the session socket closed' });
+                    if (this.recording) {
+                        // A meeting in progress: the socket dying is a network event, not a
+                        // decision. Keep capturing — the queue holds what is said meanwhile —
+                        // and go back for it.
+                        this._scheduleReconnect(opts);
+                    } else {
+                        this.recording = false;
                     }
-                    this.recording = false;
                 };
             });
+        }
+
+        /**
+         * Go back for the meeting, with the backoff D10 specifies.
+         *
+         * Capture is deliberately *not* stopped: what someone says during a ten-second
+         * reconnect is the part they will most want back, and the queue is what makes the gap
+         * invisible when it works.
+         */
+        _scheduleReconnect(opts) {
+            if (this._reconnectTimer !== null || !this.recording) return;
+            this._attempt += 1;
+            const delay = backoffDelay(this._attempt);
+            this.reconnecting = true;
+            emit('ms:reconnecting', { attempt: this._attempt, delay: delay, meetingId: this.meetingId });
+            this._reconnectTimer = setTimeout(() => {
+                this._reconnectTimer = null;
+                if (!this.recording) return;
+                this._connect(opts).then((result) => {
+                    if (!result.ok && this.recording) this._scheduleReconnect(opts);
+                });
+            }, delay);
+        }
+
+        _stopReconnecting() {
+            if (this._reconnectTimer !== null) {
+                clearTimeout(this._reconnectTimer);
+                this._reconnectTimer = null;
+            }
+            this.reconnecting = false;
         }
 
         _send(frame) {
@@ -715,6 +915,8 @@
         encodeWav: encodeWav,
         bytesToBase64: bytesToBase64,
         pickAudioMode: pickAudioMode,
+        backoffDelay: backoffDelay,
+        shedQueue: shedQueue,
         utteranceToWav: utteranceToWav,
         Framer: Framer,
         Segmenter: Segmenter,
@@ -726,6 +928,10 @@
             SILENCE_CLOSE_MS: SILENCE_CLOSE_MS,
             HARD_CUT_MS: HARD_CUT_MS,
             SILENCE_RMS: SILENCE_RMS,
+            BACKOFF_MS: BACKOFF_MS,
+            BACKOFF_CAP_MS: BACKOFF_CAP_MS,
+            MAX_QUEUE_MS: MAX_QUEUE_MS,
+            MIN_SPEECH_MS: MIN_SPEECH_MS,
         },
     };
 })();
