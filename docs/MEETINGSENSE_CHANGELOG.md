@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W3 — Eyes
 
-### MS10 — slides in the card · `PENDING`
+### MS10 — slides in the card · `8023b3d`
 
 - `SlideStrip.tsx`: a strip under the transcript, and a lightbox joining a slide's caption to
   the transcript spoken while it was up. `mergeSlide` and `segmentsDuring` in `meetingState`,
