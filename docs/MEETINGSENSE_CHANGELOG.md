@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## Carried work
 
-### MS12-a — the notes engine, actually connected · `PENDING`
+### MS12-a — the notes engine, actually connected · 3c592f0
 
 - MS12 shipped an engine that was complete, tested, and **constructed by nothing**. `start`
   echoed `notes: true` straight back, `MeetingSession` drove a `notes=` engine correctly, and
