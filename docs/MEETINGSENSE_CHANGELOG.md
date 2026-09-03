@@ -19,6 +19,21 @@ this is reachable and no table is created.
 
 ## W4 — Brain
 
+### MS14 — a self-sufficient summary, and deleting a meeting · `f537783`
+
+- The summary message carries the recap, decisions, actions with owners and citations, open
+  questions and a slide timeline, with thumbnails in `media.images` capped at 8. The chat path
+  passes six messages, so this one *is* the meeting as far as a persona is concerned.
+- **Per D4 nothing is enqueued.** Two tests hold it: one patches the jobs functions and asserts
+  none fired, one greps the module for the word.
+- `retention.py` + `DELETE /v1/meetingsense/{id}`: rows and owned files, reporting counts.
+  **Retention does not modify deletion** — whatever was kept is removed.
+- `session.stop()` forces the last notes window, or the final minute of every meeting is
+  missing from its summary.
+- **Two weak tests found by mutation:** a symlink does not separate `is_relative_to` from a
+  string prefix check (a sibling directory named like the root does), and an empty list never
+  reaches a section whose items all render blank.
+
 ### MS12 — rolling notes and the recap · `1e90e18`
 
 - `notes_engine.py` + `prompts.py`. Trigger is a floor, not a schedule: 60 s **or** 400 words,

@@ -8,8 +8,9 @@ or from a hosted avatar page through OllaBridge; a live transcript card with a r
 and a consent sheet; resume across a dropped connection; export as Markdown, SRT or JSON; and
 the meeting landing in History as a titled conversation.
 
-**What does not, yet:** captioning slides, rolling notes, asking questions about a meeting, and
-a real summary — the message a meeting leaves is a transcript preview. Those are waves W3–W4.
+**What does not, yet:** captioning slides (W3), and asking questions about a meeting mid-flight
+(MS13). Rolling notes and a real summary now exist — the message a meeting leaves carries its
+recap, decisions, actions and open questions, and a meeting can be deleted in one call.
 
 The order of work, and the reasoning behind each decision, is
 [`docs/design/MEETINGSENSE_BATCHES.md`](design/MEETINGSENSE_BATCHES.md). What changed when is
