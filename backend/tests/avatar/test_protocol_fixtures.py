@@ -54,6 +54,13 @@ EXPECTED_NAMES = {
     "voice_end",
     "voice_answer",
     "voice_state",
+    # MS7 — MeetingSense over the avatar session. Three inbound, one outbound, no version
+    # bump: §6.9's silent-ignore rule is what makes that safe, and this set is where the
+    # claim is checked rather than assumed.
+    "meeting_start",
+    "meeting_audio",
+    "meeting_stop",
+    "meeting",
     # forward compatibility
     FORWARD_COMPAT,
 }

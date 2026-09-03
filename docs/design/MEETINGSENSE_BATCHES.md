@@ -162,7 +162,7 @@ not done while any of its rows is untested.
 |---|---|---|---|
 | **W0** | Foundation | MS0 ✅ → MS1 ✅ | Flags, status endpoint; STT that returns timed spans, names its device, loads once. Two items carried: MS1-a, MS1-b |
 | **W1** | Recorder (local) | MS2 ✅ → MS3 ✅ → MS4 ✅ → MS5 ✅ → MS3-a ✅ → MS4-a ✅ → MS6 ✅ | Screen + audio → live transcript in a chat card, export, resume on reconnect. **Pilot for a week here** |
-| **W2** | Reach | MS7 → MS8 | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
+| **W2** | Reach | MS7 ✅ → MS8 | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
 | **W3** | Eyes | MS9 → MS11 | Slide-aware keyframes captioned locally; desktop loopback (Windows) |
 | **W4** | Brain | MS12 → MS14 | Rolling notes, "ask about this meeting", final summary + retention |
 | **W5** | Memory | MS15 → MS17 | Retrieval namespace, binding/resume/branch, auto-metadata |
@@ -208,7 +208,7 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 
 | # | Batch | Scope | Acceptance | Status |
 |---|---|---|---|---|
-| **MS7** | Avatar-session transport | Add client `meeting_start meeting_audio meeting_stop` and server `meeting` to `avatar_director/protocol.py` type sets — **no version bump** (unknown types are ignored by contract); `avatar_director/session.py` routes them to the same `MeetingSession` through the same `Transport`; segments may ride `voice_transcript` where the client has a recogniser | pytest: a session driven through the avatar handler produces frame-for-frame the same output as through MS3; an old client sending no meeting frames is unaffected; unknown sub-type ignored | ⬜ |
+| **MS7** | Avatar-session transport | `meeting_start meeting_audio meeting_stop` + server `meeting` added to `protocol.py`'s type sets, **no version bump**; the handler *queues* them (`meeting_inbox`, `take_meeting_frames()`) rather than answering, because a meeting transcribes audio and `handle()` is synchronous by design. New `meetingsense/avatar_bridge.py`: an `AvatarTransport` writing to the handler's outbox — the socket already has exactly one writer — and a `MeetingBridge` that reuses MS2's core, MS3's `audio.py` and MS3's own `_handle_audio`. One outbound type carries the MS3 frame verbatim, so a later wave's frame needs no contract change. `_REMOTE` is separate from the master flag; a dropped avatar socket suspends on MS3-a's grace window | 46 tests. **Parity is the load-bearing one**: the same script through both transports produces frame-identical output, with the clock injected so the comparison is behaviour rather than "close enough". Eight mutations each fail. **Cross-repo:** the shared fixture set gained four frames, so `ruslanmv/3D-Avatar-Chatbot` took the byte-identical copy in the same shape (`303b722`, 2199 tests green) — the checksum manifest went red until it did, which is the mechanism working. 308 in `tests/meetingsense`, backend baseline unchanged | ✅ `PENDING` |
 | **MS8** | Through OllaBridge | Document and test end to end: avatar client on yourfriend.online → OllaBridge `/v1/avatar/session` → HomePilot. **Assert the proxy is a pipe** (reads `hello`, pumps the rest); Cloud path rides the existing `sig`/`ev` relay; `status` gains `remote_ok` | pytest in ollabridge: a meeting frame crosses proxy and relay byte-identically, stream id intact; HomePilot: `_REMOTE` off refuses avatar-session meeting frames | ⬜ |
 
 **W2 exit:** the same recorder reached from a hosted avatar with no new URL or token.
@@ -319,7 +319,7 @@ from here. Do not begin the next batch.
 
 **OllaBridge.** The avatar-session proxy reads exactly one frame — `hello` — and pumps the rest verbatim. Meeting frames need no proxy change; MS8 asserts it. If a batch ever needs the proxy to understand a meeting frame, the design has gone wrong.
 
-**The avatar protocol.** `PROTOCOL_VERSION` stays 1. New types go into the type sets and nothing else.
+**The avatar protocol.** `PROTOCOL_VERSION` stays 1. New types go into the type sets and nothing else. MS7 added four and did not move it. The protocol fixture set is **byte-identical to `ruslanmv/3D-Avatar-Chatbot`**, held by `CHECKSUMS.txt`: a type added on one side goes red on the other until both carry the same files.
 
 **Together mode.** The 👥 launcher's seven activities, its activity-scoped permission model and consent machine are not modified. MeetingSense is an eighth activity that borrows them.
 

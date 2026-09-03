@@ -50,6 +50,10 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
         key = f"{id(websocket):x}"
         _SESSIONS[key] = handler
 
+        # MS7. Built per socket but inert until a `meeting_start` arrives: constructing it
+        # costs a dataclass read, and no speech model is loaded until a meeting begins.
+        meetings = _meeting_bridge(handler)
+
         heartbeat = asyncio.create_task(_heartbeat(websocket, handler))
         # B17. A tool call queues on the handler and this sends it — four wakeups a second,
         # because a gesture that waits for the next heartbeat is a gesture that arrives
@@ -68,6 +72,13 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
                 for reply in handler.handle(message):
                     await _send(websocket, reply)
 
+                # MS7. Meeting frames are queued by the handler rather than answered by it,
+                # because a meeting transcribes audio and `handle()` is synchronous. Acted on
+                # here, before the drain, so whatever the meeting produced goes out on this
+                # same pass rather than waiting for the next tick.
+                if meetings is not None:
+                    await meetings.handle_all(handler.take_meeting_frames())
+
                 # Anything a tool call (B17) or curiosity (B16) queued while we were
                 # waiting. Drained here rather than pushed from those modules, so the
                 # socket has exactly one writer.
@@ -85,6 +96,14 @@ def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None
         except WebSocketDisconnect:
             log.info("avatar session closed (%s)", handler.state.client or "unidentified")
         finally:
+            if meetings is not None:
+                # A meeting in progress gets MS3-a's grace window rather than ending with the
+                # avatar socket: a hosted page loses its connection for the same reasons a
+                # local one does.
+                try:
+                    await meetings.close()
+                except Exception:  # noqa: BLE001 — the socket is already gone
+                    log.debug("meetingsense: could not suspend the meeting", exc_info=True)
             heartbeat.cancel()
             pump.cancel()
             for task in list(turns):
@@ -172,3 +191,19 @@ async def _heartbeat(websocket: WebSocket, handler: ProtocolHandler) -> None:  #
 
 async def _send(websocket: WebSocket, message: dict) -> None:  # pragma: no cover - transport
     await websocket.send_text(json.dumps(message, separators=(",", ":")))
+
+
+def _meeting_bridge(handler):
+    """MS7's bridge, or ``None`` on a build without MeetingSense.
+
+    Imported lazily and guarded: an avatar session on an install that does not have the
+    package — or has it switched off — must behave exactly as it did before this batch, and
+    an ImportError here would take the whole socket down to say so.
+    """
+    try:
+        from ..meetingsense.avatar_bridge import MeetingBridge
+
+        return MeetingBridge(handler.outbox)
+    except Exception:  # noqa: BLE001
+        log.debug("meetingsense: avatar bridge unavailable", exc_info=True)
+        return None

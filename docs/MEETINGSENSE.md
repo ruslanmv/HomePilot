@@ -524,7 +524,63 @@ told to skip, belong to the manual matrix.
 
 ---
 
-## Verifying MS0 – MS6
+## The second transport (MS7)
+
+The batch MS2 was written for. A hosted page cannot open a WebSocket to `ws://localhost`, but
+it already holds one to the avatar session — and OllaBridge already proxies that as a pipe. So
+a meeting reaches a local HomePilot over a socket that already exists, with **no new URL and
+no second token**.
+
+```
+client → server   {"v":1,"type":"meeting_start", "conversation_id":…, "audio":{…}}
+                  {"v":1,"type":"meeting_audio", "format":"wav", "data_b64":…, "t0":…}
+                  {"v":1,"type":"meeting_stop"}
+server → client   {"v":1,"type":"meeting","meeting":{…}}     ← an MS3 frame, verbatim
+```
+
+**`PROTOCOL_VERSION` stays 1.** Three new client types and one server type, and every existing
+peer is still correct — that is what §6.9's silent-ignore rule buys, and a bump would have made
+this a breaking change for the avatar, the voice channel and the display panels too.
+
+One outbound type carrying the MS3 frame untouched, rather than a flattened
+`meeting_segment` / `meeting_status` / `meeting_final` family. A client that already renders
+the local transcript works by reading `.meeting`, and a frame added by a later wave needs no
+change to the contract at all.
+
+### What this batch is *not*
+
+It is not a second implementation. The core is MS2's `MeetingSession`, the audio decoding is
+MS3's `audio.py`, and the per-frame split is MS3's own `_handle_audio`. What MS7 adds is a
+`Transport` — two forwarding methods — and an envelope. The two transports therefore *cannot*
+answer differently, because there is only one thing answering, and a test drives the same
+script through both and compares frame for frame.
+
+The bridge writes into the handler's outbox rather than the socket, because that socket already
+has exactly one writer and a second is how interleaved frames and half-written JSON happen.
+Closing a meeting never closes the avatar socket: it is also carrying the persona, the gestures
+and possibly a spoken conversation.
+
+### Two flags, not one
+
+`MEETINGSENSE_REMOTE` is separate from `MEETINGSENSE_ENABLED` and neither implies the other. An
+operator who wants meetings on their own machine has not thereby agreed to accept them from a
+hosted page, so with the master flag on and the remote flag off an avatar-session meeting is
+refused by name (`remote_disabled`) and no table is touched.
+
+A dropped avatar socket **suspends** the meeting on MS3-a's grace window rather than ending it:
+somebody on a hosted page loses their connection for the same reasons a local one does.
+
+### The fixture set is shared with the client
+
+`backend/tests/fixtures/protocol/` is byte-identical to `tests/fixtures/protocol/` in
+`ruslanmv/3D-Avatar-Chatbot`, and `CHECKSUMS.txt` is the proof — each repo verifies its own
+copy against the same manifest. Adding these four frames therefore had to land in **both**
+repos in the same shape, and the server-side change went red until it did. That is the
+mechanism working, not an obstacle to route around.
+
+---
+
+## Verifying MS0 – MS7
 
 With the flag off — the shipped state:
 
@@ -542,7 +598,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 276
+cd backend && python3 -m pytest tests/meetingsense -q   # 308
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -562,6 +618,8 @@ cd backend && python3 -m pytest tests/meetingsense/test_session_core.py -q   # 3
 cd backend && python3 -m pytest tests/meetingsense/test_session_ws.py -q     # 40  (MS3)
 cd backend && python3 -m pytest tests/meetingsense/test_resume.py -q         # 50  (MS3-a)
 cd backend && python3 -m pytest tests/meetingsense/test_export.py -q         # 59  (MS6)
+cd backend && python3 -m pytest tests/meetingsense/test_avatar_bridge.py -q  # 46  (MS7)
+cd backend && python3 -m pytest tests/avatar -q                              # the shared contract
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 61  (MS4 + MS4-a)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 39  (MS5)
 cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 66  (MS6)

@@ -28,16 +28,26 @@ log = logging.getLogger("avatar_director.protocol")
 
 PROTOCOL_VERSION = 1
 
+#: MeetingSense over this socket (MS7). Three inbound names and one outbound, added to the
+#: sets **without a version bump** — which is the whole reason §6.9 makes an unknown type a
+#: silent no-op. A client that predates these sends none of them and behaves exactly as it
+#: did; a server that predates them ignores them and answers nothing, which is what the
+#: hosted page reads as "this HomePilot cannot record meetings".
+MEETING_CLIENT_TYPES = frozenset({"meeting_start", "meeting_audio", "meeting_stop"})
+MEETING_SERVER_TYPES = frozenset({"meeting"})
+
 #: Client → server, §6.9 and addendum §14.3, plus B10's voice uplink.
 CLIENT_TYPES = (
     frozenset({"hello", "ctx", "user_event", "vision_ask", "chat_meta", "pong", "adult_verify_request", "streak"})
     | VOICE_CLIENT_TYPES
+    | MEETING_CLIENT_TYPES
 )
 
 #: Server → client. Listed so a typo in an emitter is caught here rather than on a headset.
 SERVER_TYPES = (
     frozenset({"intent", "say", "vision_insight", "scene", "error", "ping", "display", "adult_ack"})
     | VOICE_SERVER_TYPES
+    | MEETING_SERVER_TYPES
 )
 
 #: §6.2's emote whitelist. The server may not invent names any more than the model may.
@@ -98,6 +108,11 @@ class ProtocolHandler:
         #: and B16's curiosity when it lands a turn. The transport drains it; nothing here
         #: sends, because this class has never had a socket and should not grow one.
         self.outbox: List[Dict[str, Any]] = []
+        #: MeetingSense frames waiting to be acted on (MS7). Queued rather than handled
+        #: because a meeting is asynchronous — it transcribes audio — and `handle()` is
+        #: synchronous by design. The transport drains this the way it drains `outbox`,
+        #: which keeps the rule this class is built on: it decides *what*, never *when*.
+        self.meeting_inbox: List[Dict[str, Any]] = []
 
     def _today(self) -> date:
         """Today, from the handler's own injectable clock rather than from ``date.today()``
@@ -181,6 +196,29 @@ class ProtocolHandler:
 
     def _on_chat_meta(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
         return []
+
+    # ── MeetingSense (MS7) ───────────────────────────────────────────────────
+    #
+    # All three do the same thing: queue, and say nothing now. The reply is a `meeting`
+    # frame produced later by the same `MeetingSession` the local WebSocket drives, so the
+    # two transports cannot answer differently — there is only one thing answering.
+
+    def _on_meeting_start(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.meeting_inbox.append(message)
+        return []
+
+    def _on_meeting_audio(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.meeting_inbox.append(message)
+        return []
+
+    def _on_meeting_stop(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.meeting_inbox.append(message)
+        return []
+
+    def take_meeting_frames(self) -> List[Dict[str, Any]]:
+        """Everything queued since the last call. Empties the inbox."""
+        queued, self.meeting_inbox = self.meeting_inbox, []
+        return queued
 
     def _on_pong(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
         return []
