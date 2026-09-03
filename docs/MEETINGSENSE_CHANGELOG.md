@@ -17,6 +17,25 @@ this is reachable and no table is created.
 
 ---
 
+## W4 — Brain
+
+### MS12 — rolling notes and the recap · `1e90e18`
+
+- `notes_engine.py` + `prompts.py`. Trigger is a floor, not a schedule: 60 s **or** 400 words,
+  and nothing pending is never due.
+- **Deltas, not rewrites.** The merge happens server-side and never deletes; resolving marks a
+  question so the card can strike it through.
+- **D9 tier 2 is one signature:** `recap_messages()` takes the previous recap as a string, not
+  a meeting id, so it cannot reach the transcript. The 120-word cap is enforced in code, not
+  requested in the prompt.
+- A citation the transcript cannot support is dropped while the observation is kept.
+- **Found an MS6 bug:** `to_markdown` read `notes["json"]` while `store.get_notes()` returns
+  the parsed object under `notes["notes"]`, so the Markdown export had been silently omitting
+  its notes section. The MS6 test hand-built a shape the store never produces and passed over
+  it.
+
+---
+
 ## W2 — Reach
 
 ### MS8 — through OllaBridge · `27b6e15`, ollabridge `48520da`
