@@ -19,6 +19,28 @@ this is reachable and no table is created.
 
 ## W6 — Together
 
+### MS19 — the eighth activity · `3b7af51` (avatar) + `PENDING`
+
+- `meeting.js` joins the 👥 launcher. It cannot obtain a stream: no `navigator`, no media
+  call, no canvas — asserted by reading its own source. The recorder is handed the grant's
+  streams through a new `startWithStreams`, because a recorder that opened its own capture
+  inside that page would be a second consent story for the same screen.
+- `meeting` is a **compound consent source**: screen then microphone, in that order. A part
+  declined, or resolving with no stream, grants nothing.
+- **Revoking stops the recorder synchronously**, asserted with no timers at all. If the test
+  needed one, the guarantee would be "soon" rather than "now".
+- **Two pre-existing tests updated rather than worked around.** `capture.test.js` pinned
+  `SOURCES` exactly and B11's docstring says adding a consumer should be a registration —
+  MS19 is the first to take that offer. `composition.test.js` caught `meeting.js` publishing a
+  global `boot.js` never loaded, which is what it is for.
+- **A real bug the tests found:** `stop()` released the grant *after* revoking, so its own
+  consent listener still saw a live grant, announced a second stop and counted a deliberate
+  stop as a revocation.
+- **A harness bug worth recording:** two mutations aimed at `startWithStreams` matched the
+  identical guard lines in `start()` instead — `replace(…, 1)` takes the first occurrence —
+  and survived, because `start()`'s own guard had no test. Both are covered now, and the
+  borrowed path uses distinct local names so an anchor cannot land on the wrong function.
+
 ### MS18 — the live context provider · `188ee7a`
 
 - New `live_context.py`, and one optional `conversation_id` argument on

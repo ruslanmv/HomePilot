@@ -988,3 +988,85 @@ describe('the sampler, wired', () => {
         expect(recorder._mediaClockMs()).toBe(3000);
     });
 });
+
+// ── borrowed streams (MS19) ─────────────────────────────────────────────────
+
+describe('startWithStreams', () => {
+    /**
+     * The avatar client's 👥 launcher owns exactly one call site for `getDisplayMedia` and
+     * `getUserMedia`, and a test in that repo reads every other file to prove it. A recorder
+     * that opened its own capture from inside that page would be a second consent story for
+     * the same screen — so it is handed the grant's streams instead.
+     *
+     * jsdom has no AudioContext, so `_buildGraph` cannot run here and the graph itself is
+     * untestable as ever. What *is* testable is the decision made before it: which streams
+     * count as which source, and what happens when there is no audio at all.
+     */
+    const streamOf = (kinds) => ({
+        getTracks: () => kinds.map((kind) => ({ kind, stop() {}, addEventListener() {} })),
+        getAudioTracks: () => kinds.filter((k) => k === 'audio').map((kind) => ({ kind })),
+        getVideoTracks: () => kinds.filter((k) => k === 'video').map((kind) => ({ kind })),
+        getSettings: () => ({}),
+    });
+
+    const fresh = () => new window.hpMeetingSense.constructor();
+
+    it('needs a conversation, and says so before touching anything', async () => {
+        const recorder = fresh();
+        const result = await recorder.startWithStreams({ screen: streamOf(['video']) }, {});
+        expect(result).toEqual({ ok: false, error: 'conversationId is required' });
+    });
+
+    it('refuses when neither stream carries audio', async () => {
+        // A video-only share with no microphone is a screen recording, not a meeting. The
+        // recorder says so rather than opening a socket that will never carry a word.
+        const recorder = fresh();
+        const result = await recorder.startWithStreams(
+            { screen: streamOf(['video']) },
+            { conversationId: 'c1' },
+        );
+        expect(result.ok).toBe(false);
+        expect(result.audioMode).toBe('none');
+    });
+
+    it('reads the audio mode off the streams it was given', async () => {
+        // A display stream with an audio track is the call; one without is video only. The
+        // same rule `start()` applies to the streams it opens itself — one implementation,
+        // whoever asked the browser.
+        expect(ms.pickAudioMode(true, true)).toBe('system+mic');
+        const recorder = fresh();
+        // The graph cannot be built in jsdom, so this stops at the AudioContext — after the
+        // decision under test, which is what the returned error confirms.
+        const result = await recorder.startWithStreams(
+            { screen: streamOf(['video', 'audio']), mic: streamOf(['audio']) },
+            { conversationId: 'c1' },
+        );
+        expect(recorder.audioMode).toBe('system+mic');
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/AudioContext/);
+    });
+
+    it('a microphone alone is a meeting', async () => {
+        const recorder = fresh();
+        await recorder.startWithStreams({ mic: streamOf(['audio']) }, { conversationId: 'c1' });
+        expect(recorder.audioMode).toBe('mic');
+    });
+
+    it('refuses to start a second meeting over a running one', async () => {
+        const recorder = fresh();
+        recorder.recording = true;
+        const result = await recorder.startWithStreams({ mic: streamOf(['audio']) },
+                                                       { conversationId: 'c1' });
+        expect(result).toEqual({ ok: false, error: 'already recording' });
+    });
+
+    it('and `start` refuses the same way', async () => {
+        // The identical guard on the older path, which had no test of its own until a
+        // mutation aimed at the borrowed one landed here instead and survived — the two
+        // functions share the line, and only one of them was covered.
+        const recorder = fresh();
+        recorder.recording = true;
+        expect(await recorder.start({ conversationId: 'c1' }))
+            .toEqual({ ok: false, error: 'already recording' });
+    });
+});

@@ -832,6 +832,64 @@
             };
         }
 
+        /**
+         * Begin with streams somebody else already has consent for (MS19).
+         *
+         * The avatar client's 👥 launcher owns exactly one call site for `getDisplayMedia`
+         * and `getUserMedia`, and a test there reads every other file to prove it. A recorder
+         * that opened its own capture from inside that page would be a second consent story
+         * for the same screen — so it is handed the grant's streams instead.
+         *
+         * Everything after the streams is `start`'s path unchanged: same graph, same socket,
+         * same segmenter. The only difference is who asked the browser.
+         */
+        async startWithStreams(streams, options) {
+            const opts = options || {};
+            if (this.recording) return { ok: false, error: 'already recording' };
+            if (!opts.conversationId) return { ok: false, error: 'conversationId is required' };
+
+            const given = streams || {};
+            const screen = given.screen || null;
+            const mic = given.mic || null;
+            // A display stream with no audio track is video-only, which is the usual case
+            // outside a Chrome tab share. `system` is the audio half; `screen` is the video.
+            const borrowedSystem =
+                screen && screen.getAudioTracks && screen.getAudioTracks().length ? screen : null;
+
+            this._windowTitle = opts.windowTitle || (screen ? trackLabel(screen) : '');
+            this.audioMode = pickAudioMode(!!borrowedSystem, !!mic);
+            if (this.audioMode === 'none') {
+                return { ok: false, error: 'no audio source was granted', audioMode: 'none' };
+            }
+
+            try {
+                await this._buildGraph(borrowedSystem, mic);
+            } catch (err) {
+                this._teardown();
+                return { ok: false, error: String(err && err.message ? err.message : err) };
+            }
+
+            this._opts = opts;
+            const openedBorrowed = await this._connect(opts);
+            if (!openedBorrowed.ok) {
+                this._teardown();
+                return openedBorrowed;
+            }
+            this.recording = true;
+            const watchingBorrowed = opts.watch ? this._startWatching(screen, opts) : false;
+            return {
+                ok: true,
+                meetingId: this.meetingId,
+                audioMode: this.audioMode,
+                watching: watchingBorrowed,
+                // The streams are the caller's: it obtained them and it revokes them. Teardown
+                // here stops the tracks it was given, which is what a revoke wants, but the
+                // caller must not assume the recorder will do it — a revoked grant kills them
+                // in the same tick either way.
+                borrowed: true,
+            };
+        }
+
         /** Mute this side only. The call keeps recording — that is the point of two gains. */
         muteMic(muted) {
             this.micMuted = !!muted;

@@ -547,6 +547,26 @@ The block tells the persona what it cannot see, in as many words. Without that a
 "what did she say?" answers about the last thing in *its* window — which is the chat, not the
 meeting — and cites a timestamp it invented.
 
+### Recording from the 👥 launcher (MS19)
+
+MeetingSense is the eighth activity in the avatar client's Together launcher —
+`3D-Avatar-Chatbot`, `src/features/together/activities/meeting.js` — and almost none of it is
+new code. B11 there owns the consent and the revoke; this addon owns the audio graph, the
+segmenter, the socket and the transcript.
+
+**The recorder does not open its own capture there.** That page has exactly one call site for
+`getDisplayMedia` and `getUserMedia`, and a test reads every other file to prove it. So the
+addon grew a second entry point, `startWithStreams({screen, mic}, options)`, which is `start`'s
+path from the graph onwards — same segmenter, same socket — with somebody else having asked
+the browser. `start()` is unchanged, and is still what the HomePilot page uses, where there is
+no launcher and no consent machine.
+
+The consent machine gained a `meeting` compound source: the screen, then the microphone, in
+that order, because the screen is the dialog a user is most likely to cancel and somebody who
+declines it should not already have granted a microphone they now have no use for. Revoking
+stops the recorder synchronously — the epoch makes every grant read dead in the same tick, and
+a revoke that waits on a network round trip is a revoke that has not happened yet.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -993,7 +1013,8 @@ cd backend && python3 -m pytest tests/meetingsense/test_binding.py -q       # 33
 cd backend && python3 -m pytest tests/meetingsense/test_metadata.py -q      # 72  (MS17)
 cd backend && python3 -m pytest tests/meetingsense/test_notes_wiring.py -q  # 11  (MS12-a)
 cd backend && python3 -m pytest tests/meetingsense/test_live_context.py -q  # 26  (MS18)
-cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 84  (MS4, MS4-a, MS9)
+cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 90  (MS4, MS4-a, MS9, MS19)
+cd ../3D-Avatar-Chatbot && npx jest tests/behavior/meeting.test.js           # 21  (MS19)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 55  (MS5 + MS11)
 cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 90  (MS6 + MS10)
 ```
