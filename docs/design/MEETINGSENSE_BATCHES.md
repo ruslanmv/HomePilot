@@ -162,7 +162,7 @@ not done while any of its rows is untested.
 |---|---|---|---|
 | **W0** | Foundation | MS0 ✅ → MS1 ✅ | Flags, status endpoint; STT that returns timed spans, names its device, loads once. Two items carried: MS1-a, MS1-b |
 | **W1** | Recorder (local) | MS2 ✅ → MS3 ✅ → MS4 ✅ → MS5 ✅ → MS3-a ✅ → MS4-a ✅ → MS6 ✅ | Screen + audio → live transcript in a chat card, export, resume on reconnect. **Pilot for a week here** |
-| **W2** | Reach | MS7 ✅ → MS8 | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
+| **W2** | Reach | MS7 ✅ → MS8 ✅ | Same recorder from yourfriend.online through OllaBridge, no new URL/token |
 | **W3** | Eyes | MS9 → MS11 | Slide-aware keyframes captioned locally; desktop loopback (Windows) |
 | **W4** | Brain | MS12 → MS14 | Rolling notes, "ask about this meeting", final summary + retention |
 | **W5** | Memory | MS15 → MS17 | Retrieval namespace, binding/resume/branch, auto-metadata |
@@ -209,7 +209,7 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 | # | Batch | Scope | Acceptance | Status |
 |---|---|---|---|---|
 | **MS7** | Avatar-session transport | `meeting_start meeting_audio meeting_stop` + server `meeting` added to `protocol.py`'s type sets, **no version bump**; the handler *queues* them (`meeting_inbox`, `take_meeting_frames()`) rather than answering, because a meeting transcribes audio and `handle()` is synchronous by design. New `meetingsense/avatar_bridge.py`: an `AvatarTransport` writing to the handler's outbox — the socket already has exactly one writer — and a `MeetingBridge` that reuses MS2's core, MS3's `audio.py` and MS3's own `_handle_audio`. One outbound type carries the MS3 frame verbatim, so a later wave's frame needs no contract change. `_REMOTE` is separate from the master flag; a dropped avatar socket suspends on MS3-a's grace window | 46 tests. **Parity is the load-bearing one**: the same script through both transports produces frame-identical output, with the clock injected so the comparison is behaviour rather than "close enough". Eight mutations each fail. **Cross-repo:** the shared fixture set gained four frames, so `ruslanmv/3D-Avatar-Chatbot` took the byte-identical copy in the same shape (`303b722`, 2199 tests green) — the checksum manifest went red until it did, which is the mechanism working. 308 in `tests/meetingsense`, backend baseline unchanged | ✅ `75d7294` |
-| **MS8** | Through OllaBridge | Document and test end to end: avatar client on yourfriend.online → OllaBridge `/v1/avatar/session` → HomePilot. **Assert the proxy is a pipe** (reads `hello`, pumps the rest); Cloud path rides the existing `sig`/`ev` relay; `status` gains `remote_ok` | pytest in ollabridge: a meeting frame crosses proxy and relay byte-identically, stream id intact; HomePilot: `_REMOTE` off refuses avatar-session meeting frames | ⬜ |
+| **MS8** | Through OllaBridge | ollabridge: `tests/avatar/test_meeting_frames.py` proves the proxy is a pipe **in bytes** — non-canonical JSON fixtures and string equality, up and down, a whole meeting in order, plus the cloud `sig`/`ev` path where the raw frame travels as the payload string; a grep test forbids meeting vocabulary in the proxy at all. `/health` advertises `meetings`. HomePilot: `/v1/meetingsense/status` gains **`remote_ok`** (`enabled AND ready AND flags.remote` — one boolean, because the flags do not imply each other and a client guessing would guess wrong towards offering a control the server refuses), and `_REMOTE` off refuses avatar-session frames **per frame**, not just at start | 10 ollabridge + 12 HomePilot tests. Eight mutations each fail — **one survived first**: the audio fixture happened to be byte-identical to `json.dumps` output, so a re-serialising relay passed the whole suite; the fixtures now carry spacing `json.dumps` cannot reproduce. ollabridge avatar suite 61 green and its repo baseline unchanged (142 pre-existing failures before and after); 316 in `tests/meetingsense`, HomePilot baseline unchanged | ✅ `PENDING` |
 
 **W2 exit:** the same recorder reached from a hosted avatar with no new URL or token.
 
@@ -317,7 +317,7 @@ from here. Do not begin the next batch.
 
 ## 7. Compatibility contracts (do not break these)
 
-**OllaBridge.** The avatar-session proxy reads exactly one frame — `hello` — and pumps the rest verbatim. Meeting frames need no proxy change; MS8 asserts it. If a batch ever needs the proxy to understand a meeting frame, the design has gone wrong.
+**OllaBridge.** The avatar-session proxy reads exactly one frame — `hello` — and pumps the rest verbatim. Meeting frames need no proxy change; MS8 asserts it. Asserted **in bytes**, not as parsed objects: a proxy that re-serialised each frame would pass an object comparison while re-encoding an audio chunk. The same holds on the cloud path, where the raw frame is the `sig`/`ev` payload string. If a batch ever needs the proxy to understand a meeting frame, the design has gone wrong.
 
 **The avatar protocol.** `PROTOCOL_VERSION` stays 1. New types go into the type sets and nothing else. MS7 added four and did not move it. The protocol fixture set is **byte-identical to `ruslanmv/3D-Avatar-Chatbot`**, held by `CHECKSUMS.txt`: a type added on one side goes red on the other until both carry the same files.
 
@@ -343,6 +343,6 @@ from here. Do not begin the next batch.
 3. ~~MS4~~ ✅ `6ee54ab`, ~~MS5~~ ✅ `1ee3227`, ~~MS3-a~~ ✅ `ada9408`, ~~MS4-a~~ ✅. Built out of rev-5 order — MS4 and MS5 landed against rev 4, then the resume pair caught up. A Wi-Fi blip no longer loses a recording, which was the pilot's largest exposure.
 4. ~~MS6~~ ✅. **W1 is complete**: a recorder, a socket that survives a dropped connection, an entry point, a live card, a pill, consent, and export in three formats.
 5. **Pilot for one week** — and two things gate it, neither of them code. The **10-row browser matrix** in `docs/MEETINGSENSE.md` is unsigned, and rows 1–3 decide whether MeetingSense records at all. **MS1-b** is now load-bearing rather than informational: §2a says the "catching up" threshold derives from the measured real-time factor, and MS6 shipped a provisional 2 s in its place. Take that measurement on the machine that will run meetings.
-6. **MS7–MS8** — reach, before any new capability, so everything after is written once.
+6. ~~MS7–MS8~~ ✅. **W2 is complete**: the same recorder reached from a hosted avatar, with no new URL and no second token, and the pipe claim asserted in bytes on both the direct and the cloud path.
 7. **Order W3 vs W4 by the pilot notes** (missing slides vs. missing notes).
 8. W5–W7 deliver the "together" and "capability" value; W8–W10 are refinement and can be reordered or dropped.

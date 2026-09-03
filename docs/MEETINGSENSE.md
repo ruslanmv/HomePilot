@@ -580,7 +580,53 @@ mechanism working, not an obstacle to route around.
 
 ---
 
-## Verifying MS0 – MS7
+## Through OllaBridge (MS8)
+
+The path a hosted page actually takes:
+
+```
+yourfriend.online  ──ws──▶  OllaBridge /v1/avatar/session  ──ws──▶  HomePilot /avatar/session
+                            (swaps the credential, pumps the rest)
+```
+
+No new URL and no second token: the browser presents OllaBridge's own credential, and the
+proxy replaces it with HomePilot's key before forwarding. HomePilot's key never reaches the
+browser.
+
+**The proxy is a pipe, and MS8 asserts it in bytes.** OllaBridge reads exactly one frame — the
+`hello` — and forwards everything after it verbatim. The tests there compare *strings*, not
+parsed objects, because a proxy that round-tripped each frame through JSON would pass a
+compare-the-dictionaries test while reordering keys and re-encoding the base64 audio chunk it
+had no business touching. A separate test greps the proxy for meeting vocabulary and requires
+there to be none: the moment it learns what a `meeting_audio` is, there are two implementations
+of one protocol.
+
+The **cloud path** — HomePilot on the operator's machine, unreachable from the bridge process —
+rides the existing `sig`/`ev` relay with the raw frame as the payload *string*, which is what
+keeps that same byte guarantee true on the path that is harder to watch.
+
+### Two questions, two answers
+
+| Question | Who answers | Where |
+|---|---|---|
+| "will meeting frames survive the trip?" | OllaBridge | `meetings` in `/health`'s avatar feature list |
+| "will this server accept a meeting from there?" | HomePilot | `remote_ok` on `/v1/meetingsense/status` |
+
+`remote_ok` is `enabled AND ready AND flags.remote` — one boolean rather than two flags for a
+client to combine, because the flags deliberately do not imply each other and a client guessing
+the relationship would guess wrong in the direction that matters: offering a control the server
+will refuse. It is also false when nothing can transcribe, which is honest rather than
+optimistic — a client told otherwise would start a meeting whose every audio frame is refused.
+
+With `MEETINGSENSE_REMOTE` off, avatar-session meeting frames are refused **per frame**, not
+just at start: a client that ignored the first refusal and carried on must not find a later
+frame accepted. The refusal names what is true rather than the environment variable, because a
+hosted client cannot set one on somebody else's machine. The local WebSocket is untouched by
+this flag — W1 keeps working exactly as it did.
+
+---
+
+## Verifying MS0 – MS8
 
 With the flag off — the shipped state:
 
@@ -598,7 +644,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 308
+cd backend && python3 -m pytest tests/meetingsense -q   # 316
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -620,6 +666,7 @@ cd backend && python3 -m pytest tests/meetingsense/test_resume.py -q         # 5
 cd backend && python3 -m pytest tests/meetingsense/test_export.py -q         # 59  (MS6)
 cd backend && python3 -m pytest tests/meetingsense/test_avatar_bridge.py -q  # 46  (MS7)
 cd backend && python3 -m pytest tests/avatar -q                              # the shared contract
+cd ../ollabridge && python3 -m pytest tests/avatar -q                        # 61  (MS8: the pipe)
 cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 61  (MS4 + MS4-a)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 39  (MS5)
 cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 66  (MS6)

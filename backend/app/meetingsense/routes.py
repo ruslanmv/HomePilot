@@ -142,6 +142,13 @@ async def meetingsense_status() -> Dict[str, Any]:
     # show the control, the other to decide whether it works.
     ready = bool(cfg.enabled and stt["available"])
 
+    # MS8. Whether a meeting may arrive over the avatar session — the path a hosted page uses,
+    # which cannot reach this endpoint directly and asks through whatever proxied it. Reported
+    # as one boolean rather than leaving a client to infer it from two flags, because the two
+    # deliberately do not imply each other: wanting meetings on your own machine is not
+    # agreeing to accept them from somewhere else.
+    remote_ok = bool(ready and cfg.flags.remote)
+
     return {
         "enabled": cfg.enabled,
         "ready": ready,
@@ -149,6 +156,7 @@ async def meetingsense_status() -> Dict[str, Any]:
         "flags": cfg.flags.as_dict(),
         "stt": stt,
         "vision": vision,
+        "remote_ok": remote_ok,
         # Echoed so a client can lay out a card without a second call, and so a mismatch
         # between the two sides shows up as a number rather than a rendering bug.
         "limits": {

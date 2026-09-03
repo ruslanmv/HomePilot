@@ -212,7 +212,18 @@ def test_status_carries_no_meeting_content(client, monkeypatch):
     # the install can do and never what anyone said in a meeting.
     monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
     body = client.get("/v1/meetingsense/status").json()
-    assert set(body) == {"enabled", "ready", "retention", "flags", "stt", "vision", "limits"}
+    # `remote_ok` (MS8) is a capability boolean like the rest — whether a meeting may arrive
+    # over the avatar session — and says nothing about any meeting.
+    assert set(body) == {
+        "enabled",
+        "ready",
+        "retention",
+        "flags",
+        "stt",
+        "vision",
+        "limits",
+        "remote_ok",
+    }
 
 
 def test_status_does_not_leak_a_remote_stt_url(client, monkeypatch):

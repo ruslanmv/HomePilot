@@ -487,3 +487,111 @@ class TestWiring:
         monkeypatch.setattr(builtins, "__import__", fail)
         handler = modules.protocol.ProtocolHandler(authenticate=lambda t: True)
         assert avatar_session._meeting_bridge(handler) is None
+
+
+# ── MS8: what a hosted client is told, and what it is refused ───────────────
+
+
+class TestRemoteOk:
+    """`/v1/meetingsense/status` answers "may a meeting arrive over the avatar session?".
+
+    One boolean rather than two flags for a client to combine, because the two deliberately do
+    not imply each other and a client that guessed the relationship would guess wrong in the
+    direction that matters: offering a control the server will refuse.
+    """
+
+    def _client(self, modules):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        app = FastAPI()
+        app.include_router(modules.routes.router)
+        return TestClient(app)
+
+    def _status(self, modules, monkeypatch, **env):
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        import app.voice.providers as providers
+
+        class Ready:
+            name = "whisper-local"
+            available = True
+            supports_segments = True
+            device = "cuda"
+
+        monkeypatch.setattr(providers, "get_stt_provider", lambda: Ready())
+        return self._client(modules).get("/v1/meetingsense/status").json()
+
+    def test_it_is_false_while_meetingsense_is_off(self, modules, monkeypatch):
+        assert self._status(modules, monkeypatch)["remote_ok"] is False
+
+    def test_it_is_false_with_the_master_flag_on_but_remote_off(self, modules, monkeypatch):
+        # The shipped default. Somebody who turned MeetingSense on for their own recorder has
+        # not thereby opened it to a hosted page.
+        body = self._status(modules, monkeypatch, MEETINGSENSE_ENABLED="true")
+        assert body["enabled"] is True
+        assert body["ready"] is True
+        assert body["remote_ok"] is False
+
+    def test_it_is_true_only_when_both_are_on(self, modules, monkeypatch):
+        body = self._status(
+            modules, monkeypatch, MEETINGSENSE_ENABLED="true", MEETINGSENSE_REMOTE="true"
+        )
+        assert body["remote_ok"] is True
+
+    def test_it_is_false_when_nothing_can_transcribe(self, modules, monkeypatch):
+        # Honest rather than optimistic: a client told `remote_ok` would start a meeting, and a
+        # server with no speech provider would refuse every audio frame it then sent.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
+        monkeypatch.setenv("MEETINGSENSE_REMOTE", "true")
+        import app.voice.providers as providers
+
+        monkeypatch.setattr(providers, "get_stt_provider", lambda: None)
+        assert self._client(modules).get("/v1/meetingsense/status").json()["remote_ok"] is False
+
+
+class TestRemoteRefusal:
+    """MS8's other half: with `_REMOTE` off, avatar-session meeting frames are refused."""
+
+    def _bridge(self, modules, *, remote):
+        outbox = []
+        return outbox, modules.bridge.MeetingBridge(
+            outbox, config=enabled_config(modules, remote=remote), transcribe=stub_transcribe()
+        )
+
+    def test_every_meeting_frame_is_refused_not_just_the_start(self, modules):
+        # A client that ignored the refusal and carried on must not find a later frame
+        # accepted: the gate is checked per frame, not once at start.
+        outbox, bridge = self._bridge(modules, remote=False)
+        for frame in (
+            {"type": "meeting_start", "conversation_id": "c"},
+            {"type": "meeting_audio", **audio_frame()},
+            {"type": "meeting_stop"},
+        ):
+            run(bridge.handle(frame))
+        assert [m["meeting"]["code"] for m in outbox] == ["remote_disabled"] * 3
+
+    def test_the_refusal_names_the_reason_rather_than_the_flag(self, modules):
+        # A hosted client cannot set an environment variable on somebody else's machine, so
+        # naming the variable would be advice it cannot act on. It is told what is true.
+        outbox, bridge = self._bridge(modules, remote=False)
+        run(bridge.handle({"type": "meeting_start", "conversation_id": "c"}))
+        assert "avatar session" in outbox[-1]["meeting"]["msg"]
+
+    def test_no_meeting_is_created(self, modules):
+        outbox, bridge = self._bridge(modules, remote=False)
+        run(bridge.handle({"type": "meeting_start", "conversation_id": "c"}))
+        assert bridge.session is None
+        assert modules.store.list_meetings() == []
+
+    def test_the_local_socket_is_unaffected_by_the_remote_flag(self, modules):
+        # `_REMOTE` gates the avatar path only. Somebody recording on their own machine keeps
+        # working exactly as they did in W1.
+        outbox, bridge = self._bridge(modules, remote=False)
+        session = modules.session.MeetingSession(
+            transport=modules.session.ListTransport(),
+            config=enabled_config(modules, remote=False),
+            transcribe=stub_transcribe(),
+        )
+        run(session.start({"conversation_id": "conv-1"}))
+        assert session.transport.frames[0]["type"] == "ready"
