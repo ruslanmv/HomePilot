@@ -431,6 +431,42 @@ def set_keyframe_caption(keyframe_id: str, caption: str, ocr_text: Optional[str]
         con.close()
 
 
+def keyframe_by_hash(meeting_id: str, hash: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The earliest already-captioned keyframe in this meeting with the same perceptual hash.
+
+    A presenter goes back to slide 4, and the recorder captures it again — correctly, because
+    the timeline needs to show that it was on screen a second time. What it does *not* need is
+    a second trip through the vision model, which costs seconds of GPU and can come back with
+    a differently worded description of the same slide. Two entries in the strip whose captions
+    disagree read as two different slides.
+
+    Scoped to one meeting on purpose. A hash collision across meetings would attach one
+    meeting's caption to another's slide, and a 64-bit perceptual hash is small enough that
+    "never" is not the right word for it.
+    """
+    if not hash:
+        return None
+    con = _connect()
+    try:
+        row = con.execute(
+            "SELECT * FROM ms_keyframes WHERE meeting_id = ? AND hash = ?"
+            " AND caption IS NOT NULL AND caption != '' ORDER BY t_ms ASC LIMIT 1",
+            (meeting_id, hash),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        con.close()
+
+
+def get_keyframe(keyframe_id: str) -> Optional[Dict[str, Any]]:
+    con = _connect()
+    try:
+        row = con.execute("SELECT * FROM ms_keyframes WHERE id = ?", (keyframe_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        con.close()
+
+
 def get_keyframes(meeting_id: str) -> List[Dict[str, Any]]:
     con = _connect()
     try:

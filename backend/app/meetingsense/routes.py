@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse, Response
 from . import ask as ask_mod
 from . import audio as audio_wire
 from . import export as export_mod
+from . import keyframes as keyframes_mod
 from . import retention as retention_mod
 from . import session as session_mod
 from . import store
@@ -279,6 +280,10 @@ async def meetingsense_session(websocket: WebSocket) -> None:
         # and refuses audio with a code — a meeting that records slides and markers without a
         # transcript is still a meeting, and is a better answer than refusing the connection.
         transcribe=_stt_bridge(provider) if provider is not None else None,
+        # MS9. Resolved once for the connection rather than per keyframe. None on an install
+        # with no multimodal module: slides are then recorded with timestamps and no captions,
+        # which is a complete meeting rather than a degraded one.
+        vision=keyframes_mod.vision_bridge(cfg),
     )
     channels = 1
 

@@ -17,6 +17,35 @@ this is reachable and no table is created.
 
 ---
 
+## W3 — Eyes
+
+### MS9 — the keyframe scheduler, and captions · `PENDING`
+
+- **Client** (`homepilot-meetingsense.js`, mirrored): a 500 ms sampler → 64×36 gray → dHash and
+  a changed-pixel ratio; motion gate > 35 % *against the last capture*, 1.5 s stability, an 8 s
+  floor, a 5 min heartbeat, and a rolling-hour cap. Keyframe → JPEG → `/upload` → `keyframe`
+  frame. `start({ watch: true })` also keeps the shared **video** track when the share carried
+  no audio, which it previously stopped.
+- **Server** (`keyframes.py`): `analyze_image` with a prompt written for a slide, a dHash
+  reused **within one meeting** so a re-shown slide is captioned once, refusal and length
+  filtering, and every failure swallowed. Captioning runs as a task beside the frame loop;
+  `stop` waits up to 8 s and cancels the rest.
+- **The rule is change *plus stillness*, not change.** A slide flip, a scroll and a video all
+  move most of the frame; only one of them then stops. That single observation is what the
+  1.5 s window buys, and it is why the heartbeat requires stillness too.
+- **Keyframes use the transcript's clock**, not `Date.now()` — MS10 joins slide to speech on
+  that number, and two clocks would put the join a sentence out.
+- **Three test holes that mutation testing found**, each of which had let a wrong
+  implementation pass: a capture sequence that started at t = 0 could not tell a rolling hour
+  from a calendar bucket (the bucket's cost is at its edge); a vision stub that never suspended
+  was finished by any incidental `await` inside `stop`, so the drain could be deleted; and an
+  `ok: False` answer with empty text was rejected by the *length* check, so the `ok` check
+  itself was doing nothing.
+- `hash = NULL` matches nothing in SQL but `hash = ''` matches every other empty one, so the
+  guard against an empty hash is load-bearing in a way the SQL alone is not.
+
+---
+
 ## W4 — Brain
 
 ### MS13 — asking about a meeting · `27e75d9`

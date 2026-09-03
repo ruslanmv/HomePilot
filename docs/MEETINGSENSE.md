@@ -8,9 +8,13 @@ or from a hosted avatar page through OllaBridge; a live transcript card with a r
 and a consent sheet; resume across a dropped connection; export as Markdown, SRT or JSON; and
 the meeting landing in History as a titled conversation.
 
-**What does not, yet:** captioning slides — that is W3, the last wave outstanding. Everything
-else in the recorder works: rolling notes, a summary that carries its own recap and decisions,
-asking a question about a meeting live or afterwards, export, and one-call deletion.
+Slides are captured and captioned too (MS9): the recorder watches the shared screen, decides
+which frames are a *new thing to look at*, and a local vision model describes each one.
+
+**What does not, yet:** the slide strip in the card (MS10) and desktop system-audio loopback
+(MS11) — the rest of W3. Everything else in the recorder works: rolling notes, a summary that
+carries its own recap and decisions, asking a question about a meeting live or afterwards,
+export, and one-call deletion.
 
 The order of work, and the reasoning behind each decision, is
 [`docs/design/MEETINGSENSE_BATCHES.md`](design/MEETINGSENSE_BATCHES.md). What changed when is
@@ -253,14 +257,76 @@ Every utterance still opens slightly *before* the frame that tripped the thresho
 rolling buffer of the preceding frames. The attack of a word is quieter than its body, so the
 frame that trips the VAD is already a syllable in.
 
+### Which frames become slides
+
+The recorder samples the shared screen **twice a second**, draws it into a 64×36 grayscale
+thumbnail, and asks one question: *is this a new thing to look at, or the same thing still
+moving?* Almost always the answer is neither, and answering it costs 2,304 subtractions, which
+is why it can run on the main thread without a worker.
+
+A frame is captured when the picture is **both different and settled**:
+
+| | | why |
+|---|---|---|
+| motion gate | > 35 % of pixels changed **since the last capture** | a slide flip moves most of the frame; a cursor, a caret and a clock move well under a percent |
+| stability | < 2 % changed between consecutive samples, held for **1.5 s** | this is the whole difference between a slide flip and a video — both change most of the frame, and only one of them then stops |
+| floor | **8 s** between keyframes | a deck clicked through fast is still a deck; eight seconds is roughly "was on screen long enough to be talked about" |
+| heartbeat | after **5 min** with nothing captured, if still | catches the screen that changed by less than the gate at every step and is a different screen by the end — a document written into over ten minutes |
+| cap | **60 per rolling hour** (`MEETINGSENSE_MAX_KEYFRAMES_PER_HOUR`) | a rolling window, not a bucket: a bucket lets 120 through either side of a boundary |
+
+The four sequences that shaped those numbers are in the test file, and each has a case that
+fails if the threshold moves:
+
+- **a slide flip** → one keyframe, of the settled slide rather than the transition;
+- **scrolling a document** → one keyframe when it stops, not one per sample;
+- **a video playing** → nothing, however long it plays. The heartbeat is not a way around
+  this: it requires stillness too, because a still from the middle of a video describes
+  nothing and sixty of them describe it sixty times;
+- **a cursor wiggling on a static slide** → nothing, for as long as it goes on.
+
+Keyframes are stamped with **the same clock as the transcript** — the audio sample count, not
+`Date.now()`. MS10 joins a slide to the words spoken while it was up by comparing that number
+with a segment's `t0`, and two clocks that agreed only to within a second would put the join a
+sentence out at every boundary.
+
+### The caption, and why a re-shown slide only gets one
+
+Each keyframe carries a **dHash** — 64 bits saying, for each cell of a 9×8 grid, whether it is
+brighter than the cell to its right. A *relational* hash, which is the point: it is unchanged
+by the exposure difference between two captures of the same slide.
+
+The server captions a keyframe by calling `multimodal.analyze_image` directly with a prompt
+written for a slide rather than for a photograph — the generic one produces "a computer screen
+showing a presentation with blue text", which is true of every slide in the deck. When a hash
+has already been captioned **in the same meeting**, the caption is copied rather than
+regenerated: the timeline still shows the slide was up again, but there is one wording. Two
+strip entries for one slide whose captions disagree read as two different slides. The reuse is
+scoped to one meeting because a 64-bit hash is small enough that a collision across an install
+is not a thing to call impossible.
+
+Captioning runs **beside** the frame loop, not inside it — a vision model takes seconds, and
+awaiting it would stall the transcript every time a slide changed. `stop` waits up to 8 s for
+what is in flight, so the summary message carries the last slide's caption, and cancels the
+rest: a task outliving its session would write a `slide` frame to a socket belonging to a
+meeting that is over.
+
+Calling `analyze_image` directly rather than `POST /v1/multimodal/analyze` is exactly the
+`persist` flag that endpoint carries. The chat path writes its analysis into a conversation
+and hands it to the memory extractor; this path writes a caption onto one keyframe row. Per
+D4 a meeting is retrieved from, never extracted into long-term memory.
+
+**No vision model is a complete meeting, not a degraded one.** Slides are still captured, and
+the strip shows timestamps with no captions.
+
 ### What the automated tests cover, and what they cannot
 
-jsdom has no `AudioContext`, no `AudioWorklet` and no `getDisplayMedia`, so the capture graph
-is not exercised by any automated test. What is covered — 39 tests over synthetic buffers — is
-every decision made about the samples after they arrive: framing without drift, the VAD cuts,
-the WAV layout and channel order, clamping, resampling, base64 chunking.
+jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
+the capture graph nor the screen sampler is exercised by any automated test. What is covered —
+84 tests over synthetic buffers and synthetic screens — is every decision made about the data
+after it arrives: framing without drift, the VAD cuts, the WAV layout and channel order,
+clamping, resampling, base64 chunking, and every keyframe threshold above.
 
-The graph itself needs the manual matrix below. **Nobody has run it yet.**
+Both the graph and the sampler need the manual matrix below. **Nobody has run it yet.**
 
 | # | Browser | Share | Expected | Signed off |
 |---|---|---|---|---|
@@ -274,9 +340,13 @@ The graph itself needs the manual matrix below. **Nobody has run it yet.**
 | 8 | Any | both declined | `start` refuses with `audioMode: 'none'` | ⬜ |
 | 9 | Chrome | stop sharing mid-meeting | `ms:audio_lost`, recording continues on the mic | ⬜ |
 | 10 | Chrome | 30-minute meeting | memory flat, no drift between audio and timestamps | ⬜ |
+| 11 | Chrome | a slide deck, `watch: true` | one keyframe per slide, captioned; none while a video plays | ⬜ |
+| 12 | Chrome | a window share with no audio, `watch: true` | video kept for slides, `audioMode: 'mic'` | ⬜ |
 
 Rows 1–3 are the ones that decide whether MeetingSense records a meeting at all; row 10 is the
-one a short test cannot substitute for.
+one a short test cannot substitute for. Row 11 is the only place the thresholds meet a real
+screen: the synthetic sequences prove the scheduler does what it says, not that "35 % changed"
+is what a real deck does.
 
 ---
 
@@ -476,8 +546,8 @@ this flag — W1 keeps working exactly as it did.
 `WS /v1/meetingsense/session`. One connection is one meeting.
 
 ```
-client → server   start · audio · keyframe · mute · status · stop · ping
-server → client   ready · partial · segment · status · final · error · pong
+client → server   start · audio · keyframe · mute · ask · status · stop · ping
+server → client   ready · partial · segment · slide · notes · answer · status · final · error · pong
 ```
 
 Unknown types are ignored in both directions. A newer client talking to an older server
@@ -657,7 +727,7 @@ MEETINGSENSE_ENABLED=true make start
 Tests:
 
 ```bash
-cd backend && python3 -m pytest tests/meetingsense -q   # 316
+cd backend && python3 -m pytest tests/meetingsense -q   # 506
 ```
 
 MS1 touches `backend/app/voice/providers.py`, which the voice backend shares — the plan's
@@ -680,7 +750,9 @@ cd backend && python3 -m pytest tests/meetingsense/test_export.py -q         # 5
 cd backend && python3 -m pytest tests/meetingsense/test_avatar_bridge.py -q  # 46  (MS7)
 cd backend && python3 -m pytest tests/avatar -q                              # the shared contract
 cd ../ollabridge && python3 -m pytest tests/avatar -q                        # 61  (MS8: the pipe)
-cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 61  (MS4 + MS4-a)
+cd backend && python3 -m pytest tests/meetingsense/test_ask.py -q            # 45  (MS13)
+cd backend && python3 -m pytest tests/meetingsense/test_keyframes.py -q     # 26  (MS9)
+cd frontend && npx vitest run src/test/meetingsenseAddon.test.js            # 84  (MS4, MS4-a, MS9)
 cd frontend && npx vitest run src/test/meetingsenseEntry.test.ts            # 39  (MS5)
 cd frontend && npx vitest run src/test/meetingsenseCard.test.tsx            # 66  (MS6)
 ```
@@ -690,14 +762,23 @@ MS4 also widened `frontend/vitest.config.ts` from `src/**/*.test.{ts,tsx}` to in
 phone/call primitives suite among them — which had never run in CI since they were written.
 All of them pass; nothing was fixed to make that true.
 
-**W1 is complete.** What it deliberately does not do yet: caption a slide (MS9), take rolling
-notes or write a real summary (MS12, MS14), answer questions about the meeting (MS13), or work
-from a hosted page (W2). The message a meeting leaves is a transcript preview, not a summary —
-MS14 replaces its body.
+**W0, W1, W2 and W4 are complete, and W3 is half of the way through.** A meeting records,
+resumes, transcribes, takes rolling notes, answers questions, summarises itself into History,
+exports, deletes, works from a hosted page — and now captures and captions its slides.
 
-One wiring seam is left open on purpose: MS5's **Start session** calls an `onStart` callback,
-and the host application decides what to mount it against. Everything it needs — the hook, the
-card, the pill, the consent sheet — exists and is tested.
+**Three wiring seams are open**, and it is worth being exact about which:
+
+1. MS5's **Start session** calls an `onStart` callback and the host application decides what
+   to mount it against. Everything it needs — the hook, the card, the pill, the consent sheet
+   — exists and is tested. Deliberate.
+2. **The slide strip is MS10.** Keyframes are captured, captioned and returned by
+   `GET /v1/meetingsense/{id}`; nothing renders them yet.
+3. **MS12's `NotesEngine` is not constructed by either transport.** `start` echoes
+   `notes: true` back to a client, `MeetingSession` accepts a `notes=` engine and drives it
+   correctly, and no route builds one — so no meeting has ever produced a `notes` frame. The
+   engine and its 60 tests are right; the four lines that hand one to the session are missing.
+   Found while wiring MS9's vision bridge through the same constructor, and left for whoever
+   picks up MS10, which is the batch that renders what it produces.
 
 ---
 

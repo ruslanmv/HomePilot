@@ -236,8 +236,8 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 
 | # | Batch | Scope | Acceptance | Status |
 |---|---|---|---|---|
-| **MS9** | Keyframe scheduler | In the addon: 500 ms sampler → 64×36 gray → dHash + changed-pixel ratio; motion gate (> 35 %), 1.5 s stability, 8 s min interval, 5 min heartbeat, hourly cap; JPEG → `/upload` → `keyframe` frame. Server `keyframes.py` stores and calls `analyze_image()` (`persist=false`) with the slide prompt → `slide` frame | vitest: synthetic sequences (slide flip / scroll / video / cursor wiggle) → expected decisions — **this test earns the thresholds**; pytest: keyframe → caption with a vision stub | ⬜ |
-| **MS10** | Slides in the card | `SlideStrip.tsx`; lightbox joins caption to the transcript spoken while the slide was up (join on `t0`) | vitest: the join picks the right segments at a boundary | ⬜ |
+| **MS9** | Keyframe scheduler | In the addon: 500 ms sampler → 64×36 gray → dHash + changed-pixel ratio; motion gate (> 35 %), 1.5 s stability, 8 s min interval, 5 min heartbeat, hourly cap; JPEG → `/upload` → `keyframe` frame. Server `keyframes.py` stores and calls `analyze_image()` (`persist=false`) with the slide prompt → `slide` frame | vitest: synthetic sequences (slide flip / scroll / video / cursor wiggle) → expected decisions — **this test earns the thresholds**; pytest: keyframe → caption with a vision stub | ✅ |
+| **MS10** | Slides in the card (**also: wire `NotesEngine` into both transports — MS12's engine is built, tested and constructed by nothing, so no meeting has ever emitted a `notes` frame; found during MS9**) | `SlideStrip.tsx`; lightbox joins caption to the transcript spoken while the slide was up (join on `t0`) | vitest: the join picks the right segments at a boundary | ⬜ |
 | **MS11** ∥ | Desktop loopback | `desktop/main.js` `setDisplayMediaRequestHandler(..., audio:'loopback', useSystemPicker)`; `preload.js` exposes `meetingSenseAudio`; mic permission request. **macOS on Electron 33: no loopback — mic or virtual device, stated in the popover** | manual QA Windows + macOS; desktop build unchanged with flag off | ⬜ |
 
 ### W4 — Brain

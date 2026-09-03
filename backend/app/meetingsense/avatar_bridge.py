@@ -164,10 +164,16 @@ class MeetingBridge:
         store.migrate_if_enabled(self.config)
         transcribe = self._provider()
         kwargs = {"now": self._now} if self._now is not None else {}
+        from . import keyframes as keyframes_mod
+
         self.session = session_mod.MeetingSession(
             transport=AvatarTransport(self.outbox),
             config=self.config,
             transcribe=transcribe,
+            # MS9, and the same value the local socket gets: a meeting proxied in from a
+            # hosted page captions its slides on this machine's vision model, because that is
+            # the only machine in the picture that has one.
+            vision=keyframes_mod.vision_bridge(self.config),
             **kwargs,
         )
         await self.session.start(message)

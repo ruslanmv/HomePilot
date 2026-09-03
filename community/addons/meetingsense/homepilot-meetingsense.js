@@ -118,6 +118,64 @@
      *  queue looks empty while the browser holds seconds of audio, and `behind_ms` lies. */
     const SOCKET_HIGH_WATER = 256 * 1024;
 
+    // ── Keyframes (MS9) ───────────────────────────────────────────────────────────────────
+    // The screen is watched twice a second and almost never captured. Every threshold below
+    // exists to answer one question — "is this a new thing to look at, or the same thing still
+    // moving?" — and every one of them is earned by a test over a synthetic sequence in
+    // src/test/meetingsenseAddon.test.js. Changing a number here without changing that test is
+    // how a meeting ends up with a keyframe per second of a video call.
+
+    /** How often the screen is sampled. Twice a second: a slide flip is not missed, and the
+     *  work is one 64x36 draw, which is cheaper than a repaint. */
+    const SAMPLE_MS = 500;
+
+    /** The thumbnail everything is decided on. 64x36 is 16:9 at the smallest size where a
+     *  slide's block structure survives — small enough that comparing two of them is 2,304
+     *  subtractions, which is why this can run every 500 ms without a worker. */
+    const GRID_W = 64;
+    const GRID_H = 36;
+
+    /** How different two gray values must be to count as a changed pixel. Below about 10 the
+     *  ratio tracks JPEG noise and the anti-aliasing of a blinking cursor. */
+    const PIXEL_DELTA = 12;
+
+    /** Changed-pixel ratio against the *last captured* frame above which the screen is showing
+     *  something new. A slide flip moves most of the frame; scrolling a document moves most of
+     *  it too, which is why this gate alone is not enough and stability below is the other
+     *  half. A cursor, a caret, a clock in the corner move well under a percent. */
+    const MOTION_RATIO = 0.35;
+
+    /** Changed-pixel ratio between *consecutive samples* below which the picture counts as
+     *  still. Not zero: a video thumbnail in the corner of a slide, an animated cursor and a
+     *  ticking clock all keep a genuinely static slide slightly alive. */
+    const STILL_RATIO = 0.02;
+
+    /** How long the picture must hold still before it is captured. This is the whole
+     *  difference between a slide flip and a video: both change most of the frame, and only
+     *  one of them then stops. It also means the frame captured is the settled one rather than
+     *  a half-drawn transition. */
+    const STABLE_MS = 1500;
+
+    /** Least time between two keyframes. A deck being clicked through fast is still a deck;
+     *  eight seconds is roughly the point where a slide was on screen long enough to have been
+     *  talked about. */
+    const MIN_KEYFRAME_MS = 8000;
+
+    /** Capture the screen anyway after this long with nothing captured, provided it is still.
+     *  Catches the screen that changed by less than MOTION_RATIO at every step and is now a
+     *  different screen — a document written into over ten minutes. */
+    const HEARTBEAT_MS = 300000;
+
+    /** Ceiling per rolling hour. Mirrors `vision.max_keyframes_per_hour`; the server reports
+     *  its own value in `/status.limits` and that is the one that wins. */
+    const MAX_KEYFRAMES_PER_HOUR = 60;
+
+    /** JPEG quality and the widest frame uploaded. A slide is text on a flat background: 0.72
+     *  keeps the text readable, and 1280 is enough for a vision model that will downscale it
+     *  again anyway. */
+    const JPEG_QUALITY = 0.72;
+    const KEYFRAME_MAX_W = 1280;
+
     const API_BASE = window.HOMEPILOT_API_BASE || '';
 
     // ── Pure helpers ──────────────────────────────────────────────────────────────────────
@@ -438,6 +496,177 @@
         return encodeWav(channels, rate);
     }
 
+    // ── Keyframe decisions (MS9) ──────────────────────────────────────────────────────────
+
+    /**
+     * RGBA bytes → one gray byte per pixel.
+     *
+     * Luma weights rather than a plain average: a slide with white text on a saturated blue
+     * background comes out as near-uniform gray under an average, and every structural
+     * difference the hash and the ratio depend on disappears with it.
+     */
+    function grayscale(rgba) {
+        const out = new Uint8Array(rgba.length >> 2);
+        for (let i = 0, j = 0; j < out.length; i += 4, j++) {
+            out[j] = (rgba[i] * 77 + rgba[i + 1] * 151 + rgba[i + 2] * 28) >> 8;
+        }
+        return out;
+    }
+
+    /**
+     * The fraction of pixels that differ by more than `delta`.
+     *
+     * Two frames of different sizes are reported as completely different rather than compared
+     * position by position: the screen share changed resolution, which is a new picture.
+     */
+    function changedRatio(a, b, delta) {
+        if (!a || !b || a.length !== b.length || !a.length) return 1;
+        const limit = typeof delta === 'number' ? delta : PIXEL_DELTA;
+        let changed = 0;
+        for (let i = 0; i < a.length; i++) {
+            const d = a[i] - b[i];
+            if (d > limit || d < -limit) changed++;
+        }
+        return changed / a.length;
+    }
+
+    /**
+     * Difference hash: 64 bits saying, for each cell of a 9x8 grid, whether it is brighter
+     * than the cell to its right.
+     *
+     * A *relational* hash, which is the point: it is unchanged by the brightness and contrast
+     * differences between two captures of the same slide, so a slide re-shown later hashes
+     * identically and the server reuses its caption instead of paying a vision model twice.
+     * Box-averaged down from the sample grid rather than point-sampled — a point sample of a
+     * slide can land on a glyph in one capture and the space beside it in the next.
+     */
+    function dhash(gray, width, height) {
+        const w = width || GRID_W;
+        const h = height || GRID_H;
+        const W = 9;
+        const H = 8;
+        const sum = new Float64Array(W * H);
+        const count = new Float64Array(W * H);
+        for (let y = 0; y < h; y++) {
+            const ty = Math.min(H - 1, Math.floor((y * H) / h));
+            for (let x = 0; x < w; x++) {
+                const tx = Math.min(W - 1, Math.floor((x * W) / w));
+                sum[ty * W + tx] += gray[y * w + x];
+                count[ty * W + tx] += 1;
+            }
+        }
+        let hex = '';
+        let nibble = 0;
+        let bits = 0;
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W - 1; x++) {
+                const left = sum[y * W + x] / (count[y * W + x] || 1);
+                const right = sum[y * W + x + 1] / (count[y * W + x + 1] || 1);
+                nibble = (nibble << 1) | (left > right ? 1 : 0);
+                bits++;
+                if (bits === 4) {
+                    hex += nibble.toString(16);
+                    nibble = 0;
+                    bits = 0;
+                }
+            }
+        }
+        return hex;
+    }
+
+    /**
+     * Decides which samples become keyframes.
+     *
+     * Pure: it is handed a gray thumbnail and a timestamp and answers with a decision or null,
+     * which is what lets a test drive a whole meeting through it in a millisecond. The four
+     * sequences that shaped it, and what each one demands:
+     *
+     * - **a slide flip** — most of the frame changes, then it stops. One keyframe, and of the
+     *   settled slide rather than the transition.
+     * - **scrolling a document** — most of the frame changes at every sample for several
+     *   seconds, then it stops. One keyframe at the end, not one per sample.
+     * - **a video playing** — most of the frame changes and never stops. No keyframe: a still
+     *   from the middle of a video describes nothing, and sixty of them describe it sixty
+     *   times. This is also why the heartbeat requires stillness.
+     * - **a cursor wiggling on a static slide** — a fraction of a percent changes. Nothing,
+     *   forever, however long it goes on.
+     *
+     * So the rule is *change plus stillness*, not change: the motion gate says the screen
+     * became something else, and the stability window says it has finished becoming it.
+     */
+    class KeyframeScheduler {
+        constructor(options) {
+            const opts = options || {};
+            this.pixelDelta = opts.pixelDelta || PIXEL_DELTA;
+            this.motionRatio = opts.motionRatio || MOTION_RATIO;
+            this.stillRatio = opts.stillRatio || STILL_RATIO;
+            this.stableMs = opts.stableMs || STABLE_MS;
+            this.minIntervalMs = opts.minIntervalMs || MIN_KEYFRAME_MS;
+            this.heartbeatMs = opts.heartbeatMs || HEARTBEAT_MS;
+            this.maxPerHour = opts.maxPerHour || MAX_KEYFRAMES_PER_HOUR;
+            this.width = opts.width || GRID_W;
+            this.height = opts.height || GRID_H;
+            /** The previous sample, for the stillness test. */
+            this._last = null;
+            /** The last sample actually captured, for the motion gate. Compared against the
+             *  capture rather than against the previous sample on purpose: a screen that drifts
+             *  by 5 % every two seconds is never "moving" and is a different screen after a
+             *  minute, and only the capture remembers what it looked like then. */
+            this._captured = null;
+            this._stableSince = null;
+            this._lastCaptureMs = null;
+            this._times = [];
+        }
+
+        /** Feed one sample. Returns a decision `{reason, t, hash}` or null. */
+        push(gray, tMs) {
+            const previous = this._last;
+            this._last = gray;
+            if (!previous) {
+                this._stableSince = tMs;
+                return null;
+            }
+
+            // Still? The comparison is against the previous *sample*, so the first sample after
+            // motion stops still reads as moving — stability is therefore counted from the
+            // moment two consecutive samples agree, which is what it should mean.
+            if (changedRatio(previous, gray, this.pixelDelta) > this.stillRatio) {
+                this._stableSince = null;
+                return null;
+            }
+            if (this._stableSince === null) this._stableSince = tMs;
+            if (tMs - this._stableSince < this.stableMs) return null;
+
+            const since = this._lastCaptureMs === null ? Infinity : tMs - this._lastCaptureMs;
+            let reason = null;
+            if (this._captured === null) {
+                reason = 'first';
+            } else if (changedRatio(this._captured, gray, this.pixelDelta) > this.motionRatio) {
+                reason = 'change';
+            } else if (since >= this.heartbeatMs) {
+                reason = 'heartbeat';
+            }
+            if (!reason) return null;
+
+            // Deferred, not lost: a slide that flips four seconds after the last capture is
+            // still different from the captured one at eight, so it is taken then.
+            if (since < this.minIntervalMs) return null;
+            if (!this._underCap(tMs)) return null;
+
+            this._captured = gray;
+            this._lastCaptureMs = tMs;
+            this._times.push(tMs);
+            return { reason: reason, t: tMs, hash: dhash(gray, this.width, this.height) };
+        }
+
+        /** Rolling hour rather than a per-hour bucket: a bucket lets 120 through across a
+         *  boundary, and it is the cost of an hour of captioning that this bounds. */
+        _underCap(tMs) {
+            this._times = this._times.filter((t) => tMs - t < 3600000);
+            return this._times.length < this.maxPerHour;
+        }
+    }
+
     /** The worklet, as source, so the addon stays one file the way ScreenSense is one file. */
     const PROCESSOR_SOURCE = `
         class MSCaptureProcessor extends AudioWorkletProcessor {
@@ -495,6 +724,11 @@
             this._segmenter = null;
             this._elapsedSamples = 0;
             this._rate = TARGET_RATE;
+            /** MS9's sampler: `{ video, canvas, ctx, scheduler }` while slides are watched. */
+            this._watch = null;
+            this._watchTimer = null;
+            /** Keyframes sent this meeting. Read by the card's slide count. */
+            this.slideCount = 0;
         }
 
         /**
@@ -511,17 +745,27 @@
 
             let system = null;
             let mic = null;
+            let screen = null;
             try {
                 system = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                screen = system;
                 if (!system.getAudioTracks().length) {
                     // Chrome on Linux, and every browser when the user picks a window rather
                     // than a tab, share video with no audio. That is a legitimate meeting —
                     // the mic still records this side — so it is reported, not refused.
-                    system.getVideoTracks().forEach((t) => t.stop());
+                    //
+                    // MS9: the *video* is worth keeping even so, when slides are being
+                    // watched. A shared window with no audio is exactly the case where the
+                    // slides carry what the microphone cannot.
+                    if (!opts.watch) {
+                        system.getVideoTracks().forEach((t) => t.stop());
+                        screen = null;
+                    }
                     system = null;
                 }
             } catch (_) {
                 system = null;
+                screen = null;
             }
             try {
                 mic = await navigator.mediaDevices.getUserMedia({
@@ -551,7 +795,15 @@
                 return opened;
             }
             this.recording = true;
-            return { ok: true, meetingId: this.meetingId, audioMode: this.audioMode };
+            // After the socket, not before: a keyframe with nowhere to go is an upload the
+            // user paid for and nothing received.
+            const watching = opts.watch ? this._startWatching(screen, opts) : false;
+            return {
+                ok: true,
+                meetingId: this.meetingId,
+                audioMode: this.audioMode,
+                watching: watching,
+            };
         }
 
         /** Mute this side only. The call keeps recording — that is the point of two gains. */
@@ -724,6 +976,146 @@
             emit('ms:audio_lost', { track: track.kind, audioMode: this.audioMode });
         }
 
+        // ── slides (MS9) ──────────────────────────────────────────────────────────────────
+
+        /**
+         * Begin watching the shared screen for slides. Returns whether it started.
+         *
+         * Returns false rather than throwing on a browser or a test environment with no
+         * canvas: a meeting that records audio and no slides is a meeting, and a recorder that
+         * refuses to start because it could not open a 64x36 canvas is not.
+         */
+        _startWatching(stream, opts) {
+            if (!stream || !stream.getVideoTracks || !stream.getVideoTracks().length) return false;
+            let video;
+            let canvas;
+            let ctx;
+            try {
+                video = document.createElement('video');
+                video.muted = true;
+                video.playsInline = true;
+                video.srcObject = stream;
+                const played = video.play();
+                if (played && played.catch) played.catch(() => {});
+                canvas = document.createElement('canvas');
+                canvas.width = GRID_W;
+                canvas.height = GRID_H;
+                ctx = canvas.getContext('2d', { willReadFrequently: true });
+                if (!ctx) return false;
+            } catch (_) {
+                return false;
+            }
+            this._watch = {
+                video: video,
+                canvas: canvas,
+                ctx: ctx,
+                apiKey: (opts || {}).apiKey || null,
+                scheduler: new KeyframeScheduler({
+                    maxPerHour: (opts || {}).maxKeyframesPerHour || MAX_KEYFRAMES_PER_HOUR,
+                }),
+            };
+            this._watchTimer = setInterval(() => this._sampleScreen(), SAMPLE_MS);
+            return true;
+        }
+
+        /** One sample: draw the screen small, gray it, ask the scheduler. */
+        _sampleScreen() {
+            const watch = this._watch;
+            if (!watch || !this.recording) return;
+            let gray;
+            try {
+                if (!watch.video.videoWidth || !watch.video.videoHeight) return;
+                watch.ctx.drawImage(watch.video, 0, 0, GRID_W, GRID_H);
+                gray = grayscale(watch.ctx.getImageData(0, 0, GRID_W, GRID_H).data);
+            } catch (_) {
+                // A frame the browser will not hand over — a tab that went to the background,
+                // a share being torn down. Skipping one sample costs nothing.
+                return;
+            }
+            const decision = watch.scheduler.push(gray, this._mediaClockMs());
+            if (decision) this._sendKeyframe(decision);
+        }
+
+        /**
+         * The meeting clock, in milliseconds — the same one the transcript is stamped with.
+         *
+         * Deliberately the *audio* clock rather than `Date.now()`. MS10 joins a slide to the
+         * words spoken while it was up by comparing this number with a segment's `t0`, and two
+         * clocks that agree to within a second would put the join a sentence out at every
+         * boundary. One clock cannot be out of step with itself.
+         */
+        _mediaClockMs() {
+            return Math.round((this._elapsedSamples / TARGET_RATE) * 1000);
+        }
+
+        /** Grab the frame at full size, upload it, and tell the server where it landed. */
+        async _sendKeyframe(decision) {
+            const watch = this._watch;
+            if (!watch) return;
+            try {
+                const vw = watch.video.videoWidth;
+                const vh = watch.video.videoHeight;
+                if (!vw || !vh) return;
+                const scale = Math.min(1, KEYFRAME_MAX_W / vw);
+                const full = document.createElement('canvas');
+                full.width = Math.round(vw * scale);
+                full.height = Math.round(vh * scale);
+                full.getContext('2d').drawImage(watch.video, 0, 0, full.width, full.height);
+                const blob = await new Promise((resolve) => {
+                    full.toBlob(resolve, 'image/jpeg', JPEG_QUALITY);
+                });
+                if (!blob) throw new Error('the frame could not be encoded');
+
+                const headers = {};
+                if (watch.apiKey) headers['Authorization'] = 'Bearer ' + watch.apiKey;
+                const form = new FormData();
+                form.append('file', blob, 'meetingsense-' + decision.t + '.jpg');
+                const up = await fetch(API_BASE + '/upload', {
+                    method: 'POST',
+                    headers: headers,
+                    body: form,
+                    credentials: 'include',
+                });
+                if (!up.ok) throw new Error('upload ' + up.status);
+                const json = await up.json();
+                const url = json.url || json.file_url || json.path;
+                if (!url) throw new Error('upload returned no url');
+
+                this.slideCount += 1;
+                this._send({
+                    type: 'keyframe',
+                    t: decision.t,
+                    url: url,
+                    hash: decision.hash,
+                    reason: decision.reason,
+                });
+                emit('ms:keyframe', { t: decision.t, url: url, hash: decision.hash, reason: decision.reason });
+            } catch (err) {
+                // A slide that could not be uploaded is a missing slide. The meeting keeps
+                // recording, and the next keyframe is eight seconds away.
+                emit('ms:keyframe_failed', {
+                    t: decision.t,
+                    error: String(err && err.message ? err.message : err),
+                });
+            }
+        }
+
+        _stopWatching() {
+            if (this._watchTimer !== null) {
+                clearInterval(this._watchTimer);
+                this._watchTimer = null;
+            }
+            if (this._watch) {
+                try {
+                    this._watch.video.pause();
+                    this._watch.video.srcObject = null;
+                } catch (_) {
+                    /* already gone */
+                }
+            }
+            this._watch = null;
+        }
+
         /**
          * Open the socket and either start a meeting or resume the one already running.
          *
@@ -866,6 +1258,9 @@
         }
 
         _teardown() {
+            // Before the tracks: the sampler holds a <video> onto the stream it is about to
+            // stop, and a stopped track behind a running interval is one exception per second.
+            this._stopWatching();
             this._tracks.forEach((t) => {
                 try {
                     t.stop();
@@ -918,8 +1313,12 @@
         backoffDelay: backoffDelay,
         shedQueue: shedQueue,
         utteranceToWav: utteranceToWav,
+        grayscale: grayscale,
+        changedRatio: changedRatio,
+        dhash: dhash,
         Framer: Framer,
         Segmenter: Segmenter,
+        KeyframeScheduler: KeyframeScheduler,
         constants: {
             TARGET_RATE: TARGET_RATE,
             FRAME_MS: FRAME_MS,
@@ -932,6 +1331,18 @@
             BACKOFF_CAP_MS: BACKOFF_CAP_MS,
             MAX_QUEUE_MS: MAX_QUEUE_MS,
             MIN_SPEECH_MS: MIN_SPEECH_MS,
+            SAMPLE_MS: SAMPLE_MS,
+            GRID_W: GRID_W,
+            GRID_H: GRID_H,
+            PIXEL_DELTA: PIXEL_DELTA,
+            MOTION_RATIO: MOTION_RATIO,
+            STILL_RATIO: STILL_RATIO,
+            STABLE_MS: STABLE_MS,
+            MIN_KEYFRAME_MS: MIN_KEYFRAME_MS,
+            HEARTBEAT_MS: HEARTBEAT_MS,
+            MAX_KEYFRAMES_PER_HOUR: MAX_KEYFRAMES_PER_HOUR,
+            JPEG_QUALITY: JPEG_QUALITY,
+            KEYFRAME_MAX_W: KEYFRAME_MAX_W,
         },
     };
 })();

@@ -731,3 +731,260 @@ describe('reconnect and backpressure, wired', () => {
         expect(recorder._lastSeq).toBe(7);
     });
 });
+
+// ── keyframes (MS9) ─────────────────────────────────────────────────────────
+
+/**
+ * The thresholds in the scheduler are numbers, and a number in a heuristic is only as good as
+ * the case that forced it. These tests *are* the argument for each one: every constant below
+ * has a sequence here that fails if it moves, so changing a threshold means coming here and
+ * saying which behaviour it is being changed for.
+ *
+ * The four sequences are the ones a real screen share produces: a slide flip, a document being
+ * scrolled, a video playing, and a cursor moving over a slide nobody has touched in a minute.
+ * Three of them change most of the frame. Only one of them is a slide.
+ */
+
+/** A blocky picture. Two different seeds differ in every cell, by more than PIXEL_DELTA. */
+function slide(seed) {
+    const { GRID_W, GRID_H } = ms.constants;
+    const shades = [20, 90, 160, 230, 55];
+    const gray = new Uint8Array(GRID_W * GRID_H);
+    for (let y = 0; y < GRID_H; y++) {
+        for (let x = 0; x < GRID_W; x++) {
+            const cell = ((x >> 3) + (y >> 3) * 8 + seed * 7) % shades.length;
+            gray[y * GRID_W + x] = shades[cell];
+        }
+    }
+    return gray;
+}
+
+/** `base` with `ratio` of its pixels pushed well past the delta — a controlled difference. */
+function disturb(base, ratio, salt) {
+    const gray = Uint8Array.from(base);
+    const count = Math.round(gray.length * ratio);
+    for (let i = 0; i < count; i++) {
+        // Strided rather than contiguous so the change is spread over the picture the way a
+        // real one is; `salt` moves the stride so two disturbances differ from each other.
+        const at = (i * 37 + (salt || 0) * 11) % gray.length;
+        gray[at] = gray[at] > 127 ? gray[at] - 100 : gray[at] + 100;
+    }
+    return gray;
+}
+
+/** Push a sequence at the real sample rate and collect what came back. */
+function run(frames, options) {
+    const scheduler = new ms.KeyframeScheduler(options || {});
+    const decisions = [];
+    frames.forEach((gray, index) => {
+        const decision = scheduler.push(gray, index * ms.constants.SAMPLE_MS);
+        if (decision) decisions.push({ ...decision, index });
+    });
+    return decisions;
+}
+
+/** `count` copies of one picture. */
+const hold = (gray, count) => Array.from({ length: count }, () => gray);
+
+describe('grayscale', () => {
+    it('weights the channels rather than averaging them', () => {
+        // A plain average makes white text on saturated blue almost uniform, and every
+        // structural difference the hash and the ratio depend on vanishes with it.
+        const red = ms.grayscale(Uint8Array.from([255, 0, 0, 255]));
+        const blue = ms.grayscale(Uint8Array.from([0, 0, 255, 255]));
+        expect(red[0]).not.toBe(blue[0]);
+        expect(red[0]).toBeGreaterThan(blue[0]);
+    });
+
+    it('gives one byte per pixel', () => {
+        const out = ms.grayscale(new Uint8Array(4 * 10));
+        expect(out.length).toBe(10);
+    });
+});
+
+describe('changedRatio', () => {
+    it('is zero for the same picture', () => {
+        expect(ms.changedRatio(slide(1), slide(1), 12)).toBe(0);
+    });
+
+    it('is one when the picture changed size', () => {
+        // The share switched resolution. Comparing position by position across two sizes
+        // would report a fraction about a comparison that means nothing.
+        expect(ms.changedRatio(slide(1), new Uint8Array(10), 12)).toBe(1);
+    });
+
+    it('counts a pixel only past the delta, not at it', () => {
+        const a = new Uint8Array([100, 100]);
+        const b = new Uint8Array([112, 113]);
+        expect(ms.changedRatio(a, b, 12)).toBe(0.5);
+    });
+
+    it('counts a change in either direction', () => {
+        expect(ms.changedRatio(new Uint8Array([200]), new Uint8Array([100]), 12)).toBe(1);
+        expect(ms.changedRatio(new Uint8Array([100]), new Uint8Array([200]), 12)).toBe(1);
+    });
+});
+
+describe('dhash', () => {
+    it('is 64 bits', () => {
+        expect(ms.dhash(slide(1), ms.constants.GRID_W, ms.constants.GRID_H)).toHaveLength(16);
+    });
+
+    it('survives a brightness shift, which is the whole reason it is relational', () => {
+        // The same slide captured twice differs in exposure — a screen dimming, a JPEG round
+        // trip. An average-based hash moves; a "is this cell brighter than the next" hash does
+        // not, which is what lets the server reuse a caption for a slide shown again.
+        const original = slide(3);
+        const brighter = Uint8Array.from(original, (v) => Math.min(255, v + 25));
+        const { GRID_W, GRID_H } = ms.constants;
+        expect(ms.dhash(brighter, GRID_W, GRID_H)).toBe(ms.dhash(original, GRID_W, GRID_H));
+    });
+
+    it('separates two different slides', () => {
+        const { GRID_W, GRID_H } = ms.constants;
+        expect(ms.dhash(slide(1), GRID_W, GRID_H)).not.toBe(ms.dhash(slide(2), GRID_W, GRID_H));
+    });
+});
+
+describe('the keyframe scheduler, on the four sequences a screen share actually produces', () => {
+    it('a slide flip: one keyframe, of the settled slide', () => {
+        // 6 samples of slide 1, then slide 2 for long enough to clear the 8 s floor.
+        const frames = hold(slide(1), 6).concat(hold(slide(2), 26));
+        const decisions = run(frames);
+        expect(decisions.map((d) => d.reason)).toEqual(['first', 'change']);
+    });
+
+    it('scrolling a document: one keyframe when it stops, not one per sample', () => {
+        // Twelve samples where most of the frame changes every time — which is exactly what a
+        // video also looks like, and the reason the motion gate alone cannot tell them apart.
+        const base = slide(1);
+        const scrolling = Array.from({ length: 12 }, (_, i) => disturb(slide(2), 0.6, i));
+        const frames = hold(base, 6).concat(scrolling, hold(slide(4), 26));
+        const decisions = run(frames);
+        expect(decisions.map((d) => d.reason)).toEqual(['first', 'change']);
+        // And the one it took is from after the scroll stopped, not from the middle of it.
+        expect(decisions[1].index).toBeGreaterThan(17);
+    });
+
+    it('a video playing: nothing, however long it plays', () => {
+        // A still from the middle of a video describes nothing, and sixty of them describe
+        // nothing sixty times. The heartbeat is deliberately not a way around this: it is
+        // shortened to 5 s here and still must not fire, because it also requires stillness.
+        const frames = Array.from({ length: 120 }, (_, i) => disturb(slide(1), 0.6, i));
+        expect(run(frames, { heartbeatMs: 5000 })).toEqual([]);
+    });
+
+    it('a cursor wiggling on a static slide: one keyframe, then nothing for a minute', () => {
+        const base = slide(1);
+        const frames = Array.from({ length: 120 }, (_, i) => disturb(base, 0.003, i));
+        const decisions = run(frames);
+        expect(decisions.map((d) => d.reason)).toEqual(['first']);
+    });
+});
+
+describe('what each threshold is for', () => {
+    it('STILL_RATIO: churn above it is motion, and motion never settles into a keyframe', () => {
+        // 5 % of the frame changing at every sample is under the motion gate and over the
+        // stillness bar — a video thumbnail in the corner of a deck. Nothing is ever stable,
+        // so nothing is ever captured, including the very first frame.
+        const base = slide(1);
+        const frames = Array.from({ length: 60 }, (_, i) => disturb(base, 0.05, i));
+        expect(run(frames)).toEqual([]);
+    });
+
+    it('MOTION_RATIO: a settled screen 20 % different from the captured one is not new', () => {
+        const base = slide(1);
+        const frames = hold(base, 6).concat(hold(disturb(base, 0.2, 1), 40));
+        expect(run(frames).map((d) => d.reason)).toEqual(['first']);
+    });
+
+    it('MOTION_RATIO: at 50 % it is', () => {
+        const base = slide(1);
+        const frames = hold(base, 6).concat(hold(disturb(base, 0.5, 1), 40));
+        expect(run(frames).map((d) => d.reason)).toEqual(['first', 'change']);
+    });
+
+    it('STABLE_MS: a deck clicked through faster than the window yields nothing', () => {
+        // Three samples per slide is 1.5 s on screen, and stability is counted from the second
+        // of the three — so the window never closes. That is the intended answer: what was on
+        // screen for a second and a half was not talked about.
+        const frames = [];
+        for (let i = 0; i < 12; i++) frames.push(...hold(slide(i + 1), 3));
+        expect(run(frames)).toEqual([]);
+    });
+
+    it('STABLE_MS: the frame captured is the settled one, not the transition', () => {
+        // The transition frame is a blend of the two slides. If stability were not required,
+        // the capture would land on it and the caption would describe neither slide.
+        const before = slide(1);
+        const after = slide(2);
+        const transition = disturb(after, 0.4, 9);
+        const frames = hold(before, 6).concat([transition], hold(after, 30));
+        const decisions = run(frames);
+        const { GRID_W, GRID_H } = ms.constants;
+        expect(decisions.at(-1).hash).toBe(ms.dhash(after, GRID_W, GRID_H));
+        expect(decisions.at(-1).hash).not.toBe(ms.dhash(transition, GRID_W, GRID_H));
+    });
+
+    it('MIN_KEYFRAME_MS: a slide that flips inside the floor is captured late, not dropped', () => {
+        // The first keyframe lands at 1.5 s and the second slide appears at 3 s. Dropping it
+        // for being early would lose the slide entirely; it is taken at the first stable
+        // sample from 9.5 s, which is the first one 8 s past the capture before it.
+        const frames = hold(slide(1), 6).concat(hold(slide(2), 26));
+        const decisions = run(frames);
+        expect(decisions[0].t).toBe(1500);
+        expect(decisions[1].t).toBe(9500);
+        expect(decisions[1].t - decisions[0].t).toBeGreaterThanOrEqual(
+            ms.constants.MIN_KEYFRAME_MS,
+        );
+    });
+
+    it('HEARTBEAT_MS: a screen nothing changes on is still captured again', () => {
+        // The case it exists for: a document written into over ten minutes, where no single
+        // step crosses the motion gate and the screen is a different screen by the end.
+        const frames = hold(slide(1), 60);
+        const reasons = run(frames, { heartbeatMs: 10000 }).map((d) => d.reason);
+        expect(reasons[0]).toBe('first');
+        expect(reasons.slice(1)).toEqual(['heartbeat', 'heartbeat']);
+    });
+
+    it('the hourly cap holds, and is a rolling window rather than a bucket', () => {
+        // A per-hour bucket lets 2n through either side of a boundary. The rolling window is
+        // what actually bounds the captioning bill.
+        const scheduler = new ms.KeyframeScheduler({ maxPerHour: 2 });
+        const taken = [];
+        // The deck is left alone for the first fifty minutes and then clicked through every
+        // 20 s. That is what separates the two implementations: the captures land either side
+        // of the hour boundary, where a bucket resets and lets a second pair straight through
+        // while the first pair is still inside the last sixty minutes. A sequence that starts
+        // changing at t = 0 cannot tell them apart — the bucket's edge is where its cost is.
+        for (let i = 0; i < 15000; i++) {
+            const t = i * 500;
+            const seed = t < 3000000 ? 1 : Math.floor((t - 3000000) / 20000) + 2;
+            const decision = scheduler.push(slide(seed), t);
+            if (decision) taken.push(t);
+        }
+        expect(taken.length).toBeGreaterThan(2);
+        // Never three inside any one hour.
+        for (let i = 2; i < taken.length; i++) {
+            expect(taken[i] - taken[i - 2]).toBeGreaterThanOrEqual(3600000);
+        }
+    });
+});
+
+describe('the sampler, wired', () => {
+    it('does not start without a video track, and says so rather than throwing', () => {
+        const recorder = new window.hpMeetingSense.constructor();
+        expect(recorder._startWatching(null, {})).toBe(false);
+        expect(recorder._startWatching({ getVideoTracks: () => [] }, {})).toBe(false);
+        expect(recorder._watch).toBe(null);
+    });
+
+    it('stamps keyframes with the transcript clock, not the wall clock', () => {
+        // MS10 joins a slide to the words spoken while it was up by comparing this number
+        // against a segment's t0. Two clocks would put that join a sentence out.
+        const recorder = new window.hpMeetingSense.constructor();
+        recorder._elapsedSamples = ms.constants.TARGET_RATE * 3;
+        expect(recorder._mediaClockMs()).toBe(3000);
+    });
+});

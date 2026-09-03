@@ -16,6 +16,7 @@ notice a disconnect and both will try.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -30,6 +31,11 @@ from .transcript import UtteranceAssembler
 Frame = Dict[str, Any]
 
 log = logging.getLogger(__name__)
+
+#: How long `stop` waits for captions still in flight. A keyframe is captured at most once
+#: every eight seconds, so at most one request is usually outstanding; this is the ceiling on
+#: how much a slow vision model may delay the end of a meeting.
+CAPTION_DRAIN_S = 8.0
 
 
 class Transport(Protocol):
@@ -128,6 +134,7 @@ class MeetingSession:
         config: Any,
         transcribe: Optional[Callable[..., Awaitable[Sequence[Dict[str, Any]]]]] = None,
         notes: Any = None,
+        vision: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,
         now: Callable[[], float] = time.time,
         meeting_id: Optional[str] = None,
     ) -> None:
@@ -137,6 +144,9 @@ class MeetingSession:
         #: MS12's engine, or None. Injected like `transcribe` and for the same reason: a test
         #: needs no model, and the core keeps no opinion about where notes come from.
         self.notes = notes
+        #: MS9's ``analyze_image``, or None. None means slides are recorded and not captioned,
+        #: which is a complete meeting on an install with no vision model — not a degraded one.
+        self.vision = vision
         self._now = now
         self.meeting_id = meeting_id or uuid.uuid4().hex
         self.state = MeetingState.IDLE
@@ -155,6 +165,9 @@ class MeetingSession:
         self.assemblers: Dict[str, UtteranceAssembler] = {}
         self.segment_count = 0
         self.keyframe_count = 0
+        #: Captioning tasks still in flight. Held so `stop` can wait briefly for them and a
+        #: test can await them deterministically instead of sleeping.
+        self.caption_tasks: List[Any] = []
         #: Monotonic per-meeting numbering of outbound segments. The client reports the last
         #: one it saw when it resumes, which is the only way to know what died in the socket.
         self.seq = 0
@@ -312,6 +325,9 @@ class MeetingSession:
                     await self.transport.send(final_notes)
             except Exception:  # noqa: BLE001
                 log.exception("meetingsense: final notes failed for %s", self.meeting_id)
+        # Captions still in flight, briefly: the summary message is written below, and a
+        # caption that lands a second after it is a caption nobody reads.
+        await self.drain_captions()
         store.end_meeting(self.meeting_id, ended_at=self.ended_at)
         final: Frame = {
             "type": "final",
@@ -450,19 +466,90 @@ class MeetingSession:
         return sent
 
     async def on_keyframe(self, message: Frame) -> Optional[str]:
-        """Record a slide keyframe. Captioning is MS9's; this only stores and counts."""
+        """Record a slide keyframe, and start captioning it (MS9).
+
+        The row is written synchronously and the caption is not. A vision model takes seconds,
+        and this coroutine runs inside the frame loop that is also carrying audio: awaiting the
+        model here would stall the transcript for the length of every caption. The keyframe is
+        in the store either way, so a caption that never arrives costs a description, not a
+        slide.
+        """
         self._require_live()
         url = message.get("url")
         if not url:
             raise MeetingSessionError("url_required", "a keyframe needs a url")
-        kid = store.add_keyframe(
-            self.meeting_id,
-            t_ms=int(message.get("t") or self.elapsed_ms),
-            url=url,
-            hash=message.get("hash"),
-        )
+        t_ms = int(message.get("t") or self.elapsed_ms)
+        hash_ = message.get("hash")
+        kid = store.add_keyframe(self.meeting_id, t_ms=t_ms, url=url, hash=hash_)
         self.keyframe_count += 1
+        self._start_caption(kid, url=url, hash_=hash_, t_ms=t_ms)
         return kid
+
+    def _start_caption(self, keyframe_id: str, *, url: str, hash_: Optional[str], t_ms: int) -> Any:
+        """Schedule captioning for one keyframe. Returns the task, or ``None``.
+
+        No vision, no task. The reuse path in :mod:`.keyframes` needs no model — it copies a
+        caption already written — but on an install with no vision there was never a first
+        caption to copy, so scheduling would only queue work that resolves to nothing.
+        """
+        if self.vision is None:
+            return None
+        try:
+            loop = asyncio.get_event_loop()
+            task = loop.create_task(self._caption(keyframe_id, url=url, hash_=hash_, t_ms=t_ms))
+        except RuntimeError:  # pragma: no cover — no running loop is not a meeting
+            log.debug("meetingsense: no loop to caption %s on", keyframe_id)
+            return None
+        self.caption_tasks.append(task)
+        task.add_done_callback(lambda t: self.caption_tasks.remove(t) if t in self.caption_tasks else None)
+        return task
+
+    async def _caption(self, keyframe_id: str, *, url: str, hash_: Optional[str], t_ms: int) -> None:
+        """Caption one keyframe and push the `slide` frame. Never raises, never blocks a stop."""
+        from . import keyframes as keyframes_mod
+
+        try:
+            frame = await keyframes_mod.caption(
+                self.meeting_id,
+                keyframe_id,
+                url=url,
+                hash=hash_,
+                t_ms=t_ms,
+                model=getattr(getattr(self.config, "vision", None), "model", "") or "",
+                analyze=self.vision,
+            )
+        except Exception:  # noqa: BLE001 — a caption is never worth the meeting
+            log.exception("meetingsense: captioning raised for %s", keyframe_id)
+            return
+        if frame is None:
+            return
+        try:
+            await self.transport.send(frame)
+        except Exception:  # noqa: BLE001 — the socket may be gone; the caption is stored
+            log.debug("meetingsense: could not send a slide frame for %s", keyframe_id, exc_info=True)
+
+    async def drain_captions(self, timeout: float = CAPTION_DRAIN_S) -> int:
+        """Wait, briefly, for captions still in flight. Returns how many did not finish.
+
+        Called from `stop` so the summary message the meeting leaves behind carries the last
+        slide's caption rather than a blank line. Bounded, because a hung vision request must
+        not hold a meeting open.
+
+        What does not finish is **cancelled**, not merely stopped being waited for. A task
+        left running after the session ended holds the transport it would write a `slide`
+        frame to, and would write it to a socket belonging to a meeting that is over. The
+        keyframe row survives with no caption, which is the same outcome as no vision model.
+        """
+        pending = [t for t in list(self.caption_tasks) if not t.done()]
+        if not pending:
+            return 0
+        try:
+            _, unfinished = await asyncio.wait(pending, timeout=max(0.0, timeout))
+        except Exception:  # noqa: BLE001
+            return len(pending)
+        for task in unfinished:
+            task.cancel()
+        return len(unfinished)
 
     async def on_mute(self, message: Frame) -> None:
         """Mute state is the client's to decide; the server records it and echoes status.
