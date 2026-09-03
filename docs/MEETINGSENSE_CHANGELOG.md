@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W6 — Together
 
-### MS18 — the live context provider · `PENDING`
+### MS18 — the live context provider · `188ee7a`
 
 - New `live_context.py`, and one optional `conversation_id` argument on
   `build_system_prompt`. Every existing caller omits it and gets a byte-identical prompt;
