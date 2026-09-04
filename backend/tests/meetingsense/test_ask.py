@@ -378,7 +378,11 @@ class TestAskRoute:
     def test_a_missing_meeting_is_a_404(self, client, enabled):
         assert client.post("/v1/meetingsense/nope/ask", json={"text": "q"}).status_code == 404
 
-    def test_it_is_a_404_while_the_flag_is_off(self, client, modules):
+    def test_it_is_a_404_while_the_flag_is_off(self, client, modules, monkeypatch):
+        # Stated rather than inherited — see the note in `test_agent_graph.py`. MS30 made the
+        # feature reachable by default, so "while the flag is off" is now a premise this test
+        # has to set up rather than one it happens to be handed.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         response = client.post(f"/v1/meetingsense/{seed(modules)}/ask", json={"text": "q"})
         assert response.status_code == 404
 

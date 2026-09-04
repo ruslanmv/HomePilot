@@ -164,7 +164,9 @@ def collect(ws):
 
 
 class TestFlag:
-    def test_disabled_says_so_and_closes_rather_than_refusing_the_handshake(self, client):
+    def test_disabled_says_so_and_closes_rather_than_refusing_the_handshake(self, client, monkeypatch):
+        # Stated rather than inherited: since MS30 an unset MEETINGSENSE_ENABLED means *on*.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         with client.websocket_connect("/v1/meetingsense/session") as ws:
             # The ping is here so that a server which *stopped* refusing fails this test
             # rather than hanging it: the refusal is queued before any frame is read, so a
@@ -175,6 +177,8 @@ class TestFlag:
         assert frame["code"] == "disabled"
 
     def test_disabled_never_touches_the_store(self, client, modules, monkeypatch):
+        # Stated rather than inherited: since MS30 an unset MEETINGSENSE_ENABLED means *on*.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         # The refusal has to come before any table is created: an install that never enables
         # MeetingSense must not grow its schema because somebody's browser reconnected.
         called = []

@@ -19,6 +19,29 @@ this is reachable and no table is created.
 
 ## W11 — The mount
 
+### MS30 — two flags that ship on · `PENDING`
+
+- `MEETINGSENSE_ENABLED` and `MEETINGSENSE_TOGETHER` now default to **on**, so
+  `make install && make start` needs no exports. Changed in `config.py`, because **nothing in
+  this repository reads `.env`** — the backend takes the real environment and `.env.example` is
+  documentation, so a default written only there would not be one.
+- **Why these two and not the others**: every other flag gates something that would run without
+  being asked. These cannot act alone. `ENABLED` makes the feature *reachable* and records
+  nothing; three deliberate acts stand between it and any audio — the button, the consent sheet,
+  and the OS share picker with its own indicator. `TOGETHER` only speaks while a meeting is
+  running, which needs all three. Idle cost is nil: the status probe builds a provider without
+  loading a model, and tables are created on a meeting's first connection.
+- `TOGETHER` stays a separate flag: wanting transcripts without meeting content in an LLM prompt
+  is a real position. It is the unusual one, and it should not be everybody's setup step.
+- **Eleven tests were asserting "off" by inheriting it rather than stating it**, across seven
+  files. Each now sets the flag it depends on. Third instance of this class in the programme
+  after chromadb and langgraph, and the same lesson: a test that does not state its premise is
+  testing whatever the environment handed it.
+- **One real mistake, caught by an existing test**: flipping the env defaults without flipping
+  `MeetingSenseConfig`'s dataclass defaults left the two disagreeing, so "what does this do out
+  of the box" had two answers depending on which file you opened.
+- 1093 passed; backend baseline unchanged at 244.
+
 ### MS29 — the mount, one button, and "can you see my screen?" · `95aea6a`
 
 - **The finding that prompted it**: W0–W10 mounted nothing. Every React component was a tested

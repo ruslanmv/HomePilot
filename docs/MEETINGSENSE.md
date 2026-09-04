@@ -92,9 +92,9 @@ default false:
 
 | Flag | Default | Turns on |
 |---|---|---|
-| `MEETINGSENSE_ENABLED` | `false` | the feature at all |
+| `MEETINGSENSE_ENABLED` | **`true`** | the feature at all |
 | `MEETINGSENSE_REMOTE` | `false` | reaching it from a hosted avatar through OllaBridge |
-| `MEETINGSENSE_TOGETHER` | `false` | live meeting context inside persona chat |
+| `MEETINGSENSE_TOGETHER` | **`true`** | live meeting context inside persona chat |
 | `MEETINGSENSE_MCP` | `false` | the `ms.*` MCP server |
 | `MEETINGSENSE_AGENT` | `false` | the LangGraph agent instead of the fixed notes loop |
 | `MEETINGSENSE_MODES` | `false` | Participant / Coach / Presenter / Practice, and MS25's chips |
@@ -1063,6 +1063,43 @@ their types to cover both or handing them a lie.
 
 Every path out of the catalog leads back to the conversation, because D5's point is that the
 catalog is a way in rather than a second home.
+
+### Two flags that ship on (MS30)
+
+`make install && make start` should give you a working feature, not a working feature plus two
+`export` lines. So `MEETINGSENSE_ENABLED` and `MEETINGSENSE_TOGETHER` default to **on**.
+
+**Nothing here reads `.env`.** The backend takes its settings from the real environment and the
+defaults live in `config.py`; `.env.example` documents them. That is why this is a code change
+rather than a template one — a default written only in a file nothing loads is not a default.
+
+**Why these two may ship on when the rest may not.** Every other flag gates something that would
+run without being asked for. These two cannot do anything on their own:
+
+- `ENABLED` makes the feature **reachable** — the 🎙 button appears and `/status` says so. It
+  records nothing. Between it and one byte of audio sit three deliberate acts: pressing the
+  button, accepting the consent sheet, and choosing what to share in the operating system's own
+  picker, which puts its own indicator on screen.
+- `TOGETHER` only speaks **while a meeting is running**, which requires all three of those.
+
+It is also free when idle: `/status` constructs a speech provider without loading a model, and
+the tables are created on a meeting's first connection rather than at import — so an install
+that never records still grows no schema.
+
+`TOGETHER` remains a separate flag because the distinction it draws is real: an operator may
+want transcripts and notes without meeting content entering an LLM prompt. That is the unusual
+case, though, and making everybody set a variable to get the feature they installed is the wrong
+default for the common one.
+
+**What this cost.** Eleven tests were asserting "off" by *inheriting* it from the ambient
+default rather than stating it. Each now sets the flag it depends on. That is the third time in
+this programme a test has been found asserting the machine rather than the code — after
+chromadb and langgraph — and it is the same lesson each time: a test that does not state its
+premise is testing whatever the environment happened to hand it.
+
+One of them caught a real mistake: `MeetingSenseConfig`'s dataclass defaults and `load_config`'s
+env defaults had diverged, because I changed one side and not the other. "What does MeetingSense
+do out of the box" would have had two answers depending on which file you opened.
 
 ### The mount, and the one button (MS29)
 

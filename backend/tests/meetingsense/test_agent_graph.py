@@ -573,6 +573,10 @@ class TestTheFlag:
         assert modules.graph.enabled(modules.config.load_config()) is False
 
     def test_the_master_flag_is_also_required(self, modules, monkeypatch):
+        # Stated, not inherited: MS30 made `enabled` default on, so a test about the master
+        # flag being *off* has to say so. Relying on the ambient default is how a test ends up
+        # asserting the machine rather than the code.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         monkeypatch.setenv("MEETINGSENSE_AGENT", "true")
         assert modules.graph.enabled(modules.config.load_config()) is False
 

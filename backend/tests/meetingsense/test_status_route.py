@@ -67,7 +67,9 @@ def client(routes):
 # ── it answers, whichever way the flag is set ───────────────────────────────
 
 
-def test_disabled_is_a_200_with_a_reason_not_a_404(client):
+def test_disabled_is_a_200_with_a_reason_not_a_404(client, monkeypatch):
+    # Stated rather than inherited: since MS30 an unset MEETINGSENSE_ENABLED means *on*.
+    monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
     body = client.get("/v1/meetingsense/status").json()
     assert body["enabled"] is False
     assert body["ready"] is False
@@ -101,6 +103,8 @@ def test_ready_needs_both_the_flag_and_a_provider(client, routes, monkeypatch):
 
 
 def test_the_flag_alone_is_not_ready(client, routes, monkeypatch):
+    # Stated rather than inherited: since MS30 an unset MEETINGSENSE_ENABLED means *on*.
+    monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
     # And the inverse: a provider without the flag is not ready either.
     monkeypatch.setattr(
         routes,

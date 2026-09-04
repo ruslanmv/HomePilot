@@ -107,10 +107,19 @@ class ResumeConfig:
 
 @dataclass(frozen=True)
 class SubFlags:
-    """One flag per wave beyond the recorder. All false, and none implied by ``enabled``."""
+    """One flag per wave beyond the recorder. None of them implied by ``enabled``.
+
+    `together` ships on (MS30) because it cannot act on its own — it speaks only while a
+    meeting is running, and a meeting cannot start without the user pressing the button,
+    accepting consent and choosing what to share. The rest ship off because each gates
+    something that would run without being asked.
+
+    These defaults must match `load_config`'s, or "what does MeetingSense do out of the box"
+    has two answers depending on which a reader happens to open. A test asserts they agree.
+    """
 
     remote: bool = False
-    together: bool = False
+    together: bool = True
     catalog: bool = False
     mcp: bool = False
     agent: bool = False
@@ -131,7 +140,7 @@ class SubFlags:
 class MeetingSenseConfig:
     """The whole MeetingSense block. Frozen: batches add keys, they do not rename them."""
 
-    enabled: bool = False
+    enabled: bool = True
     retention: str = "text"
     flags: SubFlags = field(default_factory=SubFlags)
     notes: NotesConfig = field(default_factory=NotesConfig)
@@ -171,11 +180,27 @@ def load_config() -> MeetingSenseConfig:
         retention = "text"
 
     return MeetingSenseConfig(
-        enabled=_flag("MEETINGSENSE_ENABLED", False),
+        # MS30. On by default, and the reason is narrow: `enabled` makes the feature *reachable*
+        # — the 🎙 button appears and `/status` says so — and it records nothing. Between the
+        # flag and a single byte of audio there are three deliberate acts by the user: pressing
+        # the button, accepting the consent sheet, and choosing what to share in the operating
+        # system's own picker. It also costs nothing when idle: the status probe constructs a
+        # provider without loading a model, and the tables are created on a meeting's first
+        # connection rather than at import, so an install that never records grows no schema.
+        #
+        # The rest of the flags below stay off because each gates something that would run
+        # without being asked for. This one cannot.
+        enabled=_flag("MEETINGSENSE_ENABLED", True),
         retention=retention,
         flags=SubFlags(
             remote=_flag("MEETINGSENSE_REMOTE", False),
-            together=_flag("MEETINGSENSE_TOGETHER", False),
+            # MS30. On by default for the same reason: it only does anything while a meeting
+            # is running, and a meeting cannot run without the three acts above. Kept as a
+            # separate flag because the distinction is real — an operator may want transcripts
+            # and notes without meeting content entering an LLM prompt — but that is the
+            # unusual case, and making everybody set it to get the feature they installed is
+            # the wrong default for the common one.
+            together=_flag("MEETINGSENSE_TOGETHER", True),
             catalog=_flag("MEETINGSENSE_CATALOG", False),
             mcp=_flag("MEETINGSENSE_MCP", False),
             agent=_flag("MEETINGSENSE_AGENT", False),

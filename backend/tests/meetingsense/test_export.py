@@ -303,7 +303,10 @@ class TestReadRoute:
     def test_a_missing_meeting_is_a_404(self, client, enabled):
         assert client.get("/v1/meetingsense/nope").status_code == 404
 
-    def test_it_is_a_404_while_the_flag_is_off(self, client, modules):
+    def test_it_is_a_404_while_the_flag_is_off(self, client, modules, monkeypatch):
+        # Stated rather than inherited: since MS30 an unset MEETINGSENSE_ENABLED means
+        # *on*, so a test about the flag being off has to say so.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         meeting_id = seed(modules)
         # Same answer as a meeting that does not exist, on purpose: the status endpoint is
         # where a client asks whether the feature exists, and answering it again here would
@@ -355,7 +358,10 @@ class TestExportRoute:
         response = client.get(f"/v1/meetingsense/{seed(modules)}/export?fmt=md")
         assert "Q3-planning" in response.headers["content-disposition"]
 
-    def test_export_is_a_404_while_the_flag_is_off(self, client, modules):
+    def test_export_is_a_404_while_the_flag_is_off(self, client, modules, monkeypatch):
+        # Stated rather than inherited: since MS30 an unset MEETINGSENSE_ENABLED means
+        # *on*, so a test about the flag being off has to say so.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         assert client.get(f"/v1/meetingsense/{seed(modules)}/export").status_code == 404
 
 

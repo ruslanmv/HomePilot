@@ -47,28 +47,50 @@ def _clean_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-# ── off, and off in every direction ─────────────────────────────────────────
+# ── what ships on, and what does not ────────────────────────────────────────
+
+#: MS30. The two that ship on, and the reason they may: neither *does* anything on its own.
+#: `enabled` makes the feature reachable, and `together` only speaks while a meeting is
+#: running — and between either of them and a byte of audio sit three deliberate acts by the
+#: user: pressing the button, accepting consent, and choosing what to share in the OS picker.
+ON_BY_DEFAULT = {"together"}
+
+#: Everything else. Each of these gates something that would run without being asked for, so
+#: each stays off until somebody says otherwise. This set is the contract, and a flag moving
+#: out of it is a decision, not a tidy-up.
+OFF_BY_DEFAULT = {"remote", "catalog", "mcp", "agent", "modes"}
 
 
-def test_everything_ships_off():
+def test_the_feature_ships_reachable():
+    # Reachable, not running. MS29 mounted the button and MS30 stopped making people export
+    # two variables to see it — but the recorder still cannot start without being pressed.
     cfg = load_config()
-    assert cfg.enabled is False
-    assert cfg.flags.as_dict() == {
-        "remote": False,
-        "together": False,
-        "catalog": False,
-        "mcp": False,
-        "agent": False,
-        "modes": False,
-    }
+    assert cfg.enabled is True
 
 
-def test_the_master_flag_implies_no_sub_flag(monkeypatch):
-    # The property that lets a wave land its code before its capability is wanted: enabling
-    # the recorder must not silently enable the agent, the modes, or the remote transport.
+def test_only_the_flags_that_cannot_act_alone_ship_on():
+    flags = load_config().flags.as_dict()
+    assert {name for name, on in flags.items() if on} == ON_BY_DEFAULT
+    assert {name for name, on in flags.items() if not on} == OFF_BY_DEFAULT
+
+
+def test_the_master_flag_implies_no_further_capability(monkeypatch):
+    # The property that let every wave land its code before its capability was wanted, kept:
+    # the recorder being reachable must not silently enable the agent, the modes, the remote
+    # transport or the catalog.
     monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
     cfg = load_config()
     assert cfg.enabled is True
+    assert not any(cfg.flags.as_dict()[name] for name in OFF_BY_DEFAULT)
+
+
+def test_the_defaults_can_all_be_turned_off(monkeypatch):
+    # The other direction, and the one an operator actually needs: everything that ships on
+    # can be switched off, one variable each.
+    monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
+    monkeypatch.setenv("MEETINGSENSE_TOGETHER", "false")
+    cfg = load_config()
+    assert cfg.enabled is False
     assert not any(cfg.flags.as_dict().values())
 
 
@@ -84,6 +106,11 @@ def test_the_master_flag_implies_no_sub_flag(monkeypatch):
     ],
 )
 def test_each_sub_flag_turns_on_only_itself(monkeypatch, name, attr):
+    # Each flag still moves exactly one thing. The baseline it moves *from* is now the set
+    # above rather than all-false, which is what makes this a default change and not a
+    # behaviour change: no flag gained a side effect.
+    for other in ON_BY_DEFAULT:
+        monkeypatch.setenv(f"MEETINGSENSE_{other.upper()}", "false")
     monkeypatch.setenv(name, "true")
     flags = load_config().flags.as_dict()
     assert flags[attr] is True
@@ -195,12 +222,13 @@ def test_the_config_is_immutable():
 def test_load_config_reads_the_environment_each_call(monkeypatch):
     # Not module-level state: the status route calls this per request, and an operator who
     # edits .env and restarts should not need to reason about import order.
-    assert load_config().enabled is False
-    monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
     assert load_config().enabled is True
+    monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
+    assert load_config().enabled is False
 
 
-def test_a_default_constructed_config_is_the_off_config():
-    # The dataclass defaults and the env defaults must agree, or "ships off" depends on
-    # which of the two a reader happens to look at.
+def test_a_default_constructed_config_matches_the_env_defaults():
+    # The dataclass defaults and the env defaults must agree, or "what does MeetingSense do
+    # out of the box" has two answers depending on which a reader happens to open. This is
+    # the test that caught them diverging when MS30 flipped the env side and not the other.
     assert MeetingSenseConfig().as_dict() == load_config().as_dict()

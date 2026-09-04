@@ -135,7 +135,10 @@ class TestOffIsInvisible:
         assert modules.live_context.BLOCK_HEADER not in base
 
     def test_a_live_meeting_with_the_flag_down_changes_nothing(self, modules, agent, monkeypatch):
-        monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")  # master on, `together` still off
+        # Master on, `together` explicitly off. Since MS30 `together` ships on, so "still off"
+        # is a premise this test has to state rather than one it inherits.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
+        monkeypatch.setenv("MEETINGSENSE_TOGETHER", "false")
         mid = meeting(modules, segments=[seg(0, "we should hold pricing at forty a seat")],
                       notes=NOTES)
         go_live(modules, mid)
@@ -365,11 +368,15 @@ class TestTheChatPathIsWired:
 
 class TestEnabled:
     def test_the_master_flag_alone_is_not_enough(self, modules, monkeypatch):
+        # Both halves are still required — MS30 changed which way they default, not whether
+        # either can be skipped. So each is set explicitly here.
         monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
+        monkeypatch.setenv("MEETINGSENSE_TOGETHER", "false")
         assert modules.live_context.enabled(modules.config.load_config()) is False
 
     def test_together_alone_is_not_enough_either(self, modules, monkeypatch):
         # No sub-flag is implied by the master, and none implies it.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         monkeypatch.setenv("MEETINGSENSE_TOGETHER", "true")
         assert modules.live_context.enabled(modules.config.load_config()) is False
 

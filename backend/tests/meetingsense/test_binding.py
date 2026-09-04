@@ -394,7 +394,9 @@ class TestRoutes:
     def test_with_the_flag_off_the_card_stops_rather_than_the_chat_erroring(self, modules, monkeypatch):
         # Turning MeetingSense off leaves the tables where they are. A chat that used to host
         # a meeting should stop showing its card, not start failing to load.
-        monkeypatch.delenv("MEETINGSENSE_ENABLED", raising=False)
+        # Set off, not merely unset: since MS30 an unset variable means *on*, so deleting it
+        # would leave the flag exactly the way this test needs it not to be.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         meeting(modules)
         app = FastAPI()
         app.include_router(modules.routes.router)

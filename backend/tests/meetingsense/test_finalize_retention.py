@@ -415,7 +415,10 @@ class TestDeleteRoute:
     def test_a_missing_meeting_is_a_404(self, client, enabled):
         assert client.delete("/v1/meetingsense/nope").status_code == 404
 
-    def test_delete_is_a_404_while_the_flag_is_off(self, client, modules):
+    def test_delete_is_a_404_while_the_flag_is_off(self, client, modules, monkeypatch):
+        # Stated rather than inherited: since MS30 an unset MEETINGSENSE_ENABLED means
+        # *on*, so a test about the flag being off has to say so.
+        monkeypatch.setenv("MEETINGSENSE_ENABLED", "false")
         meeting_id = modules.store.create_meeting(conversation_id="c", retention="text")
         assert client.delete(f"/v1/meetingsense/{meeting_id}").status_code == 404
         # And nothing was removed on the way to saying so.
