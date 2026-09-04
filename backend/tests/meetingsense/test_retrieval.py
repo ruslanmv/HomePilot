@@ -284,11 +284,37 @@ class TestIndexing:
         assert modules.retrieval.index_meeting(mid, client=chroma) == 0
 
     def test_no_vector_store_is_zero_rather_than_an_error(self, modules):
+        # The shipped state for most installs. "No store" is the suite's default rather than
+        # whatever this machine happens to have installed — see `conftest.py`; asserting it
+        # from the ambient environment is what made this test pass here and fail in CI.
         mid = meeting(modules)
         add(modules, mid, 0, "we agreed to hold pricing at forty a seat")
-        # This install has no chromadb at all, which is the shipped state for most of them.
         assert modules.retrieval.index_meeting(mid) == 0
         assert modules.retrieval.available() is False
+
+    def test_the_fallback_to_the_real_client_still_exists(self, unstubbed_client, monkeypatch):
+        # The reason `unstubbed_client` exists. Everything else in this suite runs with
+        # `_client` stubbed to "no store", so without this a `_client` that had quietly
+        # stopped calling `get_chroma_client` would leave the whole suite green and every
+        # install with no search.
+        import app.vectordb as vectordb
+
+        sentinel = object()
+        monkeypatch.setattr(vectordb, "get_chroma_client", lambda *a, **k: sentinel)
+        assert unstubbed_client() is sentinel
+
+    def test_a_client_that_cannot_be_built_is_no_store_not_a_crash(self, unstubbed_client,
+                                                                   monkeypatch):
+        import app.vectordb as vectordb
+
+        def angry(*a, **k):
+            raise RuntimeError("no chromadb on this install")
+
+        monkeypatch.setattr(vectordb, "get_chroma_client", angry)
+        assert unstubbed_client() is None
+
+    def test_an_explicit_client_is_never_second_guessed(self, unstubbed_client, chroma):
+        assert unstubbed_client(chroma) is chroma
 
     def test_a_store_that_raises_does_not_take_the_meeting_with_it(self, modules):
         class Angry:
@@ -447,7 +473,10 @@ class TestForget:
 
     def test_a_delete_still_succeeds_with_no_vector_store(self, modules):
         # `False` is the correct and complete answer on an install without Chroma, not a
-        # failure — and the rows and files must still go.
+        # failure — and the rows and files must still go. The absence is the suite's default
+        # (`conftest.py`), not this machine's package list: in CI, where `requirements.txt`
+        # installs chromadb, this test used to reach a real store, clear it, and correctly
+        # report `True` — failing on an assertion that was describing the developer's laptop.
         meeting(modules, "m1")
         report = modules.retention.delete_meeting("m1")
         assert report["index_cleared"] is False

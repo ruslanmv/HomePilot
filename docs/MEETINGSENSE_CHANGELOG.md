@@ -17,6 +17,30 @@ this is reachable and no table is created.
 
 ---
 
+## W9 — Modes & voice
+
+### CI — the vector store the tests were reading from · `PENDING`
+
+- Not a batch. `tests/meetingsense/test_retrieval.py` had three tests asserting "this install
+  has no vector store" **by not passing one**, and `retrieval._client()` falls back to the real
+  Chroma client. `backend/requirements.txt` pins `chromadb>=0.4.0`, so those tests described a
+  developer's laptop and failed in CI, where the deletion reached a real store and correctly
+  reported `index_cleared: True`.
+- Fixed as a category rather than three tests: `tests/meetingsense/conftest.py` makes "no store"
+  the deterministic default for the suite, so the next test written the same way cannot fail in
+  CI for a reason nobody connects to this one. Every test that wants a store already says so.
+- The stub could hide a `_client` that had stopped calling `get_chroma_client` at all, so the
+  real function is handed back through `unstubbed_client` and three tests exercise the fallback
+  directly.
+- **A marker would have read better and would not have worked.** `pytest_configure` runs only
+  for the *initial* conftest files: under `pytest tests/meetingsense` this one is initial and a
+  marker registers; under CI's `pytest -q` from `backend/` it is not, and the marker silently
+  never registers. A fixture resolves identically under both.
+- Verified by simulating CI locally — with `get_chroma_client` returning a working store, the
+  suite is 882 passed either way; before the fix, two failed.
+
+---
+
 ## W8 — Engine
 
 ### MS24 — two sub-agents, and what a meeting has approved · `feefa57`
