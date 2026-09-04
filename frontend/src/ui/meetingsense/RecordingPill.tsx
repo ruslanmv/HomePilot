@@ -8,8 +8,23 @@
  *
  * It is a `role="status"` with `aria-live="polite"`: a screen-reader user has no red dot, and
  * "recording" is the one thing they must not have to go looking for.
+ *
+ * ── MS33: what rests and what is one press away ──────────────────────────────────────────
+ *
+ * The pill used to carry `whisper · system+mic` permanently. That is the answer to a question
+ * people ask once, sitting beside the answer to the question they ask every thirty seconds.
+ * At rest it now reads `🔴 Recording · 12:43 ▂▅▃▆` — state, time, and the meter, which is the
+ * part that actually answers "is it hearing me".
+ *
+ * The technical detail is behind a **click, not a hover**. Hover does not exist on a phone or
+ * a tablet, and it is not reachable from a keyboard, so a hover-only disclosure would hide
+ * the audio configuration from exactly the people most likely to have it wrong.
+ *
+ * Mute and Stop move inside the same disclosure. They are one press further away than before,
+ * which is right for Mute and does not matter for Stop, because Stop is a ten-second
+ * countdown rather than an ending — and while it counts, the pill says so in words.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import {
     elapsedLabel,
     meterLevel,
@@ -27,11 +42,11 @@ export interface RecordingPillProps {
 }
 
 export function RecordingPill({ view, onMute, onStop, onUndo, undoSecondsLeft }: RecordingPillProps) {
+    const [open, setOpen] = useState(false);
     if (view.phase === 'idle') return null;
 
     const stopping = view.phase === 'stopping';
     const level = meterLevel(view.levels);
-    const capture = [view.provider, view.audioMode].filter(Boolean).join(' · ');
     // MS27. A mode changes what the recording is *for*, so it belongs on the unmissable thing
     // rather than in a panel. Note-taker is unlabelled — a badge that is always there is one
     // nobody reads, and that would cost it its meaning in the modes where it matters.
@@ -46,7 +61,15 @@ export function RecordingPill({ view, onMute, onStop, onUndo, undoSecondsLeft }:
             data-testid="ms-pill"
         >
             <span className="ms-pill__dot" aria-hidden="true" />
-            <span className="ms-pill__phase">{phaseLabel(view)}</span>
+            <span className="ms-pill__phase">
+                {stopping && undoSecondsLeft != null
+                    // The exact ambiguity Undo exists to remove: for these ten seconds the
+                    // meeting is still being captured, so nothing said now is lost. A bare
+                    // "stopping…" invites people to stop talking, which is the one outcome
+                    // the countdown was built to prevent.
+                    ? `Stopping in ${undoSecondsLeft}s · still recording`
+                    : phaseLabel(view)}
+            </span>
             {mode ? (
                 // Inside the `role="status"` region on purpose: a screen-reader user has no
                 // badge to glance at, and "the assistant is going to speak into this call" is
@@ -70,20 +93,39 @@ export function RecordingPill({ view, onMute, onStop, onUndo, undoSecondsLeft }:
                 <span className="ms-pill__meter-fill" style={{ width: `${Math.round(level * 100)}%` }} />
             </span>
 
-            {capture ? (
-                <span className="ms-pill__capture" data-testid="ms-capture">
-                    {capture}
-                </span>
-            ) : null}
-
             {stopping ? (
+                // Undo stays on the pill's face. Ten seconds is not long enough to go looking
+                // for it behind a disclosure.
                 <button type="button" className="ms-pill__undo" onClick={onUndo} data-testid="ms-undo">
-                    {/* Still recording while this is on screen — see MeetingCard. Undoing must
-                        not leave a ten-second hole in the middle of the meeting. */}
                     Undo{undoSecondsLeft != null ? ` · ${undoSecondsLeft}s` : ''}
                 </button>
             ) : (
-                <>
+                <button
+                    type="button"
+                    className="ms-pill__more"
+                    onClick={() => setOpen((v) => !v)}
+                    aria-expanded={open}
+                    aria-controls="ms-pill-details"
+                    aria-label={open ? 'Hide recording details' : 'Show recording details'}
+                    data-testid="ms-pill-toggle"
+                >
+                    <span aria-hidden="true">{open ? '⌃' : '⌄'}</span>
+                </button>
+            )}
+
+            {open && !stopping ? (
+                <div className="ms-pill__details" id="ms-pill-details" data-testid="ms-pill-details">
+                    {view.audioMode ? (
+                        <span className="ms-pill__fact" data-testid="ms-capture">Audio: {view.audioMode}</span>
+                    ) : null}
+                    {view.provider ? (
+                        <span className="ms-pill__fact" data-testid="ms-pill-provider">
+                            Transcription: {view.provider}
+                        </span>
+                    ) : null}
+                    <span className="ms-pill__fact" data-testid="ms-pill-slides">
+                        Slides: {view.slides > 0 ? `on · ${view.slides}` : 'on'}
+                    </span>
                     <button
                         type="button"
                         className="ms-pill__mute"
@@ -91,13 +133,13 @@ export function RecordingPill({ view, onMute, onStop, onUndo, undoSecondsLeft }:
                         onClick={() => onMute?.(!view.micMuted)}
                         data-testid="ms-mute"
                     >
-                        {view.micMuted ? 'Unmute' : 'Mute'}
+                        {view.micMuted ? 'Unmute my mic' : 'Mute my mic'}
                     </button>
                     <button type="button" className="ms-pill__stop" onClick={onStop} data-testid="ms-stop">
                         Stop
                     </button>
-                </>
-            )}
+                </div>
+            ) : null}
         </div>
     );
 }

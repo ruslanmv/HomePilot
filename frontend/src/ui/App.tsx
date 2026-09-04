@@ -5279,6 +5279,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       status={meetingStatus}
       compact={isMobile}
       screenAwareness={settingsDraft.screenAwareness ?? true}
+      onOpenConversation={(cid) => { void loadConversation(cid); setMode('chat') }}
     >
     <div className="hp-app-shell flex bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
       {/* ── Mobile sidebar overlay ── */}

@@ -556,6 +556,34 @@ async def get_meeting(meeting_id: str) -> Dict[str, Any]:
     }
 
 
+@router.patch("/v1/meetingsense/{meeting_id}")
+async def rename_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Set a meeting's own metadata — in practice, its title (MS33).
+
+    MS17 gave a meeting a title from a calendar event or a shared window, and `UPDATABLE`
+    has always allowed the columns a person might correct. Nothing could reach them: naming
+    a meeting was a capability with no door.
+
+    Renaming is safe and immediate — it changes a label, nothing else, and the previous
+    title is one more rename away. So it takes no confirmation, unlike the delete below it
+    in the same menu.
+
+    `store.update_meeting` refuses anything outside `UPDATABLE` and refuses empty values, so
+    a blank title cannot erase the one a calendar found. That is a store rule rather than a
+    route rule on purpose: it holds for every caller.
+    """
+    _require_meeting(meeting_id)
+    fields = {k: v for k, v in (body or {}).items() if k in store.UPDATABLE}
+    if not fields:
+        raise HTTPException(status_code=400, detail=f"one of {', '.join(store.UPDATABLE)} is required")
+    written = store.update_meeting(meeting_id, fields)
+    if not written:
+        # Every field was empty. Nothing was written and nothing was destroyed; say so
+        # rather than reporting a success the store did not perform.
+        raise HTTPException(status_code=400, detail="no writable value given")
+    return {"ok": True, "written": written, "meeting": store.get_meeting(meeting_id)}
+
+
 @router.get("/v1/meetingsense/{meeting_id}/export")
 async def export_meeting(meeting_id: str, fmt: str = Query("md")) -> Response:
     """Markdown to paste, SRT to lay over a recording, JSON for anything else."""

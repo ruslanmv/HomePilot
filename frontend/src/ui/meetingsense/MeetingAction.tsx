@@ -42,6 +42,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Mic } from 'lucide-react';
 import { useMeetingControls } from './MeetingSenseProvider';
 import { LivePanel, SetupPanel, meetingBlock } from './MeetingPanel';
+import { CapturePopover } from './CapturePopover';
 import { elapsedLabel } from './meetingState';
 
 export interface MeetingActionProps {
@@ -62,6 +63,7 @@ const LOUD = 'bg-red-500/10 border-red-500/30 text-red-200 hover:bg-red-500/20';
 export function MeetingAction({ onOpenSettings }: MeetingActionProps) {
     const controls = useMeetingControls();
     const [open, setOpen] = useState(false);
+    const [options, setOptions] = useState(false);
     const wrap = useRef<HTMLDivElement | null>(null);
 
     const close = useCallback(() => setOpen(false), []);
@@ -69,13 +71,17 @@ export function MeetingAction({ onOpenSettings }: MeetingActionProps) {
     // Escape and outside-click, both, because a popover that only one of them closes is a
     // popover somebody ends up clicking twice to dismiss.
     useEffect(() => {
-        if (!open) return undefined;
+        if (!open && !options) return undefined;
         const onKey = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setOpen(false);
+            if (event.key !== 'Escape') return;
+            setOpen(false);
+            setOptions(false);
         };
         const onDown = (event: MouseEvent) => {
             const node = wrap.current;
-            if (node && !node.contains(event.target as Node)) setOpen(false);
+            if (node && node.contains(event.target as Node)) return;
+            setOpen(false);
+            setOptions(false);
         };
         document.addEventListener('keydown', onKey);
         document.addEventListener('mousedown', onDown);
@@ -83,7 +89,7 @@ export function MeetingAction({ onOpenSettings }: MeetingActionProps) {
             document.removeEventListener('keydown', onKey);
             document.removeEventListener('mousedown', onDown);
         };
-    }, [open]);
+    }, [open, options]);
 
     const openSettings = useCallback(() => {
         if (onOpenSettings) {
@@ -125,8 +131,14 @@ export function MeetingAction({ onOpenSettings }: MeetingActionProps) {
             return;
         }
         setOpen(false);
+        setOptions(false);
         controls.begin();
     };
+
+    // MS33. A split action: pressing Meeting starts one, pressing the chevron configures it.
+    // One click still starts a meeting — the chevron is a second control, not a step in front
+    // of the first — which is the whole reason MS29 refused to open a form on the main press.
+    const splittable = !live && !starting && !block;
 
     return (
         <div className="relative" ref={wrap} data-testid="ms-action">
@@ -171,6 +183,44 @@ export function MeetingAction({ onOpenSettings }: MeetingActionProps) {
                     <Mic size={16} aria-hidden="true" />
                 )}
             </button>
+
+            {splittable ? (
+                <button
+                    type="button"
+                    onClick={() => setOptions((v) => !v)}
+                    aria-expanded={options}
+                    aria-haspopup="dialog"
+                    aria-label="Meeting options"
+                    title="What gets captured"
+                    data-testid="ms-action-options"
+                    className={[
+                        'absolute -right-1 -bottom-1 w-4 h-4 flex items-center justify-center',
+                        'rounded-full bg-[#0d0d0d] border border-white/15 text-[9px] text-white/50',
+                        'hover:text-white hover:border-white/30',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30',
+                        'transition-colors duration-150',
+                    ].join(' ')}
+                >
+                    <span aria-hidden="true">⌄</span>
+                </button>
+            ) : null}
+
+            {options && splittable ? (
+                <div
+                    className={[
+                        'absolute right-0 top-11 z-50 w-64 p-3.5',
+                        'rounded-2xl bg-[#0d0d0d] border border-white/10',
+                        'shadow-[0_12px_40px_-12px_rgba(0,0,0,0.9)]',
+                    ].join(' ')}
+                    data-testid="ms-action-capture"
+                >
+                    <CapturePopover
+                        value={controls.capture}
+                        onChange={controls.setCapture}
+                        onClose={() => setOptions(false)}
+                    />
+                </div>
+            ) : null}
 
             {open && (live || block) ? (
                 <div

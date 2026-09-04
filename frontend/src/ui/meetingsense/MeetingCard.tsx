@@ -25,6 +25,17 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ChipRow from './ChipRow';
+import MeetingSummary from './MeetingSummary';
+import AskField from './AskField';
+import MeetingMenu from './MeetingMenu';
+import {
+    dayLabel,
+    durationLabel,
+    notesBody,
+    segmentAt,
+    titleOf,
+    type MeetingRecord,
+} from './meetingRecord';
 import SlideStrip from './SlideStrip';
 import {
     latencyLabel,
@@ -40,7 +51,19 @@ export interface MeetingCardProps {
     /** Rendered small: a phone shows the summary and the last few lines, never the lot. */
     compact?: boolean;
     lastLines?: number;
+    /**
+     * Kept for embedders. The product's export surface is the `•••` menu (MS33) and the
+     * provider does not pass this, so a HomePilot install has exactly one way to export.
+     */
     onExport?: (fmt: 'md' | 'srt' | 'json') => void;
+    /** MS33. The ended meeting's stored record — summary, decisions, actions. */
+    record?: MeetingRecord | null;
+    /** The final notes window has not been written yet. */
+    pendingNotes?: boolean;
+    fetcher?: typeof fetch;
+    base?: string;
+    onOpenConversation?: (conversationId: string) => void;
+    onDeleted?: () => void;
     /** MS25. Both absent means the card shows no chips at all — which is what a surface that
      *  has not wired them, or an install with the flag off, should show. */
     onAcceptChip?: (id: string) => void;
@@ -66,6 +89,7 @@ function Line({ segment, provisional }: { segment: Segment; provisional?: boolea
 
 export function MeetingCard({
     view, compact = false, lastLines = 3, onExport, onAcceptChip, onDismissChip,
+    record = null, pendingNotes = false, fetcher, base = '', onOpenConversation, onDeleted,
 }: MeetingCardProps) {
     const scroller = useRef<HTMLDivElement | null>(null);
     const [stuck, setStuck] = useState(true);
@@ -102,10 +126,51 @@ export function MeetingCard({
     const lines = compact ? view.segments.slice(-lastLines) : view.segments;
     const behind = latencyLabel(view.behindMs);
 
+    // ── MS33: the ended meeting ─────────────────────────────────────────────
+    //
+    // `ended` is where the product pays off, so the card changes shape rather than adding a
+    // footer to the live one: summary, decisions, actions and an ask field come first, and
+    // the transcript — the recording rather than the value — collapses behind a disclosure.
+    const ended = view.phase === 'ended';
+    const body = notesBody(record?.notes);
+    const meeting = record?.meeting || null;
+    const [renamed, setRenamed] = useState<string | null>(null);
+    const heading = renamed || titleOf(meeting, 'Meeting');
+    const meta = [dayLabel(meeting), durationLabel(meeting)].filter(Boolean).join(' · ');
+    // Collapsed on the *transition* to ended, and never again — the dependency array is the
+    // whole of that rule. Notes land a second or two after the meeting stops, so the render
+    // that brings the summary is exactly the render that would otherwise shut the transcript
+    // under somebody already reading it.
+    //
+    // An earlier draft latched this with a ref as well. The latch was unreachable: an effect
+    // keyed on `ended` cannot run twice for one transition, so the second guard could only
+    // ever agree with the first. Two copies of one rule is how they come to disagree.
+    const [transcriptOpen, setTranscriptOpen] = useState(true);
+    useEffect(() => {
+        if (ended) setTranscriptOpen(false);
+    }, [ended]);
+
+    const [highlight, setHighlight] = useState<string | null>(null);
+    /** A citation is only a citation if it can be followed. */
+    const seek = useCallback((ms: number) => {
+        const id = segmentAt(view.segments as never, ms);
+        setTranscriptOpen(true);
+        setHighlight(id);
+        if (!id) return;
+        // After the disclosure has rendered, or there is nothing to scroll to yet.
+        requestAnimationFrame(() => {
+            const node = scroller.current?.querySelector(`[data-segment-id="${CSS.escape(id)}"]`);
+            node?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        });
+    }, [view.segments]);
+
     return (
         <div className="ms-card" data-phase={view.phase} data-compact={compact ? 'true' : 'false'} data-testid="ms-card">
             <header className="ms-card__head">
-                <h3 className="ms-card__title">Meeting</h3>
+                <h3 className="ms-card__title" data-testid="ms-card-title">{ended ? heading : 'Meeting'}</h3>
+                {ended && meta ? (
+                    <span className="ms-card__meta" data-testid="ms-card-meta">{meta}</span>
+                ) : null}
                 {behind ? (
                     // §2a: a slow transcript says it is slow. Silence where words should be
                     // reads as broken, and the user's next move is to stop the recording.
@@ -123,14 +188,60 @@ export function MeetingCard({
                         {view.error}
                     </span>
                 ) : null}
+                {ended && view.meetingId ? (
+                    <MeetingMenu
+                        meetingId={view.meetingId}
+                        title={heading}
+                        fetcher={fetcher}
+                        base={base}
+                        onOpenConversation={onOpenConversation}
+                        onDeleted={onDeleted}
+                        onRenamed={setRenamed}
+                    />
+                ) : null}
             </header>
 
+            {/* The payoff, above everything. A reader who never scrolls further has what
+                they recorded the meeting for. */}
+            {ended ? (
+                <>
+                    <MeetingSummary body={body} pending={pendingNotes} onSeek={seek} />
+                    <AskField
+                        meetingId={view.meetingId}
+                        fetcher={fetcher}
+                        base={base}
+                        onSeek={seek}
+                    />
+                </>
+            ) : null}
+
+            {ended ? (
+                // Evidence, reached for. Named with its line count so the disclosure says
+                // what is behind it rather than asking the reader to open it to find out.
+                <button
+                    type="button"
+                    className="ms-card__disclosure"
+                    onClick={() => setTranscriptOpen((v) => !v)}
+                    aria-expanded={transcriptOpen}
+                    aria-controls="ms-transcript-region"
+                    data-testid="ms-transcript-toggle"
+                >
+                    <span aria-hidden="true">{transcriptOpen ? '▾' : '▸'}</span>
+                    {' '}Transcript
+                    <span className="ms-card__count">· {view.segments.length}</span>
+                </button>
+            ) : null}
+
             <section
-                aria-label="Live transcript"
-                aria-live="polite"
+                id="ms-transcript-region"
+                aria-label={ended ? 'Transcript' : 'Live transcript'}
+                aria-live={ended ? 'off' : 'polite'}
                 className="ms-card__transcript"
                 ref={scroller}
                 onScroll={onScroll}
+                // `transcriptOpen` starts true and only the ended disclosure can change it,
+                // so an `ended &&` here would restate what the button already guarantees.
+                hidden={!transcriptOpen}
                 data-testid="ms-transcript"
             >
                 {lines.length === 0 && !view.partial ? (
@@ -141,7 +252,14 @@ export function MeetingCard({
                     </p>
                 ) : null}
                 {lines.map((segment, index) => (
-                    <Line key={segment.id ?? `${segment.seq ?? index}`} segment={segment} />
+                    <div
+                        key={segment.id ?? `${segment.seq ?? index}`}
+                        data-segment-id={segment.id != null ? String(segment.id) : undefined}
+                        data-cited={highlight != null && String(segment.id) === highlight ? 'true' : undefined}
+                        className="ms-card__row"
+                    >
+                        <Line segment={segment} />
+                    </div>
                 ))}
                 {view.partial ? <Line segment={{ ...view.partial }} provisional /> : null}
             </section>

@@ -28,6 +28,8 @@ import { MeetingCard } from './MeetingCard';
 import { RecordingPill } from './RecordingPill';
 import { useMeetingSense } from './useMeetingSense';
 import { phaseLabel, type Phase } from './meetingState';
+import { DEFAULT_CAPTURE, type CaptureOptions } from './CapturePopover';
+import { useMeetingRecord } from './useMeetingRecord';
 import type { MeetingSenseStatus } from './entryPoint';
 
 export interface MeetingSenseProviderProps {
@@ -41,6 +43,8 @@ export interface MeetingSenseProviderProps {
     /** Injected in tests. */
     storage?: Storage;
     onExport?: (fmt: 'md' | 'srt' | 'json') => void;
+    /** MS33. Navigate to the conversation "Discuss in new chat" creates. */
+    onOpenConversation?: (conversationId: string) => void;
 }
 
 /**
@@ -76,6 +80,14 @@ export interface MeetingControls {
     mute: (muted: boolean) => void;
     undo: () => void;
     undoSecondsLeft: number | null;
+    /**
+     * MS33. What the next meeting will capture, and in which mode. Held here rather than in
+     * the chevron's popover so the choice survives the popover closing — and so `begin`
+     * reads exactly what the user last saw, instead of the popover posting its state
+     * somewhere and hoping the two agree.
+     */
+    capture: CaptureOptions;
+    setCapture: (next: CaptureOptions) => void;
 }
 
 /**
@@ -93,11 +105,12 @@ export function useMeetingControls(): MeetingControls | null {
 }
 
 export function MeetingSenseProvider({
-    conversationId, status, compact = false, storage, onExport,
+    conversationId, status, compact = false, storage, onExport, onOpenConversation,
     screenAwareness = true,
     children,
 }: React.PropsWithChildren<MeetingSenseProviderProps>) {
     const meeting = useMeetingSense({ provider: status?.stt?.provider ?? null });
+    const [capture, setCapture] = useState<CaptureOptions>(DEFAULT_CAPTURE);
     const [pendingStart, setPendingStart] = useState(false);
     const [starting, setStarting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -119,13 +132,18 @@ export function MeetingSenseProvider({
             const result = await meeting.start({
                 conversationId,
                 notes: true,
-                watch: true,
+                // `watch` is slide capture. The defaults are still on; the chevron is how
+                // somebody turns one off, not a form they have to fill in first.
+                watch: capture.slides,
+                audio: capture.audio,
+                mic: capture.mic,
+                ...(capture.mode ? { mode: capture.mode } : {}),
             });
             if (!result.ok) setError(result.error || 'The meeting could not start.');
         } finally {
             setStarting(false);
         }
-    }, [conversationId, meeting]);
+    }, [conversationId, meeting, capture]);
 
     const begin = useCallback(() => {
         if (live || starting) return;
@@ -184,6 +202,15 @@ export function MeetingSenseProvider({
         if (!enabled) setError(null);
     }, [enabled]);
 
+    // MS33. The stored record behind the ended card. Notes are not a socket frame — they are
+    // flushed to the store when the meeting stops — so the payoff view fetches, and the same
+    // fetch is what rebuilds a meeting reopened days later.
+    const ended = meeting.view.phase === 'ended';
+    const stored = useMeetingRecord({
+        meetingId: meeting.view.meetingId,
+        enabled: ended,
+    });
+
     const controls: MeetingControls = {
         live, starting, error, status, conversationId, begin, end,
         phase: meeting.view.phase,
@@ -193,6 +220,8 @@ export function MeetingSenseProvider({
         mute: meeting.muteMic,
         undo: meeting.undo,
         undoSecondsLeft: meeting.undoSecondsLeft,
+        capture,
+        setCapture,
     };
 
     // Two conditions and no wrapper around them. An outer "is anything happening" guard would
@@ -227,6 +256,10 @@ export function MeetingSenseProvider({
                         onExport={onExport}
                         onAcceptChip={meeting.acceptChip}
                         onDismissChip={meeting.dismissChip}
+                        record={stored.record}
+                        pendingNotes={stored.pendingNotes}
+                        onOpenConversation={onOpenConversation}
+                        onDeleted={() => meeting.setPhase('idle')}
                     />
                 </>
             ) : null}

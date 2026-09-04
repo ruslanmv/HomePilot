@@ -363,10 +363,17 @@ describe('RecordingPill', () => {
         expect(pill.getAttribute('aria-live')).toBe('polite');
     });
 
-    it('shows the elapsed time, the provider and what is being captured', () => {
+    it('shows the elapsed time at rest, and the capture detail one press away', () => {
+        // MS33. `whisper-local · system+mic` answers a question people ask once, and it used
+        // to sit permanently beside the answer to the one they ask every thirty seconds.
+        // The detail is behind a click — not a hover, which no phone and no keyboard has.
         render(<RecordingPill view={view({ elapsedMs: 65_000, provider: 'whisper-local', audioMode: 'system+mic' })} />);
         expect(screen.getByTestId('ms-elapsed').textContent).toBe('01:05');
-        expect(screen.getByTestId('ms-capture').textContent).toBe('whisper-local · system+mic');
+        expect(screen.queryByTestId('ms-capture')).toBeNull();
+
+        fireEvent.click(screen.getByTestId('ms-pill-toggle'));
+        expect(screen.getByTestId('ms-capture').textContent).toContain('system+mic');
+        expect(screen.getByTestId('ms-pill-provider').textContent).toContain('whisper-local');
     });
 
     it('draws the level meter from the recorder', () => {
@@ -378,6 +385,7 @@ describe('RecordingPill', () => {
     it('carries the mute state where a screen reader can read it', () => {
         const onMute = vi.fn();
         render(<RecordingPill view={view({ micMuted: true })} onMute={onMute} />);
+        fireEvent.click(screen.getByTestId('ms-pill-toggle'));
         const mute = screen.getByTestId('ms-mute');
         expect(mute.getAttribute('aria-pressed')).toBe('true');
         fireEvent.click(mute);
@@ -623,6 +631,9 @@ describe('useMeetingSense', () => {
             await vi.advanceTimersByTimeAsync(20_000);
         });
         expect(recorder.stop).not.toHaveBeenCalled();
+        // Back to the resting pill: the countdown is gone, so the disclosure is offered
+        // again and Stop is inside it.
+        fireEvent.click(screen.getByTestId('ms-pill-toggle'));
         expect(screen.getByTestId('ms-stop')).toBeTruthy();
     });
 

@@ -386,11 +386,20 @@ def update_meeting(meeting_id: str, fields: Dict[str, Any]) -> List[str]:
     Only :data:`UPDATABLE` columns, and only values that say something — a ``None`` or an
     empty string is "I did not find one", which must not blank a value that is already there.
     """
-    writes = {
-        key: value
-        for key, value in (fields or {}).items()
-        if key in UPDATABLE and value not in (None, "", [])
-    }
+    # MS33. Strings are stripped before the emptiness test, not after it. `"   "` passed the
+    # old `value not in (None, "", [])` check and was written, which meant a cleared rename
+    # box — or a window title that was only whitespace — erased a title the calendar had
+    # found. MS17's rule is that an empty answer is not an answer, and whitespace is empty in
+    # every sense a person means it.
+    writes = {}
+    for key, value in (fields or {}).items():
+        if key not in UPDATABLE:
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+        if value in (None, "", []):
+            continue
+        writes[key] = value
     if not writes:
         return []
     columns = sorted(writes)
