@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W10 — Optional UI
 
-### MS28 — finding a meeting again · `PENDING`
+### MS28 — finding a meeting again · `436173b`
 
 - `meetingsense/catalog.ts` (every decision as a pure function), `MeetingFilter.tsx` in
   History, `MeetingLibrary.tsx` + `MeetingDetail.tsx` behind `MEETINGSENSE_CATALOG`, and
