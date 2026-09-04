@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W8 — Engine
 
-### MS24 — two sub-agents, and what a meeting has approved · `PENDING`
+### MS24 — two sub-agents, and what a meeting has approved · `feefa57`
 
 - `agent/subagents.py`: **SlideReader** (a captioned keyframe → title, claim, ≤3 topics; a
   re-shown slide is a *return*, not a second reading) and **ActionExtractor** (a transcript
