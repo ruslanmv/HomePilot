@@ -27,6 +27,7 @@ import { ConsentSheet, consentAcknowledged, rememberConsent } from './ConsentShe
 import { MeetingCard } from './MeetingCard';
 import { RecordingPill } from './RecordingPill';
 import { useMeetingSense } from './useMeetingSense';
+import { phaseLabel, type Phase } from './meetingState';
 import type { MeetingSenseStatus } from './entryPoint';
 
 export interface MeetingSenseProviderProps {
@@ -58,6 +59,23 @@ export interface MeetingControls {
     conversationId: string | null;
     begin: () => void;
     end: () => void;
+    /**
+     * MS32. The header control is a *state* as well as an action — `● 08:42` while a
+     * meeting runs — and its popover carries the same two buttons the pill does. These
+     * fields are added rather than handing out the whole `MeetingView`: a context that
+     * exposes the view is one every future control reads straight through, and then the
+     * shape of the recorder's state becomes the application's API.
+     *
+     * `phaseText` is resolved here rather than re-derived at each consumer, so the pill and
+     * the header can never disagree about what phase the meeting is in.
+     */
+    phase: Phase;
+    phaseText: string;
+    elapsedMs: number;
+    micMuted: boolean;
+    mute: (muted: boolean) => void;
+    undo: () => void;
+    undoSecondsLeft: number | null;
 }
 
 /**
@@ -168,6 +186,13 @@ export function MeetingSenseProvider({
 
     const controls: MeetingControls = {
         live, starting, error, status, conversationId, begin, end,
+        phase: meeting.view.phase,
+        phaseText: phaseLabel(meeting.view),
+        elapsedMs: meeting.view.elapsedMs,
+        micMuted: meeting.view.micMuted,
+        mute: meeting.muteMic,
+        undo: meeting.undo,
+        undoSecondsLeft: meeting.undoSecondsLeft,
     };
 
     // Two conditions and no wrapper around them. An outer "is anything happening" guard would

@@ -34,6 +34,9 @@ import ComputeSettingsTabs from "./components/compute/ComputeSettingsTabs";
 import ModelExecutionSelector from "./components/compute/ModelExecutionSelector";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import TtsEngineSection from "./components/TtsEngineSection";
+// MS32. The one place an environment-variable name is allowed to reach a user:
+// they opened Settings, which is the act of asking a configuration question.
+import { MeetingTranscriptionCard } from "./meetingsense/MeetingTranscriptionCard";
 // Side-effect import: registers the bundled TTS providers (web-speech-api,
 // piper-wasm). Importing here guarantees the registry is populated the
 // first time the Settings panel mounts, before TtsEngineSection reads it.
@@ -1326,6 +1329,10 @@ export default function SettingsPanel({
         <div className="border-t border-white/[0.06] pt-4">
           <TtsEngineSection systemVoices={availableVoices} />
         </div>
+
+        {/* Contributes no node at all when MeetingSense is off on this server — the
+            separator is the component's own, so an empty bordered block is impossible. */}
+        <MeetingTranscriptionCard />
       </SettingsCard>
     );
   }

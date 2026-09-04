@@ -112,7 +112,7 @@ import {
 import { useMeetingCatalog } from './meetingsense/useMeetingCatalog'
 import { MeetingLibrary } from './meetingsense/MeetingLibrary'
 import { MeetingSenseProvider } from './meetingsense/MeetingSenseProvider'
-import { MeetingButton } from './meetingsense/MeetingButton'
+import { MeetingAction } from './meetingsense/MeetingAction'
 import type { MeetingSenseStatus } from './meetingsense/entryPoint'
 
 /** Shared so History does not allocate a Set per render on an install with no meetings. */
@@ -2139,6 +2139,10 @@ function ChatState({
               </button>
             )
           })()}
+          {/* MS32. Meeting is Call's closest sibling — both start a session that runs
+              alongside the chat rather than inside it — so it sits beside Call and not
+              under the composer. Renders nothing when the server has the feature off. */}
+          <MeetingAction />
           <button
             type="button"
             onClick={() => setChatSettingsOpen((v) => !v)}
@@ -2402,14 +2406,11 @@ function ChatState({
             allowPersonaMode={allowPersonaMode}
           />
         </div>
-        {/* MS29. One click starts a meeting. Under the composer rather than in a menu,
-            because a record button people have to go looking for is pressed after the first
-            two minutes are gone. Renders nothing when the server has the feature off. */}
-        <div className="px-4 pt-2 flex justify-center">
-          <MeetingButton />
-        </div>
-        <div className="text-center text-[11px] text-[#444] pt-3 font-medium">
-          HomePilot can make mistakes. Verify outputs.
+        {/* MS32. Nothing but the disclaimer lives under the composer. The meeting control
+            moved to the header cluster above; its setup copy is contextual now and its
+            configuration lives in Settings → Voice Assistant. Chat first. */}
+        <div className="text-center text-[11px] text-white/25 pt-4 pb-0.5">
+          HomePilot can make mistakes. Verify important information.
         </div>
       </div>
     </div>
