@@ -291,7 +291,7 @@ Status: ⬜ todo · 🔄 in progress · ✅ done · ⏸ deferred
 
 | # | Batch | Scope | Acceptance | Status |
 |---|---|---|---|---|
-| **MS28** | Meetings catalog | `MeetingLibrary.tsx` + `MeetingDetail.tsx` reusing the Teams landing grid + `MeetingRightRail`; nav item after Voice behind `_CATALOG`. Cheaper first step: a "Meetings" filter chip in History | flag off → sidebar identical; vitest for filters/search | ⏸ decide after W5 (D5) |
+| **MS28** | Meetings catalog | **Both halves, and D5 decides which is on.** `meetingsense/catalog.ts` holds every decision as a pure function; `MeetingFilter.tsx` is the History chip (master flag only — D5's answer); `MeetingLibrary.tsx` + `MeetingDetail.tsx` are the grid and the tabbed rail behind `_CATALOG`, **default off**, which is D5's "only if History gets crowded" made operable. Rows come from `GET /v1/meetingsense/meetings`, never from a title | 65 vitest, 53 mutations each fail. **Acceptance met**: flag off → the sidebar is identical, asserted as `outerHTML` rather than by counting nav items, plus a source check that App.tsx really renders the item inside that guard; filters and search are covered per surface. **With the chip off, History's list is History's own** — same rows, same order. **Teams' grid and right-rail shapes are reused, their components are not**: both are typed against `MeetingRoom` (a *persona room*), which shares the word "meeting" with a recording of real people and nothing else. **Six survivors**: two dead lines removed, four weak tests — including one that passed for the wrong reason, where a bad subtraction came out negative and a different guard caught it | ✅ |
 
 ---
 

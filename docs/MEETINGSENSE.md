@@ -95,10 +95,10 @@ default false:
 | `MEETINGSENSE_ENABLED` | `false` | the feature at all |
 | `MEETINGSENSE_REMOTE` | `false` | reaching it from a hosted avatar through OllaBridge |
 | `MEETINGSENSE_TOGETHER` | `false` | live meeting context inside persona chat |
-| `MEETINGSENSE_CATALOG` | `false` | the Meetings library view |
 | `MEETINGSENSE_MCP` | `false` | the `ms.*` MCP server |
 | `MEETINGSENSE_AGENT` | `false` | the LangGraph agent instead of the fixed notes loop |
 | `MEETINGSENSE_MODES` | `false` | Participant / Coach / Presenter / Practice, and MS25's chips |
+| `MEETINGSENSE_CATALOG` | `false` | the Meetings tab in the sidebar. The History chip needs only the master flag |
 
 **None is implied by the master.** A batch lands its capability with the flag off, so turning
 the recorder on never turns on something a later wave built.
@@ -1005,6 +1005,55 @@ The consent sheet gains a sentence per mode, in the mode's own terms — Coach s
 suggestions come from *and where they do not*, and Practice says plainly that everyone in the
 meeting will hear it. Note-taker's copy is byte-identical to what MS6 shipped, and every mode
 still ends on the one thing the user has to do: tell the other people they are recording.
+
+### Finding a meeting again (MS28)
+
+`frontend/src/ui/meetingsense/` — `catalog.ts` (every decision as a pure function),
+`MeetingFilter.tsx`, `MeetingLibrary.tsx`, `MeetingDetail.tsx`, `useMeetingCatalog.ts`.
+
+**D5 decided where the catalog lives: History.** A meeting *is* a conversation, so the surface
+that costs nothing is the list the user already opens — a chip that narrows History to the
+conversations with a recording behind them. No nav change, no second place to look, no new
+mental model.
+
+**A meeting is identified by the server, never by its title.** D5 notes the meeting message is
+the last message, so a conversation's History label leads with the meeting's own first line —
+which makes title-sniffing look viable, and it is not. The label is the *last* message, so it
+stops being the meeting's the moment anybody replies in the thread, and MS16 exists precisely
+to make people carry on talking there. So the rows come from `GET /v1/meetingsense/meetings`,
+which knows, and a conversation is a meeting when its id is in that set.
+
+With the chip **off**, History's filter is History's own — same rows, same order, same
+predicate. A filter that quietly reorders the list when it is not filtering is a regression
+wearing a feature's clothes. And with no meetings at all the chip renders *nothing*, so an
+account that has never recorded one sees the History it has always seen, down to the DOM.
+
+#### The library, and the flag that is off
+
+`MeetingLibrary.tsx` is a grid of cards with search, a source facet and a date range, behind
+`MEETINGSENSE_CATALOG` — which **defaults off**, and that is the point of it. D5 said a sidebar
+tab is for *"only if History gets crowded"*. A flag defaulting off is that condition made
+operable: the code is here, ready, and nobody's sidebar changes until somebody decides their
+History is crowded. Shipping it on would be overturning a recorded decision on a guess about
+how people will use a feature that has not finished its pilot.
+
+The tab needs **both** flags. MS0 made the sub-flags deliberately independent of the master, so
+an install with `MEETINGSENSE_CATALOG` set and MeetingSense itself off would otherwise grow a
+nav item leading to a view of a feature that cannot run — the same reasoning `remote_ok`
+already settled for the other pair. Everything unknown is off: a status route that did not
+answer, an older server with no `flags` key, a body that is not an object. None of those is a
+reason to change somebody's sidebar.
+
+The grid is `teams/TeamsLandingPage`'s — same columns, same card, same hover — and the detail
+rail is `teams/MeetingRightRail`'s tabbed shape, with Notes / Slides / Transcript where it has
+Agenda / Actions / Stats. **The shapes are reused; the components are not.** Those files are
+typed against `MeetingRoom` from `teams/types` — a *persona room*, with agenda items and
+per-persona speaking distribution. A MeetingSense meeting is a recording of real people. The
+two share the word "meeting" and nothing else, and importing them would mean either widening
+their types to cover both or handing them a lie.
+
+Every path out of the catalog leads back to the conversation, because D5's point is that the
+catalog is a way in rather than a second home.
 
 ### What the automated tests cover, and what they cannot
 

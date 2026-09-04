@@ -17,6 +17,41 @@ this is reachable and no table is created.
 
 ---
 
+## W10 — Optional UI
+
+### MS28 — finding a meeting again · `PENDING`
+
+- `meetingsense/catalog.ts` (every decision as a pure function), `MeetingFilter.tsx` in
+  History, `MeetingLibrary.tsx` + `MeetingDetail.tsx` behind `MEETINGSENSE_CATALOG`, and
+  `useMeetingCatalog.ts` so both surfaces share one fetch.
+- **D5 was already decided, so the chip is the batch and the grid is the option.** "The catalog
+  lives in History; a sidebar tab only if History gets crowded." The chip needs only the master
+  flag; the tab is behind `_CATALOG`, which defaults off — a flag defaulting off *is* D5's
+  condition made operable. Shipping the tab on would have overturned a recorded decision on a
+  guess about a feature that has not finished its pilot.
+- **A meeting is identified by the server, never by its title.** D5's note that the meeting
+  message is the last message makes title-sniffing look viable; it is not, because the label is
+  the *last* message and stops being the meeting's the moment anybody replies — which MS16
+  exists to encourage. So the rows come from `GET /v1/meetingsense/meetings`.
+- The tab needs **both** flags: MS0 made the sub-flags independent of the master, so
+  `_CATALOG` alone would grow a nav item leading to a view of a feature that cannot run.
+  Everything unknown is off.
+- **The Teams grid and right-rail shapes are reused; the components are not.** Both are typed
+  against `MeetingRoom` from `teams/types` — a *persona room*, with agenda items and
+  per-persona speaking distribution. A MeetingSense meeting is a recording of real people. The
+  two share the word and nothing else, and importing them would mean widening their types to
+  cover both or handing them a lie.
+- **Six mutation survivors, and the split was even.** Two were dead lines removed rather than
+  kept — an empty-query fast path that `includes('')` already does, and a `.slice()` before a
+  sort on an array `filter` had just created. Four were weak tests: the range boundary was
+  never tested at exactly the boundary, the chip was only ever clicked while off, and — the one
+  worth naming — the "refuses a non-numeric time" test passed for the wrong reason, because the
+  fixture's timestamps made the bad subtraction come out *negative* and a different guard
+  caught it. Its times are now chosen so the subtraction is positive.
+- 65 vitest, 53 mutations each fail. Production build clean.
+
+---
+
 ## W9 — Modes & voice
 
 ### MS27 — Coach, Practice, and the voice that reaches the call · `b63be99`
