@@ -153,7 +153,12 @@ def build(deps: Deps):
         log.debug("meetingsense: langgraph is not installed; using the walker")
         return None
 
-    graph = StateGraph(dict)
+    # **The schema, not `dict`.** LangGraph derives its channels from the state schema, and a
+    # bare `dict` declares none — so every node runs, every node returns its update, and every
+    # update is dropped on the floor. The graph completes, the state comes back exactly as it
+    # went in, and nothing raises. `MeetingAgentState` is a TypedDict whose keys are the
+    # channels, which is the whole reason it is a TypedDict rather than a comment.
+    graph = StateGraph(MeetingAgentState)
     for name, node in NODES.items():
         graph.add_node(name, _bind(node, deps))
     graph.set_entry_point(ENTRY)
@@ -169,8 +174,16 @@ def build(deps: Deps):
 
 
 def _bind(node, deps: Deps):
+    """One node, as LangGraph wants it: state in, **partial update** out.
+
+    The update goes back unmerged. LangGraph applies it per key with a last-write-wins
+    default, which is exactly what `merge` does — so the two engines agree by construction
+    rather than by coincidence, and a node that returns the whole state cannot clobber a key
+    it never touched.
+    """
+
     async def run_node(state):
-        return merge(state, await node(state, deps))
+        return await node(state, deps) or {}
 
     return run_node
 

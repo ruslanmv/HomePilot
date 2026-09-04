@@ -17,6 +17,32 @@ this is reachable and no table is created.
 
 ---
 
+## Fixes
+
+### The LangGraph engine did nothing at all · `PENDING`
+
+- `StateGraph(dict)` → `StateGraph(MeetingAgentState)`, and `_bind` now returns the node's
+  **partial update** instead of the whole merged state.
+- **This was a production bug, not a test bug.** LangGraph derives its channels from the state
+  schema. A bare `dict` declares none, so every node ran, every node returned its update, and
+  every update was dropped — the graph completed, the state came back exactly as it went in,
+  and nothing raised. On any install with `langgraph` present and `MEETINGSENSE_AGENT` on, the
+  agent produced no frames, no notes and no answers, silently.
+- **It was red in CI for thirteen commits and I did not look.** MS23's headline acceptance test
+  — the walker and LangGraph produce the same state — is correctly written and `pytest.skip`s
+  when langgraph is absent. It is absent in this sandbox and present in CI, so it skipped on
+  every local run and failed on every CI run. The local suite reported "1 skipped" throughout
+  and I read past it. Reporting a batch's acceptance as met from a run where its acceptance
+  test was skipped is the mistake here; the test was never the problem.
+- Same shape as MS15's chromadb bug, and the second time in this programme: a behaviour that
+  depends on which optional package the machine has. The difference is that the chromadb one
+  only made tests lie, and this one made the feature not work.
+- Verified by installing `langgraph` locally and reproducing all 35 CI failures exactly, then
+  fixing until `tests/meetingsense` is **1058 passed, 0 skipped** — the zero matters, because
+  the acceptance test now runs rather than skipping.
+
+---
+
 ## W10 — Optional UI
 
 ### MS28 — finding a meeting again · `436173b`

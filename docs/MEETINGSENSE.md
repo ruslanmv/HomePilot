@@ -687,6 +687,14 @@ whole suite is one of the eighteen that cannot be collected here. A graph that c
 imported cannot be tested, and this batch's acceptance *is* a test. One test drives both engines
 over the same events and asserts the same frames and the same trace.
 
+**The schema is the channel list.** `build()` passes `MeetingAgentState` to `StateGraph`, not
+`dict`. LangGraph derives its channels from the state schema and a bare `dict` declares none —
+which does not raise, it simply drops every node's update on the floor and hands the input state
+back. That shipped, and was red in CI for thirteen commits while every local run skipped the
+test that catches it, because the test is correctly written to skip when langgraph is absent and
+langgraph is absent from most development machines. If you are working on this file, install
+`langgraph` first; the suite reporting `0 skipped` is what says the acceptance test actually ran.
+
 **Modes are policy objects, not prompt fragments.** `modes.py` is a table of five allow-lists —
 note-taker, participant, presenter, coach, practice — and every node asks it rather than
 deciding for itself. Note-taker is the floor and the default, and an unknown name resolves
