@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W11 — The mount
 
-### MS30 — two flags that ship on · `PENDING`
+### MS30 — two flags that ship on · `a591e14`
 
 - `MEETINGSENSE_ENABLED` and `MEETINGSENSE_TOGETHER` now default to **on**, so
   `make install && make start` needs no exports. Changed in `config.py`, because **nothing in
