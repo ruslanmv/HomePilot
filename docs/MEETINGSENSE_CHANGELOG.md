@@ -19,6 +19,45 @@ this is reachable and no table is created.
 
 ## W9 — Modes & voice
 
+### MS27 — Coach, Practice, and the voice that reaches the call · `PENDING`
+
+- `agent/coaching.py`, `agent/practice.py`, `agent/voice_out.py`, `VoiceSetup.tsx`, a mode badge
+  on the pill and a sentence per mode in the consent sheet. Behind `MEETINGSENSE_MODES`.
+- **The refusal is the batch.** The row asked for "an explicit test that Coach never receives
+  screen OCR text", with the reason attached: §E.2's refusal is only real if enforced. It is
+  enforced three ways — an allow-list in `context()`, a `scrub()` that drops anything carrying a
+  slide's fingerprint, and a source test that fails if the module so much as mentions a
+  keyframe. Three gates because the failure is silent, nothing looks wrong, and the people it
+  affects are not in the room. **Verified by breaching it**: adding one keyframe read to
+  `context` trips three independent tests.
+- **Coach with no prep material says nothing at all.** Improvising from the transcript is the
+  thing the mode is defined as not doing.
+- Prep material has the only **real delete** in the store. MS24's approvals and MS26's queue
+  record a withdrawal, because those are a history of consent; a user's own brief is not, and
+  "take it out" that leaves it in the database has not done what it said.
+- Practice runs **through `voice_call/`**, not beside it: their `create_session` does the
+  entitlement check, their `barge_in` registry refuses stale turn ids, and MeetingSense keeps no
+  turn state of its own — a second answer to "is the assistant still talking" would disagree
+  with the first exactly when it mattered. The resume token is not echoed back into a meeting
+  frame, per `create_session`'s own docstring.
+- Voice out is **desktop only and says which "no" it is** — `browser` (wrong app, nothing to
+  install would help) or `no_virtual_device` (right app, missing driver, here are the steps). It
+  never falls back to the speakers: a rehearsal partner audible in the room but not in the call
+  is a feature that appears to work and does not.
+- The TTS tier stays `get_tts_provider`'s choice. A MeetingSense-specific voice selection would
+  be a second place deciding what a user is entitled to.
+- **Eleven mutation survivors, and they split cleanly.** Seven were a lifecycle I had simply not
+  tested — prep attach/cap/budget/delete — which is what happens when a batch has one dramatic
+  requirement and a quiet one beside it. Two were assertions weaker than the claims above them:
+  the mode badge was asserted to be *inside* the live region when the claim was that it is
+  *announced* (the meter is inside it too, and is `aria-hidden`), and the browser refusal was
+  tested without `onCheck` wired, so it never showed that a browser is offered no retry that
+  cannot work. Two were dead guards, removed rather than kept.
+- 83 pytest + 23 vitest; 47 and 21 mutations each fail.
+- **Five rows added to the manual matrix (17–21), and 18–20 are unreachable by any test**:
+  whether audio arrives in somebody else's meeting is a question about two drivers and a
+  conferencing app. The matrix is still entirely unsigned.
+
 ### MS26 — Participant and Presenter · `0be6c6a`
 
 - `agent/mode_prompts.py`, `agent/participant.py`, `agent/presenter.py`, and **two new columns

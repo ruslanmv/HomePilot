@@ -900,6 +900,112 @@ first asking was not heard. Taking one off is **recorded, not deleted** — what
 when it was dealt with is what an after-the-fact read of a meeting is for — and a question can
 be asked again afterwards.
 
+### Coach, and the screen it must never read (MS27)
+
+`backend/app/meetingsense/agent/coaching.py`, behind `MEETINGSENSE_MODES`.
+
+Coach draws talking points **strictly from prep material the user uploaded** — the brief they
+wrote, the questions they expect, the numbers they want to land. `POST /v1/meetingsense/{id}/prep`
+attaches a document; `DELETE` takes it back out, and that one is a **real delete** rather than
+the recorded withdrawal MS24's approvals and MS26's queue use. Those are a history of consent
+and of what was asked. This is the user's own document, and "take my brief out of this meeting"
+that leaves the brief in the database has not done what it said.
+
+**With no prep material, Coach says nothing at all.** It has nothing to draw a talking point
+from, and the alternative — improvising from the transcript — is the thing this mode is defined
+as not doing.
+
+#### The refusal, enforced three ways
+
+MeetingSense captures keyframes and a vision model captions them; that is how it knows a slide
+said "Q3 revenue is flat". The capability is for the user's **own** slides in Presenter. Pointed
+at a Coach it becomes something else: a coach that can read the screen can read the other
+participants' documents, their open tabs and their messages, in a meeting where nobody agreed to
+that and where the user cannot see what was captured either.
+
+The design document refuses it. A refusal in a design document is a sentence until something
+enforces it, so:
+
+| | what it catches |
+|---|---|
+| **allow-list** | `context()` assembles from two named sources and there is no branch that reaches a keyframe |
+| **`scrub()`** | drops any row carrying a slide's fingerprint, so a caller that hands over a mixed list cannot smuggle one in |
+| **source test** | reads the module and fails if it so much as mentions a keyframe — catching the edit nobody has written yet |
+
+Three gates for one rule is more than a rule usually gets. This one earns it: the failure is
+silent, nothing looks wrong, the coaching just gets better — and the people it affects are not
+in the room and would never know. `scrub` is deliberately generous about what counts as coming
+off the screen: being wrong in that direction costs a line of transcript, and being wrong in the
+other direction is the failure the whole file exists to prevent.
+
+### Practice, through the voice stack that already exists (MS27)
+
+`agent/practice.py`. Practice plays the other side — the interviewer, the examiner, the
+sceptical customer — and it runs as a **voice call** rather than growing a second voice stack
+inside MeetingSense.
+
+`voice_call/` already owns turn-taking, streaming, resume tokens, the policy that decides who
+may open a call, and `barge_in.py`. **The policy check is theirs**: `create_session` gates on
+entitlement, and a MeetingSense path that skipped it would be a second door into the same room.
+The resume token it returns is deliberately *not* echoed back — its own docstring says callers
+must keep it out of anything that lands in a log, and a meeting frame is a thing that lands in a
+log.
+
+**Barge-in is the feature, not a nicety.** In an interview the interesting moments are the
+interruptions. `interrupt()` goes straight to `voice_call/barge_in.py`, whose `cancel_active`
+refuses a stale `turn_id` so an interruption racing a new turn is a silent no-op rather than a
+turn cancelled by accident. MeetingSense keeps no turn state of its own — a second answer to "is
+the assistant still talking" would disagree with the first exactly when it mattered.
+
+`POST /v1/meetingsense/{id}/rehearsal` sets the shape (`interview`, `exam`, `pitch`,
+`negotiation`), who the assistant plays, and what to push on. A bare shape is enough: demanding
+a paragraph before the user can start is how a rehearsal feature goes unused.
+
+### Speaking into the meeting: TTS and the virtual microphone (MS27)
+
+`agent/voice_out.py`. Practice needs its voice in the **call**, not on the user's speakers, and
+a browser tab cannot do that — it can play audio, and the meeting's microphone will not hear it
+unless the operating system routes it there.
+
+So this is **desktop only**, through a virtual audio device the user installs: VB-Cable on
+Windows, BlackHole on macOS, a PulseAudio/PipeWire null sink on Linux. `GET
+/v1/meetingsense/voice-out` answers with a named reason rather than a bare boolean, because the
+two "no"s need completely different things from the user:
+
+| reason | what it means |
+|---|---|
+| `browser` | wrong app. Nothing to install would help, so nothing is offered |
+| `no_virtual_device` | right app, missing driver. Comes with the install steps for this platform |
+
+**It never falls back to the speakers.** A rehearsal partner audible in the room but not in the
+call is a feature that appears to work and does not, which is worse than one that says it needs
+a driver.
+
+The setup wizard's last step is a **check**, not a congratulation. A setup flow that ends on
+"you're all set" without verifying is how somebody arrives at a mock interview with no sound and
+no idea which of four steps did not take — and on Windows the answer is usually "the restart".
+
+**The TTS tier is `providers.py`'s choice, not MeetingSense's.** That module's own words: the
+quality tier is a server-side choice, never a client change. `get_tts_provider` takes an
+entitlement and returns the neural voice where one is configured; this passes that through and
+picks nothing itself. A MeetingSense-specific voice selection would be a second place deciding
+what a user is entitled to, which is the shape of every entitlement bug. Citations are stripped
+before synthesis: `[00:12:30]` is right on a card and unreadable out loud.
+
+### The mode on the pill, and in the consent sheet (MS27)
+
+§2a says recording state is unmissable, and a mode changes what a recording is *for*. A pill
+saying only "recording" while the assistant is about to speak aloud into the call would be
+accurate and would hide the part that matters. So the mode is a badge on the pill — inside the
+`role="status"` live region and **not** `aria-hidden`, because a screen-reader user has no badge
+to glance at. Note-taker is unlabelled: a badge that is always there is one nobody reads, which
+would cost it its meaning in the four modes where it matters.
+
+The consent sheet gains a sentence per mode, in the mode's own terms — Coach says where its
+suggestions come from *and where they do not*, and Practice says plainly that everyone in the
+meeting will hear it. Note-taker's copy is byte-identical to what MS6 shipped, and every mode
+still ends on the one thing the user has to do: tell the other people they are recording.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -928,9 +1034,18 @@ Both the graph and the sampler need the manual matrix below. **Nobody has run it
 | 14 | Desktop app, macOS | flag on | `mic` only, and the popover says why before recording starts | ⬜ |
 | 15 | Desktop app, either | flag off | ScreenSense's "Ask once" unchanged; no share dialog behaves differently | ⬜ |
 | 16 | Any | a real `google_calendar` / `microsoft_graph` connection | the meeting takes its title, attendees and link from the event that contains its start | ⬜ |
+| 17 | Desktop app, Windows | VB-Cable installed, **before** restarting | the wizard's check still fails, and says the restart is why | ⬜ |
+| 18 | Desktop app, Windows | VB-Cable installed and restarted | the check passes and names `CABLE Input`; Practice is audible to the other participants | ⬜ |
+| 19 | Desktop app, macOS | BlackHole + a Multi-Output Device | the check passes; the user hears the rehearsal **and** so does the call | ⬜ |
+| 20 | Desktop app, either | Practice speaking, user talks over it | the voice stops mid-sentence — barge-in, end to end through `voice_call/` | ⬜ |
+| 21 | Browser | Practice mode | the wizard says the desktop app is needed and offers no driver and no retry | ⬜ |
 
 Rows 1–3 are the ones that decide whether MeetingSense records a meeting at all; row 10 is the
-one a short test cannot substitute for. Row 11 is the only place the thresholds meet a real
+one a short test cannot substitute for. **Rows 17–21 are MS27's, and rows 18–20 are the ones
+nothing automated can reach**: whether audio actually arrives in somebody else's meeting is a
+question about two drivers and a conferencing app, and `detect` only proves this code recognised
+a device name. Row 20 in particular — barge-in heard by a person, not asserted on an
+`asyncio.Event` — is the difference between a rehearsal partner and a podcast. Row 11 is the only place the thresholds meet a real
 screen: the synthetic sequences prove the scheduler does what it says, not that "35 % changed"
 is what a real deck does.
 

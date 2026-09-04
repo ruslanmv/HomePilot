@@ -311,6 +311,26 @@ def artifacts_for_meeting(meeting_id: str, *, kind: Optional[str] = None) -> Lis
         con.close()
 
 
+def delete_artifacts(meeting_id: str, *, kind: str) -> int:
+    """Remove one kind of artifact from a meeting. Returns how many rows went.
+
+    A real delete, and the only one in this module that is. MS24's approvals and MS26's queue
+    record a withdrawal instead, because those are a history of what was consented to and what
+    was asked. This exists for MS27's prep material, which is the *user's own document*: "take
+    my brief out of this meeting" that leaves the brief in the database has not done what it
+    said.
+    """
+    con = _connect()
+    try:
+        cur = con.execute(
+            "DELETE FROM ms_artifacts WHERE meeting_id = ? AND kind = ?", (meeting_id, kind)
+        )
+        con.commit()
+        return int(cur.rowcount or 0)
+    finally:
+        con.close()
+
+
 # ── meetings ────────────────────────────────────────────────────────────────
 
 

@@ -13,6 +13,7 @@ import React from 'react';
 import {
     elapsedLabel,
     meterLevel,
+    modeLabel,
     phaseLabel,
     type MeetingView,
 } from './meetingState';
@@ -31,6 +32,10 @@ export function RecordingPill({ view, onMute, onStop, onUndo, undoSecondsLeft }:
     const stopping = view.phase === 'stopping';
     const level = meterLevel(view.levels);
     const capture = [view.provider, view.audioMode].filter(Boolean).join(' · ');
+    // MS27. A mode changes what the recording is *for*, so it belongs on the unmissable thing
+    // rather than in a panel. Note-taker is unlabelled — a badge that is always there is one
+    // nobody reads, and that would cost it its meaning in the modes where it matters.
+    const mode = modeLabel(view.mode);
 
     return (
         <div
@@ -42,6 +47,19 @@ export function RecordingPill({ view, onMute, onStop, onUndo, undoSecondsLeft }:
         >
             <span className="ms-pill__dot" aria-hidden="true" />
             <span className="ms-pill__phase">{phaseLabel(view)}</span>
+            {mode ? (
+                // Inside the `role="status"` region on purpose: a screen-reader user has no
+                // badge to glance at, and "the assistant is going to speak into this call" is
+                // not something they should have to go looking for.
+                <span className="ms-pill__mode" data-mode={view.mode} data-testid="ms-mode">
+                    {mode}
+                </span>
+            ) : null}
+            {view.queued > 0 ? (
+                <span className="ms-pill__queued" data-testid="ms-queued">
+                    {view.queued} question{view.queued === 1 ? '' : 's'} waiting
+                </span>
+            ) : null}
             <span className="ms-pill__time" data-testid="ms-elapsed">
                 {elapsedLabel(view.elapsedMs)}
             </span>

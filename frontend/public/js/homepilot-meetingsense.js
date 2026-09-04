@@ -68,6 +68,8 @@
  *   ms:resumed       the meeting continued     detail: {meeting_id, segments, seq}
  *   ms:chip        an offer on the card        detail: {id, kind, text, t0, proposal?}
  *   ms:chip_result what an accepted chip did   detail: {id, ok, tool?, reason?}
+ *   ms:mode        the helper mode in force      detail: {mode}
+ *   ms:queued      an audience question held     detail: {text, t0, waiting}
  *
  * Events rather than callbacks so more than one surface can listen — the chat card and the
  * recording pill are different components and neither owns the recorder.
@@ -1311,6 +1313,13 @@
                         emit('ms:chip', frame);
                     } else if (frame.type === 'chip_result') {
                         emit('ms:chip_result', frame);
+                    } else if (frame.type === 'mode') {
+                        // MS27. Server state, announced. The pill reads it; nothing here sets
+                        // it — a client that could would be escalating, not choosing a mode.
+                        emit('ms:mode', frame);
+                    } else if (frame.type === 'queued') {
+                        // MS26's audience queue. A count changing is not an interruption.
+                        emit('ms:queued', frame);
                     } else if (frame.type === 'status' || frame.type === 'final') {
                         emit('ms:status', frame);
                     } else if (frame.type === 'error') {

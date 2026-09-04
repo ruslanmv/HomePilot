@@ -205,6 +205,31 @@ async def run(
     return await walk(state, deps)
 
 
+def _coach_bridge(meeting_id: str, call: Any):
+    """`coaching.observe`, bound to one meeting. ``None`` on an install with no model.
+
+    MS23 built the `coach` node and left the coaching itself to W9; this is that function, and
+    it is a bridge rather than an import inside the node for the reason `vision_bridge` is:
+    the node holds no opinion about where an observation comes from, and a test injects a stub.
+    """
+    if call is None:
+        return None
+
+    from . import coaching as coaching_mod
+
+    async def observe(state: Dict[str, Any]) -> str:
+        return await coaching_mod.observe(
+            meeting_id,
+            call=call,
+            # The live window, not the store: coaching is about the meeting happening now.
+            # It goes through `scrub` either way — "the transcript" is a list somebody built.
+            segments=(state or {}).get("fresh") or None,
+            elapsed_ms=int((state or {}).get("elapsed_ms") or 0),
+        )
+
+    return observe
+
+
 def deps_for(
     meeting_id: str,
     *,
@@ -234,7 +259,10 @@ def deps_for(
         invoke=invoke,
         tool_calls=tuple(tool_calls or ()),
         search=search,
-        coach=coach,
+        # MS27. Coaching goes through `coaching.observe`, which assembles from an allow-list of
+        # two sources and never reaches a keyframe. Bound here rather than left to each caller
+        # so there is one path into the coach and one place the boundary is enforced.
+        coach=coach or _coach_bridge(meeting_id, call),
         approved_tools=subagents.approved(meeting_id),
         extract_actions=(lambda window: subagents.extract_actions(window, call=call))
         if call is not None else None,

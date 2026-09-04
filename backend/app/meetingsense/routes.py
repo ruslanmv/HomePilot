@@ -674,6 +674,74 @@ async def _handle_chip_action(session, message: Dict[str, Any]) -> Dict[str, Any
     return frame
 
 
+@router.post("/v1/meetingsense/{meeting_id}/prep")
+async def attach_prep(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach prep material for Coach (MS27).
+
+    The only thing Coach draws talking points from. Stored as text on the meeting rather than
+    as a pointer into a project, because a pointer is a restriction somebody else can widen.
+    """
+    _require_meeting(meeting_id)
+    from .agent import coaching as coaching_mod
+
+    added = coaching_mod.add_prep(meeting_id, str((body or {}).get("title") or ""),
+                                  str((body or {}).get("text") or ""))
+    if added is None:
+        raise HTTPException(status_code=400, detail="text is required, and at most 10 documents")
+    return {"meeting_id": meeting_id, "attached": added,
+            "documents": [d["title"] for d in coaching_mod.prep(meeting_id)]}
+
+
+@router.get("/v1/meetingsense/{meeting_id}/prep")
+async def read_prep(meeting_id: str) -> Dict[str, Any]:
+    """What Coach may draw on. Titles and sizes, not the bodies."""
+    _require_meeting(meeting_id)
+    from .agent import coaching as coaching_mod
+
+    docs = coaching_mod.prep(meeting_id)
+    return {"meeting_id": meeting_id,
+            "documents": [{"title": d["title"], "words": len(d["text"].split())} for d in docs]}
+
+
+@router.delete("/v1/meetingsense/{meeting_id}/prep")
+async def clear_prep(meeting_id: str) -> Dict[str, Any]:
+    """Take the prep material out. A real delete — it is the user's own document."""
+    _require_meeting(meeting_id)
+    from .agent import coaching as coaching_mod
+
+    return {"meeting_id": meeting_id, "cleared": coaching_mod.drop_prep(meeting_id)}
+
+
+@router.post("/v1/meetingsense/{meeting_id}/rehearsal")
+async def set_rehearsal(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Set up a Practice rehearsal (MS27)."""
+    _require_meeting(meeting_id)
+    from .agent import practice as practice_mod
+
+    brief = practice_mod.set_brief(meeting_id, kind=str((body or {}).get("kind") or ""),
+                                   role=str((body or {}).get("role") or ""),
+                                   notes=str((body or {}).get("notes") or ""))
+    if brief is None:
+        raise HTTPException(status_code=400,
+                            detail=f"kind must be one of {', '.join(practice_mod.KINDS)}")
+    return {"meeting_id": meeting_id, "rehearsal": brief}
+
+
+@router.get("/v1/meetingsense/voice-out")
+async def voice_out_capability(desktop: bool = False, devices: str = "",
+                               system: str = "") -> Dict[str, Any]:
+    """Can this install speak into a meeting, and if not, what to install (MS27).
+
+    `devices` is a comma-separated list the desktop app enumerated. The backend has no audio
+    stack and deliberately does not grow one: it recognises a device name, it does not go
+    looking for one.
+    """
+    from .agent import voice_out as voice_mod
+
+    names = [d.strip() for d in (devices or "").split(",") if d.strip()]
+    return voice_mod.capability(desktop=desktop, devices=names, system=system or None)
+
+
 @router.post("/v1/meetingsense/{meeting_id}/deck")
 async def attach_deck(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
     """Attach a deck to a meeting (MS26, Presenter).

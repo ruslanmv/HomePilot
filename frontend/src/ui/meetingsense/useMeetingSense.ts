@@ -108,6 +108,17 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
             if (!detail) return;
             setView((current) => ({ ...current, chips: resolveChip(current.chips, detail.id, detail) }));
         };
+        // MS27. The mode is server state (MS24): the card displays what the server says the
+        // meeting is in, and never decides it. A client that could set its own mode could put
+        // a meeting into Practice for one frame, which is an escalation rather than a mode.
+        const onMode = (event: Event) => {
+            const detail = (event as CustomEvent).detail || {};
+            if (detail.mode) patch({ mode: detail.mode });
+        };
+        const onQueued = (event: Event) => {
+            const detail = (event as CustomEvent).detail || {};
+            if (typeof detail.waiting === 'number') patch({ queued: detail.waiting });
+        };
         const onReconnecting = () => patch({ phase: 'reconnecting' });
         const onResumed = () => patch({ phase: 'live', error: null });
         const onAudioLost = (event: Event) => {
@@ -119,6 +130,8 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
             ['ms:partial', onPartial],
             ['ms:slide', onSlide],
             ['ms:chip', onChip],
+            ['ms:mode', onMode],
+            ['ms:queued', onQueued],
             ['ms:chip_result', onChipResult],
             ['ms:status', onStatus],
             ['ms:reconnecting', onReconnecting],

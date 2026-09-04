@@ -65,6 +65,10 @@ export interface Chip {
 
 export type Phase = 'idle' | 'live' | 'reconnecting' | 'stopping' | 'ended';
 
+/** MS27. The helper mode a meeting is in. Server state (MS24) — the card displays it, it
+ *  never decides it. `null` is Note-taker, which is also what an older server reports. */
+export type HelperMode = 'note-taker' | 'participant' | 'presenter' | 'coach' | 'practice';
+
 export interface MeetingView {
     phase: Phase;
     meetingId: string | null;
@@ -81,6 +85,10 @@ export interface MeetingView {
     slides: number;
     slideList: Slide[];
     chips: Chip[];
+    mode: HelperMode | null;
+    /** MS27. Audience questions waiting, in Presenter. A count, not the questions: the pill
+     *  shows a number and the card shows the list. */
+    queued: number;
     error: string | null;
 }
 
@@ -98,6 +106,8 @@ export const EMPTY_VIEW: MeetingView = {
     slides: 0,
     slideList: [],
     chips: [],
+    mode: null,
+    queued: 0,
     error: null,
 };
 
@@ -233,6 +243,34 @@ export function latencyLabel(behindMs: number): string | null {
 }
 
 /** What the pill says it is doing. One phrase, never two at once. */
+/**
+ * What the recording pill says the assistant is doing (MS27).
+ *
+ * The pill is §2a's "recording state is unmissable", and a mode changes what is being
+ * recorded *for* — Coach reads prep material, Practice speaks aloud into the call. A pill that
+ * said only "recording" while the assistant was rehearsing back at the user would be telling
+ * the truth and hiding the thing that matters, so the mode goes on the pill and not in a
+ * settings panel two clicks away.
+ *
+ * Note-taker gets no label: it is the default and the floor, and a badge that is always there
+ * is a badge nobody reads — which would cost the badge its meaning in the four modes where it
+ * matters.
+ */
+export function modeLabel(mode: HelperMode | null): string {
+    switch (mode) {
+        case 'participant':
+            return 'Participant';
+        case 'presenter':
+            return 'Presenter';
+        case 'coach':
+            return 'Coach';
+        case 'practice':
+            return 'Practice';
+        default:
+            return '';
+    }
+}
+
 export function phaseLabel(view: MeetingView): string {
     if (view.phase === 'reconnecting') return 'reconnecting…';
     if (view.phase === 'stopping') return 'stopping…';
@@ -275,6 +313,7 @@ export function meterLevel(levels: number[]): number {
 export function consentSentences(status: {
     stt?: { provider?: string | null; remote?: boolean; segments?: boolean };
     retention?: string;
+    mode?: HelperMode | null;
 } | null): string[] {
     const stt = (status && status.stt) || {};
     const lines: string[] = [];
@@ -290,6 +329,32 @@ export function consentSentences(status: {
               ? 'The transcript and slide images are kept until you delete the meeting; the audio is not.'
               : 'Only the transcript is kept. No audio and no images are stored.',
     );
+    // MS27. What the mode adds, in the mode's own terms. A consent sheet that described only
+    // the recording would be describing a different feature from the one about to run: Coach
+    // reads a document the user uploaded, and Practice puts a synthetic voice into the call
+    // that everybody else will hear and none of them agreed to.
+    const mode = status?.mode || null;
+    if (mode === 'coach') {
+        lines.push(
+            'Coach draws its suggestions only from the prep material you uploaded. It is not '
+            + 'given anything read off your screen, and nobody else in the meeting can hear it.',
+        );
+    } else if (mode === 'practice') {
+        lines.push(
+            'Practice speaks aloud into the call through your virtual microphone. Everyone in '
+            + 'the meeting will hear it.',
+        );
+    } else if (mode === 'participant') {
+        lines.push(
+            'This assistant answers out loud when somebody in the call says its name. Questions '
+            + 'asked of you are drafted for you, never answered for you.',
+        );
+    } else if (mode === 'presenter') {
+        lines.push(
+            'Questions from the call are collected for you to answer afterwards. Nothing is '
+            + 'said out loud while you are presenting.',
+        );
+    }
     lines.push('Tell the other people in the meeting that you are recording.');
     return lines;
 }
