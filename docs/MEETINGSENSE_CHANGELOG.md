@@ -17,6 +17,67 @@ this is reachable and no table is created.
 
 ---
 
+## W8 — Engine
+
+### MS24 — two sub-agents, and what a meeting has approved · `PENDING`
+
+- `agent/subagents.py`: **SlideReader** (a captioned keyframe → title, claim, ≤3 topics; a
+  re-shown slide is a *return*, not a second reading) and **ActionExtractor** (a transcript
+  window → proposed owners and deadlines, capped at five). Neither writes anything — `reflect`
+  folds proposals in through MS12's `merge`, which never deletes.
+- **The mode is server state.** `resolve_mode` reads it back from `ms_artifacts` on every turn;
+  a `mode` arriving with a turn is a *default* for a meeting nobody has set, and when it
+  disagrees with what is stored the stored one governs and the client is told. A per-turn mode
+  on the wire is not a mode, it is an escalation.
+- **Two gates, two questions.** A mode says whether tools may be used at all; a per-meeting
+  approval says which. Both closed by default: `approved_tools=None` is a `Deps` nobody filled
+  in, and `act` reads it exactly as it reads `[]`.
+- **Nine mutation survivors, and every one was a real hole.** The two that mattered most:
+  `test_re_approving_after_a_revoke_works` asserted on `approve`'s *return value*, which is
+  computed — so a replay that made a revoke permanent passed the test and would have been wrong
+  on the next turn; and the unreadable-store test asserted on the whole turn, where `perceive`'s
+  own belt turns any failure into the floor, so it passed just as happily when `resolve_mode`
+  crashed as when it decided. Both now assert on the thing that makes the claim.
+- A third: the fenced-JSON test was killed by removing the fence handling entirely, because the
+  bare-brace fallback found the same object. The fixture now has prose *after* the fence, which
+  is what a model told "JSON only" actually returns, and a greedy scan swallows the sign-off.
+- **One real defect, found while wiring:** `_merge_actions` imported `_key` with two dots from
+  `agent/nodes/`, which resolves to `agent`, not `meetingsense`. Every extraction raised
+  `ModuleNotFoundError` and was swallowed by the "a proposal is never worth the notes" guard —
+  so the feature was silently doing nothing and the suite was green until a test looked at the
+  merged frame.
+- **A test I had written too wide, corrected rather than kept:** `TestMemoryStaysOutside`
+  forbade any write under `agent/`, and MS24's approval log is a legitimate write — policy a
+  person set, recorded by the code that set it. The claim is that *no node decides what is
+  stored*, so the grep is scoped to `nodes/` + `graph.py` and is now backed by a behavioural
+  test that a full Practice turn with every dependency wired writes nothing.
+- 45 tests, 42 mutations each fail. `tests/meetingsense`: 793 passed, 1 skipped. Full backend
+  baseline unchanged — 248 failed / 3163 passed on a clean tree, 248 failed / 3209 passed here.
+
+### MS23 — the LangGraph engine · `622ca0d`
+
+- Eight nodes (`perceive reflect decide answer coach act recall deliver`), one conditional edge,
+  five modes, behind `MEETINGSENSE_AGENT` (default off).
+- **The acceptance is the headline test**: the fixed loop and the graph are driven over the same
+  recorded events with the same stubbed engine and compared frame for frame *and* on how they
+  drive the engine (`run` count, `force` flags). A third test reads the source of
+  `session._maybe_notes`, so the loop this suite copies cannot drift from the one that ships.
+  That comparison is only possible because D8 kept memory outside the graph.
+- **Two schedulers, one set of behaviour.** The topology is data; LangGraph executes it where
+  installed and a twenty-line walker where not. `langgraph` is in `requirements.txt` but
+  `langgraph_personas/graph_builder.py` imports it at module scope, which is why its whole suite
+  is one of the eighteen that cannot be collected here — and a graph that cannot be imported
+  cannot be tested.
+- **A real gap the tests found:** a `slide` event routed to `answer` with nothing to answer. The
+  caption is now the question, and an uncaptioned slide plans nothing.
+- **Four mutation survivors were all unreachable guards** — `act`'s tool check, `coach`'s
+  permission check, note-taker's `recall=False`, and `MAX_STEPS`. Each was kept and is now
+  tested by calling the node directly with the state the router would never build: that is what
+  a second gate is *for*, and it is what holds when the first gate is edited.
+- 41 tests, 19 mutations each fail.
+
+---
+
 ## W7 — Capability
 
 ### MS22 — Forge registration, and the Teams decision · `dd92397`

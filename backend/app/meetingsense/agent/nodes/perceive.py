@@ -23,10 +23,33 @@ async def perceive(state: MeetingAgentState, deps: Any = None) -> Dict[str, Any]
                 "event": "segments", "allows": modes_mod.DEFAULT.allows(),
                 "trace": list(state.get("trace") or []) + ["perceive"]}
 
-    mode = modes_mod.resolve(str(state.get("mode") or ""))
-    return {
+    # MS24. The mode is **server state**, not something a turn asserts. A stored mode wins over
+    # whatever arrived in the state; what arrived is a default for a meeting that has never had
+    # one set. A per-turn mode on the wire would let a client put a meeting into Practice for a
+    # single request, which is not a mode — it is an escalation.
+    decision = _resolve_mode(state)
+    mode = modes_mod.resolve(decision["mode"])
+    out: Dict[str, Any] = {
         "event": event,
         "mode": mode.name,
         "allows": mode.allows(),
         "trace": list(state.get("trace") or []) + ["perceive"],
     }
+    if decision.get("overridden"):
+        # Reported rather than silently ignored: a client that thinks it is driving should
+        # find out that it is not.
+        out["errors"] = list(state.get("errors") or []) + [
+            f"mode {decision['requested']!r} ignored; this meeting is set to {mode.name!r}"
+        ]
+    return out
+
+
+def _resolve_mode(state: MeetingAgentState) -> Dict[str, Any]:
+    """Ask the policy store, falling back to what the state carried. Never raises."""
+    from .. import subagents
+
+    try:
+        return subagents.resolve_mode(str(state.get("meeting_id") or ""),
+                                      str(state.get("mode") or ""))
+    except Exception:  # noqa: BLE001 — an unreadable policy store means the floor, not a crash
+        return {"mode": "", "source": "none", "overridden": False, "requested": None}

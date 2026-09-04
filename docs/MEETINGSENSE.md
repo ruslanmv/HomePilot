@@ -665,6 +665,96 @@ every other one and failed on a timeout while starting a process for a module th
 there. Meetings record, transcribe, caption and export without it; what is unavailable is
 posting back into the Teams chat.
 
+### The agent engine, and the five modes (MS23)
+
+`backend/app/meetingsense/agent/`, behind `MEETINGSENSE_AGENT` (default off). With the flag
+off nothing here is reached and the fixed notes loop in `session.py` runs exactly as before.
+
+The batch's acceptance is one sentence: **in Note-taker mode the graph's output is identical to
+the fixed loop's.** That is checkable only because D8 keeps memory outside the graph — if a node
+could remember something the loop could not, the two would diverge on the second turn and no
+test could say which was right. So `reflect` makes `session._maybe_notes`'s three calls (`add`,
+`due`, `run`) in the same order on the same engine, `recall` wraps MS15 and `answer` wraps MS13
+rather than re-deciding their budgets. A test reads the source of `_maybe_notes`, so the loop
+this suite copies cannot silently drift from the one that ships.
+
+Eight nodes — `perceive reflect decide answer coach act recall deliver` — and the topology is
+**data**: `NODES`, `EDGES` and one conditional router. Two things execute it. LangGraph where it
+is installed, and a twenty-line walker where it is not. Two schedulers for one set of behaviour
+is a real cost, taken deliberately: `langgraph` is in `requirements.txt` but not on every
+install, and `langgraph_personas/graph_builder.py` imports it at module scope — which is why its
+whole suite is one of the eighteen that cannot be collected here. A graph that cannot be
+imported cannot be tested, and this batch's acceptance *is* a test. One test drives both engines
+over the same events and asserts the same frames and the same trace.
+
+**Modes are policy objects, not prompt fragments.** `modes.py` is a table of five allow-lists —
+note-taker, participant, presenter, coach, practice — and every node asks it rather than
+deciding for itself. Note-taker is the floor and the default, and an unknown name resolves
+*down* to it: a typo, a stale client or a mode a later wave removes should quiet the assistant,
+never hand it tools.
+
+### Two sub-agents, and what a meeting has approved (MS24)
+
+`agent/subagents.py`. Two jobs that are genuinely separate from the main loop, and the policy
+that decides what either may reach.
+
+**SlideReader** turns a captioned keyframe into a record the notes can carry — title, claim, at
+most three topics. Separate from `reflect` because it reads one artefact and produces one
+record, and folding that into the rolling-notes prompt is how a notes engine starts describing
+slides that were never shown. A re-shown slide is recorded as a *return*, not a second reading:
+MS9's dHash already decided that a slide back on screen is the same slide.
+
+**ActionExtractor** pulls owners and deadlines out of a window of transcript. Separate for the
+opposite reason — it is the one job here that benefits from being wrong cheaply. An extractor
+that proposes six actions and has four rejected is useful; a notes engine that does the same is
+a notes engine nobody trusts. With no model configured it falls back to one deliberately narrow
+pattern ("Ana will send the terms") and misses everything else, which beats a regular expression
+guessing at intent.
+
+**Neither writes anything.** They return proposals; `reflect` folds them in through MS12's
+`merge`, which never deletes and dedupes on the item text, so a proposal that repeats what the
+engine already found costs nothing and one it missed is kept. An extractor that wrote directly
+would be a second author of one record.
+
+#### The mode is server state
+
+`hp.ms.set_mode` writes a name; every turn afterwards **reads it back from the store**. A mode on
+the wire, per turn, would let a client put a meeting into Practice for one request — and that is
+not a mode, it is an escalation. A `mode` arriving with a turn is treated as a *default*, used
+only for a meeting nobody has set, and when it disagrees with what is stored the stored one
+governs and the disagreement is reported into `errors` rather than dropped, so a client that
+thinks it is driving finds out that it is not.
+
+The mode lives in `ms_artifacts` rather than on a session object because it has to survive a
+reconnect, a server restart and a second client attaching to the same meeting.
+
+**An unreadable policy store lands on the floor, never the ceiling.** "Nothing was ever set" and
+"we cannot tell what was set" are different answers, and only the second has to fail closed: if
+they were collapsed, a store outage would be the cheapest way to get a meeting into Practice.
+
+#### Two gates, and they are different questions
+
+A mode says whether tools may be used **at all** — that is policy. A per-meeting pre-approval
+says **which** tools, for **this** meeting — that is consent. Collapsing them would mean somebody
+who picks Practice has silently agreed to whatever tools the install happens to have.
+
+So both are checked, and both are closed until something opens them. `approved_tools=None` is a
+`Deps` nobody filled in, and `act` reads it exactly as it reads `[]`: approve nothing. The one
+place a caller should build dependencies for a live meeting is `graph.deps_for(meeting_id)`,
+which reads the approvals from the store — there is no reason for a caller to hold that list,
+and passing one a client sent is precisely the escalation this exists to prevent.
+
+Approving is additive and revoking is a separate call, because "also allow this" and "stop
+allowing that" are different intentions and a set-replacing API turns the first into the second
+whenever a client forgets to resend the old list. A revoke is **recorded**, not deleted: what a
+meeting was allowed to do, and when that changed, is the thing an audit reads. A refused call is
+recorded too — a tool call that vanishes silently is one nobody can approve, because nobody
+knows it was wanted.
+
+Approvals live in `ms_artifacts`, so the delete that removes everything else about a meeting
+removes these as well. A consent that outlived its meeting would be a consent nobody could
+withdraw.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither

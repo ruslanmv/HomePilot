@@ -83,12 +83,16 @@ class Deps:
     search: Optional[Callable[..., Sequence[Dict[str, Any]]]] = None
     #: ``async (state) -> str`` — W9 writes this; MS23 builds the path to it.
     coach: Optional[Callable[..., Awaitable[str]]] = None
+    #: MS24's sub-agents. ``async (window) -> [action]`` and ``async (keyframe) -> reading``.
+    #: Both return proposals; `reflect` merges what it accepts and neither writes anything.
+    extract_actions: Optional[Callable[..., Awaitable[Sequence[Dict[str, Any]]]]] = None
+    read_slide: Optional[Callable[..., Awaitable[Optional[Dict[str, Any]]]]] = None
     #: ``async (tool, args) -> output`` — `runtime_tool_router.invoke`, bound.
     invoke: Optional[Callable[..., Awaitable[Any]]] = None
     #: What this turn wants to call. MS24 fills it from a sub-agent.
     tool_calls: Sequence[Dict[str, Any]] = field(default_factory=tuple)
-    #: MS24's per-meeting pre-approval. ``None`` means "no approvals configured", which `act`
-    #: reads as "approve nothing" only when tool calls are actually requested.
+    #: MS24's per-meeting pre-approval — the tools *this* meeting has consented to. ``None``
+    #: is a `Deps` nobody told, and `act` reads it exactly as it reads ``[]``: approve nothing.
     approved_tools: Optional[Sequence[str]] = None
     #: ``async (frame) -> None`` — the session's transport.
     send: Optional[Callable[..., Awaitable[None]]] = None
@@ -199,6 +203,44 @@ async def run(
             state = merge(state, {"errors": ["langgraph is not installed"]})
             return state
     return await walk(state, deps)
+
+
+def deps_for(
+    meeting_id: str,
+    *,
+    notes: Any = None,
+    ask: Any = None,
+    send: Any = None,
+    invoke: Any = None,
+    tool_calls: Sequence[Dict[str, Any]] = (),
+    call: Any = None,
+    search: Any = None,
+    coach: Any = None,
+) -> Deps:
+    """Assemble the dependencies for one meeting, reading its policy from the store.
+
+    The one place a caller should build `Deps` for a live meeting: it resolves the per-meeting
+    tool approvals rather than leaving that to whoever wired the session. A `Deps` built by
+    hand with `approved_tools=None` approves nothing, so forgetting this is safe — but
+    forgetting it in the *other* direction, by passing a list a client sent, is exactly the
+    escalation MS24 exists to prevent, and there is no reason for a caller to have that list.
+    """
+    from . import subagents
+
+    return Deps(
+        notes=notes,
+        ask=ask,
+        send=send,
+        invoke=invoke,
+        tool_calls=tuple(tool_calls or ()),
+        search=search,
+        coach=coach,
+        approved_tools=subagents.approved(meeting_id),
+        extract_actions=(lambda window: subagents.extract_actions(window, call=call))
+        if call is not None else None,
+        read_slide=(lambda keyframe: subagents.read_slide(keyframe, call=call))
+        if call is not None else None,
+    )
 
 
 def enabled(config: Any) -> bool:

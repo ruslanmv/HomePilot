@@ -8,7 +8,8 @@ wrong half the time.
 **Two gates, and they are different questions.** The mode says whether this meeting may use
 tools at all (policy); MS24's pre-approval says *which* tools, for *this* meeting (consent).
 A mode that permits tools does not approve any particular one, and an approved tool is not
-usable in a mode that forbids tools.
+usable in a mode that forbids tools. Both gates are closed until something opens them: an
+empty approval list runs nothing, and so does a `Deps` that was built by hand and never told.
 """
 
 from __future__ import annotations
@@ -37,14 +38,17 @@ async def act(state: MeetingAgentState, deps: Any = None) -> Dict[str, Any]:
     if invoke is None or not wanted:
         return {"trace": trace, "plan": plan}
 
-    approved = getattr(deps, "approved_tools", None)
+    # `None` is a `Deps` nobody filled in, not "unrestricted". `deps_for` always sets this
+    # from the meeting's approvals, and the default a consent can safely have is refusal — so
+    # the way to get a tool run is to approve it, never to forget to say anything.
+    approved = set(getattr(deps, "approved_tools", None) or ())
     results: List[Dict[str, Any]] = list(state.get("tool_results") or [])
     errors = list(state.get("errors") or [])
 
     for call in list(wanted)[:MAX_CALLS]:
         name = str((call or {}).get("tool") or "")
         args = (call or {}).get("args") or {}
-        if approved is not None and name not in approved:
+        if name not in approved:
             # Refused, and recorded: a tool call that vanishes silently is one nobody can
             # approve, because nobody knows it was wanted.
             errors.append(f"act: {name} is not approved for this meeting")

@@ -583,17 +583,48 @@ class TestTheFlag:
 
 
 class TestMemoryStaysOutside:
+    """D8, checked at the source.
+
+    The claim is precise and worth keeping precise: **no node decides what is stored.** It is
+    not "nothing under `agent/` writes" — MS24's approval log is policy a person set, written
+    by the route that set it, and a test that forbade it would be enforcing a rule nobody
+    stated. What has to hold is that a *turn* cannot remember something the fixed loop would
+    not, because that is what makes the acceptance comparison meaningful.
+    """
+
     def test_no_node_writes_to_the_store_or_the_index(self, modules):
-        # D8, checked at the source. A node that could write would make the acceptance
-        # unprovable: the graph would remember things the fixed loop does not.
         import pathlib
 
-        root = pathlib.Path(modules.graph.__file__).parent
-        for path in sorted(root.rglob("*.py")):
+        nodes = pathlib.Path(modules.graph.__file__).parent / "nodes"
+        files = sorted(nodes.rglob("*.py")) + [pathlib.Path(modules.graph.__file__)]
+        for path in files:
             text = path.read_text()
             for forbidden in ("store.add_", "store.save_", "store.delete_", "index_meeting",
-                              "forget_meeting", "add_artifact"):
+                              "forget_meeting", "add_artifact", "approve(", "revoke("):
                 assert forbidden not in text, f"{path.name} writes memory: {forbidden}"
+
+    def test_a_turn_writes_nothing_even_with_every_dependency_wired(self, modules, monkeypatch):
+        # The same claim behaviourally rather than by grep: drive a full Practice turn with
+        # every dependency present and assert the store was never written.
+        import app.meetingsense.store as store_mod
+
+        wrote = []
+        for name in ("add_artifact", "save_notes", "add_segments", "add_keyframe"):
+            monkeypatch.setattr(store_mod, name,
+                                lambda *a, _n=name, **k: wrote.append(_n))
+
+        async def ask(meeting_id, question):
+            return {"type": "answer", "text": "ok"}
+
+        async def invoke(tool, args):
+            return "ok"
+
+        deps = modules.graph.Deps(ask=ask, invoke=invoke, approved_tools=["t"],
+                                  tool_calls=[{"tool": "t", "args": {}}],
+                                  search=lambda q, **kw: [])
+        run(modules.agent.run(meeting_id="m1", event="ask", question="q?", mode="practice",
+                              deps=deps))
+        assert wrote == []
 
 
 # ── the belts, tested rather than asserted in a comment ─────────────────────
