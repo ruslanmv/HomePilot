@@ -449,7 +449,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		pids="$$pids $$!"; \
 		\
 		echo "Starting frontend..."; \
-		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000 & \
+		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev & \
 		pids="$$pids $$!"; \
 		\
 		if [ -f "$$ROOT/ComfyUI/main.py" ] && [ -f "$$ROOT/ComfyUI/.venv/bin/python" ]; then \
@@ -503,14 +503,22 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 					mcp_ok=$$((mcp_ok + 1)); \
 				fi; \
 			done; \
-			echo "  ✓ MCP Servers: $$mcp_ok/$$mcp_total healthy"; \
+			if [ "$$mcp_ok" = "$$mcp_total" ]; then \
+				echo "  ✓ MCP Servers: $$mcp_ok/$$mcp_total healthy"; \
+			else \
+				echo "  ⚠ MCP Servers: $$mcp_ok/$$mcp_total healthy — check the log above"; \
+			fi; \
 			a2a_ok=0; a2a_total=2; \
 			for _p in 9201 9202; do \
 				if curl -sf "http://127.0.0.1:$$_p/health" >/dev/null 2>&1; then \
 					a2a_ok=$$((a2a_ok + 1)); \
 				fi; \
 			done; \
-			echo "  ✓ A2A Agents: $$a2a_ok/$$a2a_total healthy"; \
+			if [ "$$a2a_ok" = "$$a2a_total" ]; then \
+				echo "  ✓ A2A Agents: $$a2a_ok/$$a2a_total healthy"; \
+			else \
+				echo "  ⚠ A2A Agents: $$a2a_ok/$$a2a_total healthy — check the log above"; \
+			fi; \
 		fi; \
 		\
 		echo ""; \
@@ -527,6 +535,9 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 			echo "  ✅ All services started!"; \
 		fi; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo ""; \
+		echo "  🎙 MeetingSense is on: press \"Start meeting\" under the chat box."; \
+		echo "     Check it can transcribe:  curl -s localhost:8000/v1/meetingsense/status | jq .ready"; \
 		echo ""; \
 		wait \
 	'
@@ -553,7 +564,7 @@ start-frontend: ## Start frontend locally
 		echo "Node modules not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
+	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev
 
 install-expert: ## Install dependencies for the isolated Expert-mode sandbox (includes Expert MCP gateway when AGENTIC=1)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -783,7 +794,7 @@ health: ## Health checks (best-effort)
 
 dev: ## Frontend dev locally; backend stack in docker
 	docker compose -f infra/docker-compose.yml up -d backend llm comfyui media
-	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
+	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev
 
 build: ## Build production frontend bundle (Expert selector ON by default — set VITE_EXPERT_CHAT_ENABLED=false to ship gated)
 	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run build
