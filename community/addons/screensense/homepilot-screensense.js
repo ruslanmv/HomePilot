@@ -95,6 +95,41 @@
         }
     }
 
+    /**
+     * Refusal openings a vision model uses when it cannot answer. Same list MS9's
+     * `clean_caption` keeps server-side, for the same reason: a refusal shown as an answer
+     * reads as the product being broken rather than the model declining.
+     */
+    const REFUSALS = [
+        "i'm sorry", "i am sorry", "sorry,", "i cannot", "i can't", "i am unable",
+        "i'm unable", "as an ai", "i do not have", "i don't have", "unable to",
+    ];
+
+    /**
+     * Is this worth showing a person? (`""` when not.)
+     *
+     * A small vision model asked an open question about a screenshot will sometimes return a
+     * word or two of noise — "ersatz", "erset up lngreck aggr;" — and printing that verbatim
+     * makes the product look broken when the truth is that the model is too small for the job.
+     *
+     * The test is deliberately blunt: a real answer to "what is on my screen" is a sentence.
+     * Five words and twenty characters is under any genuine answer and over both kinds of
+     * noise, and it is a rule a reader can check, which a cleverer gibberish detector is not —
+     * that would eventually reject "npm ERR! ENOENT: no such file or directory", which is
+     * exactly the answer somebody most needs.
+     */
+    function usableAnswer(text) {
+        const body = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!body) return '';
+        const lowered = body.toLowerCase();
+        for (const mark of REFUSALS) {
+            if (lowered.startsWith(mark)) return '';
+        }
+        if (body.length < 20) return '';
+        if (body.split(' ').filter(Boolean).length < 5) return '';
+        return body;
+    }
+
     class HPScreenSense {
         constructor() {
             this.stream = null;
@@ -148,10 +183,40 @@
             v.style.cssText =
                 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9px;top:-9px';
             document.body.appendChild(v);
-            await v.play().catch(() => {});
+            // `play()` returns a Promise in current browsers and `undefined` in older ones —
+            // and in jsdom, which is why this path could not be tested before. Wrapping makes
+            // it true in all three rather than throwing on the ones that predate the Promise.
+            await Promise.resolve(v.play()).catch(() => {});
             this.video = v;
             this.stream.getVideoTracks()[0]?.addEventListener('ended', () => this.stop());
             return true;
+        }
+
+        /**
+         * Is the share this object believes in still real? Repairs the belief if not.
+         *
+         * The browser's own "Stop sharing" bar fires `ended` on the track, and `enable()` has
+         * always listened for that — so the ordinary way a share ends was already handled.
+         * This covers the ways it is not: a stream that goes inactive without firing, a tab
+         * restored from the back/forward cache, a window that went away with the page hidden.
+         *
+         * Called when the tab becomes visible again, which on a single screen is exactly when
+         * the answer is most likely to have changed and least likely to have been noticed —
+         * sharing means leaving this tab, so the interesting transitions all happen where
+         * nobody is looking.
+         *
+         * Teardown goes through `stop()` rather than a second path of its own: two ways to end
+         * a share is two places to forget to tell the backend, and the duplicate is what made
+         * an earlier version of this send the stop twice.
+         */
+        verifyShare() {
+            if (this.mode !== 'browser') return true;
+            if (this.stream && this.stream.active) return true;
+            // No guard on `this.stream`: `stop()` nulls `_conversationId` as it announces, so
+            // calling it twice sends one stop. Restating that here would be a second copy of a
+            // rule `stop()` already keeps.
+            this.stop();
+            return false;
         }
 
         stop() {
@@ -318,7 +383,7 @@
                 // most recent thing read off it. Sent after the answer rather than before, so
                 // a failed capture never leaves the persona claiming to see a screen it did
                 // not manage to look at.
-                if (opts.conversationId) {
+                if (opts.conversationId && this.enabled) {
                     this._conversationId = opts.conversationId;
                     tellBackend('start', opts.conversationId, { mode: this.mode });
                     if (out.analysis_text) {
@@ -435,8 +500,32 @@
             'box-shadow:0 8px 28px rgba(0,0,0,.5)',
         ].join(';');
 
-        const say = (t) => {
-            panel.textContent = t;
+        // A titled panel with a close button rather than bare text. Floating prose beside a
+        // button reads as part of the page — which is how "ersatz" came to look like a bug in
+        // HomePilot instead of a small model saying nothing useful.
+        const head = document.createElement('div');
+        head.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px';
+        const title = document.createElement('strong');
+        title.style.cssText = 'font:600 11px/1 system-ui,sans-serif;letter-spacing:.04em;'
+            + 'text-transform:uppercase;color:#7f8dab;flex:1';
+        title.textContent = 'What I can see';
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.setAttribute('aria-label', 'Dismiss');
+        close.textContent = '×';
+        close.style.cssText = 'border:0;background:none;color:#7f8dab;cursor:pointer;'
+            + 'font:400 16px/1 system-ui,sans-serif;padding:0 2px';
+        close.addEventListener('click', () => { panel.style.display = 'none'; });
+        head.appendChild(title);
+        head.appendChild(close);
+
+        const body = document.createElement('div');
+        panel.appendChild(head);
+        panel.appendChild(body);
+
+        const say = (t, tone) => {
+            body.textContent = t;
+            body.style.color = tone === 'weak' ? '#8b96ad' : '#c9d4ea';
             panel.style.display = 'block';
         };
 
@@ -456,7 +545,25 @@
                     apiKey: opts.apiKey || window.HOMEPILOT_API_KEY,
                     model: opts.model,
                 });
-                say(r.ok ? r.analysis_text || '(no answer)' : 'ScreenSense: ' + (r.error || 'failed'));
+                if (!r.ok) {
+                    say(r.error || 'The screen could not be captured.', 'weak');
+                } else {
+                    const answer = usableAnswer(r.analysis_text);
+                    if (answer) {
+                        say(answer);
+                    } else {
+                        // Naming the model is the useful part: this outcome nearly always
+                        // means the configured vision model is too small for the question,
+                        // and the fix is to change it rather than to press the button again.
+                        const model = (r.meta && (r.meta.model || r.meta.name)) || 'the vision model';
+                        say(
+                            'No usable answer from ' + model + '. It returned nothing that '
+                            + 'reads as a description of your screen — try a larger vision '
+                            + 'model (Settings → Multimodal).',
+                            'weak',
+                        );
+                    }
+                }
                 if (r.ok && typeof opts.onResult === 'function') opts.onResult(r);
             } finally {
                 btn.disabled = false;
@@ -471,6 +578,21 @@
     };
 
     window.hpScreenSense = new HPScreenSense();
+
+    // Coming back to the tab is the moment to re-check, and it costs one property read. On a
+    // single screen it is *the* moment: sharing means leaving this tab, and the share is
+    // usually ended from the browser's own bar while the tab is hidden.
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                try {
+                    window.hpScreenSense.verifyShare();
+                } catch (_) {
+                    // Never worth breaking a page over.
+                }
+            }
+        });
+    }
 
     // Auto-mount the floating button unless the host opts out with
     // window.HOMEPILOT_SCREENSENSE_NO_AUTOBUTTON = true before this script loads.
