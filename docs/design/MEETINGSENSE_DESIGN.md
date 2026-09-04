@@ -1,8 +1,57 @@
 # MeetingSense — Screen share + audio + live transcript + AI meeting notes
 
-**Status:** design / analysis only — no code changed, nothing committed.
-**Branch analysed:** `claude/upgrade-feature-batches-3x0z82` @ `54ff266`
+**Status:** **built.** This document is the original design and is kept as the record of what
+was intended; where the shipped product differs, §0 below says so and the batch ledger in
+[`MEETINGSENSE_BATCHES.md`](./MEETINGSENSE_BATCHES.md) is the current state.
+**Branch:** `claude/upgrade-feature-batches-3x0z82` (design written @ `54ff266`; built through MS33)
 **Principle:** additive, non-destructive, flag-gated, 100 % local by default. Follows the same contract as ScreenSense (`community/addons/screensense/DESIGN.md`) and the voice backend (`backend/app/voice/`).
+
+---
+
+## 0. As built — where the shipped product differs from this design
+
+Written after MS33. The design below is unedited; this section is the diff, because a design
+document quietly rewritten to match what shipped stops being evidence of anything.
+
+**The entry point moved twice.** §2.1 describes a popover on the ScreenSense 👁 button. MS29
+shipped that *and* a record button under the composer; MS32 removed the composer button and
+made **Meeting a header control beside Call**, because one optional feature under the primary
+input competed with the chat on every screen. MS33 restored the `⌄` as a split action, so one
+click still starts a meeting and the capture options are a second control rather than a step
+in front of the first.
+
+**The setup hint left the chat.** §6 says an unavailable STT provider greys a control and
+shows *"Set `WHISPER_MODEL=small` to enable"*. That is right for a developer surface and wrong
+under somebody's message box, where it sat permanently for people who will never record a
+meeting. It now lives in **Settings → Voice Assistant → Meeting transcription**; the chat
+control says *"Meeting transcription isn't configured"* with a link to Settings, and shows it
+only when pressed. No environment-variable name reaches a chat user.
+
+**The ended meeting is the product.** §2.3 is one paragraph and the shipped card is the
+feature's whole payoff: **Summary → Decisions → Actions → Ask this meeting**, with the
+transcript demoted behind a disclosure. People record meetings so they do not have to reread
+them, and until MS33 the ended card showed a transcript — the recording rather than the value.
+Citations in an answer are links that open the transcript at the line already in progress.
+
+**`ScreenAwarenessPopover.tsx` does not exist.** MS5's `entryPoint.ts` attaches to
+ScreenSense's existing button instead, which is what kept the promise that ScreenSense is
+edited by no batch. The directory shipped sixteen files rather than six; `MeetingDetail.tsx`
+and `VoiceSetup.tsx` are built and not mounted, which is stated here rather than left to be
+discovered.
+
+**Stop is a countdown, not an ending.** §2.3 says stop; MS6 made it ten seconds of continued
+capture with Undo, because the seconds somebody spends deciding are usually the seconds
+somebody else was still talking. The pill says *"Stopping in 8s · still recording"* so nobody
+stops talking on account of it.
+
+**Two flags default on.** `MEETINGSENSE_ENABLED` and `MEETINGSENSE_TOGETHER` ship `true`
+(MS30) so `make install && make start` needs no exports. This contradicts the programme's own
+"flags default off" rule and was an explicit product decision, recorded here rather than
+silently.
+
+**Still owed.** The 21-row manual matrix is unsigned, rows 18–20 are unreachable by any
+automated test, and the end-to-end path — browser → mic + system audio → Whisper → segments →
+notes → persona prompt — has never run as a whole.
 
 ---
 
