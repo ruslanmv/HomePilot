@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## Fixes
 
-### The LangGraph engine did nothing at all · `PENDING`
+### The LangGraph engine did nothing at all · `81fe3e2`
 
 - `StateGraph(dict)` → `StateGraph(MeetingAgentState)`, and `_bind` now returns the node's
   **partial update** instead of the whole merged state.
