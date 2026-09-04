@@ -483,16 +483,30 @@ class TestInASession:
             run(session._maybe_chips([said(f"let's go with option {i}", t0=i * 1000)]))
         assert len(session.chips) == chips.MAX_PER_MEETING
 
-    def test_names_come_from_the_start_frame(self, live):
+    def test_names_come_from_the_start_frame(self, live, store):
+        # In Participant: MS26 made the trigger set a property of the mode, and `question` is
+        # not in Note-taker's — "somebody just asked you something" is the assistant tapping
+        # the user on the shoulder, which Note-taker exists not to do.
         session, _ = live
+        store.add_artifact("m1", kind="mode", target="participant")
         self._start(session, names=["Ana"])
         sent = run(session._maybe_chips([said("Ana, what is the release date?")]))
         assert [f["kind"] for f in sent] == ["question"]
 
-    def test_with_no_names_second_person_is_the_only_signal(self, live):
+    def test_with_no_names_second_person_is_the_only_signal(self, live, store):
         session, _ = live
+        store.add_artifact("m1", kind="mode", target="participant")
         self._start(session)
         assert run(session._maybe_chips([said("Ana, what is the release date?")])) == []
+
+    def test_the_default_mode_makes_no_question_chip(self, live):
+        # The shipped state: no mode set resolves to Note-taker, which offers the note-taking
+        # chips and not the shoulder-tap. A behaviour MS25 had and MS26 deliberately narrowed.
+        session, _ = live
+        self._start(session, names=["Ana"])
+        assert run(session._maybe_chips([said("Ana, what do you think?")])) == []
+        assert [f["kind"] for f in run(session._maybe_chips([said("let's go with Postgres")]))] \
+            == ["decision"]
 
     def test_a_chip_that_raises_does_not_take_the_meeting(self, live, monkeypatch, chips):
         session, transport = live

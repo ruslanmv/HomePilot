@@ -236,6 +236,7 @@ def build_prompt(
     verbatim_rows: Sequence[Dict[str, Any]] = (),
     retrieved_rows: Sequence[Dict[str, Any]] = (),
     budget: int = TOKEN_BUDGET,
+    mode: str = "",
 ) -> List[Dict[str, str]]:
     """Assemble the three tiers, trimming to the budget.
 
@@ -268,7 +269,16 @@ def build_prompt(
         verbatim_list.pop(0)
         body = render(retrieved, verbatim_list)
 
-    return [{"role": "system", "content": ASK_SYSTEM}, {"role": "user", "content": body}]
+    # MS26. A mode's framing is layered *above* `ASK_SYSTEM`, never in place of it: the base
+    # carries "cite the timestamp" and "never invent one", and those are not a Participant's
+    # to relax. With no mode, the system prompt is byte-identical to what MS13 shipped.
+    system = ASK_SYSTEM
+    if mode:
+        from .agent import mode_prompts
+
+        system = mode_prompts.system_for(mode, ASK_SYSTEM)
+
+    return [{"role": "system", "content": system}, {"role": "user", "content": body}]
 
 
 async def answer(
@@ -280,6 +290,7 @@ async def answer(
     limit: int = MAX_RETRIEVED,
     budget: int = TOKEN_BUDGET,
     vector_search: Optional[Callable[..., Sequence[Dict[str, Any]]]] = None,
+    mode: str = "",
 ) -> Dict[str, Any]:
     """Answer one question about one meeting.
 
@@ -330,6 +341,7 @@ async def answer(
         verbatim_rows=verbatim_rows,
         retrieved_rows=retrieved_rows,
         budget=budget,
+        mode=mode,
     )
     try:
         text = await call(messages, temperature=0.2)

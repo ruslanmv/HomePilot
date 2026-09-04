@@ -821,6 +821,85 @@ segments — or a second client on one meeting — produces the same row on both
 two rows on one. Three chips are shown at once, newest first, and a meeting stops at forty:
 past that the card is a list, and a list is what the notes already are.
 
+### Participant and Presenter (MS26)
+
+`backend/app/meetingsense/agent/` — `mode_prompts.py`, `participant.py`, `presenter.py` — plus
+two new columns on `modes.py`. Behind `MEETINGSENSE_MODES`, default off.
+
+MS23 made a mode an allow-list of what it *may* do. That is half of what a mode is; MS26 adds
+the other half — what it sounds like, and which of MS25's offers it makes — and adds both as
+**rows in `modes.py` rather than branches in the graph**. Participant and Presenter differ by
+data, not by an `if`.
+
+| | note-taker | participant | presenter | coach | practice |
+|---|---|---|---|---|---|
+| answers to its own name (`addressed`) | — | ✅ | — | ✅ | ✅ |
+| speaks unbidden (`proactive`) | — | — | ✅ | — | — |
+| collects for the user (`queues`) | — | — | ✅ | — | — |
+| offers a `question` chip | — | ✅ | — | ✅ | ✅ |
+
+**`addressed` and `proactive` are different permissions**, and Participant is deliberately the
+first mode with one and not the other. Being addressed is a *prompt*: somebody said the
+assistant's name and asked it something, and the question arrived down the microphone instead
+of down the socket. Speaking unbidden is not.
+
+**`queues` and `addressed` are exclusive by construction**, which is why Presenter has neither
+`addressed` nor a `question` chip. While the user is presenting, a question from the floor is
+theirs to take, and an assistant answering it out loud is the single thing this mode exists to
+prevent — so it is collected instead, and a `queued` frame lets the card show a count. A number
+changing is not an interruption.
+
+#### Answering to your own name, and drafting for somebody else's
+
+Two behaviours that look alike and are opposites, which is why they live in one file.
+
+Somebody says *"Ana, what did we decide about pricing?"* and Ana is the assistant → it answers,
+through MS13 like every other question. Somebody says *"Ruslan, what did we decide?"* — or just
+*"what do you think?"* — and Ruslan is the **user** → it drafts a reply and hands it over on the
+chip. Answering that aloud would be the assistant speaking for the person the room believes it
+is talking to.
+
+The line between the two is a name, so names are declared at `start` (`names` for the user,
+`assistant_names` for the assistant) and never guessed. **With no `assistant_names` declared,
+nothing fires** — the failure mode of guessing is answering to somebody else's name in front of
+them. A name is matched as a whole word: "Ana" is not in "analysis" and not in "Anahita", and a
+one-letter name is refused outright, because it would match most sentences.
+
+A question that names the assistant is answered and **not** also drafted: two answers on screen
+for one question leaves the user working out which one is live. And a draft is offered far more
+often than not — the prompt asks the model to reply `PASS` when the meeting does not support an
+answer, a reply over sixty words is discarded, and a draft the user has to rewrite is slower
+than answering themselves.
+
+#### Mode prompts layer, they never replace
+
+A mode's framing goes **above** MS13's `ASK_SYSTEM`, never in place of it. The base carries
+*cite the timestamp* and *never invent one*, and those are not a Participant's to relax; putting
+them last also gives them the final word in the prompt, which is the position a model weights
+hardest. With no mode set the system prompt is byte-identical to what MS13 shipped, and an
+unknown mode gets no framing rather than somebody else's — the same direction `modes.resolve`
+falls in. Note-taker has no framing at all, because it never answers and dead text in a prompt
+file is text a later reader assumes is live.
+
+#### The deck, the clock, and the queue
+
+`POST /v1/meetingsense/{id}/deck` takes `[{"title": …, "minutes": …}]`. **Attached, not
+inferred**: pacing built on a guess is wrong the first time it matters, and then the mode gets
+turned off.
+
+**A section is a window, not an instant.** It was meant to start when the previous one ended and
+to finish at its own planned time, and anywhere inside that window is on time. Comparing against
+the end alone makes the first minute of a ten-minute section read as *"eight minutes ahead"* —
+the pacer telling a presenter who is exactly where they planned to be that they are early.
+Below two minutes of drift it says nothing at all: every presenter drifts, and being told so is
+a clock.
+
+`GET`/`POST /v1/meetingsense/{id}/queue` read the audience queue and take a question off it.
+Deduped on the text, because a question asked twice from the floor is what happens when the
+first asking was not heard. Taking one off is **recorded, not deleted** — what was asked and
+when it was dealt with is what an after-the-fact read of a meeting is for — and a question can
+be asked again afterwards.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -1061,7 +1140,7 @@ this flag — W1 keeps working exactly as it did.
 
 ```
 client → server   start · audio · keyframe · mute · ask · chip_action · status · stop · ping
-server → client   ready · partial · segment · slide · notes · answer · chip · chip_result · status · final · error · pong
+server → client   ready · partial · segment · slide · notes · answer · chip · chip_result · queued · status · final · error · pong
 ```
 
 Unknown types are ignored in both directions. A newer client talking to an older server

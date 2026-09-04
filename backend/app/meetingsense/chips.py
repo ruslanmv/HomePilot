@@ -338,8 +338,14 @@ def detect(
     *,
     keyframe: Optional[Dict[str, Any]] = None,
     names: Sequence[str] = (),
+    kinds: Optional[Sequence[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """Every trigger, over one turn's input. Pure: no store, no clock, no model.
+    """Every trigger this mode offers, over one turn's input. Pure: no store, no clock, no model.
+
+    MS26. `kinds` is the mode's trigger set — `modes.Mode.triggers`. ``None`` means every kind,
+    which is what MS25 did and what a caller with no mode in hand should get. Filtering here
+    rather than in the caller keeps one definition of "was this offered": a chip that is
+    detected and then dropped downstream is a chip that still counted against the turn's cap.
 
     A segment may produce more than one chip — "Ana will send the terms by Friday" is genuinely
     an action *and* a date — but the turn is capped, because a turn that produces six chips has
@@ -347,9 +353,15 @@ def detect(
     """
     out: List[Dict[str, Any]] = []
     seen: set = set()
+    offered = set(KINDS if kinds is None else kinds)
 
     def add(chip: Optional[Dict[str, Any]]) -> None:
         if not usable(chip):
+            return
+        if chip["kind"] not in offered:
+            # This mode does not make this offer. Note-taker makes no `question` chip because
+            # "somebody just asked you something" is the assistant tapping the user on the
+            # shoulder, and Presenter makes none because the user is mid-slide.
             return
         k = key(chip)
         if k in seen:
@@ -383,10 +395,14 @@ def frame(meeting_id: str, chip: Dict[str, Any]) -> Dict[str, Any]:
     """One chip, as it goes down the wire.
 
     `proposal` is present and `accepted` is false. The card renders a button; nothing has run.
+
+    `draft` (MS26) rides along the same way: a suggested reply is part of the offer, not a
+    second frame, because a draft with no question beside it is a sentence with no reason to
+    exist — and because the reader dismisses one thing.
     """
     body = {"type": "chip", "id": chip_id(meeting_id, chip), "kind": chip["kind"],
             "text": chip["text"], "t0": chip.get("t0")}
-    for extra in ("owner", "when", "url", "proposal"):
+    for extra in ("owner", "when", "url", "proposal", "draft"):
         if chip.get(extra) is not None:
             body[extra] = chip[extra]
     return body

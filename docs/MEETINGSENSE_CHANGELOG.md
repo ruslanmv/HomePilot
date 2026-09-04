@@ -19,6 +19,38 @@ this is reachable and no table is created.
 
 ## W9 — Modes & voice
 
+### MS26 — Participant and Presenter · `PENDING`
+
+- `agent/mode_prompts.py`, `agent/participant.py`, `agent/presenter.py`, and **two new columns
+  on `modes.py` rather than two branches in the graph** — `addressed` (answers to its own name)
+  and `queues` (collects for the user), plus a per-mode `triggers` set deciding which of MS25's
+  chips a mode offers.
+- **`addressed` is not `proactive`**, and Participant is the first mode with one and not the
+  other: being spoken to is a prompt, speaking unbidden is not. **`queues` and `addressed` are
+  exclusive**, which is why Presenter has neither `addressed` nor a `question` chip — while the
+  user is presenting, an assistant answering the floor out loud is the one thing the mode
+  exists to prevent.
+- Answering to your own name and drafting for the user's are opposites in one file. The line
+  between them is a name, so names are declared at `start` and never guessed; with none
+  declared nothing fires, a name matches as a whole word ("Ana" is not in "analysis"), and a
+  one-letter name is refused.
+- A mode's framing layers **above** `ASK_SYSTEM`, never in place of it: "cite the timestamp"
+  and "never invent one" are not a Participant's to relax, and last position in a system prompt
+  is the one a model weights hardest. With no mode set the prompt is byte-identical to MS13's.
+- **A behaviour MS25 had, deliberately narrowed**: the `question` chip is now Participant's and
+  above. Note-taker offers the note-taking chips and not the shoulder tap, which is what "says
+  nothing unless asked" has to mean if it means anything.
+- **Three real defects, all found by the e2e fixtures rather than by the units.** `chips.frame`
+  dropped `draft` on the floor, so the whole drafting path worked and delivered nothing. A
+  question naming the assistant was answered *and* chipped, putting two answers on screen for
+  one question. And pacing compared the clock against a section's *end*, so the first minute of
+  a ten-minute section read as "eight minutes ahead" — a section is a window, not an instant.
+- **Twenty-four mutation survivors, and the lesson was the shape of the suite.** The e2e
+  fixtures prove the modes *disagree*; they pass as long as the whole disagrees somewhere, and
+  every part of MS26 has a rule no amount of end-to-end agreement would notice breaking.
+  `test_modes_units.py` is those rules, one at a time — after which every survivor died.
+- 91 tests over two files, 55 mutations each fail.
+
 ### MS25 — chips, and the order of ask-before-acting · `1919efc`
 
 - `meetingsense/chips.py` (five deterministic triggers, no model), `ChipRow.tsx`, a `chip` /

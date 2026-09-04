@@ -294,6 +294,10 @@ async def meetingsense_session(websocket: WebSocket) -> None:
         # MS12-a. Built on `start` when the client asks for notes — the wiring MS12 shipped
         # without, which left `notes: true` echoed back over a meeting that produced none.
         notes_factory=notes_engine_mod.engine_factory(cfg),
+        # MS26. Participant answers to its own name and drafts for the user's, and both go
+        # through MS13's `answer` — the budget, the tiers and the citation rule were argued
+        # once. Bound here rather than imported inside the session so a test injects a stub.
+        ask=_ask_bridge(),
     )
     channels = 1
 
@@ -627,6 +631,22 @@ async def _handle_ask(session, message: Dict[str, Any]) -> Dict[str, Any]:
     return frame
 
 
+def _ask_bridge():
+    """MS13's `answer`, bound to the local model. ``None`` on an install with no model.
+
+    Mirrors `keyframes.vision_bridge`: MeetingSense reads another subsystem's capability at the
+    edge and the core holds no opinion about it. ``None`` means Participant offers no drafts
+    and answers to no name, which is the correct behaviour for an install that cannot answer
+    anything — not a degraded one.
+    """
+    from .notes_engine import call_model
+
+    async def ask(meeting_id: str, question: str, *, mode: str = "") -> Dict[str, Any]:
+        return await ask_mod.answer(meeting_id, question, call=call_model, mode=mode)
+
+    return ask
+
+
 async def _handle_chip_action(session, message: Dict[str, Any]) -> Dict[str, Any]:
     """Run the proposal on a chip the user accepted (MS25).
 
@@ -652,6 +672,59 @@ async def _handle_chip_action(session, message: Dict[str, Any]) -> Dict[str, Any
     frame = {"type": "chip_result", "id": chip_id, **result}
     await session.transport.send(frame)
     return frame
+
+
+@router.post("/v1/meetingsense/{meeting_id}/deck")
+async def attach_deck(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach a deck to a meeting (MS26, Presenter).
+
+    A list of `{"title": str, "minutes": number}`. Attached rather than inferred: pacing built
+    on a guess is wrong the first time it matters, and the user turns the mode off.
+    """
+    _require_meeting(meeting_id)
+    from .agent import presenter as presenter_mod
+
+    sections = body.get("sections") if isinstance(body, dict) else None
+    if not isinstance(sections, list) or not sections:
+        raise HTTPException(status_code=400, detail="sections is required")
+    stored = presenter_mod.set_deck(meeting_id, sections)
+    if not stored:
+        raise HTTPException(status_code=400, detail="no section had a title")
+    return {"meeting_id": meeting_id, "sections": stored}
+
+
+@router.get("/v1/meetingsense/{meeting_id}/deck")
+async def read_deck(meeting_id: str) -> Dict[str, Any]:
+    """The deck, and where the clock says it is."""
+    _require_meeting(meeting_id)
+    from .agent import presenter as presenter_mod
+
+    sections = presenter_mod.deck(meeting_id)
+    return {"meeting_id": meeting_id, "sections": sections,
+            "planned_ms": presenter_mod.planned_ms(sections)}
+
+
+@router.get("/v1/meetingsense/{meeting_id}/queue")
+async def read_queue(meeting_id: str) -> Dict[str, Any]:
+    """Audience questions waiting (MS26, Presenter). Oldest first."""
+    _require_meeting(meeting_id)
+    from .agent import presenter as presenter_mod
+
+    return {"meeting_id": meeting_id, "questions": presenter_mod.queued(meeting_id)}
+
+
+@router.post("/v1/meetingsense/{meeting_id}/queue")
+async def resolve_queue(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Take a question off the queue, once the user has dealt with it."""
+    _require_meeting(meeting_id)
+    from .agent import presenter as presenter_mod
+
+    text = str((body or {}).get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    cleared = presenter_mod.mark_answered(meeting_id, text)
+    return {"meeting_id": meeting_id, "cleared": cleared,
+            "questions": presenter_mod.queued(meeting_id)}
 
 
 @router.post("/v1/meetingsense/{meeting_id}/ask")

@@ -678,6 +678,11 @@ class TestDefenceInDepth:
         assert modules.modes.allows("note-taker") == {
             "notes": True, "answer": False, "proactive": False,
             "coach": False, "tools": False, "recall": False,
+            # MS26. Note-taker does not answer to its own name either — being addressed is a
+            # prompt, but a mode that says nothing unless asked is not asked by somebody
+            # else's microphone.
+            "addressed": False,
+            "queues": False,
         }
 
     def test_every_mode_takes_notes_and_only_practice_gets_tools(self, modules):
@@ -685,6 +690,14 @@ class TestDefenceInDepth:
         assert all(m["notes"] for m in table.values())
         assert [n for n, m in table.items() if m["tools"]] == ["practice"]
         assert [n for n, m in table.items() if m["proactive"]] == ["presenter"]
+        # MS26. `addressed` and `proactive` are different permissions, and Participant is
+        # deliberately the first mode with one and not the other: being spoken to is a prompt,
+        # speaking unbidden is not.
+        assert [n for n, m in table.items() if m["addressed"]] == [
+            "participant", "coach", "practice"]
+        # Exclusive by construction: a mode either answers the room or collects for the user.
+        assert [n for n, m in table.items() if m["queues"]] == ["presenter"]
+        assert not [n for n, m in table.items() if m["queues"] and m["addressed"]]
 
     def test_the_step_limit_ends_a_turn_rather_than_a_meeting(self, modules, monkeypatch):
         # The plan is consumed a step at a time so a run terminates by construction; this is

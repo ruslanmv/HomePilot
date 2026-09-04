@@ -137,6 +137,7 @@ class MeetingSession:
         notes_factory: Optional[Callable[[str], Any]] = None,
         vision: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,
         calendar: Optional[Callable[..., Awaitable[Any]]] = None,
+        ask: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None,
         now: Callable[[], float] = time.time,
         meeting_id: Optional[str] = None,
     ) -> None:
@@ -156,6 +157,10 @@ class MeetingSession:
         #: MS17's calendar invoker, or None. None means a meeting is named from its window
         #: title alone, which is what an install with no calendar connected has.
         self.calendar = calendar
+        #: MS26. ``async (meeting_id, question, *, mode="") -> answer frame`` — MS13's `answer`,
+        #: bound. Injected like everything else here so a test needs no model, and so the
+        #: session keeps no second opinion about how a question gets answered.
+        self._ask = ask
         #: Held so a test can await the naming instead of sleeping.
         self.metadata_task: Any = None
         self._now = now
@@ -202,6 +207,11 @@ class MeetingSession:
         #: Names a `question` chip will accept as "aimed at me" — the user's, and the
         #: persona's. Declared by `start`; empty means second person is the only signal.
         self.chip_names: List[str] = []
+        #: MS26. Names the *assistant* answers to. Kept apart from `chip_names` because the two
+        #: mean opposite things: a question naming one of these is the assistant's to answer,
+        #: and a question naming one of those is the user's — and drafting a reply to a
+        #: question that was never theirs is how an assistant starts speaking for people.
+        self.assistant_names: List[str] = []
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
@@ -269,6 +279,9 @@ class MeetingSession:
         names = message.get("names")
         self.chip_names = [str(n).strip() for n in names if str(n).strip()] \
             if isinstance(names, (list, tuple)) else []
+        assistant = message.get("assistant_names")
+        self.assistant_names = [str(n).strip() for n in assistant if str(n).strip()] \
+            if isinstance(assistant, (list, tuple)) else []
 
         # MS17. Scheduled, not awaited: a calendar round trip before `ready` is a dialog-free
         # start turned back into a wait, and the recording is what the user pressed the button
@@ -487,6 +500,8 @@ class MeetingSession:
 
         await self._maybe_notes(fresh)
         await self._maybe_chips(fresh)
+        await self._maybe_addressed(fresh)
+        await self._maybe_queue(fresh)
         return sent
 
     async def _maybe_chips(self, fresh: List[Frame],
@@ -502,8 +517,15 @@ class MeetingSession:
             return []
         try:
             from . import chips as chips_mod
+            from .agent import modes as modes_mod
 
-            found = chips_mod.detect(fresh, keyframe=keyframe, names=self.chip_names)
+            # MS26. The mode decides which offers are welcome, and it is resolved before the
+            # triggers run rather than filtered after: a chip detected and then dropped would
+            # still have spent the turn's cap.
+            policy = modes_mod.resolve(self.mode())
+            found = chips_mod.detect(fresh, keyframe=keyframe, names=self.chip_names,
+                                     kinds=policy.triggers)
+            found = await self._participate(found, policy)
             sent: List[Frame] = []
             for chip in found:
                 if len(self.chip_keys) >= chips_mod.MAX_PER_MEETING:
@@ -541,6 +563,130 @@ class MeetingSession:
         if frame is not None:
             await self.transport.send(frame)
         return frame
+
+    def mode(self) -> str:
+        """This meeting's mode. **Server state** (MS24), read fresh rather than cached.
+
+        Cached, it would be a mode set on one client and not seen by another, which is exactly
+        the thing MS24 put it in the store to prevent.
+        """
+        from .agent import subagents
+
+        try:
+            return subagents.resolve_mode(self.meeting_id)["mode"]
+        except Exception:  # noqa: BLE001 — an unreadable policy store is the floor
+            return ""
+
+    async def _participate(self, found: List[Frame], policy: Any) -> List[Frame]:
+        """MS26's drafting. Never raises, never removes a chip.
+
+        Drafting only. Answering to the assistant's *own* name is `_maybe_addressed`, because
+        that produces an `answer` frame rather than a chip and the two must never be confused:
+        a draft is offered to the user, and an answer is said to the room.
+        """
+        if not getattr(policy, "addressed", False) or self._ask is None:
+            return found
+        from .agent import participant as participant_mod
+
+        out: List[Frame] = []
+        for chip in found:
+            if chip.get("kind") != "question":
+                out.append(chip)
+                continue
+            if participant_mod._mentions(chip.get("text") or "", self.assistant_names):
+                # Named the assistant, so `_maybe_addressed` is answering it. Dropping the
+                # chip here rather than drafting an empty one: "Ana, what do you think?"
+                # answered aloud *and* offered to the user as a draft is two answers on
+                # screen for one question, and the user has to work out which is live.
+                continue
+            try:
+                text = await participant_mod.draft(chip.get("text") or "",
+                                                   answer=self._ask, meeting_id=self.meeting_id)
+            except Exception:  # noqa: BLE001 — a draft is never worth the meeting
+                log.exception("meetingsense: drafting failed for %s", self.meeting_id)
+                text = ""
+            out.append(participant_mod.attach_draft(chip, text))
+        return out
+
+    async def _maybe_addressed(self, fresh: List[Frame]) -> List[Frame]:
+        """Answer a question that named the assistant (MS26). Never raises.
+
+        The one place this assistant speaks into a meeting without a socket frame telling it to
+        — and it is not unprompted: somebody said its name and asked it something. It runs only
+        in a mode whose policy says `addressed`, and only when the meeting declared names for it
+        to answer to. With none declared nothing fires, which is the narrow behaviour and the
+        right one: the failure mode of guessing is answering to somebody else's name in front
+        of them.
+        """
+        if not getattr(getattr(self.config, "flags", None), "modes", False):
+            return []
+        if not self.assistant_names or self._ask is None:
+            return []
+        try:
+            from .agent import modes as modes_mod
+            from .agent import participant as participant_mod
+
+            policy = modes_mod.resolve(self.mode())
+            if not policy.addressed:
+                return []
+            sent: List[Frame] = []
+            for segment in fresh:
+                hit = participant_mod.addressed(segment, assistant_names=self.assistant_names)
+                if not hit:
+                    continue
+                frame = await self._ask(self.meeting_id, hit["question"], mode=policy.name)
+                if not frame or not (frame.get("text") or "").strip():
+                    continue
+                frame = dict(frame, addressed_as=hit["name"], t0=hit.get("t0"))
+                await self.transport.send(frame)
+                sent.append(frame)
+                # One per turn. A window carrying three questions to the assistant is a window
+                # where it should answer the first and let a person handle the rest.
+                break
+            return sent
+        except Exception:  # noqa: BLE001 — never worth the meeting
+            log.exception("meetingsense: addressed handling failed for %s", self.meeting_id)
+            return []
+
+    async def _maybe_queue(self, fresh: List[Frame]) -> List[Frame]:
+        """Presenter: hold the audience's questions (MS26). Never raises.
+
+        Every question from the call goes on the queue — the ones aimed at the user, and the
+        ones that named the assistant. The mode makes no distinction because the user is
+        presenting, and "who was that for" is a judgement they will make in two seconds when
+        they look at the list. What matters is that nothing is answered out loud.
+
+        A `queued` frame goes out so the card can show a count. Quiet by construction: a
+        number changing is not an interruption.
+        """
+        if not getattr(getattr(self.config, "flags", None), "modes", False):
+            return []
+        try:
+            from . import chips as chips_mod
+            from .agent import modes as modes_mod
+            from .agent import presenter as presenter_mod
+
+            if not modes_mod.resolve(self.mode()).queues:
+                return []
+            sent: List[Frame] = []
+            for segment in fresh:
+                if (segment or {}).get("speaker") != "them":
+                    continue
+                text = ((segment or {}).get("text") or "").strip()
+                if not text or not chips_mod._asking(text):
+                    continue
+                if not presenter_mod.enqueue(self.meeting_id, text,
+                                             t0=(segment or {}).get("t0_ms")):
+                    continue
+                frame = {"type": "queued", "meeting_id": self.meeting_id, "text": text,
+                         "t0": segment.get("t0_ms"),
+                         "waiting": len(presenter_mod.queued(self.meeting_id))}
+                await self.transport.send(frame)
+                sent.append(frame)
+            return sent
+        except Exception:  # noqa: BLE001 — never worth the meeting
+            log.exception("meetingsense: queueing failed for %s", self.meeting_id)
+            return []
 
     async def on_partial(self, message: Frame) -> List[Frame]:
         """Transcribe a frame provisionally: emit ``partial``, store nothing, remember nothing.
