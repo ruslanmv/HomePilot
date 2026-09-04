@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W9 — Modes & voice
 
-### MS26 — Participant and Presenter · `PENDING`
+### MS26 — Participant and Presenter · `0be6c6a`
 
 - `agent/mode_prompts.py`, `agent/participant.py`, `agent/presenter.py`, and **two new columns
   on `modes.py` rather than two branches in the graph** — `addressed` (answers to its own name)
