@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W11 — The mount
 
-### MS29 — the mount, one button, and "can you see my screen?" · `PENDING`
+### MS29 — the mount, one button, and "can you see my screen?" · `95aea6a`
 
 - **The finding that prompted it**: W0–W10 mounted nothing. Every React component was a tested
   island no page rendered, `homepilot-meetingsense.js` was never in `index.html` so
