@@ -99,6 +99,7 @@ default false:
 | `MEETINGSENSE_AGENT` | `false` | the LangGraph agent instead of the fixed notes loop |
 | `MEETINGSENSE_MODES` | `false` | Participant / Coach / Presenter / Practice, and MS25's chips |
 | `MEETINGSENSE_CATALOG` | `false` | the Meetings tab in the sidebar. The History chip needs only the master flag |
+| `MEETINGSENSE_SCREEN` | **`true`** | agents know when you are sharing your screen. The one flag here that defaults on — see MS29 |
 
 **None is implied by the master.** A batch lands its capability with the flag off, so turning
 the recorder on never turns on something a later wave built.
@@ -1062,6 +1063,83 @@ their types to cover both or handing them a lie.
 
 Every path out of the catalog leads back to the conversation, because D5's point is that the
 catalog is a way in rather than a second home.
+
+### The mount, and the one button (MS29)
+
+Everything above this line was built and none of it was on screen. W0–W10 produced a recorder,
+a card, a pill, a consent sheet, four helper modes, a catalog and 1,058 backend tests — and
+mounted **nothing**: every React component was a tested island that no page rendered, and
+`homepilot-meetingsense.js` was never added to `index.html`, so `window.hpMeetingSense` did not
+exist in the running app. `entryPoint.attach()` was written in MS5 for exactly this and was
+never called.
+
+Every batch was specified "additive, new directories, existing files get guarded hooks only",
+and that was followed so precisely that the mount *points* were built and the mount never was.
+There was no integration batch in the plan. This is it.
+
+**`MeetingSenseProvider` is the only thing the application renders.** One component wraps the
+app shell; the pill, the card and the consent sheet hang off it, so there is a single place to
+answer "is MeetingSense on screen right now, and why". With nothing recording it contributes
+no node at all — asserted as `innerHTML` against the unwrapped app, because a provider around
+the whole product is the most dangerous thing this programme has added.
+
+**One click starts a meeting.** Notes and slides are on by default; a record button that opens
+a form is a record button pressed after the first two minutes are gone. The 👁 popover from MS5
+remains where those are changed, reached by a chevron beside the button. A blocked button
+*names its cause* — no conversation, no speech provider, feature off — and forwards the
+server's own hint rather than paraphrasing it into a staler copy.
+
+**Consent comes before capture, once.** The sheet appears before the first recording on this
+machine and is remembered only if the user ticks the box. A dialog that appears every time is
+one people learn to dismiss without reading, which is the opposite of consent.
+
+**"Stop" is still a countdown, and the button says so.** Pressing it a second time starts MS6's
+ten-second window with capture still running, so undoing leaves no hole in the transcript.
+
+#### What this makes work, that already existed
+
+The part everybody asks for — *"the AI can see what's going on in the meeting"* — needed no new
+code. `live_context.for_conversation()` has been called from `prompt_builder.py` since MS18.
+The moment a meeting is running against a conversation, the persona's system prompt carries the
+last ninety seconds, the rolling notes, the recap and the slide on screen. It was simply never
+reachable, because no meeting could be started from the UI.
+
+### "Can you see my screen?" (MS29)
+
+The bug: you press 👁 Share screen, the vision model captions the frame correctly, and the chat
+answers *"No, I can't see your screen."* Nothing was broken — the caption went to ScreenSense's
+own panel and the chat model was never told, so from where it sat that answer was true. It was
+also a flat **capability claim**, which is the kind of wrong that stops somebody asking again.
+
+`screen_context.py` puts a `[LIVE SCREEN]` block on the same prompt seam MS18 uses:
+
+```
+[LIVE SCREEN]
+The user is sharing their screen with you right now — a window or tab they picked,
+started 4 minutes ago.
+The last look at it, just now: a Python traceback about a missing module.
+Never tell them you cannot see their screen. If they ask about it, take a look.
+```
+
+**Presence and content are separated deliberately.** Presence — *a screen is being shared* —
+leaks nothing about what is on it and on its own fixes the bug. The caption is genuinely screen
+content in a prompt, so it is capped at 400 characters, carries its age, and **expires after 90
+seconds**: a caption from four minutes ago describes a screen that is gone, and repeating it
+confidently is worse than saying nothing. Past that the presence line stands alone and the
+persona is told to look again. A share nobody stopped expires after five minutes, because a tab
+that closed mid-share never says so.
+
+**Two switches, and either one saying no is enough.** `MEETINGSENSE_SCREEN` is the operator's,
+server-wide. *Settings → "Let agents see my shared screen"* is the user's, on this browser, and
+it stops the pings at the source so nothing reaches a prompt even on a server that permits it.
+Turning it off mid-share **retracts** what the server already holds rather than merely muting
+what comes next. A privacy control that can be overridden from the other end is not a control.
+
+**This is the one flag in MeetingSense that defaults on**, and the reason is narrow: the block
+exists only *while* a screen is actively being shared — a deliberate act, with an
+operating-system indicator on it, taken in order to be seen. It appears when you share and is
+gone the moment you stop. Every other flag here gates something that would otherwise run in the
+background, which is why they all default off.
 
 ### What the automated tests cover, and what they cannot
 

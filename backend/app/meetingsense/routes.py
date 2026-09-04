@@ -899,3 +899,32 @@ async def attach_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any
     if result is None:
         raise HTTPException(status_code=404, detail="not found")
     return result
+
+
+# ── MS29: the screen the user is sharing ────────────────────────────────────
+
+
+@router.post("/v1/meetingsense/screen/{conversation_id}")
+async def screen_share_state(conversation_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Tell the server a screen share started, stopped, or was looked at (MS29).
+
+    Three verbs on one route because they are one fact — "a screen is being shared here" —
+    changing state, and three routes would be three places to keep that fact consistent.
+
+    Not gated on ``enabled``: this is the seam that makes a persona stop denying it can see the
+    screen, and it is the one part of MeetingSense that stands alone. ScreenSense works on an
+    install with the recorder switched off, and this has to work there too.
+    """
+    from . import screen_context as screen_mod
+
+    action = str((body or {}).get("action") or "").strip().lower()
+    if action == "start":
+        ok = screen_mod.begin(conversation_id, mode=str((body or {}).get("mode") or "browser"))
+    elif action == "stop":
+        ok = screen_mod.end(conversation_id)
+    elif action == "seen":
+        ok = screen_mod.observe(conversation_id, str((body or {}).get("caption") or ""))
+    else:
+        raise HTTPException(status_code=400, detail="action must be start, stop or seen")
+    return {"conversation_id": conversation_id, "action": action, "ok": ok,
+            "sharing": screen_mod.active(conversation_id) is not None}

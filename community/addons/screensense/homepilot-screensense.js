@@ -64,6 +64,37 @@
         return 'upload';
     }
 
+    /**
+     * Tell the backend a screen share started, stopped, or was looked at (MS29).
+     *
+     * This is the whole of the fix for "can you see my screen?" → "No, I can't." The capture
+     * always worked; the chat model was simply never told, so from where it sat that answer
+     * was true. Now the persona's prompt carries a [LIVE SCREEN] block while sharing is on.
+     *
+     * Fire-and-forget on purpose: a presence ping that fails must never delay a capture or
+     * surface an error. The server expires a share it stops hearing about.
+     */
+    /** The user's own switch (Settings → Multimodal). Off means nothing is ever sent. */
+    let awareness = true;
+
+    function tellBackend(action, conversationId, extra) {
+        // Checked here rather than at each call site, so a future caller cannot forget it.
+        // "stop" is always allowed through: turning the setting off mid-share must retract
+        // what the server already knows, not merely stop adding to it.
+        if (!awareness && action !== 'stop') return;
+        const cid = String(conversationId || '').trim();
+        if (!cid) return;
+        try {
+            fetch(API_BASE + '/v1/meetingsense/screen/' + encodeURIComponent(cid), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(Object.assign({ action: action }, extra || {})),
+            }).catch(function () {});
+        } catch (_) {
+            // An install without MeetingSense answers 404 and nothing here cares.
+        }
+    }
+
     class HPScreenSense {
         constructor() {
             this.stream = null;
@@ -104,6 +135,12 @@
                 this.mode = 'upload';
                 return true;
             }
+            // MS29. The share is live the moment the picker is accepted — before any frame is
+            // captured — so a persona asked "can you see my screen?" straight afterwards
+            // answers yes rather than denying something that is already true.
+            if (this._conversationId) {
+                tellBackend('start', this._conversationId, { mode: this.mode });
+            }
             const v = document.createElement('video');
             v.srcObject = this.stream;
             v.muted = true;
@@ -124,6 +161,13 @@
             this.stream = null;
             this.video?.remove();
             this.video = null;
+            // The persona must stop believing it can see the screen the moment the user stops
+            // showing it. Everything the server held about the share, including the last
+            // caption, goes with this.
+            if (this._conversationId) {
+                tellBackend('stop', this._conversationId);
+                this._conversationId = null;
+            }
         }
 
         // ── Capture a single downscaled JPEG Blob, per active mode ─────────────
@@ -270,6 +314,17 @@
                 });
                 if (!an.ok) throw new Error('analyze ' + an.status);
                 const out = await an.json();
+                // MS29. Two facts the chat needs: a screen is being shared, and this is the
+                // most recent thing read off it. Sent after the answer rather than before, so
+                // a failed capture never leaves the persona claiming to see a screen it did
+                // not manage to look at.
+                if (opts.conversationId) {
+                    this._conversationId = opts.conversationId;
+                    tellBackend('start', opts.conversationId, { mode: this.mode });
+                    if (out.analysis_text) {
+                        tellBackend('seen', opts.conversationId, { caption: out.analysis_text });
+                    }
+                }
                 return {
                     ok: !!out.ok,
                     analysis_text: out.analysis_text || '',
@@ -283,6 +338,42 @@
             }
         }
     }
+
+    /**
+     * Name the conversation a share belongs to (MS29).
+     *
+     * `ask()` already carries one, but `enable()` runs first when the user presses the button
+     * before typing anything — and that is the moment the persona needs to stop denying it can
+     * see the screen. A host app calls this once, when the conversation changes.
+     */
+    HPScreenSense.prototype.bindConversation = function (conversationId) {
+        const next = String(conversationId || '').trim() || null;
+        if (next === this._conversationId) return;
+        // A share belongs to the conversation it was started in. Moving it would put one
+        // person's screen into another thread's prompt.
+        if (this._conversationId) tellBackend('stop', this._conversationId);
+        this._conversationId = next;
+        if (next && this.enabled) tellBackend('start', next, { mode: this.mode });
+    };
+
+    /**
+     * The user's switch (MS29). `false` retracts any live share immediately.
+     *
+     * Retracting rather than merely muting: somebody who turns this off mid-share is asking
+     * for the screen to stop being in the prompt *now*, not from the next frame onwards.
+     */
+    HPScreenSense.prototype.setAwareness = function (on) {
+        const next = on !== false;
+        if (next === awareness) return next;
+        if (!next && this._conversationId) {
+            tellBackend('stop', this._conversationId);
+        }
+        awareness = next;
+        if (next && this._conversationId && this.enabled) {
+            tellBackend('start', this._conversationId, { mode: this.mode });
+        }
+        return next;
+    };
 
     HPScreenSense.prototype.isScreenQuery = function (text) {
         return /\b(look|looking|see|check|glance|watch)\b[^.?!]{0,40}\b(screen|display|monitor|pantalla|window)\b/i.test(

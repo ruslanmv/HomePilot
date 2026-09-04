@@ -51,6 +51,13 @@ def build_system_prompt(
     if live:
         sections.append(live)
 
+    # 0b. Live screen context (MS29). Same seam, same guard, and three lines rather than nine
+    #     hundred tokens — it says a screen is being shared and what was last seen on it. With
+    #     nobody sharing this is "" and the prompt is byte-identical to what it was.
+    screen = _live_screen_context(conversation_id)
+    if screen:
+        sections.append(screen)
+
     # 1. Core personality prompt (always present)
     sections.append(agent.system_prompt)
 
@@ -98,6 +105,23 @@ def _live_meeting_context(conversation_id: Optional[str]) -> str:
         return ""
     try:
         from ..meetingsense.live_context import for_conversation
+
+        return for_conversation(conversation_id)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _live_screen_context(conversation_id: Optional[str]) -> str:
+    """MS29's screen block, or "" — including on every install that does not have it.
+
+    The same seam and the same guard as `_live_meeting_context` above. A persona that cannot
+    answer because the user was sharing their screen would be a worse bug than no screen
+    context at all.
+    """
+    if not conversation_id:
+        return ""
+    try:
+        from ..meetingsense.screen_context import for_conversation
 
         return for_conversation(conversation_id)
     except Exception:  # noqa: BLE001

@@ -111,6 +111,9 @@ import {
 } from './meetingsense/catalog'
 import { useMeetingCatalog } from './meetingsense/useMeetingCatalog'
 import { MeetingLibrary } from './meetingsense/MeetingLibrary'
+import { MeetingSenseProvider } from './meetingsense/MeetingSenseProvider'
+import { MeetingButton } from './meetingsense/MeetingButton'
+import type { MeetingSenseStatus } from './meetingsense/entryPoint'
 
 /** Shared so History does not allocate a Set per render on an install with no meetings. */
 const EMPTY_MEETING_IDS: Set<string> = new Set()
@@ -2399,6 +2402,12 @@ function ChatState({
             allowPersonaMode={allowPersonaMode}
           />
         </div>
+        {/* MS29. One click starts a meeting. Under the composer rather than in a menu,
+            because a record button people have to go looking for is pressed after the first
+            two minutes are gone. Renders nothing when the server has the feature off. */}
+        <div className="px-4 pt-2 flex justify-center">
+          <MeetingButton />
+        </div>
         <div className="text-center text-[11px] text-[#444] pt-3 font-medium">
           HomePilot can make mistakes. Verify outputs.
         </div>
@@ -2721,6 +2730,9 @@ export default function App() {
   // operator turns the tab on where the meetings are — and so an install with MeetingSense
   // off can never show it, whatever the catalog flag says.
   const [meetingsNavEnabled, setMeetingsNavEnabled] = useState(false)
+  // MS29. The one status body the whole feature reads: the nav flag, the record button, and
+  // the consent sheet's copy all come from it, so there is one round trip and one answer.
+  const [meetingStatus, setMeetingStatus] = useState<MeetingSenseStatus | null>(null)
   const meetingsView = useMeetingCatalog({ enabled: meetingsNavEnabled && mode === 'meetings' })
   useEffect(() => {
     let cancelled = false
@@ -2728,9 +2740,12 @@ export default function App() {
       try {
         const res = await fetch('/v1/meetingsense/status')
         const body = res.ok ? await res.json() : null
-        if (!cancelled) setMeetingsNavEnabled(msCatalogEnabled(body))
+        if (cancelled) return
+        setMeetingsNavEnabled(msCatalogEnabled(body))
+        setMeetingStatus(body)
       } catch {
-        // An optional nav item's probe failing is not something to tell the user about.
+        // An optional feature's probe failing is not something to tell the user about. The
+        // status stays null, the button does not render, and the app is what it was.
       }
     })()
     return () => { cancelled = true }
@@ -5258,6 +5273,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
   )
 
   return (
+    <MeetingSenseProvider
+      conversationId={conversationId}
+      status={meetingStatus}
+      compact={isMobile}
+      screenAwareness={settingsDraft.screenAwareness ?? true}
+    >
     <div className="hp-app-shell flex bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
       {/* ── Mobile sidebar overlay ── */}
       {isMobile && mobileSidebarOpen && (
@@ -6252,5 +6273,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
        */}
       <WizardProgressOverlay />
     </div>
+    </MeetingSenseProvider>
   )
 }

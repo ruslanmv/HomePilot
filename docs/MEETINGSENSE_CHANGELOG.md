@@ -17,6 +17,50 @@ this is reachable and no table is created.
 
 ---
 
+## W11 — The mount
+
+### MS29 — the mount, one button, and "can you see my screen?" · `PENDING`
+
+- **The finding that prompted it**: W0–W10 mounted nothing. Every React component was a tested
+  island no page rendered, `homepilot-meetingsense.js` was never in `index.html` so
+  `window.hpMeetingSense` did not exist in the running app, and `entryPoint.attach()` — written
+  in MS5 for exactly this — was never called. The plan had no integration batch and I did not
+  flag the gap, reporting waves complete on backend and component tests that were real while
+  the user-facing surface stayed unreachable.
+- `MeetingSenseProvider` is the single mount: one component around the app shell, with the pill,
+  card and consent sheet hanging off it. With nothing recording it contributes **no node at
+  all**, asserted as `innerHTML` against the unwrapped app.
+- `MeetingButton`: **one click starts**, notes and slides already on. MS5's popover stays where
+  those are changed, behind a chevron. A blocked button names its cause and forwards the
+  server's own hint rather than paraphrasing it.
+- **The headline capability needed no new code.** `live_context.for_conversation()` has been
+  called from `prompt_builder.py` since MS18; the persona has always been able to see the live
+  meeting. It was simply unreachable because no meeting could be started from the UI.
+- `screen_context.py` fixes *"can you see my screen?" → "No, I can't."* The capture always
+  worked; the chat model was never told, so that answer was true — and was a flat capability
+  claim, which is the kind of wrong that stops somebody asking again. Presence and content are
+  separated: presence leaks nothing, and the caption is capped, aged and **expires at 90
+  seconds** because describing a screen that has moved on is worse than saying nothing.
+- **Two switches, either sufficient**: `MEETINGSENSE_SCREEN` for the operator, a Settings toggle
+  for the user, which stops the pings at source and **retracts** a live share when turned off
+  mid-session. The only flag in MeetingSense that defaults on, because the block exists solely
+  while a screen is actively being shared.
+- **Seven mutation survivors, and two were real.** `begin()` was reachable through the context
+  and never checked the server's flag — hiding a control is not the same as turning a capability
+  off. And the outer render guard restated what the two inner guards already said, so it was
+  removed rather than kept as dead logic.
+- **Two of my tests asserted behaviour the product deliberately does not have**: that Stop stops
+  (MS6 made it a ten-second countdown so undo leaves no hole) and that accepting consent
+  remembers it (the box is unticked by default — consent that remembers itself unasked is not
+  consent). Both were corrected to the real behaviour rather than the behaviour changed.
+- Two more survivors were the frozen-clock trap from MS15 and the LangGraph fix appearing a
+  third time: tests seeded a 2025 timestamp while the code under test read the real clock, so
+  the share expired on its own and the assertion passed without the thing it named ever working.
+- 29 vitest + 33 pytest, 41 mutations each fail. `tests/meetingsense`: 1091 passed. Frontend:
+  656 passed, production build clean. Backend baseline unchanged at 244.
+
+---
+
 ## Fixes
 
 ### The LangGraph engine did nothing at all · `81fe3e2`
