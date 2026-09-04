@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W9 — Modes & voice
 
-### MS27 — Coach, Practice, and the voice that reaches the call · `PENDING`
+### MS27 — Coach, Practice, and the voice that reaches the call · `b63be99`
 
 - `agent/coaching.py`, `agent/practice.py`, `agent/voice_out.py`, `VoiceSetup.tsx`, a mode badge
   on the pill and a sentence per mode in the consent sheet. Behind `MEETINGSENSE_MODES`.
