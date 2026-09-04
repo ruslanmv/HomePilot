@@ -186,6 +186,22 @@ class MeetingSession:
         #: The task that ends this meeting when its grace window runs out. Held so a resume
         #: can cancel it and a test can await it.
         self.expiry_task: Any = None
+        #: MS25. The chips this meeting has offered, by id. **The server keeps them, and a
+        #: client accepts an id — never a payload.** A chip carries the arguments a tool will
+        #: be invoked with, so accepting a body would let whatever is on the page rewrite what
+        #: the user thought they were agreeing to, and ask-before-acting would be asking about
+        #: one thing and acting on another.
+        self.chips: Dict[str, Frame] = {}
+        #: The project this meeting belongs to, for resolving a chip's capability inside the
+        #: right allow-list.
+        self.project_id: Optional[str] = None
+        #: MS25. Chip keys already offered in this meeting, so the same offer is made once.
+        #: In memory rather than in the store because a chip is an interruption, and an
+        #: interruption that survives a reconnect to interrupt again is a bug, not a feature.
+        self.chip_keys: set = set()
+        #: Names a `question` chip will accept as "aimed at me" — the user's, and the
+        #: persona's. Declared by `start`; empty means second person is the only signal.
+        self.chip_names: List[str] = []
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
@@ -244,6 +260,15 @@ class MeetingSession:
                 self.notes = self._notes_factory(self.meeting_id)
             except Exception:  # noqa: BLE001 — a meeting without notes is still a meeting
                 log.exception("meetingsense: could not build a notes engine for %s", self.meeting_id)
+
+        # MS25. Names a `question` chip will accept as "aimed at me". Taken from the start
+        # frame rather than guessed, because who the assistant answers to is the client's to
+        # say — and with none supplied, second person is the only signal, which is the
+        # narrower behaviour.
+        self.project_id = message.get("project_id")
+        names = message.get("names")
+        self.chip_names = [str(n).strip() for n in names if str(n).strip()] \
+            if isinstance(names, (list, tuple)) else []
 
         # MS17. Scheduled, not awaited: a calendar round trip before `ready` is a dialog-free
         # start turned back into a wait, and the recording is what the user pressed the button
@@ -461,7 +486,40 @@ class MeetingSession:
             sent.append(frame)
 
         await self._maybe_notes(fresh)
+        await self._maybe_chips(fresh)
         return sent
+
+    async def _maybe_chips(self, fresh: List[Frame],
+                           keyframe: Optional[Frame] = None) -> List[Frame]:
+        """MS25's deterministic triggers, behind `flags.modes`. Never raises.
+
+        Guarded twice over — the flag, and a `try` around the whole of it — for the reason the
+        notes are: an install that records a perfectly good transcript must not lose it to a
+        regular expression. The detection itself is pure, so everything that can go wrong here
+        is in the sending.
+        """
+        if not getattr(getattr(self.config, "flags", None), "modes", False):
+            return []
+        try:
+            from . import chips as chips_mod
+
+            found = chips_mod.detect(fresh, keyframe=keyframe, names=self.chip_names)
+            sent: List[Frame] = []
+            for chip in found:
+                if len(self.chip_keys) >= chips_mod.MAX_PER_MEETING:
+                    break
+                k = chips_mod.key(chip)
+                if k in self.chip_keys:
+                    continue
+                self.chip_keys.add(k)
+                frame = chips_mod.frame(self.meeting_id, chip)
+                self.chips[frame["id"]] = chip
+                await self.transport.send(frame)
+                sent.append(frame)
+            return sent
+        except Exception:  # noqa: BLE001 — a chip is never worth a meeting
+            log.exception("meetingsense: chips failed for %s", self.meeting_id)
+            return []
 
     async def _maybe_notes(self, fresh: List[Frame]) -> Optional[Frame]:
         """Feed the notes engine and push a `notes` frame when it produced one.
@@ -623,6 +681,10 @@ class MeetingSession:
             await self.transport.send(frame)
         except Exception:  # noqa: BLE001 — the socket may be gone; the caption is stored
             log.debug("meetingsense: could not send a slide frame for %s", keyframe_id, exc_info=True)
+        # MS25's link chip comes from the caption, not from the keyframe: a URL is only "on a
+        # slide" once something has read the slide. An install with no vision model gets slides
+        # and no link chips, which is the honest outcome — nothing read the screen.
+        await self._maybe_chips([], keyframe=frame)
 
     async def drain_captions(self, timeout: float = CAPTION_DRAIN_S) -> int:
         """Wait, briefly, for captions still in flight. Returns how many did not finish.

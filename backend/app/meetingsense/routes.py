@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse, Response
 from . import ask as ask_mod
 from . import audio as audio_wire
 from . import binding as binding_mod
+from . import chips as chips_mod
 from . import export as export_mod
 from . import keyframes as keyframes_mod
 from . import notes_engine as notes_engine_mod
@@ -329,6 +330,11 @@ async def meetingsense_session(websocket: WebSocket) -> None:
                     # mid-meeting does not need a second round trip through HTTP.
                     await _handle_ask(session, message)
 
+                elif kind == "chip_action":
+                    # MS25. The user said yes to a chip. The id is all that crosses the wire —
+                    # see `_handle_chip_action`.
+                    await _handle_chip_action(session, message)
+
                 elif kind == "status":
                     await session.send_status(grace_s=cfg.resume.grace_s)
 
@@ -617,6 +623,33 @@ async def _handle_ask(session, message: Dict[str, Any]) -> Dict[str, Any]:
         call=call_model,
         now_ms=session.elapsed_ms,
     )
+    await session.transport.send(frame)
+    return frame
+
+
+async def _handle_chip_action(session, message: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the proposal on a chip the user accepted (MS25).
+
+    **An id crosses the wire, never a chip.** The server offered the chip and the server still
+    has it, so what runs is what was shown. Accepting a body instead would let whatever is on
+    the page rewrite the arguments between the offer and the acceptance, and ask-before-acting
+    would be asking about one thing and acting on another.
+
+    An unknown id is answered rather than ignored: it means the card and the server disagree
+    about what is on screen — a reconnect, a second client, a stale render — and a button that
+    silently does nothing is the worst version of that.
+    """
+    chip_id = str((message or {}).get("id") or "").strip()
+    chip = session.chips.get(chip_id)
+    if chip is None:
+        return await session.send_error("chip_unknown", f"no chip {chip_id!r} in this meeting")
+
+    result = await chips_mod.accept(
+        session.meeting_id, chip,
+        router=chips_mod.router_bridge(),
+        tool_source=session.project_id,
+    )
+    frame = {"type": "chip_result", "id": chip_id, **result}
     await session.transport.send(frame)
     return frame
 

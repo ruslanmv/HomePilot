@@ -52,6 +52,7 @@
  *
  *   await hpMeetingSense.start({ conversationId, title, source, apiKey });
  *   hpMeetingSense.muteMic(true);          // your side only; the call keeps recording
+ *   hpMeetingSense.acceptChip(id);         // MS25: say yes to an offer. An id, never a chip
  *   await hpMeetingSense.stop();
  *   hpMeetingSense.audioMode                // 'system+mic' | 'system' | 'mic' | 'none'
  *   hpMeetingSense.levels                   // RMS per channel, for the pill's meter
@@ -65,6 +66,8 @@
  *   ms:audio_lost  a track ended mid-meeting   detail: {track, audioMode}
  *   ms:reconnecting  the socket dropped        detail: {attempt, delay, meetingId}
  *   ms:resumed       the meeting continued     detail: {meeting_id, segments, seq}
+ *   ms:chip        an offer on the card        detail: {id, kind, text, t0, proposal?}
+ *   ms:chip_result what an accepted chip did   detail: {id, ok, tool?, reason?}
  *
  * Events rather than callbacks so more than one surface can listen — the chat card and the
  * recording pill are different components and neither owns the recorder.
@@ -898,6 +901,22 @@
             return this.micMuted;
         }
 
+        /**
+         * Accept a chip's offer (MS25). **An id, never a chip.**
+         *
+         * The server offered it and the server still has it, so what runs is what was shown.
+         * Sending the body back would let anything on this page rewrite the arguments between
+         * the offer and the acceptance, and ask-before-acting would be asking about one thing
+         * and acting on another. The server refuses a body it did not offer; this simply
+         * never sends one.
+         */
+        acceptChip(chipId) {
+            const id = String(chipId || '').trim();
+            if (!id || !this.recording) return false;
+            this._send({ type: 'chip_action', id: id });
+            return true;
+        }
+
         async stop() {
             if (!this.recording) return { ok: false, error: 'not recording' };
             // Cleared first: `recording` is what tells `onclose` a drop was a network event
@@ -1286,6 +1305,12 @@
                         // Two of these arrive for one slide: the frame when it is taken, and
                         // again when the caption lands. The card upserts on `id` (MS10).
                         emit('ms:slide', frame);
+                    } else if (frame.type === 'chip') {
+                        // MS25. An offer, and nothing has run: the card renders a button and
+                        // the user decides. `acceptChip` is what acts, and only then.
+                        emit('ms:chip', frame);
+                    } else if (frame.type === 'chip_result') {
+                        emit('ms:chip_result', frame);
                     } else if (frame.type === 'status' || frame.type === 'final') {
                         emit('ms:status', frame);
                     } else if (frame.type === 'error') {

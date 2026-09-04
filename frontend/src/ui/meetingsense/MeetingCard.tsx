@@ -24,6 +24,7 @@
  * phone, and the slides are the thing a reader goes looking for rather than watches.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import ChipRow from './ChipRow';
 import SlideStrip from './SlideStrip';
 import {
     latencyLabel,
@@ -40,6 +41,10 @@ export interface MeetingCardProps {
     compact?: boolean;
     lastLines?: number;
     onExport?: (fmt: 'md' | 'srt' | 'json') => void;
+    /** MS25. Both absent means the card shows no chips at all — which is what a surface that
+     *  has not wired them, or an install with the flag off, should show. */
+    onAcceptChip?: (id: string) => void;
+    onDismissChip?: (id: string) => void;
 }
 
 function Line({ segment, provisional }: { segment: Segment; provisional?: boolean }) {
@@ -59,7 +64,9 @@ function Line({ segment, provisional }: { segment: Segment; provisional?: boolea
     );
 }
 
-export function MeetingCard({ view, compact = false, lastLines = 3, onExport }: MeetingCardProps) {
+export function MeetingCard({
+    view, compact = false, lastLines = 3, onExport, onAcceptChip, onDismissChip,
+}: MeetingCardProps) {
     const scroller = useRef<HTMLDivElement | null>(null);
     const [stuck, setStuck] = useState(true);
     const [unseen, setUnseen] = useState(0);
@@ -142,6 +149,18 @@ export function MeetingCard({ view, compact = false, lastLines = 3, onExport }: 
             {/* Under the transcript, not beside it: the transcript is what the reader is
                 following, and a strip in the margin competes with it for the same attention
                 while adding a horizontal scroll on every phone. */}
+            {/* Between the transcript and the slides: a chip is about what was *just* said,
+                so it sits where the reader's eye already is when a new line lands. Above the
+                transcript it would push the words the reader is following down the card. */}
+            {onAcceptChip && onDismissChip ? (
+                <ChipRow
+                    chips={view.chips}
+                    onAccept={onAcceptChip}
+                    onDismiss={onDismissChip}
+                    compact={compact}
+                />
+            ) : null}
+
             <SlideStrip slides={view.slideList} segments={view.segments} compact={compact} />
 
             {unseen > 0 && !stuck ? (

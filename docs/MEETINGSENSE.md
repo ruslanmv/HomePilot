@@ -98,7 +98,7 @@ default false:
 | `MEETINGSENSE_CATALOG` | `false` | the Meetings library view |
 | `MEETINGSENSE_MCP` | `false` | the `ms.*` MCP server |
 | `MEETINGSENSE_AGENT` | `false` | the LangGraph agent instead of the fixed notes loop |
-| `MEETINGSENSE_MODES` | `false` | Participant / Coach / Presenter / Practice |
+| `MEETINGSENSE_MODES` | `false` | Participant / Coach / Presenter / Practice, and MS25's chips |
 
 **None is implied by the master.** A batch lands its capability with the flag off, so turning
 the recorder on never turns on something a later wave built.
@@ -755,6 +755,72 @@ Approvals live in `ms_artifacts`, so the delete that removes everything else abo
 removes these as well. A consent that outlived its meeting would be a consent nobody could
 withdraw.
 
+### Chips: what the meeting offers to do (MS25)
+
+`backend/app/meetingsense/chips.py` and `frontend/src/ui/meetingsense/ChipRow.tsx`, behind
+`MEETINGSENSE_MODES` (default off). A chip is a small dismissible offer on the card — *that
+looked like a decision*, *there is a date in that sentence*, *the slide has a link*.
+
+**Every trigger is deterministic. Nothing here asks a model.** A chip interrupts: it appears
+while somebody is talking and *because* of what they just said, so a chip that is wrong is not
+a bad summary the user scrolls past — it is the assistant visibly misunderstanding the room, in
+front of the room. MS12's notes can afford to be occasionally loose because they are read
+afterwards; a chip cannot.
+
+That buys a trade, stated once: **these triggers miss.** The tests that matter are the ones
+that must *not* fire, and they are collected in one list because they are the acceptance
+criterion:
+
+| Trigger | Fires on | Stays quiet on |
+|---|---|---|
+| `question` | a question somebody else asked *you* | a question **you** asked; a question to the room ("what time is the release?"); verbal commas ("does that make sense?", "can you hear me?") |
+| `decision` | "we're going with the second option" | asking about deciding ("so we're going with the second option?"); "we have not decided" |
+| `action` | "Ana will send the revised terms" | "who will send the terms?"; "so Ana will send the terms?"; "someone will"; "we will see"; "I will try"; "Ana will **not** send" |
+| `date` | "by Friday", "2026-04-20", "March 3" | `monday.com`; `example.com/2026-04-20/notes`; a bare weekday ("it has been a long Friday"); "version 3.2" |
+| `link` | a URL **on a slide** | a URL somebody read out; `node.js`; `report.pdf`; `ana@example.com` |
+
+Two of those rows are one line of code between them. URLs are stripped — schemes *and* bare
+hosts — before any other trigger reads the text, because `monday.com` is a weekday to any
+pattern that has not been shown the address. And a bare host on a slide is deliberately **not**
+a link: requiring a scheme or `www.` misses `monday.com` written plainly on a slide, and that is
+the right miss, because the alternative opens `report.pdf` in a browser.
+
+A slide's link comes from the **caption**, not from the keyframe: a URL is only "on a slide"
+once something has read the slide. An install with no vision model gets slides and no link
+chips, which is the honest outcome — nothing read the screen.
+
+#### Ask-before-acting, in the order the words are in
+
+A chip may carry a **proposal** — "Add to calendar", "Add to tasks", "Summarise this page" — and
+a proposal is a description until somebody presses the button. Rendering runs nothing. Only
+`accept` runs anything, and it has three gates that can each say no:
+
+1. The chip has a proposal at all. A `question` chip has nothing to run; the card already has a
+   way to ask.
+2. The **runtime tool router** resolves the capability inside the project's allow-list —
+   `agentic/runtime_tool_router.py`, never a second resolver here. A second allow-list that
+   disagrees with the one Forge enforces is a security control that is wrong half the time.
+3. MS24's **per-meeting approval** covers the tool the router picked — checked on the *resolved
+   tool id*, after the router has spoken, because that is what will actually be invoked.
+   Approving the capability name would approve a name and run whatever the catalog maps it to.
+
+Both a refusal and a run are recorded in `ms_artifacts`. A tool call that vanishes silently is
+one nobody can approve, because nobody knows it was wanted.
+
+**An id crosses the wire, never a chip.** The server offered the chip and still holds it, so
+`chip_action {id}` is all the client sends and what runs is what was shown. Accepting a body
+would let whatever is on the page rewrite the arguments between the offer and the acceptance —
+ask-before-acting asking about one thing and acting on another. The server ignores a `chip` a
+client sends anyway, and the addon never sends one.
+
+Dismissal is the mirror image: **local, and not a deletion.** One reader saying "not interested"
+is not a fact about the meeting, so nothing goes to the server and no record changes.
+
+Chip ids are derived from the offer rather than from a counter, so a reconnect replaying
+segments — or a second client on one meeting — produces the same row on both cards rather than
+two rows on one. Three chips are shown at once, newest first, and a meeting stops at forty:
+past that the card is a list, and a list is what the notes already are.
+
 ### What the automated tests cover, and what they cannot
 
 jsdom has no `AudioContext`, no `AudioWorklet`, no `getDisplayMedia` and no canvas, so neither
@@ -994,8 +1060,8 @@ this flag — W1 keeps working exactly as it did.
 `WS /v1/meetingsense/session`. One connection is one meeting.
 
 ```
-client → server   start · audio · keyframe · mute · ask · status · stop · ping
-server → client   ready · partial · segment · slide · notes · answer · status · final · error · pong
+client → server   start · audio · keyframe · mute · ask · chip_action · status · stop · ping
+server → client   ready · partial · segment · slide · notes · answer · chip · chip_result · status · final · error · pong
 ```
 
 Unknown types are ignored in both directions. A newer client talking to an older server

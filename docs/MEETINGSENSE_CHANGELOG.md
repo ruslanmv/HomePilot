@@ -19,6 +19,35 @@ this is reachable and no table is created.
 
 ## W9 — Modes & voice
 
+### MS25 — chips, and the order of ask-before-acting · `PENDING`
+
+- `meetingsense/chips.py` (five deterministic triggers, no model), `ChipRow.tsx`, a `chip` /
+  `chip_result` pair on the wire and a `chip_action` frame going the other way. Behind
+  `MEETINGSENSE_MODES`, default off.
+- **The negatives are the batch.** A chip interrupts, so it is tested twice: once for the
+  sentence it exists to catch and once for the sentence that looks like it. `monday.com` is not
+  a weekday, `example.com/2026-04-20/notes` is not a deadline, "so we're going with the second
+  option?" is not a decision, "so Ana will send the terms?" is not a commitment, and "does that
+  make sense?" is not a question aimed at anybody.
+- **An id crosses the wire, never a chip.** The server keeps what it offered, so what runs is
+  what was shown; a body on the wire would let the page rewrite the arguments between the offer
+  and the acceptance. The addon never sends one and the server ignores one sent anyway.
+- Three gates on `accept`: the chip has a proposal, the **runtime tool router** resolves the
+  capability (never a second allow-list), and MS24's approval covers the **resolved tool id** —
+  checked after the router has spoken, because approving a capability name approves whatever
+  the catalog currently maps it to.
+- **Eleven mutation survivors, and the two that mattered were both about unreachable code.** A
+  broad `try/except` inside `detect` was swallowing the "not a segment" guard *and* would have
+  swallowed a genuinely broken trigger; detection is pure, so the handler was removed and the
+  caller's own guard is the only one. And a "chip is renderable" check inline in a closure could
+  not be called at all, so it became `usable()` and is now tested with the chip no trigger
+  builds.
+- Two more were tests describing the wrong thing: the dismiss button was asserted to exist
+  rather than to have a name a screen reader can use ("×" passes axe and reads as "times"
+  three times in a row), and the hook re-implemented `mergeChip`'s own id guard — one
+  implementation now, tested where it lives.
+- 86 pytest + 31 vitest, 44 + 34 mutations each fail.
+
 ### CI — the vector store the tests were reading from · `PENDING`
 
 - Not a batch. `tests/meetingsense/test_retrieval.py` had three tests asserting "this install

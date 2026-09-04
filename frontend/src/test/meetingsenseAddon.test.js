@@ -573,7 +573,8 @@ describe('reconnect and backpressure, wired', () => {
         // eslint-disable-next-line no-new-func
         new Function(readFileSync(SHIPPED, 'utf8')).call(window);
         recorder = window.hpMeetingSense;
-        for (const name of ['ms:reconnecting', 'ms:resumed', 'ms:status', 'ms:segment']) listen(name);
+        for (const name of ['ms:reconnecting', 'ms:resumed', 'ms:status', 'ms:segment',
+            'ms:chip', 'ms:chip_result']) listen(name);
     });
 
     afterEach(() => {
@@ -1068,5 +1069,102 @@ describe('startWithStreams', () => {
         recorder.recording = true;
         expect(await recorder.start({ conversationId: 'c1' }))
             .toEqual({ ok: false, error: 'already recording' });
+    });
+});
+
+
+describe('chips on the wire (MS25)', () => {
+    let sockets;
+    let recorder;
+    let events;
+    let listeners;
+
+    class FakeSocket {
+        constructor(url) {
+            this.url = url;
+            this.readyState = 0;
+            this.sent = [];
+            this.bufferedAmount = 0;
+            sockets.push(this);
+        }
+        send(data) { this.sent.push(JSON.parse(data)); }
+        close() { this.readyState = 3; this.onclose?.(); }
+        open() { this.readyState = 1; this.onopen?.(); }
+        deliver(frame) { this.onmessage?.({ data: JSON.stringify(frame) }); }
+    }
+
+    function listen(name) {
+        const handler = (e) => events.push({ name, detail: e.detail });
+        window.addEventListener(name, handler);
+        listeners.push([name, handler]);
+    }
+
+    beforeEach(() => {
+        sockets = [];
+        events = [];
+        listeners = [];
+        vi.useFakeTimers();
+        vi.stubGlobal('WebSocket', FakeSocket);
+        // eslint-disable-next-line no-new-func
+        new Function(readFileSync(SHIPPED, 'utf8')).call(window);
+        recorder = window.hpMeetingSense;
+        for (const name of ['ms:chip', 'ms:chip_result']) listen(name);
+    });
+
+    afterEach(() => {
+        for (const [name, handler] of listeners) window.removeEventListener(name, handler);
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    const of = (name) => events.filter((e) => e.name === name);
+
+    async function openMeeting() {
+        const promise = recorder._connect({ conversationId: 'c1' });
+        const ws = sockets[sockets.length - 1];
+        ws.open();
+        ws.deliver({ type: 'ready', meeting_id: 'm1' });
+        await promise;
+        recorder.recording = true;
+        return ws;
+    }
+
+    it('publishes a chip frame as ms:chip', async () => {
+        const ws = await openMeeting();
+        ws.deliver({ type: 'chip', id: 'chip_a', kind: 'decision', text: 'going with Postgres' });
+        expect(of('ms:chip').map((e) => e.detail.id)).toEqual(['chip_a']);
+    });
+
+    it('publishes a chip_result frame', async () => {
+        const ws = await openMeeting();
+        ws.deliver({ type: 'chip_result', id: 'chip_a', ok: true, tool: 'hp.cal' });
+        expect(of('ms:chip_result')[0].detail.ok).toBe(true);
+    });
+
+    it('acceptChip sends an id and nothing else', async () => {
+        // The trust boundary, on the client's side of it: the server offered the chip and
+        // still has it, so sending a body back would let anything on this page rewrite what
+        // the user thought they were agreeing to.
+        const ws = await openMeeting();
+        ws.deliver({ type: 'chip', id: 'chip_a', kind: 'date', text: 'by Friday',
+            proposal: { capability: 'calendar.create_event', label: 'Add to calendar' } });
+        expect(recorder.acceptChip('chip_a')).toBe(true);
+        const sent = ws.sent.filter((f) => f.type === 'chip_action');
+        expect(sent).toEqual([{ type: 'chip_action', id: 'chip_a' }]);
+    });
+
+    it('refuses to accept once the meeting has stopped', async () => {
+        // A chip left saying "Working…" over a meeting that has ended never resolves.
+        const ws = await openMeeting();
+        recorder.recording = false;
+        expect(recorder.acceptChip('chip_a')).toBe(false);
+        expect(ws.sent.filter((f) => f.type === 'chip_action')).toEqual([]);
+    });
+
+    it('refuses an empty id', async () => {
+        const ws = await openMeeting();
+        expect(recorder.acceptChip('')).toBe(false);
+        expect(recorder.acceptChip(null)).toBe(false);
+        expect(ws.sent.filter((f) => f.type === 'chip_action')).toEqual([]);
     });
 });

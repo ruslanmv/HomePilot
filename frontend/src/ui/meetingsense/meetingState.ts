@@ -42,6 +42,27 @@ export interface Slide {
     reused?: boolean;
 }
 
+/** MS25. An offer on the card, produced by a deterministic trigger server-side. */
+export interface Chip {
+    id: string;
+    kind: 'question' | 'decision' | 'action' | 'date' | 'link';
+    text: string;
+    t0?: number | null;
+    owner?: string;
+    when?: string;
+    url?: string;
+    /** What the chip offers to do. Absent means there is nothing to run — a `question` chip
+     *  has nothing to do about it except answer it. **Never executed by rendering.** */
+    proposal?: { capability: string; label: string; args?: Record<string, unknown> };
+    /** Local, per client: the user dismissed this offer. Dismissal is not sent anywhere —
+     *  it is one reader deciding they are not interested, not a fact about the meeting. */
+    dismissed?: boolean;
+    /** What came back after the user accepted. */
+    result?: { ok: boolean; tool?: string; reason?: string } | null;
+    /** Accepted, and the answer has not arrived yet. */
+    pending?: boolean;
+}
+
 export type Phase = 'idle' | 'live' | 'reconnecting' | 'stopping' | 'ended';
 
 export interface MeetingView {
@@ -59,6 +80,7 @@ export interface MeetingView {
      *  still in flight, which is why the pill reads this and the strip reads the list. */
     slides: number;
     slideList: Slide[];
+    chips: Chip[];
     error: string | null;
 }
 
@@ -75,6 +97,7 @@ export const EMPTY_VIEW: MeetingView = {
     audioMode: null,
     slides: 0,
     slideList: [],
+    chips: [],
     error: null,
 };
 
@@ -273,3 +296,83 @@ export function consentSentences(status: {
 
 /** Seconds a stop can be taken back. Capture keeps running throughout — see MeetingCard. */
 export const UNDO_WINDOW_MS = 10000;
+
+
+/**
+ * How many chips the card shows at once (MS25).
+ *
+ * Three. A chip interrupts, and a column of them is not three interruptions — it is a panel
+ * nobody reads, which is how a feature that fires correctly still fails.
+ */
+export const MAX_VISIBLE_CHIPS = 3;
+
+/**
+ * Add or update a chip, keyed on `id`.
+ *
+ * Idempotent for the same reason `mergeSegment` is: a reconnect or a second client on one
+ * meeting re-offers what it already offered, and the server derives a chip's id from the offer
+ * rather than from a counter — so the same offer is the same row rather than a second one.
+ *
+ * **Local state is never overwritten by a re-offer.** A chip the reader dismissed stays
+ * dismissed, and one they accepted keeps its result: the second copy is the same offer
+ * arriving again, not news about it.
+ */
+export function mergeChip(chips: Chip[], incoming: Chip): Chip[] {
+    if (!incoming || !incoming.id) return chips;
+    const at = chips.findIndex((c) => c.id === incoming.id);
+    if (at === -1) return [...chips, incoming];
+    const next = chips.slice();
+    next[at] = {
+        ...incoming,
+        dismissed: chips[at].dismissed,
+        pending: chips[at].pending,
+        result: chips[at].result,
+    };
+    return next;
+}
+
+/** Mark a chip dismissed. Local only — nothing is sent, and nothing is deleted. */
+export function dismissChip(chips: Chip[], id: string): Chip[] {
+    return chips.map((c) => (c.id === id ? { ...c, dismissed: true } : c));
+}
+
+/** Record what came back from an accepted chip, and clear its pending state. */
+export function resolveChip(
+    chips: Chip[],
+    id: string,
+    result: { ok: boolean; tool?: string; reason?: string },
+): Chip[] {
+    return chips.map((c) => (c.id === id ? { ...c, pending: false, result } : c));
+}
+
+/**
+ * The chips actually on screen: newest first, dismissed ones gone, capped.
+ *
+ * Newest first because a chip is about what was *just* said; oldest-first would put the offer
+ * the reader has already ignored at the top of the list and the one they might want off the
+ * bottom of it.
+ *
+ * A chip whose action has run stays visible, so somebody who pressed a button can see what it
+ * did rather than watching the row vanish and having to trust it.
+ */
+export function visibleChips(chips: Chip[], limit = MAX_VISIBLE_CHIPS): Chip[] {
+    return chips.filter((c) => !c.dismissed).slice(-limit).reverse();
+}
+
+/** The words on a chip's badge. One place, so the card and a test agree. */
+export function chipLabel(chip: Chip): string {
+    switch (chip.kind) {
+        case 'question':
+            return 'Asked you';
+        case 'decision':
+            return 'Decision';
+        case 'action':
+            return chip.owner && chip.owner !== 'me' ? `Action · ${chip.owner}` : 'Action';
+        case 'date':
+            return chip.when ? `Date · ${chip.when}` : 'Date';
+        case 'link':
+            return 'Link on slide';
+        default:
+            return 'Note';
+    }
+}

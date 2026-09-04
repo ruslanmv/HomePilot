@@ -15,8 +15,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     EMPTY_VIEW,
     UNDO_WINDOW_MS,
+    dismissChip,
+    mergeChip,
     mergeSegment,
     mergeSlide,
+    resolveChip,
     type MeetingView,
     type Phase,
 } from './meetingState';
@@ -25,6 +28,10 @@ export interface Recorder {
     start: (options: Record<string, unknown>) => Promise<{ ok: boolean; meetingId?: string; error?: string }>;
     stop: () => Promise<unknown>;
     muteMic: (muted: boolean) => void;
+    /** MS25. Takes an id — the card never sends a chip body back. Optional because an older
+     *  addon on a newer card is the ordinary case, and the button is hidden rather than
+     *  throwing when it is missing. */
+    acceptChip?: (id: string) => boolean;
     levels?: number[];
     behindMs?: number;
     audioMode?: string;
@@ -86,6 +93,21 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
                 phase: detail.type === 'final' ? 'ended' : current.phase,
             }));
         };
+        const onChip = (event: Event) => {
+            // No guard here: `mergeChip` already refuses a chip with no id, and a second copy
+            // of that rule is a second thing to keep in step. MS2 settled this — one
+            // implementation, tested where it lives.
+            setView((current) => ({
+                ...current,
+                chips: mergeChip(current.chips, (event as CustomEvent).detail),
+            }));
+        };
+        const onChipResult = (event: Event) => {
+            const detail = (event as CustomEvent).detail;
+            // This one *is* needed: it reads `detail.id` before handing it on.
+            if (!detail) return;
+            setView((current) => ({ ...current, chips: resolveChip(current.chips, detail.id, detail) }));
+        };
         const onReconnecting = () => patch({ phase: 'reconnecting' });
         const onResumed = () => patch({ phase: 'live', error: null });
         const onAudioLost = (event: Event) => {
@@ -96,6 +118,8 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
             ['ms:segment', onSegment],
             ['ms:partial', onPartial],
             ['ms:slide', onSlide],
+            ['ms:chip', onChip],
+            ['ms:chip_result', onChipResult],
             ['ms:status', onStatus],
             ['ms:reconnecting', onReconnecting],
             ['ms:resumed', onResumed],
@@ -183,6 +207,32 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         [recorder, patch],
     );
 
+    /**
+     * MS25. Accept a chip's offer.
+     *
+     * An id goes to the recorder, never the chip: the server offered it and still has it, so
+     * what runs is what was shown rather than whatever this page currently holds. The chip is
+     * marked pending immediately, because the round trip goes to a tool and a button that
+     * looks unpressed for two seconds gets pressed twice.
+     */
+    const acceptChip = useCallback(
+        (id: string) => {
+            if (!recorder?.acceptChip) return;
+            if (!recorder.acceptChip(id)) return;
+            setView((current) => ({
+                ...current,
+                chips: current.chips.map((c) => (c.id === id ? { ...c, pending: true } : c)),
+            }));
+        },
+        [recorder],
+    );
+
+    /** Local, and not a deletion: one reader is not interested, which is not a fact about the
+     *  meeting. Nothing is sent and the record is untouched. */
+    const dismissChipById = useCallback((id: string) => {
+        setView((current) => ({ ...current, chips: dismissChip(current.chips, id) }));
+    }, []);
+
     useEffect(
         () => () => {
             if (undoTimer.current) clearTimeout(undoTimer.current);
@@ -191,7 +241,10 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         [],
     );
 
-    return { view, start, stop, undo, muteMic, undoSecondsLeft, setPhase: (p: Phase) => patch({ phase: p }) };
+    return {
+        view, start, stop, undo, muteMic, acceptChip, dismissChip: dismissChipById,
+        undoSecondsLeft, setPhase: (p: Phase) => patch({ phase: p }),
+    };
 }
 
 export default useMeetingSense;
