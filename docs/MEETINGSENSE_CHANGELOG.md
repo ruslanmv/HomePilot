@@ -19,7 +19,7 @@ this is reachable and no table is created.
 
 ## W9 — Modes & voice
 
-### MS25 — chips, and the order of ask-before-acting · `PENDING`
+### MS25 — chips, and the order of ask-before-acting · `1919efc`
 
 - `meetingsense/chips.py` (five deterministic triggers, no model), `ChipRow.tsx`, a `chip` /
   `chip_result` pair on the wire and a `chip_action` frame going the other way. Behind
@@ -48,7 +48,7 @@ this is reachable and no table is created.
   implementation now, tested where it lives.
 - 86 pytest + 31 vitest, 44 + 34 mutations each fail.
 
-### CI — the vector store the tests were reading from · `PENDING`
+### CI — the vector store the tests were reading from · `a952e98`
 
 - Not a batch. `tests/meetingsense/test_retrieval.py` had three tests asserting "this install
   has no vector store" **by not passing one**, and `retrieval._client()` falls back to the real
