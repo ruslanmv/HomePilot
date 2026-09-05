@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
@@ -171,6 +172,25 @@ async def frame(frame_id: str) -> Response:
     )
 
 
+def _default_vision_model() -> str:
+    """The vision model this machine is configured to use, or ``""`` for auto-detection.
+
+    RS1's caller is a browser on somebody else's machine, so it cannot know what this
+    HomePilot's Settings say — its own ``localStorage`` belongs to a different install. The
+    honest server-side equivalent is the environment, and ``MULTIMODAL_MODEL`` is the variable
+    MeetingSense's own vision capability already reads.
+
+    Empty means empty: a blank variable falls through to auto-detection rather than being sent
+    as a model named ``""``.
+    """
+    return os.getenv("MULTIMODAL_MODEL", "").strip()
+
+
+def _default_vision_base_url() -> str:
+    """Where that model lives. Blank leaves ``multimodal`` on its own ``OLLAMA_BASE_URL``."""
+    return os.getenv("MULTIMODAL_BASE_URL", "").strip()
+
+
 class ExplainIn(BaseModel):
     """Ask the vision model about a frame that was already captured."""
 
@@ -222,8 +242,8 @@ async def explain(inp: ExplainIn) -> JSONResponse:
         result = await analyze_image(
             image_url="",
             upload_path=_Path(UPLOAD_DIR),
-            base_url=inp.base_url,
-            model=inp.model,
+            base_url=inp.base_url or _default_vision_base_url(),
+            model=inp.model or _default_vision_model(),
             user_prompt=(inp.question or "What do you see?") + _FRAME_PROMPT,
             mode="both",
             image_b64=base64.b64encode(data).decode("ascii"),
@@ -240,6 +260,14 @@ async def explain(inp: ExplainIn) -> JSONResponse:
             },
         )
 
+    # V3. `error_code` is what a retry ladder switches on; `message` is what a person reads.
+    # A model that returned nothing is not "your computer failed" — the screenshot is fine and
+    # still on screen, so the sentence says which half worked.
+    code = result.get("error_code", "")
+    message = ""
+    if code == "empty_model_response":
+        model = (result.get("meta") or {}).get("model") or "the vision model"
+        message = f"I took the screenshot, but {model} did not give me anything readable about it."
     return JSONResponse(
         status_code=200,
         content={
@@ -247,6 +275,8 @@ async def explain(inp: ExplainIn) -> JSONResponse:
             "frame_id": inp.frame_id,
             "analysis_text": result.get("analysis_text", ""),
             "error": result.get("error", ""),
+            "error_code": code,
+            "message": message,
             "meta": result.get("meta", {}),
         },
     )

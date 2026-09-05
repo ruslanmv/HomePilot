@@ -98,6 +98,29 @@ export interface MeetingControls {
  * between them would put MeetingSense's state in the one file this programme has been careful
  * not to grow.
  */
+/**
+ * The vision provider the user chose in Settings (V1).
+ *
+ * The same three `localStorage` keys `App.tsx` writes when Settings is saved. Read here
+ * rather than threaded down as props because ScreenSense is a plain script on `globalThis`,
+ * not part of the React tree — and a missing or unreadable value is an empty string, which
+ * ScreenSense treats as "no choice" and leaves to the backend.
+ */
+function readVisionSettings(): { provider: string; baseUrl: string; model: string } {
+    const get = (key: string): string => {
+        try {
+            return (localStorage.getItem(key) || '').trim();
+        } catch {
+            return ''; // storage disabled is a valid "no choice"
+        }
+    };
+    return {
+        provider: get('homepilot_provider_multimodal'),
+        baseUrl: get('homepilot_base_url_multimodal'),
+        model: get('homepilot_model_multimodal'),
+    };
+}
+
 export const MeetingSenseContext = React.createContext<MeetingControls | null>(null);
 
 export function useMeetingControls(): MeetingControls | null {
@@ -184,12 +207,18 @@ export function MeetingSenseProvider({
             hpScreenSense?: {
                 bindConversation?: (id: string | null) => void;
                 setAwareness?: (on: boolean) => void;
+                setVision?: (next: { provider?: string; baseUrl?: string; model?: string }) => void;
             };
         }).hpScreenSense;
         try {
             // The setting first: it decides whether the binding may say anything at all.
             sense?.setAwareness?.(screenAwareness);
             sense?.bindConversation?.(conversationId);
+            // V1. The vision model the user picked. Settings has always stored these three and
+            // /v1/multimodal/analyze has always accepted them, but nothing carried one to the
+            // other — so the floating button asked with no model and the backend auto-detected,
+            // which is how somebody with a good model selected still got moondream's answer.
+            sense?.setVision?.(readVisionSettings());
         } catch {
             // A screen-presence ping is never worth a chat.
         }

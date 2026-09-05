@@ -6898,7 +6898,11 @@ async def multimodal_analyze(inp: MultimodalAnalyzeIn) -> JSONResponse:
                 status_code=422,
                 content={
                     "ok": False,
+                    # V3. `error` stays the human string every existing caller reads;
+                    # `error_code` is what a retry ladder can switch on. Absent for the
+                    # failures that predate it, which is what "absence means unknown" buys.
                     "error": result.get("error", "Unknown multimodal error"),
+                    "error_code": result.get("error_code", ""),
                     "analysis_text": "",
                     "meta": result.get("meta", {}),
                 },

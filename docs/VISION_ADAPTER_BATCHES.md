@@ -1,6 +1,7 @@
 # Local Vision Adapter — Batch Plan (screen understanding)
 
-**Status:** planning artifact. No product code changes in this document.
+**Status:** V1, V2 and V3 are **shipped**; V4–V8 are still planning.
+Below, the shipped batches keep their original text and carry a ✅ with what actually landed.
 **Scope:** `ruslanmv/HomePilot` — `backend/app/multimodal.py`, a new
 `backend/app/vision_adapter/`, `frontend/public/js/homepilot-screensense.js`,
 `frontend/src/ui/meetingsense/MeetingSenseProvider.tsx`, `frontend/src/ui/Models.tsx`,
@@ -191,6 +192,8 @@ never mark multi-image support unless it has been tested here.
 
 ### V1 — The Settings choice reaches the request
 
+✅ **Shipped.** `hpScreenSense.setVision()` holds the choice; `MeetingSenseProvider` reads the three `localStorage` keys and hands them over; RS1's `/explain` falls back to `MULTIMODAL_MODEL` / `MULTIMODAL_BASE_URL`, because its caller is a browser on another machine and cannot know this HomePilot's Settings.
+
 Pass `homepilot_provider_multimodal`, `homepilot_base_url_multimodal` and
 `homepilot_model_multimodal` into `hpScreenSense` — through `mountButton()` options and a
 setter alongside the existing `bindConversation` / `setAwareness` — and into RS1's
@@ -207,6 +210,8 @@ carries that model. A test asserts it for the floating button, for the chat path
 ---
 
 ### V2 — Rank the installed models instead of taking the first match
+
+✅ **Shipped.** `VISION_PREFERENCE` ranks the installed set, `VISION_LAST_RESORT` pins Moondream behind even an unranked vision family, and a test fails if the ranking is ever made to depend on `VISION_MODEL_PATTERNS`. Also found and fixed: `qwen2.5vl` matched no pattern, so the catalog's own Qwen2.5-VL was not classified as a vision model at all.
 
 Replace "first installed model matching any pattern" with a preference order applied to the
 installed set:
@@ -226,6 +231,8 @@ this by reordering `VISION_MODEL_PATTERNS`, since that list is a membership test
 ---
 
 ### V3 — An empty answer is a typed failure
+
+✅ **Shipped.** `error_code: "empty_model_response"` alongside the human `error` string, so every existing caller keeps working. `meta.image_size_bytes` no longer reports 0 on the `image_b64` path.
 
 ```json
 {"ok": false, "error": {"code": "empty_model_response",
