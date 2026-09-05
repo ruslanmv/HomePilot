@@ -24,6 +24,7 @@ def build_system_prompt(
     agent: PersonalityAgent,
     memory: Optional[ConversationMemory] = None,
     is_first_turn: bool = False,
+    conversation_id: Optional[str] = None,
 ) -> str:
     """
     Build the complete system prompt for a given turn.
@@ -32,11 +33,30 @@ def build_system_prompt(
         agent: The active personality agent
         memory: Conversation memory (None for first turn)
         is_first_turn: Whether this is the opening of the conversation
+        conversation_id: Optional. When given, and when MeetingSense's Together mode is on
+            and a meeting is being recorded in this conversation, a bounded live-meeting block
+            is prepended (MS18). Every existing caller omits it and gets a byte-identical
+            prompt — a context provider that quietly changed every prompt on every install
+            would be a change to every persona in the product.
 
     Returns:
         Complete system prompt string ready for the LLM
     """
     sections = []
+
+    # 0. Live meeting context (MS18), when there is one. Prepended rather than appended: it is
+    #    what the user is asking *about*, and a model reading a long system prompt weights the
+    #    opening. Bounded at 900 tokens by the provider, never by this file.
+    live = _live_meeting_context(conversation_id)
+    if live:
+        sections.append(live)
+
+    # 0b. Live screen context (MS29). Same seam, same guard, and three lines rather than nine
+    #     hundred tokens — it says a screen is being shared and what was last seen on it. With
+    #     nobody sharing this is "" and the prompt is byte-identical to what it was.
+    screen = _live_screen_context(conversation_id)
+    if screen:
+        sections.append(screen)
 
     # 1. Core personality prompt (always present)
     sections.append(agent.system_prompt)
@@ -72,6 +92,40 @@ def build_system_prompt(
     sections.append(_engagement_tools(agent))
 
     return "\n".join(sections)
+
+
+def _live_meeting_context(conversation_id: Optional[str]) -> str:
+    """MeetingSense's live block, or "" — including on every install that does not have it.
+
+    Imported inside the function and guarded, so this module keeps working unchanged when
+    MeetingSense is absent, disabled, or raising. A persona that cannot answer because a
+    meeting was being recorded would be a worse bug than no meeting context at all.
+    """
+    if not conversation_id:
+        return ""
+    try:
+        from ..meetingsense.live_context import for_conversation
+
+        return for_conversation(conversation_id)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _live_screen_context(conversation_id: Optional[str]) -> str:
+    """MS29's screen block, or "" — including on every install that does not have it.
+
+    The same seam and the same guard as `_live_meeting_context` above. A persona that cannot
+    answer because the user was sharing their screen would be a worse bug than no screen
+    context at all.
+    """
+    if not conversation_id:
+        return ""
+    try:
+        from ..meetingsense.screen_context import for_conversation
+
+        return for_conversation(conversation_id)
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _voice_directives(agent: PersonalityAgent) -> str:

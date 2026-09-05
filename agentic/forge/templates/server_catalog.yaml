@@ -174,6 +174,18 @@ optional:
     category: community
     icon: smile
 
+  # ── MeetingSense (MS21) ──
+  - id: hp-meetingsense
+    port: 9107
+    module: "agentic.integrations.mcp.meetingsense_server:app"
+    label: "MeetingSense"
+    description: "Meetings: list, transcript, slides, cross-meeting search, live context"
+    category: local
+    icon: mic
+    # Reads are open. The four tools that change something — update_action, suggest,
+    # set_mode, export — are behind WRITE_ENABLED, off by default.
+    write_gated: true
+
   # ── Community: Microsoft Teams [BETA] ──
   - id: hp-teams
     port: 9106
@@ -182,6 +194,20 @@ optional:
     category: communication
     icon: message-circle
     requires_config: MS_TEAMS_AUTH
+    # MS22's decision, and it is the second of the two the batch offered rather than the
+    # first. Building a thin Teams server here would put a *second* implementation behind
+    # this id: the entry already declares an external source, and two answers to one id is
+    # how an operator ends up running the one they did not mean to.
+    #
+    # So tier 2 — "post to the meeting chat" — is paused, and the catalog says so. The point
+    # of saying it here rather than nowhere is that the UI can grey the tile with a reason
+    # *before* it is clicked; without this, install fails at click time on a repository the
+    # operator was never told they needed.
+    availability: unavailable
+    unavailable_reason: >-
+      Not built yet. This entry points at an external repository
+      (github.com/ruslanmv/teams-mcp-server) that is not vendored here, so "post to meeting
+      chat" is unavailable. Meetings still record, transcribe and export without it.
     source:
       type: external
       git: https://github.com/ruslanmv/teams-mcp-server

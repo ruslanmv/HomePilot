@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import logging
 import random
+import secrets
 import time
 import urllib.request
 from pathlib import Path
@@ -32,7 +33,11 @@ from .storage.local_store import save_pil_images
 router = APIRouter(tags=["quickface"])
 _log = logging.getLogger(__name__)
 
-_WEB_URL = "https://thispersondoesnotexist.com"
+# The bare root serves an HTML page, not an image. Fetching it returned 4,532 bytes of
+# text/html, which tripped the `len(data) < 10_000` guard below, left `results` empty, and
+# sent every caller into `_quickface_placeholder()` — writing initials PNGs into shipped
+# .hpersona packages while their metadata still claimed StyleGAN. The image is at a path.
+_WEB_URL = "https://thispersondoesnotexist.com/random-person.jpeg"
 _WEB_UA = "HomePilot-AvatarService/1.0"
 
 
@@ -46,6 +51,12 @@ class QuickFaceRequest(BaseModel):
     seed: Optional[int] = None
     truncation: float = Field(default=0.7, ge=0.1, le=1.0)
     output_size: int = Field(default=512, ge=256, le=1024)
+    #: Whether a gradient-and-initials tile is an acceptable answer. True for a UI that
+    #: wants *something* on screen; a caller building a package to ship should pass False
+    #: and handle the error. The silent fallback is what let placeholders reach users:
+    #: nothing downstream could tell a generated face from a failure, because the response
+    #: and the metadata looked the same either way.
+    allow_placeholder: bool = True
 
 
 class QuickFaceResult(BaseModel):
@@ -159,7 +170,11 @@ def _quickface_local(req: QuickFaceRequest) -> QuickFaceResponse:
         _log.warning("[QuickFace] Local StyleGAN failed: %s, trying web", exc)
         try:
             return _quickface_web(req)
-        except Exception:
+        except Exception as web_exc:
+            if not req.allow_placeholder:
+                raise RuntimeError(
+                    f"no face generator available (local: {exc}; web: {web_exc})"
+                ) from web_exc
             return _quickface_placeholder(req)
 
 
@@ -173,8 +188,13 @@ def _quickface_web(req: QuickFaceRequest) -> QuickFaceResponse:
     for i in range(req.count):
         t0 = time.monotonic()
         try:
+            # A cache-buster per request. Without one, Cloudflare serves the same
+            # cached face to every call: five of the fourteen Chata personas ended up
+            # with a byte-identical avatar that way, which reads as a copy-paste
+            # mistake rather than a caching one.
             http_req = urllib.request.Request(
-                _WEB_URL, headers={"User-Agent": _WEB_UA}
+                f"{_WEB_URL}?_={secrets.token_hex(8)}",
+                headers={"User-Agent": _WEB_UA, "Cache-Control": "no-cache"},
             )
             with urllib.request.urlopen(http_req, timeout=15) as resp:
                 data = resp.read()

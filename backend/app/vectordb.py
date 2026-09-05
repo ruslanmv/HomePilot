@@ -33,7 +33,7 @@ except ImportError:
 from .config import UPLOAD_DIR
 
 # Export for use in other modules
-__all__ = ['CHROMADB_AVAILABLE', 'get_chroma_client', 'query_project_knowledge', 'get_project_document_count', 'process_and_add_file']
+__all__ = ['CHROMADB_AVAILABLE', 'get_chroma_client', 'query_project_knowledge', 'get_project_document_count', 'process_and_add_file', 'collection_name', 'DEFAULT_NAMESPACE']
 
 # ChromaDB persistent storage location
 CHROMA_DB_PATH = Path(UPLOAD_DIR) / "chroma_db"
@@ -55,16 +55,50 @@ def get_chroma_client():
     )
     return client
 
-def get_or_create_collection(project_id: str):
-    """Get or create a collection for a specific project"""
+#: The namespace every existing caller uses. Named rather than inlined so that the one place
+#: the collection name is built is also the one place this default is stated.
+DEFAULT_NAMESPACE = "project"
+
+
+def collection_name(key: str, namespace: str = DEFAULT_NAMESPACE) -> str:
+    """The Chroma collection for one key inside one namespace.
+
+    ``namespace="project"`` produces exactly the name this module has always produced —
+    ``project_<md5(project_id)[:16]>`` — so every existing collection on every existing install
+    is found unchanged. A test asserts that against a fixed hash, because "unchanged" is a
+    claim about data already on disk and a wrong one orphans somebody's knowledge base.
+
+    Other namespaces exist so that things which are *not* project knowledge can be stored in
+    the same Chroma without being seen by the functions that count, query and delete a
+    project's documents. MeetingSense (MS15) uses ``"meetings"``: a meeting is retrieved from,
+    never absorbed into a project (D4), and ``get_project_document_count`` reporting a number
+    that jumps because somebody recorded a call would be a bug with no visible cause.
+
+    One function rather than an f-string at each site: two copies of a naming rule is exactly
+    how a delete stops matching the create it is meant to undo.
+    """
+    return f"{namespace}_{hashlib.md5(key.encode()).hexdigest()[:16]}"
+
+
+def get_or_create_collection(project_id: str, namespace: str = DEFAULT_NAMESPACE):
+    """Get or create a collection for a specific project (or another namespace)."""
     client = get_chroma_client()
 
     # Collection name must be alphanumeric + underscores
-    collection_name = f"project_{hashlib.md5(project_id.encode()).hexdigest()[:16]}"
+    name = collection_name(project_id, namespace)
+
+    # The project metadata is left exactly as it was: it is written into collections that
+    # already exist on disk, and a differently-shaped dict here would be a second schema for
+    # the same records.
+    metadata = (
+        {"project_id": project_id}
+        if namespace == DEFAULT_NAMESPACE
+        else {"namespace": namespace, "key": project_id}
+    )
 
     collection = client.get_or_create_collection(
-        name=collection_name,
-        metadata={"project_id": project_id}
+        name=name,
+        metadata=metadata
     )
 
     return collection
@@ -164,10 +198,12 @@ def delete_project_knowledge(project_id: str) -> bool:
     """
     try:
         client = get_chroma_client()
-        collection_name = f"project_{hashlib.md5(project_id.encode()).hexdigest()[:16]}"
+        # Deliberately the same function `get_or_create_collection` builds the name with: a
+        # second copy of the hash expression here is how a delete stops matching its create.
+        name = collection_name(project_id)
         # Collection may already be absent — that counts as success.
         try:
-            client.delete_collection(name=collection_name)
+            client.delete_collection(name=name)
         except ValueError:
             pass  # "Collection … does not exist" — nothing to delete
         return True
