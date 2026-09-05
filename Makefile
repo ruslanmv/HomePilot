@@ -33,6 +33,7 @@ MCP_EXPERT_CORE_SERVERS := web_search doc_retrieval memory_store safety_policy o
         install-mcp start-mcp stop-mcp clean-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
+        start-meetingsense stop-meetingsense health-meetingsense \
         mcp-inventory \
         install-mcp-servers test-mcp-new-servers \
         install-mcp-expert-core test-mcp-expert-core start-mcp-expert-core health-mcp-expert-core \
@@ -448,7 +449,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		pids="$$pids $$!"; \
 		\
 		echo "Starting frontend..."; \
-		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000 & \
+		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev & \
 		pids="$$pids $$!"; \
 		\
 		if [ -f "$$ROOT/ComfyUI/main.py" ] && [ -f "$$ROOT/ComfyUI/.venv/bin/python" ]; then \
@@ -502,14 +503,22 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 					mcp_ok=$$((mcp_ok + 1)); \
 				fi; \
 			done; \
-			echo "  ✓ MCP Servers: $$mcp_ok/$$mcp_total healthy"; \
+			if [ "$$mcp_ok" = "$$mcp_total" ]; then \
+				echo "  ✓ MCP Servers: $$mcp_ok/$$mcp_total healthy"; \
+			else \
+				echo "  ⚠ MCP Servers: $$mcp_ok/$$mcp_total healthy — check the log above"; \
+			fi; \
 			a2a_ok=0; a2a_total=2; \
 			for _p in 9201 9202; do \
 				if curl -sf "http://127.0.0.1:$$_p/health" >/dev/null 2>&1; then \
 					a2a_ok=$$((a2a_ok + 1)); \
 				fi; \
 			done; \
-			echo "  ✓ A2A Agents: $$a2a_ok/$$a2a_total healthy"; \
+			if [ "$$a2a_ok" = "$$a2a_total" ]; then \
+				echo "  ✓ A2A Agents: $$a2a_ok/$$a2a_total healthy"; \
+			else \
+				echo "  ⚠ A2A Agents: $$a2a_ok/$$a2a_total healthy — check the log above"; \
+			fi; \
 		fi; \
 		\
 		echo ""; \
@@ -526,6 +535,9 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 			echo "  ✅ All services started!"; \
 		fi; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo ""; \
+		echo "  🎙 MeetingSense is on: press \"Start meeting\" under the chat box."; \
+		echo "     Check it can transcribe:  curl -s localhost:8000/v1/meetingsense/status | jq .ready"; \
 		echo ""; \
 		wait \
 	'
@@ -552,7 +564,7 @@ start-frontend: ## Start frontend locally
 		echo "Node modules not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
+	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev
 
 install-expert: ## Install dependencies for the isolated Expert-mode sandbox (includes Expert MCP gateway when AGENTIC=1)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -744,8 +756,8 @@ stop: ## Stop all local HomePilot processes (kills processes on all service port
 	@echo ""
 	@# Kill processes by port (works on Linux/macOS/WSL)
 	@# Core: 3000(frontend) 8000(backend) 8010(edit-session) 8188(comfyui)
-	@# MCP:  9101-9105(MCP servers) 9201-9202(A2A agents)
-	@for port in 3000 8000 8010 8188 9101 9102 9103 9104 9105 9120 9201 9202; do \
+	@# MCP:  9101-9105(MCP servers) 9107(meetingsense) 9201-9202(A2A agents)
+	@for port in 3000 8000 8010 8188 9101 9102 9103 9104 9105 9107 9120 9201 9202; do \
 		echo "Checking port $$port..."; \
 		pid=$$(lsof -ti :$$port 2>/dev/null || true); \
 		if [ -n "$$pid" ]; then \
@@ -782,7 +794,7 @@ health: ## Health checks (best-effort)
 
 dev: ## Frontend dev locally; backend stack in docker
 	docker compose -f infra/docker-compose.yml up -d backend llm comfyui media
-	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
+	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev
 
 build: ## Build production frontend bundle (Expert selector ON by default — set VITE_EXPERT_CHAT_ENABLED=false to ship gated)
 	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run build
@@ -1252,7 +1264,7 @@ start-agentic-servers: ## Start HomePilot MCP servers + A2A agents + seed Forge 
 		exit 1; \
 	fi
 	@echo ""
-	@echo "  MCP servers:  ports 9101-9105, 9120 (inventory)"
+	@echo "  MCP servers:  ports 9101-9105, 9107 (meetingsense), 9120 (inventory)"
 	@echo "  A2A agents:   ports 9201-9202"
 	@echo ""
 	@echo "  Press Ctrl+C to stop"
@@ -1300,6 +1312,44 @@ start-inventory: ## Start the Inventory MCP server standalone (port 9120)
 	@PYTHONPATH="$$(pwd)" backend/.venv/bin/python -m uvicorn \
 		agentic.integrations.mcp.inventory_server:app \
 		--host 127.0.0.1 --port 9120 --log-level info
+
+start-meetingsense: ## Start the MeetingSense MCP server standalone (port 9107)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting MeetingSense MCP Server (port 9107)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "  MeetingSense:  http://localhost:9107"
+	@echo "  Health:        http://localhost:9107/health"
+	@echo ""
+	@echo "  Every tool calls the backend; start it first (make start)."
+	@echo "  Reads are open; the four write tools need MEETINGSENSE_MCP_WRITE_ENABLED=true."
+	@echo "  Press Ctrl+C to stop"
+	@echo ""
+	@PYTHONPATH="$$(pwd)" \
+		WRITE_ENABLED="$${MEETINGSENSE_MCP_WRITE_ENABLED:-false}" \
+		DRY_RUN="$${MEETINGSENSE_MCP_DRY_RUN:-true}" \
+		BACKEND_BASE_URL="$${BACKEND_BASE_URL:-http://localhost:8000}" \
+		backend/.venv/bin/python -m uvicorn \
+		agentic.integrations.mcp.meetingsense_server:app \
+		--host 127.0.0.1 --port 9107 --log-level info
+
+stop-meetingsense: ## Stop the MeetingSense MCP server
+	@pid=$$(lsof -ti :9107 2>/dev/null || true); \
+	if [ -n "$$pid" ]; then \
+		echo "  Stopping MeetingSense MCP server on :9107 ($$pid)"; \
+		echo "$$pid" | xargs -r kill -9 2>/dev/null || true; \
+	else \
+		echo "  Nothing is listening on :9107"; \
+	fi
+
+health-meetingsense: ## Check the MeetingSense MCP server's health
+	@curl -sf http://localhost:9107/health \
+		&& echo "" \
+		|| { echo "  MeetingSense MCP server is not responding on :9107"; exit 1; }
 
 install-mcp: ## Install MCP Context Forge separately (gateway + servers + agent)
 	@echo "════════════════════════════════════════════════════════════════════════════════"

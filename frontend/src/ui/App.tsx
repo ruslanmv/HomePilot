@@ -101,6 +101,22 @@ import {
 } from './voice/personalityGating'
 // Companion-grade session management (additive)
 import { resolveSession, createSession, endSession } from './sessions'
+// MS28 (D5) — the meetings catalog lives in History. `catalog.ts` holds every decision as a
+// pure function, so what changes in this file is a chip and a predicate, not a filter.
+import { MeetingFilter } from './meetingsense/MeetingFilter'
+import {
+  catalogEnabled as msCatalogEnabled,
+  filterConversations as msFilterConversations,
+  meetingCount as msMeetingCount,
+} from './meetingsense/catalog'
+import { useMeetingCatalog } from './meetingsense/useMeetingCatalog'
+import { MeetingLibrary } from './meetingsense/MeetingLibrary'
+import { MeetingSenseProvider } from './meetingsense/MeetingSenseProvider'
+import { MeetingAction } from './meetingsense/MeetingAction'
+import type { MeetingSenseStatus } from './meetingsense/entryPoint'
+
+/** Shared so History does not allocate a Set per render on an install with no meetings. */
+const EMPTY_MEETING_IDS: Set<string> = new Set()
 import { SessionPanel, PersonaHubDrawer } from './sessions'
 import type { PersonaSession } from './sessions'
 
@@ -302,7 +318,7 @@ function useEnterpriseCallRow(): boolean {
   return String(envVal ?? 'true') !== 'false'
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams' | 'meetings'
 
 /**
  * OllaBridge GPU-node routing: when the chat provider points at an OllaBridge
@@ -894,6 +910,7 @@ function HistoryPanel({
   onLoadConversation,
   onDeleteConversation,
   onClose,
+  meetingIds,
 }: {
   conversations: Conversation[]
   searchQuery: string
@@ -901,14 +918,19 @@ function HistoryPanel({
   onLoadConversation: (convId: string) => void
   onDeleteConversation: (convId: string) => void
   onClose: () => void
+  /** MS28. Conversations with a recording behind them, from the server. Absent — an install
+   *  with MeetingSense off, or one that has never recorded — renders History unchanged. */
+  meetingIds?: Set<string>
 }) {
-  const filteredConversations = conversations.filter((conv) => {
-    if (!searchQuery) return true
-    const query = searchQuery.toLowerCase()
-    return (
-      conv.conversation_id.toLowerCase().includes(query) ||
-      conv.last_content.toLowerCase().includes(query)
-    )
+  // MS28 (D5): the catalog lives in History. The chip narrows this list to the conversations
+  // with a recording behind them; with it off, the predicate below is History's own, so the
+  // list is the same rows in the same order it has always been.
+  const [meetingsOnly, setMeetingsOnly] = useState(false)
+  const meetingSet = meetingIds || EMPTY_MEETING_IDS
+  const filteredConversations = msFilterConversations(conversations, {
+    query: searchQuery,
+    meetingsOnly,
+    meetingIds: meetingSet,
   })
 
   return (
@@ -939,10 +961,20 @@ function HistoryPanel({
         </div>
       </div>
 
+      {/* MS28. Renders nothing when this install has no meetings, so an account that has never
+          recorded one sees the History it has always seen. */}
+      <MeetingFilter
+        count={msMeetingCount(conversations, meetingSet)}
+        active={meetingsOnly}
+        onToggle={setMeetingsOnly}
+      />
+
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
         {filteredConversations.length === 0 ? (
           <div className="text-center text-white/40 text-sm py-8">
-            {searchQuery ? 'No conversations found' : 'No conversation history yet'}
+            {meetingsOnly
+              ? 'No meetings match.'
+              : searchQuery ? 'No conversations found' : 'No conversation history yet'}
           </div>
         ) : (
           filteredConversations.map((conv) => (
@@ -1154,6 +1186,7 @@ function Sidebar({
   collapsed,
   onToggleCollapse,
   chatReasoningMode,
+  showMeetingsNav = false,
 }: {
   mode: Mode
   setMode: (m: Mode) => void
@@ -1175,6 +1208,8 @@ function Sidebar({
   /** Drives voice gating: Expert tiers (anything other than 'persona')
    *  disable Voice because the Expert backend does not serve voice. */
   chatReasoningMode: ChatReasoningMode
+  /** MS28 `_CATALOG`, default off. Absent renders the sidebar unchanged. */
+  showMeetingsNav?: boolean
 }) {
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
@@ -1369,6 +1404,13 @@ function Sidebar({
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} collapsed={collapsed} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} />
           <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} collapsed={collapsed} />
+          {/* MS28, behind `_CATALOG` (default off). D5 put the catalog in History and said a
+              sidebar tab is for "only if History gets crowded" — this flag is that condition
+              made operable. With it off there is no extra node here at all, which is the
+              batch's acceptance criterion: flag off → sidebar identical. */}
+          {showMeetingsNav ? (
+            <NavItem icon={Mic} label="Meetings" active={mode === 'meetings'} onClick={() => setMode('meetings')} collapsed={collapsed} />
+          ) : null}
         </div>
 
         {/* Single divider — separates modes from History */}
@@ -2097,6 +2139,10 @@ function ChatState({
               </button>
             )
           })()}
+          {/* MS32. Meeting is Call's closest sibling — both start a session that runs
+              alongside the chat rather than inside it — so it sits beside Call and not
+              under the composer. Renders nothing when the server has the feature off. */}
+          <MeetingAction />
           <button
             type="button"
             onClick={() => setChatSettingsOpen((v) => !v)}
@@ -2360,8 +2406,11 @@ function ChatState({
             allowPersonaMode={allowPersonaMode}
           />
         </div>
-        <div className="text-center text-[11px] text-[#444] pt-3 font-medium">
-          HomePilot can make mistakes. Verify outputs.
+        {/* MS32. Nothing but the disclaimer lives under the composer. The meeting control
+            moved to the header cluster above; its setup copy is contextual now and its
+            configuration lives in Settings → Voice Assistant. Chat first. */}
+        <div className="text-center text-[11px] text-white/25 pt-4 pb-0.5">
+          HomePilot can make mistakes. Verify important information.
         </div>
       </div>
     </div>
@@ -2675,6 +2724,33 @@ export default function App() {
 
   const [showSettings, setShowSettings] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  // MS28. Loaded only while the panel is open, and silent when MeetingSense is off — an
+  // install without it gets the History it has always had, with no chip and no error.
+  const meetingCatalog = useMeetingCatalog({ enabled: showHistory })
+  // MS28 `_CATALOG`. Read from the server's own flags rather than a build constant, so an
+  // operator turns the tab on where the meetings are — and so an install with MeetingSense
+  // off can never show it, whatever the catalog flag says.
+  const [meetingsNavEnabled, setMeetingsNavEnabled] = useState(false)
+  // MS29. The one status body the whole feature reads: the nav flag, the record button, and
+  // the consent sheet's copy all come from it, so there is one round trip and one answer.
+  const [meetingStatus, setMeetingStatus] = useState<MeetingSenseStatus | null>(null)
+  const meetingsView = useMeetingCatalog({ enabled: meetingsNavEnabled && mode === 'meetings' })
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch('/v1/meetingsense/status')
+        const body = res.ok ? await res.json() : null
+        if (cancelled) return
+        setMeetingsNavEnabled(msCatalogEnabled(body))
+        setMeetingStatus(body)
+      } catch {
+        // An optional feature's probe failing is not something to tell the user about. The
+        // status stays null, the button does not render, and the app is what it was.
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('homepilot_sidebar_collapsed') === 'true' } catch { return false }
   })
@@ -5198,6 +5274,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
   )
 
   return (
+    <MeetingSenseProvider
+      conversationId={conversationId}
+      status={meetingStatus}
+      compact={isMobile}
+      screenAwareness={settingsDraft.screenAwareness ?? true}
+      onOpenConversation={(cid) => { void loadConversation(cid); setMode('chat') }}
+    >
     <div className="hp-app-shell flex bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
       {/* ── Mobile sidebar overlay ── */}
       {isMobile && mobileSidebarOpen && (
@@ -5233,6 +5316,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           collapsed={isMobile ? false : sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
           chatReasoningMode={chatReasoningMode}
+          showMeetingsNav={meetingsNavEnabled}
         />
       </div>
 
@@ -5267,6 +5351,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             onLoadConversation={loadConversation}
             onDeleteConversation={deleteConversation}
             onClose={() => setShowHistory(false)}
+            meetingIds={meetingCatalog.meetingIds}
           />
         )}
 
@@ -5811,6 +5896,20 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             apiKey={settingsDraft.apiKey}
             teamsMcpAvailable={teamsMcpAvailable}
           />
+        ) : mode === 'meetings' ? (
+          // MS28, only reachable when `_CATALOG` is on — `mode` cannot be set to this without
+          // the nav item, and the nav item is behind the same flag.
+          <MeetingLibrary
+            meetings={meetingsView.meetings}
+            onOpen={(meeting) => {
+              if (meeting.conversation_id) {
+                // Back to where the meeting lives. D5: the catalog is a way in, not a second
+                // home, so every path out of it leads to the conversation.
+                void loadConversation(meeting.conversation_id)
+                setMode('chat')
+              }
+            }}
+          />
         ) : mode === 'interactive' ? (
           // Interactive: three mutually-exclusive sub-surfaces drive this
           // tab — live play, authoring host (wizard / editor), or the
@@ -6176,5 +6275,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
        */}
       <WizardProgressOverlay />
     </div>
+    </MeetingSenseProvider>
   )
 }

@@ -283,6 +283,22 @@ except Exception as _vc_err:  # noqa: BLE001
     # Deliberate broad catch: this entire feature is optional. Log and move on.
     print(f"[voice_call] DISABLED due to import error: {_vc_err}")
 
+# --- Avatar Director (/avatar/*) — ADDITIVE, FEATURE-FLAGGED -----------------
+# The realtime channel the 3D avatar client connects to (spec v1.1 §6.9). Off by
+# default; enable with ``AVATAR_ENABLED=true``. Same safety pattern as voice_call
+# and interactive: an import error logs and is swallowed, because an optional
+# feature must never take the app down.
+#
+# `register` imports its transport lazily, so while the flag is false this block
+# costs one dataclass and a few os.getenv calls — no route, and no FastAPI
+# WebSocket machinery loaded. backend/tests/avatar/test_registration.py asserts it.
+try:
+    from .avatar_director import register as _register_avatar
+    if _register_avatar(app):
+        print("[avatar_director] enabled — session channel mounted at /avatar/session")
+except Exception as _ad_err:  # noqa: BLE001
+    print(f"[avatar_director] DISABLED due to import error: {_ad_err}")
+
 # --- Interactive (/v1/interactive/*) — ADDITIVE, FEATURE-FLAGGED -------------
 # AI interactive video engine. Off by default; enable with
 # ``INTERACTIVE_ENABLED=true``. See backend/app/interactive/__init__.py for
@@ -449,6 +465,14 @@ app.include_router(files_router)
 # enabled, so this include is a no-op in prod until the feature is switched on.
 from .voice import router as voice_router
 app.include_router(voice_router)
+
+# Include MeetingSense status (MS0 — additive, flag-gated MEETINGSENSE_ENABLED).
+# The status route answers whether the flag is on or off, deliberately: a frontend has to
+# tell "disabled" apart from "enabled but this machine cannot transcribe", and a 404 would
+# collapse both into "no". The session WebSocket lands in MS3 and refuses while the flag
+# is off, the way the voice route does.
+from .meetingsense import router as meetingsense_router
+app.include_router(meetingsense_router)
 
 # Include media:// URI resolver (/media/resolve)
 from .media_resolver import router as media_router

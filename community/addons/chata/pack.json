@@ -6,7 +6,7 @@
   "author": "Chata Community",
   "source_repo": "ruslanmv/chata",
   "source_path": "personas/chata_addon/public/exports/",
-  "content_rating": "nsfw",
+  "content_rating": "sfw",
   "default_class_id": "companion",
   "default_tags": ["chata", "social", "chat", "entertainment"],
   "personas": [

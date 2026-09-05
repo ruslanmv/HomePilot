@@ -5,7 +5,7 @@
 # registry and uploads to Cloudflare R2.
 #
 # Currently syncs:
-#   - chata/  → 14 Chata social personas (NSFW section)
+#   - chata/  → 14 Chata social personas (all SFW; see community/addons/chata/pack.json)
 #
 # Required Secrets:
 #   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, CLOUDFLARE_ACCOUNT_ID,
@@ -52,8 +52,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install AWS CLI
-        run: pip install awscli
+      - name: Install AWS CLI and Pillow
+        # Pillow is what lets sync-addons refuse a placeholder avatar. Without it the
+        # quality gate cannot run, and the script says so and exits rather than
+        # publishing unchecked — a silent skip here is how the placeholders shipped.
+        run: pip install awscli Pillow
 
       - name: Run sync-addons
         run: python community/scripts/sync-addons.py --upload

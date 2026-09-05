@@ -91,6 +91,25 @@ servers:
       - "hp.local_projects."
 
 
+  # ── MeetingSense (MS21/MS22) ──
+  - name: "hp-meetings-readonly"
+    description: "Meetings, read-only: list, transcript, slides, search, live context"
+    include_tool_prefixes:
+      - "hp.ms."
+    exclude_tool_prefixes:
+      # The four that change something. Excluded here rather than left to WRITE_ENABLED
+      # alone: the server's gate is the operator's decision and this list is the persona's,
+      # and a read-only suite that could call `ms.export` would be misnamed.
+      - "hp.ms.update_action"
+      - "hp.ms.suggest"
+      - "hp.ms.set_mode"
+      - "hp.ms.export"
+
+  - name: "hp-meetings-all"
+    description: "Meetings, including the write tools (still subject to WRITE_ENABLED)"
+    include_tool_prefixes:
+      - "hp.ms."
+
   # ── Community: hello_world_greeter ──
   - name: "hp-community-greeter"
     description: "Community greeter tools: greet, farewell, compliment"

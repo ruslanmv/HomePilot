@@ -1,0 +1,317 @@
+"""The session protocol, as pure logic (spec v1.1 §6.9).
+
+Separated from ``session.py`` on purpose. The batch plan says to build the contract tests
+from ``tests/fixtures/protocol/*.json`` **before** the endpoints, and a protocol that can
+only be exercised through a live WebSocket is one nobody tests properly. Everything that
+decides *what* to say lives here; ``session.py`` only moves bytes.
+
+Two rules from §6.9 that are easy to get wrong and are therefore tested directly:
+
+* **An unknown ``type`` is ignored, silently.** That is what lets addendum v1.2 add
+  ``display``, ``adult_ack`` and ``streak`` without a version bump. Answering an unknown
+  type with an error would make every future addition a breaking change.
+* **A server intent gets no special powers.** The server may only name emotes from the
+  whitelist. The client checks again — this is belt and braces, and the belt is here.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Any, Dict, List, Optional
+
+from .rtc import VOICE_CLIENT_TYPES, VOICE_SERVER_TYPES
+
+log = logging.getLogger("avatar_director.protocol")
+
+PROTOCOL_VERSION = 1
+
+#: MeetingSense over this socket (MS7). Three inbound names and one outbound, added to the
+#: sets **without a version bump** — which is the whole reason §6.9 makes an unknown type a
+#: silent no-op. A client that predates these sends none of them and behaves exactly as it
+#: did; a server that predates them ignores them and answers nothing, which is what the
+#: hosted page reads as "this HomePilot cannot record meetings".
+MEETING_CLIENT_TYPES = frozenset({"meeting_start", "meeting_audio", "meeting_stop"})
+MEETING_SERVER_TYPES = frozenset({"meeting"})
+
+#: Client → server, §6.9 and addendum §14.3, plus B10's voice uplink.
+CLIENT_TYPES = (
+    frozenset({"hello", "ctx", "user_event", "vision_ask", "chat_meta", "pong", "adult_verify_request", "streak"})
+    | VOICE_CLIENT_TYPES
+    | MEETING_CLIENT_TYPES
+)
+
+#: Server → client. Listed so a typo in an emitter is caught here rather than on a headset.
+SERVER_TYPES = (
+    frozenset({"intent", "say", "vision_insight", "scene", "error", "ping", "display", "adult_ack"})
+    | VOICE_SERVER_TYPES
+    | MEETING_SERVER_TYPES
+)
+
+#: §6.2's emote whitelist. The server may not invent names any more than the model may.
+EMOTE_WHITELIST = frozenset(
+    {
+        "happy", "sad", "angry", "surprised", "thinking", "celebrate", "dance", "wave",
+        "flirt", "tease", "shy", "agree", "disagree", "idle", "point", "lean_in",
+        "nod_along", "breathe", "console",
+    }
+)
+
+HEARTBEAT_SECONDS = 15
+
+
+@dataclass
+class SessionState:
+    """What the server knows about one connected client."""
+
+    client: str = ""
+    caps: List[str] = field(default_factory=list)
+    authenticated: bool = False
+    mode: Optional[str] = None
+    activity: Optional[str] = None
+    attention: float = 0.0
+    last_event: Optional[str] = None
+    streaks: Dict[str, int] = field(default_factory=dict)
+    adult_verified: bool = False
+    capture_consent: bool = False
+
+
+class ProtocolHandler:
+    """Turns one client message into zero or more server messages.
+
+    Deliberately synchronous and side-effect free apart from its own state: the transport
+    decides when to send, this decides what.
+    """
+
+    def __init__(
+        self, *, authenticate=None, now=time.time, voice=None, vision=None, streaks=None, adult=None
+    ) -> None:
+        self.state = SessionState()
+        self._authenticate = authenticate or (lambda token: bool(token))
+        self._now = now
+        self.ignored: List[str] = []
+        #: B10's uplink, or None on a server with the voice gate off. The handler routes to
+        #: it and holds no opinion of its own about audio.
+        self.voice = voice
+        #: B15's vision service, or None. Same arrangement: this decides nothing about it.
+        self.vision = vision
+        #: B22's streak store, or None. None keeps `streak` exactly what it was before that
+        #: batch: session-scoped, and gone when the socket closes.
+        self._streaks = streaks
+        #: B28's attestation session, or None. None means the adult tier is unreachable from
+        #: this socket — which is what an instance with the tier disabled gets, and the
+        #: reason `_on_adult_verify_request` can refuse without consulting anything.
+        self._adult = adult
+        #: Messages queued by something other than an inbound message — B17's tool bridge,
+        #: and B16's curiosity when it lands a turn. The transport drains it; nothing here
+        #: sends, because this class has never had a socket and should not grow one.
+        self.outbox: List[Dict[str, Any]] = []
+        #: MeetingSense frames waiting to be acted on (MS7). Queued rather than handled
+        #: because a meeting is asynchronous — it transcribes audio — and `handle()` is
+        #: synchronous by design. The transport drains this the way it drains `outbox`,
+        #: which keeps the rule this class is built on: it decides *what*, never *when*.
+        self.meeting_inbox: List[Dict[str, Any]] = []
+
+    def _today(self) -> date:
+        """Today, from the handler's own injectable clock rather than from ``date.today()``
+        — a streak is entirely about which day it is, and a test needs to choose."""
+        return date.fromtimestamp(self._now())
+
+    # ── inbound ──────────────────────────────────────────────────────────────
+
+    def handle(self, message: Any) -> List[Dict[str, Any]]:
+        """Handle one inbound message. Never raises on bad input."""
+        if not isinstance(message, dict):
+            return [self.error("bad_message", "expected a JSON object")]
+
+        kind = message.get("type")
+        if not isinstance(kind, str):
+            return [self.error("bad_message", "missing type")]
+
+        if message.get("v") != PROTOCOL_VERSION:
+            return [self.error("bad_version", f"this server speaks v{PROTOCOL_VERSION}")]
+
+        if kind not in CLIENT_TYPES:
+            # Forward compatibility (§6.9): a peer that knows more than we do is not an
+            # error. Record it for the debug endpoint and say nothing.
+            self.ignored.append(kind)
+            return []
+
+        if kind != "hello" and not self.state.authenticated:
+            return [self.error("unauthenticated", "send hello first")]
+
+        return getattr(self, f"_on_{kind}")(message)
+
+    def _on_hello(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not self._authenticate(message.get("auth")):
+            return [self.error("unauthorized", "pairing rejected")]
+        self.state.client = str(message.get("client") or "")
+        self.state.caps = list(message.get("caps") or [])
+        self.state.authenticated = True
+        return [self.ping()]
+
+    def _on_ctx(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.state.mode = message.get("mode")
+        self.state.activity = message.get("activity")
+        attention = message.get("attention")
+        self.state.attention = float(attention) if isinstance(attention, (int, float)) else 0.0
+        return []
+
+    def _on_user_event(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        name = message.get("name")
+        self.state.last_event = name
+        # B11's consent state, as the client reports it. No new message type: `user_event`
+        # is exactly "something happened on the client", and consent starting or stopping
+        # is that. §6.14 reads `capture_consent` before any tool may touch a frame.
+        if name == "capture:start":
+            self.state.capture_consent = True
+        elif name == "capture:stop":
+            self.state.capture_consent = False
+        return []
+
+    def _on_vision_ask(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """B15, and every answer here is a refusal — deliberately.
+
+        §6.9 sends the frame itself as a data-channel message keyed by ``frameId``. B10
+        shipped transcript mode rather than WebRTC, so this session has no data channel and
+        no bytes can reach the server this way. Rather than accept an ask it can never
+        answer, the handler says so and names the endpoint that does take frames.
+
+        The consent check still happens here and happens first, because §6.14 makes it a
+        precondition of *asking*, not of uploading: a client without live capture consent is
+        told about the consent, not about the endpoint.
+
+        Nothing in this method touches or holds a frame. There is nowhere in this handler
+        that could.
+        """
+        if self.vision is None:
+            return [self.error("vision_unavailable", "vision is not enabled on this server")]
+        if not self.state.capture_consent:
+            # A server-side permission is not the same as the user having opted in on the
+            # device holding the screen.
+            return [self.error("vision_no_consent", "no active capture consent on the client")]
+        return [self.error("vision_use_endpoint", "POST the frame to /avatar/vision/insight")]
+
+    def _on_chat_meta(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return []
+
+    # ── MeetingSense (MS7) ───────────────────────────────────────────────────
+    #
+    # All three do the same thing: queue, and say nothing now. The reply is a `meeting`
+    # frame produced later by the same `MeetingSession` the local WebSocket drives, so the
+    # two transports cannot answer differently — there is only one thing answering.
+
+    def _on_meeting_start(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.meeting_inbox.append(message)
+        return []
+
+    def _on_meeting_audio(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.meeting_inbox.append(message)
+        return []
+
+    def _on_meeting_stop(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.meeting_inbox.append(message)
+        return []
+
+    def take_meeting_frames(self) -> List[Dict[str, Any]]:
+        """Everything queued since the last call. Empties the inbox."""
+        queued, self.meeting_inbox = self.meeting_inbox, []
+        return queued
+
+    def _on_pong(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return []
+
+    def _on_streak(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        activity = message.get("activity")
+        value = message.get("value")
+        if isinstance(activity, str) and isinstance(value, int):
+            self.state.streaks[activity] = value
+            # B22. Without a store this stays exactly what it was: session-scoped, and gone
+            # when the socket closes. With one it becomes a `focus_streak` row in the
+            # persona's existing long-term memory, which is what makes it visible tomorrow.
+            # A store that raises must not cost the client its session, so this is guarded.
+            if self._streaks is not None:
+                try:
+                    self._streaks.record_block(activity, self._today())
+                except Exception as error:  # noqa: BLE001 — a streak is never worth a drop
+                    log.warning("streak not recorded for %r: %s", activity, error)
+        return []
+
+    def _on_voice_offer(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._voice(message)
+
+    def _on_voice_ice(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._voice(message)
+
+    def _on_voice_transcript(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._voice(message)
+
+    def _on_voice_end(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._voice(message)
+
+    def _voice(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Route to B10's uplink. Absent one, refuse by name rather than ignore.
+
+        The §6.9 ignore rule is for types this server has never heard of. These it has heard
+        of, and a client that offered its microphone deserves a no rather than silence.
+        """
+        if self.voice is None:
+            return [self.error("voice_unavailable", "the voice uplink is not enabled")]
+        return self.voice.handle(message)
+
+    def _on_adult_verify_request(self, message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """§16.2. The only place an ``adult_ack`` is ever produced.
+
+        There is no other emitter and there must never be one: the client's `adultVerified`
+        becomes true exactly when this frame arrives, so a second producer would be a second
+        way to verify, and one of them would eventually be reachable without a provider.
+        """
+        if self._adult is None:
+            # No attestation session means the tier is unreachable from this socket. Refusing
+            # without consulting anything is what makes `adult.enabled = false` unactivatable
+            # rather than merely unadvertised.
+            return [self.error("adult_unavailable", "adult verification is not configured")]
+
+        attestation = self._adult.request(message.get("user"))
+        self.state.adult_verified = attestation.live(self._now())
+        if not self.state.adult_verified:
+            # A refusal is an answer, not an error: the client shows the tier as unavailable
+            # and every other channel carries on.
+            return [self.adult_ack(attestation)]
+        return [self.adult_ack(attestation)]
+
+    # ── outbound ─────────────────────────────────────────────────────────────
+
+    def intent(self, name: str, intensity: float = 0.6, source: str = "server") -> Dict[str, Any]:
+        """Build an intent. Refuses to name an emote outside the whitelist."""
+        if name not in EMOTE_WHITELIST:
+            raise ValueError(f"{name!r} is not a whitelisted emote")
+        return {"v": PROTOCOL_VERSION, "type": "intent", "name": name, "intensity": intensity, "source": source}
+
+    def say(self, text: str, source: str = "server") -> Dict[str, Any]:
+        return {"v": PROTOCOL_VERSION, "type": "say", "text": text, "source": source}
+
+    def display(self, kind: str, data: Dict[str, Any], *, max_kb: int = 64) -> Dict[str, Any]:
+        """One panel (B20). Raises ``PanelError`` rather than sending something malformed.
+
+        Every `display` this server emits goes through here, so the size limit and the kind
+        check are not something an emitter can forget — there is one door and it is this one.
+        """
+        from .panels import build  # noqa: PLC0415 — lazy, like every other optional half
+
+        return build(kind, data, max_kb=max_kb)
+
+    def adult_ack(self, attestation) -> Dict[str, Any]:
+        """The attestation, on the wire. Carries no identity — see `verification.Attestation`."""
+        return {"v": PROTOCOL_VERSION, "type": "adult_ack", **attestation.as_ack(self._now())}
+
+    def scene(self, scene_id: str) -> Dict[str, Any]:
+        return {"v": PROTOCOL_VERSION, "type": "scene", "id": scene_id}
+
+    def ping(self) -> Dict[str, Any]:
+        return {"v": PROTOCOL_VERSION, "type": "ping"}
+
+    def error(self, code: str, msg: str) -> Dict[str, Any]:
+        return {"v": PROTOCOL_VERSION, "type": "error", "code": code, "msg": msg}

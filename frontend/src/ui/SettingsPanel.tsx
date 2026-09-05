@@ -34,6 +34,9 @@ import ComputeSettingsTabs from "./components/compute/ComputeSettingsTabs";
 import ModelExecutionSelector from "./components/compute/ModelExecutionSelector";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import TtsEngineSection from "./components/TtsEngineSection";
+// MS32. The one place an environment-variable name is allowed to reach a user:
+// they opened Settings, which is the act of asking a configuration question.
+import { MeetingTranscriptionCard } from "./meetingsense/MeetingTranscriptionCard";
 // Side-effect import: registers the bundled TTS providers (web-speech-api,
 // piper-wasm). Importing here guarantees the registry is populated the
 // first time the Settings panel mounts, before TtsEngineSection reads it.
@@ -69,6 +72,18 @@ export type ProviderKey = string;
 export type HardwarePresetUI = "low" | "med" | "high" | "ultra" | "custom";
 
 export type SettingsModelV2 = {
+  /**
+   * MS29. Let agents know about — and look at — the screen while you are sharing it.
+   *
+   * Two switches, deliberately. `MEETINGSENSE_SCREEN` is the operator's, server-wide. This is
+   * the user's, on this browser, and it stops the presence pings at the source so nothing
+   * about the screen reaches a prompt even on a server that permits it. Either one saying no
+   * is enough; a privacy control that can be overridden from the other end is not a control.
+   *
+   * On by default: the block only exists *while* a screen is being shared, which is a
+   * deliberate act with an operating-system indicator on it. Undefined reads as on.
+   */
+  screenAwareness?: boolean
   backendUrl: string;
   apiKey: string;
 
@@ -1314,6 +1329,10 @@ export default function SettingsPanel({
         <div className="border-t border-white/[0.06] pt-4">
           <TtsEngineSection systemVoices={availableVoices} />
         </div>
+
+        {/* Contributes no node at all when MeetingSense is off on this server — the
+            separator is the component's own, so an empty bordered block is impossible. */}
+        <MeetingTranscriptionCard />
       </SettingsCard>
     );
   }
@@ -1327,6 +1346,17 @@ export default function SettingsPanel({
       >
         <Row label="Auto-analyze images" description="Automatically describe uploaded images in chat.">
           <Toggle label="Auto-analyze images" checked={value.multimodalAuto ?? true} onChange={(v) => commit({ ...value, multimodalAuto: v })} />
+        </Row>
+
+        <Row
+          label="Let agents see my shared screen"
+          description="While you are sharing your screen, agents know it and can look at it when you ask. Turn this off and they are told nothing — the 👁 button still works on its own."
+        >
+          <Toggle
+            label="Let agents see my shared screen"
+            checked={value.screenAwareness ?? true}
+            onChange={(v) => commit({ ...value, screenAwareness: v })}
+          />
         </Row>
 
         {providerSelectRow("Multimodal Provider", "Provider used for vision.", value.providerMultimodal || 'ollama', (k) => commit({ ...value, providerMultimodal: k }))}

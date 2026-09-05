@@ -94,6 +94,12 @@ gateways:
     transport: "SSE"
     description: "HomePilot Community Greeter MCP server"
 
+  # ── MeetingSense (MS21) ──
+  - name: hp-meetingsense
+    url: "http://localhost:9107/rpc"
+    transport: "SSE"
+    description: "HomePilot MeetingSense MCP server — meetings, transcripts, slides, search"
+
   # ── Community: Microsoft Teams [BETA] ──
   - name: hp-teams
     url: "http://localhost:9106/rpc"

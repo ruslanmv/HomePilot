@@ -1,0 +1,42 @@
+name: Avatar Director
+
+# Additive gate for the Avatar Director work (spec v1.1 §4B + addendum v1.2). Runs beside
+# ci.yml and changes nothing about it. Two claims are checked here from B0 onward:
+#   1. the avatar: config block ships off, so installing the package enables nothing;
+#   2. the shared session-protocol fixtures still match the manifest the client repo holds
+#      an identical copy of.
+#
+# Deliberately dependency-light: app.avatar_director.config is a pure module, so this job
+# does not need the full backend requirements to prove the flags are off.
+
+on:
+  push:
+    branches: [main, master, "claude/**", "feat/avatar-**"]
+  pull_request:
+
+jobs:
+  avatar-director:
+    name: Config defaults & protocol fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Avatar Director tests
+        run: pytest tests/avatar -q
+        working-directory: backend
+        env:
+          SKIP_NETWORK_TESTS: "1"
+
+      # docs/PATHMAP.md is how later batches stay consistent with this one, and the
+      # package name is the decision most likely to be re-litigated by accident.
+      - name: Frozen names are documented
+        run: |
+          grep -q "avatar_director" docs/PATHMAP.md
+          grep -q "AVATAR_ENABLED" docs/PATHMAP.md

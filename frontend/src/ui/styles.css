@@ -167,3 +167,298 @@ select option:hover {
 .animate-live-dot {
   animation: ixLiveDotPulse 1.4s ease-in-out infinite;
 }
+
+/* ── MeetingSense: the ended meeting (MS33) ────────────────────────────────
+   The payoff view. Summary, decisions and actions read as a document; the
+   transcript below them reads as evidence. Every colour is a token-free
+   rgba on the card's own ground, matching the ms-card rules above. */
+
+.ms-pill__more {
+  margin-left: 2px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+.ms-pill__more:hover { color: #fff; border-color: rgba(255, 255, 255, 0.28); }
+.ms-pill__details {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ms-pill__fact { font-size: 11px; color: rgba(255, 255, 255, 0.45); }
+
+.ms-sum { display: flex; flex-direction: column; gap: 14px; padding: 12px 14px 2px; }
+.ms-sum--empty { padding-bottom: 12px; }
+.ms-sum__block { display: flex; flex-direction: column; gap: 6px; }
+.ms-sum__heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+.ms-sum__count { margin-left: 6px; font-weight: 400; color: rgba(255, 255, 255, 0.3); }
+.ms-sum__prose {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.82);
+}
+.ms-sum__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.ms-sum__item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.78);
+}
+.ms-sum__item[data-resolved='true'] { text-decoration: line-through; opacity: 0.5; }
+.ms-sum__box { color: rgba(255, 255, 255, 0.35); }
+.ms-sum__owner { color: rgba(255, 255, 255, 0.95); font-weight: 500; }
+.ms-sum__owner::after { content: ' —'; color: rgba(255, 255, 255, 0.3); font-weight: 400; }
+.ms-sum__text { flex: 1 1 auto; min-width: 0; }
+.ms-sum__stamp {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.3);
+}
+.ms-sum__stamp--link {
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.2);
+  transition: color 150ms ease;
+}
+.ms-sum__stamp--link:hover { color: rgba(255, 255, 255, 0.75); }
+.ms-sum__note { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.4); }
+
+.ms-ask { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; }
+.ms-ask__log { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.ms-ask__turn { display: flex; flex-direction: column; gap: 3px; }
+.ms-ask__q { margin: 0; font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+.ms-ask__a { margin: 0; font-size: 13px; line-height: 1.6; color: rgba(255, 255, 255, 0.85); }
+.ms-ask__a--pending, .ms-ask__a--error { color: rgba(255, 255, 255, 0.4); }
+.ms-ask__cite {
+  border: 0;
+  padding: 0 1px;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: rgba(160, 200, 255, 0.85);
+  text-decoration: underline;
+  text-decoration-color: rgba(160, 200, 255, 0.35);
+}
+.ms-ask__cite:hover { color: rgb(190, 220, 255); }
+.ms-ask__form { display: flex; align-items: center; gap: 6px; }
+.ms-ask__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: #fff;
+  font-size: 13px;
+  transition: border-color 150ms ease;
+}
+.ms-ask__input:focus { outline: none; border-color: rgba(255, 255, 255, 0.28); }
+.ms-ask__send {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+.ms-ask__send:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.ms-ask__send:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.ms-card__meta { font-size: 11px; color: rgba(255, 255, 255, 0.4); }
+.ms-card__disclosure {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 14px 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+.ms-card__disclosure:hover { color: rgba(255, 255, 255, 0.85); }
+.ms-card__count { color: rgba(255, 255, 255, 0.3); }
+.ms-card__row[data-cited='true'] {
+  border-radius: 6px;
+  background: rgba(160, 200, 255, 0.1);
+  box-shadow: inset 2px 0 0 rgba(160, 200, 255, 0.5);
+}
+
+.ms-menu { position: relative; margin-left: auto; }
+.ms-menu__trigger {
+  padding: 2px 7px;
+  border-radius: 8px;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+.ms-menu__trigger:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.ms-menu__sheet {
+  position: absolute;
+  right: 0;
+  top: 26px;
+  z-index: 40;
+  min-width: 190px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0d0d0d;
+  box-shadow: 0 12px 40px -12px rgba(0, 0, 0, 0.9);
+}
+.ms-menu__sheet button {
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+.ms-menu__sheet button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); }
+.ms-menu__sheet button:disabled { opacity: 0.4; cursor: not-allowed; }
+.ms-menu__formats { display: flex; gap: 3px; padding: 0 9px 4px; }
+.ms-menu__formats button {
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.ms-menu__rule { margin: 4px 6px; border: 0; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.ms-menu__danger { color: rgba(255, 140, 140, 0.9) !important; }
+.ms-menu__danger:hover { background: rgba(255, 80, 80, 0.12) !important; }
+.ms-menu__error { display: block; padding: 4px 0; font-size: 11px; color: rgba(255, 150, 150, 0.9); }
+
+.ms-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+}
+.ms-dialog__panel {
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0d0d0d;
+  box-shadow: 0 24px 70px -20px rgba(0, 0, 0, 0.95);
+}
+.ms-dialog__title { margin: 0; font-size: 14px; font-weight: 600; color: rgba(255, 255, 255, 0.95); }
+.ms-dialog__note { margin: 0; font-size: 12px; line-height: 1.6; color: rgba(255, 255, 255, 0.45); }
+.ms-dialog__error { margin: 0; font-size: 12px; color: rgba(255, 150, 150, 0.9); }
+.ms-dialog__input, .ms-dialog__select {
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  font-size: 13px;
+}
+.ms-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.ms-dialog__actions button {
+  padding: 7px 13px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+.ms-dialog__actions button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.11); }
+.ms-dialog__actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.ms-dialog__go { border-color: rgba(255, 255, 255, 0.25) !important; color: #fff !important; }
+.ms-dialog__danger {
+  border-color: rgba(255, 90, 90, 0.4) !important;
+  background: rgba(255, 70, 70, 0.14) !important;
+  color: rgb(255, 190, 190) !important;
+}
+
+.ms-cap { display: flex; flex-direction: column; gap: 8px; }
+.ms-cap__head {
+  margin: 4px 0 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+}
+.ms-cap__row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgba(255, 255, 255, 0.8); cursor: pointer; }
+.ms-cap__mode, .ms-cap__back, .ms-cap__done, .ms-cap__mode-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+.ms-cap__mode:hover, .ms-cap__back:hover, .ms-cap__done:hover, .ms-cap__mode-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.ms-cap__default {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.ms-cap__modes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.ms-cap__mode-item { flex-direction: column; align-items: stretch; gap: 2px; width: 100%; }
+.ms-cap__mode-item[aria-checked='true'] { border-color: rgba(255, 255, 255, 0.28); }
+.ms-cap__mode-name { font-weight: 500; }
+.ms-cap__mode-note { font-size: 11px; color: rgba(255, 255, 255, 0.4); line-height: 1.45; }
+.ms-cap__done { justify-content: center; margin-top: 2px; }

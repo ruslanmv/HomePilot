@@ -325,9 +325,12 @@ class TestRegistryCache:
         community._registry_cache["data"] = SAMPLE_REGISTRY
         community._registry_cache["fetched_at"] = time.time()
 
-        # Should return cached data without network call
+        # Should return cached data without network call.
+        # `asyncio.run` rather than `get_event_loop().run_until_complete`: from Python 3.10
+        # `get_event_loop()` raises in a thread with no running loop and none set, which is
+        # exactly this test under pytest.
         import asyncio
-        data = asyncio.get_event_loop().run_until_complete(community._fetch_registry())
+        data = asyncio.run(community._fetch_registry())
         assert data["schema_version"] == 1
         assert len(data["items"]) == 3
 
@@ -350,7 +353,7 @@ class TestRegistryCache:
         # Should refetch — remote fails, but _fetch_registry now degrades
         # gracefully (returns empty items instead of raising).
         import asyncio
-        data = asyncio.get_event_loop().run_until_complete(community._fetch_registry())
+        data = asyncio.run(community._fetch_registry())
         # Expired cache was replaced with fresh (empty) data
         assert data is not community._registry_cache.get("_old_sentinel", object())
         assert "items" in data

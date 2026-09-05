@@ -45,6 +45,26 @@ async def _try_invoke(tool_name: str, args: Dict[str, Any]) -> str:
         return ""
 
 
+#: Words that make a question a question about meetings. Deliberately short: the cost of a
+#: miss is a briefing without a citation, and the cost of a false positive is a tool call that
+#: returns nothing — so this leans towards asking.
+_MEETING_WORDS = (
+    "meeting", "meetings", "call", "calls", "standup", "stand-up", "sync", "retro",
+    "we decide", "we decided", "we agreed", "discussed", "last week", "this week",
+)
+
+
+def _asks_about_meetings(text: str) -> bool:
+    """Whether to spend a tool call on `ms.search`.
+
+    A cheap keyword test rather than a model call: the enrichment is best-effort and the
+    briefing has to come back inside a turn, so a second round trip to decide whether to make
+    a round trip is the wrong trade.
+    """
+    lowered = (text or "").lower()
+    return any(word in lowered for word in _MEETING_WORDS)
+
+
 async def handle_message(text: str, meta: Json) -> Json:
     """Chief of Staff orchestrator (safe v1).
 
@@ -60,11 +80,24 @@ async def handle_message(text: str, meta: Json) -> Json:
     if mode in ("auto", "knowledge", "decision"):
         enrichment = await _try_invoke("hp.search_workspace", {"query": text, "limit": 3})
 
+    # MS22. "What did we decide about pricing?" is a question about meetings, and a chief of
+    # staff that could not answer it would be one nobody asks twice. Best-effort like the
+    # workspace search above: `ms.search` returns nothing when MeetingSense is not seeded, and
+    # the briefing reads the same as it did before this batch.
+    meetings = ""
+    if mode in ("auto", "knowledge", "decision") and _asks_about_meetings(text):
+        meetings = await _try_invoke("hp.ms.search", {"query": text, "k": 4})
+
     response_lines: List[str] = []
     response_lines.append("**What I know**")
     if enrichment:
         response_lines.append(f"- Workspace search hints:\n{enrichment}")
-    else:
+    if meetings:
+        # Kept as its own bullet rather than folded into the workspace hints: these carry a
+        # `meeting · hh:mm:ss` citation and the workspace ones do not, and a reader who cannot
+        # tell them apart cannot check either.
+        response_lines.append(f"- From your meetings (cited):\n{meetings}")
+    if not enrichment and not meetings:
         response_lines.append("- I don't have workspace facts yet (or tools are not seeded).")
 
     response_lines.append("")
