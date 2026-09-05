@@ -474,6 +474,14 @@ app.include_router(voice_router)
 from .meetingsense import router as meetingsense_router
 app.include_router(meetingsense_router)
 
+# Include remote screen capture (RS1 — additive). The routes are always mounted and the
+# capability route always answers: a client has to tell "this HomePilot is too old to know
+# what you are asking" from "capture is switched off on that machine", and a 404 says
+# neither. Taking a picture still needs either a share the user granted in a HomePilot tab
+# or the local HOMEPILOT_REMOTE_CAPTURE flag — mounting the route grants nothing.
+from .screensense import router as screensense_router
+app.include_router(screensense_router)
+
 # Include media:// URI resolver (/media/resolve)
 from .media_resolver import router as media_router
 app.include_router(media_router)
