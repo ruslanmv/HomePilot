@@ -52,6 +52,7 @@ def test_it_hands_back_exactly_what_it_was_given():
 
 
 def test_it_measures_what_it_passed_through():
+    # Under every profile's budget, so still byte-for-byte the V4 path.
     out = vision_adapter.adapt(png(width=1280, height=653))
     assert (out.width, out.height) == (1280, 653)
     assert (out.original_width, out.original_height) == (1280, 653)
@@ -86,12 +87,14 @@ def test_a_purpose_nobody_has_heard_of_is_recorded_not_refused():
     assert any(w.startswith("unknown-purpose") for w in out.warnings)
 
 
-def test_a_very_large_image_is_still_passed_through_in_v4():
-    # V5 resizes. V4 measuring it and doing nothing is the point of landing the seam first.
+def test_a_very_large_image_is_fitted_from_v5_onward():
+    # V4's version of this test asserted `passthrough` and `width == 4000`. V5 is the batch
+    # where that stops being true on purpose, and `test_vision_profiles.py` holds the new
+    # behaviour to its own claims. What is kept here is the seam: one call, one record of it.
     out = vision_adapter.adapt(png(width=4000, height=2000))
-    assert out.strategy == "passthrough"
-    assert out.width == 4000
-    assert not out.warnings
+    assert out.strategy == "resized"
+    assert (out.original_width, out.original_height) == (4000, 2000)
+    assert max(out.width, out.height) == 1400
 
 
 # ── both paths meet at it ───────────────────────────────────────────────────

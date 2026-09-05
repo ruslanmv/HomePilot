@@ -302,6 +302,7 @@ async def analyze_image_ollama(
     user_prompt: Optional[str] = None,
     nsfw_mode: bool = False,
     mode: str = "both",  # caption | ocr | both
+    purpose: str = "screen",  # screen | photo | document — chooses the adapter profile (V5)
     image_b64: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -357,9 +358,16 @@ async def analyze_image_ollama(
     else:
         raw_bytes, mime_type = await _load_image_bytes(image_url, upload_path)
 
-    adapted = vision_adapter.adapt(raw_bytes, mime_type=mime_type, model=mdl, purpose="screen")
+    # V5. The adapter now fits the image to a budget and, for a model that has been shown to
+    # handle it, adds overlapping detail crops. `mode` is what tells it whether the caller wants
+    # to *read* the screen or just see it — the vocabulary already existed, so no call site grows
+    # a second way of saying the same thing.
+    adapted = vision_adapter.adapt(
+        raw_bytes, mime_type=mime_type, model=mdl, purpose=purpose, mode=mode
+    )
     raw_bytes, mime_type = adapted.data, adapted.mime_type
-    img_b64 = _image_to_base64(raw_bytes)
+    images_b64 = [_image_to_base64(part.data) for part in adapted.parts] or [""]
+    img_b64 = images_b64[0]
 
     # Build prompt
     system_prompt = _NSFW_SYSTEM_PROMPT if nsfw_mode else _SFW_SYSTEM_PROMPT
@@ -376,6 +384,18 @@ async def analyze_image_ollama(
             "transcribe it exactly and note where it appears."
         )
 
+    # V5. When detail crops were sent, say what they are. Without this the model is handed five
+    # images with no account of how they relate and treats them as five separate pictures — the
+    # exact failure the multi-image gate exists to keep away from unverified models.
+    if len(adapted.parts) > 1:
+        crops = ", ".join(part.label for part in adapted.parts[1:])
+        prompt = (
+            f"{prompt}\n\n"
+            "These images are one screen, not several. The first is the whole screen; the rest "
+            f"are higher-resolution crops of it ({crops}), and they overlap. Answer about the "
+            "single screen they come from, and read text from the crops, where it is sharper."
+        )
+
     # Ollama vision API: /api/chat with images array
     payload = {
         "model": mdl,
@@ -384,7 +404,7 @@ async def analyze_image_ollama(
             {
                 "role": "user",
                 "content": prompt,
-                "images": [img_b64],
+                "images": images_b64,
             },
         ],
         "stream": False,
@@ -494,6 +514,7 @@ async def analyze_image(
     nsfw_mode: bool = False,
     mode: str = "both",
     image_b64: Optional[str] = None,
+    purpose: str = "screen",
 ) -> Dict[str, Any]:
     """
     Top-level dispatcher for multimodal image analysis.
@@ -502,6 +523,11 @@ async def analyze_image(
     ``image_b64`` supplies the image directly and bypasses disk resolution entirely; when it
     is given, *image_url* and *upload_path* are ignored. Added for the avatar director's
     §6.13 vision path, whose defining constraint is that a frame is never written anywhere.
+
+    ``purpose`` picks the adapter profile (V5): ``screen`` fits the image for reading and, on a
+    model verified to handle several images, adds detail crops; ``photo`` and ``document`` fit
+    it and send one image. It defaults to ``screen`` because that is what every caller was
+    getting before the profiles existed, so nothing changes shape by being left alone.
     """
     if provider == "ollama":
         return await analyze_image_ollama(
@@ -513,6 +539,7 @@ async def analyze_image(
             nsfw_mode=nsfw_mode,
             mode=mode,
             image_b64=image_b64,
+            purpose=purpose,
         )
 
     return {

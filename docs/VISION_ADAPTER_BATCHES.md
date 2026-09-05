@@ -1,6 +1,6 @@
 # Local Vision Adapter — Batch Plan (screen understanding)
 
-**Status:** V1, V2, V3 and V4 are **shipped**; V5–V8 are still planning.
+**Status:** V1–V5 are **shipped**; V6–V8 are still planning.
 Below, the shipped batches keep their original text and carry a ✅ with what actually landed.
 **Scope:** `ruslanmv/HomePilot` — `backend/app/multimodal.py`, a new
 `backend/app/vision_adapter/`, `frontend/public/js/homepilot-screensense.js`,
@@ -283,7 +283,54 @@ distinguished from the profiles that follow it.
 
 ### V5 — Screen profiles, with tiling gated on evidence
 
-`screen_overview` and `screen_text`. Overlapping tiles at 10–15%, labelled (`overview`,
+✅ **Shipped.** `screen_overview`, `screen_text` and `photo` live in
+`backend/app/vision_adapter/profiles.py`, and `analyze_image`'s existing `mode`
+(`caption | ocr | both`) is what picks between the first two — somebody asking for OCR is asking
+to read the screen, so no call site grew a second, parallel way of saying the same thing. A new
+`purpose` argument (`screen | photo | document`) defaults to `screen`, which is what every
+caller was already getting.
+
+**The overview runs today, for everyone.** An image is fitted to a long-edge cap *and* a pixel
+cap — an ultrawide passes the first and not the second — with the aspect ratio kept, and it is
+**never enlarged**: the only thing extra pixels add to a 320×200 icon is detail nobody
+photographed. A resized screen comes back as **PNG**, because JPEG's ringing lands on
+high-contrast edges and at these sizes a glyph stroke *is* a high-contrast edge one or two
+pixels wide.
+
+**Tiling ships gated, and the gate is closed.** `supports_multiple_images()` is False for every
+model, because `MULTI_IMAGE_VERIFIED` is empty and a list of families that ought to work is not
+a measurement — V8's bench set is the batch that fills it. An operator who has watched their own
+model read a tiled screenshot can name it in `VISION_MULTI_IMAGE_MODELS` today. When the gate
+closes, it says so: `warnings: ["tiling-unavailable:single-image-model"]`, because "the answer
+was thin" and "the detail crops were never sent" look identical from outside.
+
+**What tiling does when it runs.** Crops of the *original* — cropping the overview would hand
+the model four pieces of the same blur — labelled `top-left`, `center`, `left` and so on, with
+the split chosen by shape: a 16:9 screen is 2×2, an ultrawide is three panes across, a long
+page is three down. The overview always goes first, and the prompt says the images are one
+screen and how they relate; five images with no such account are five separate pictures to a
+model, which is the failure the gate exists to keep away from unverified models.
+
+Two claims are held to a standard stronger than a smoke test. The **overlap** (14%) carries a
+geometric guarantee — with tiles of width *w* stepping by `w × (1 − overlap)`, any run shorter
+than `w × overlap` lies wholly inside at least one tile, so a line of text is never cut in half
+with neither crop showing all of it — and a test walks every offset across the screen to check
+it. And `test_a_crop_keeps_text_the_overview_loses` measures the actual premise of the batch: a
+4-pixel stripe pattern aliases into flat grey in the overview and is still legible in a crop. If
+that test ever passes trivially, tiling has stopped being worth its cost.
+
+**Numbers are budgets, not model limits.** A vision encoder's internal resolution is not
+something this code can discover, so the caps (1400px long edge, 1.6 MP, 1100px tiles, five
+parts) are chosen to be safe on small models and are expected to be tuned by V8 against real
+screenshots. Two rules are not tuning-dependent: never enlarge, and never re-encode a screen as
+JPEG.
+
+**Found while building it.** EXIF orientation was applied *after* the target size was computed
+from the on-disk dimensions, so a photo tagged "rotate 90°" was being fitted to the wrong shape
+and stretched — and a small rotated photo took the passthrough shortcut and reached the model on
+its side. Both fixed, both tested.
+
+*Original plan:* `screen_overview` and `screen_text`. Overlapping tiles at 10–15%, labelled (`overview`,
 `top-left`, `center`, …), with a hard tile budget from the selected model and available memory.
 
 **Gate tiling on verified multi-image support.** Sending four tiles to a model that has never
