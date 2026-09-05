@@ -340,6 +340,46 @@ def _unchanged(
     )
 
 
+def crops(
+    data: bytes,
+    *,
+    mime_type: str = "image/png",
+    purpose: str = "screen",
+    mode: Optional[str] = None,
+) -> List[Part]:
+    """Detail crops of *data*, **without consulting the multi-image gate** (V6).
+
+    The gate in :func:`adapt` guards one specific risk: several images in one request, to a
+    model that cannot reason across them. Sending the same crops **one at a time**, each its own
+    single-image request, carries none of that risk — every model can read one image — which is
+    what lets V6's retry ladder rescue an unreadable screenshot on hardware where tiling itself
+    is still switched off.
+
+    Returns ``[]`` when the profile does not tile, when the image is already inside its budget
+    (nothing was lost, so there is nothing to recover), or when Pillow cannot work on it.
+    """
+    profile = profile_for(purpose, mode)
+    if not profile.tile:
+        return []
+
+    width, height, _sniffed = _measure(data or b"")
+    Image = _pillow()
+    if Image is None or width is None:
+        return []
+    if _profiles.fit(width, height, profile) == (width, height):
+        return []
+
+    try:
+        with Image.open(io.BytesIO(data)) as source:
+            source.load()
+            source, rotated = _upright(source)
+            if rotated:
+                width, height = source.width, source.height
+            return _tiles(Image, source, profile, width, height)
+    except Exception:
+        return []
+
+
 def describe(adapted: Optional[AdaptedImage]) -> Dict[str, Any]:
     """``adapter`` metadata for a response, or ``{}`` when nothing passed through."""
     return adapted.meta() if adapted else {}

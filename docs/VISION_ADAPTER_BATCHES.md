@@ -1,6 +1,6 @@
 # Local Vision Adapter — Batch Plan (screen understanding)
 
-**Status:** V1–V5 are **shipped**; V6–V8 are still planning.
+**Status:** V1–V7 are **shipped**; V8 is still planning.
 Below, the shipped batches keep their original text and carry a ✅ with what actually landed.
 **Scope:** `ruslanmv/HomePilot` — `backend/app/multimodal.py`, a new
 `backend/app/vision_adapter/`, `frontend/public/js/homepilot-screensense.js`,
@@ -344,6 +344,40 @@ multi-image support receives exactly one image.
 
 ### V6 — Retry internally, and say the right thing
 
+✅ **Shipped.** `backend/app/vision_ladder/`, hooked into RS1's `/explain`.
+
+**The rung that does the work is the crops one, and it works on today's models.** V5's tiling
+sends several crops in *one* request, which needs a model that can reason across images — so it
+is gated, and the gate is closed. The ladder sends the same crops **one at a time**, each an
+ordinary single-image request. Every vision model can read one image. So the thing that actually
+rescues an unreadable 4K screenshot — text at close to native resolution — is available right
+now, on today's hardware, with the model the user already has. `vision_adapter.crops()` exists
+for exactly this and deliberately does not consult the multi-image gate, because none of the
+risk that gate guards applies here.
+
+**The ladder cannot switch on a status code**, which is why `usable.py` exists. A vision model
+handed a destroyed screenshot rarely errors; it answers "An image of a computer screen." So there
+is a judgement — empty, too short, refusal, blind, vacuous, repetition, not-language — and it is
+deliberately generous, because **the best reply is always kept**: being wrong costs a model call,
+never an answer. A reply the judgement disliked is still returned, marked `meta.degraded`, with
+no disclaimer in front of it; prefixing a usable answer with an apology makes it read as a
+failure.
+
+**The copy rule.** The model's name is not the first thing anybody reads. Before this, a failed
+screenshot produced "moondream returned no description of the image" — the name of a piece of
+software the user did not choose, in a sentence offering nothing to do. The name now appears in
+exactly one place: the last message, beside `ollama pull`, once the retries are spent, and it is
+a model to **install**, never the one that failed. Suggesting what is already installed is worse
+than suggesting nothing. "Nothing installed can see at all" gets its own sentence, because
+telling somebody their screenshot was unreadable when the fix is a `pull` wastes their evening.
+
+**It has to stop.** A wall-clock budget (`VISION_LADDER_BUDGET_S`, 90s) gates the *start* of each
+rung — one already running finishes, since killing a model mid-answer wastes the work — and
+`VISION_LADDER_MAX_CROPS` (4) caps the second rung. A rung that throws is a rung that failed, not
+a 500, and the exception text never reaches the person.
+
+*Original plan:*
+
 ```text
 overview → empty or unusable? → detail tiles → better installed model → only then, say so
 ```
@@ -360,7 +394,42 @@ model to install, not a model that failed.
 
 ### V7 — One catalog
 
-Generate the frontend list from `backend/app/model_catalog_data.json` at build time; delete
+✅ **Shipped.** `frontend/scripts/generate-model-catalog.mjs` projects
+`backend/app/model_catalog_data.json` into `frontend/src/generated/modelCatalog.ts`, wired as
+`prebuild` and available as `npm run catalog`. `Models.tsx` imports it; the 283-line
+hand-maintained copy is gone.
+
+**How far apart they had drifted.** 43 field differences across 94 shared entries, in both
+directions and both user-visible:
+
+* the frontend offered `internvl3:8b` and `smolvlm2:latest`, which the backend catalog had never
+  heard of — a person could pick a vision model the server could not classify;
+* the frontend's offline list had **no** OpenAI, Claude or watsonx chat models at all, so the
+  list of models on screen *changed* the moment the backend answered;
+* the two `addons` lists were disjoint — git-installed ComfyUI custom nodes on one side,
+  HuggingFace file downloads (text encoders, VAEs) on the other;
+* the frontend spelled download sizes into labels ("Moondream (1.6 GB)") where the backend keeps
+  `size_gb` as a field, so the same model was named two different things depending on which list
+  answered.
+
+Nobody did any of that on purpose. It is what two hand-maintained lists do.
+
+**Resolving it additively.** The backend JSON became the superset: every frontend-only entry was
+merged into it rather than dropped, so generating from it takes nothing away. `size_gb` is now
+rendered next to the label, which keeps the size where a person could already see it in the
+offline list *and* puts it on the online list, which never had it.
+
+**The test is the batch.** `modelCatalog.generated.test.ts` regenerates in memory and fails if
+the committed file has drifted, fails if the projection starts shipping backend-only fields, and
+audits `Models.tsx` itself for a pasted-back literal — because without that last one V7 is one
+paste away from being undone with every other test still green.
+
+`vision_input` (`max_long_edge`, `max_megapixels`, `preferred_mime`, `supports_multiple_images`,
+`strategy`) is carried through the projection and populated for **nothing**, on the same
+discipline that keeps V5's verified multi-image set empty: V8's bench set fills it in from
+measurement, entry by entry. The seam is what ships here.
+
+*Original plan:* Generate the frontend list from `backend/app/model_catalog_data.json` at build time; delete
 the hand-maintained copy in `Models.tsx`. Add optional `vision_input` capability metadata
 (`max_long_edge`, `max_megapixels`, `preferred_mime`, `supports_multiple_images`, `strategy`)
 **only** for entries where it has been confirmed.

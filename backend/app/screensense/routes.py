@@ -237,16 +237,21 @@ async def explain(inp: ExplainIn) -> JSONResponse:
         from pathlib import Path as _Path
 
         from ..config import UPLOAD_DIR
-        from ..multimodal import analyze_image
+        from ..vision_ladder import analyze_persistently
 
-        result = await analyze_image(
-            image_url="",
+        # V6. One model call used to be the whole of this route, and a downscaled 4K screenshot
+        # does not make a model *error* — it makes it answer "An image of a computer screen."
+        # The ladder tries the whole screen, then each crop on its own at close to native
+        # resolution, then a better installed model, and only then admits it. The person sees
+        # an answer or one actionable sentence; never a transcript of the attempts.
+        result = await analyze_persistently(
+            image_bytes=data,
             upload_path=_Path(UPLOAD_DIR),
             base_url=inp.base_url or _default_vision_base_url(),
             model=inp.model or _default_vision_model(),
             user_prompt=(inp.question or "What do you see?") + _FRAME_PROMPT,
             mode="both",
-            image_b64=base64.b64encode(data).decode("ascii"),
+            purpose="screen",
         )
     except Exception as exc:
         log.warning("screensense explain failed: %s", exc)
@@ -260,14 +265,18 @@ async def explain(inp: ExplainIn) -> JSONResponse:
             },
         )
 
-    # V3. `error_code` is what a retry ladder switches on; `message` is what a person reads.
-    # A model that returned nothing is not "your computer failed" — the screenshot is fine and
-    # still on screen, so the sentence says which half worked.
+    # V3 named `error_code` as the thing a retry ladder would switch on. V6 is that ladder, and
+    # it now owns the sentence too: `vision_unreadable` arrives with copy that says which half
+    # worked and names a model to *install* — never the model that just failed, which reads as
+    # blame and leaves the person exactly where they were.
+    #
+    # `empty_model_response` is kept as a fall-through. The ladder resolves it into either an
+    # answer or `vision_unreadable`, so this branch only fires if something calls the single-shot
+    # path directly, and a caller that predates V6 should not lose its message.
     code = result.get("error_code", "")
-    message = ""
-    if code == "empty_model_response":
-        model = (result.get("meta") or {}).get("model") or "the vision model"
-        message = f"I took the screenshot, but {model} did not give me anything readable about it."
+    message = str(result.get("message") or "")
+    if not message and code == "empty_model_response":
+        message = "I took the screenshot, but I couldn't make out enough of it to answer that."
     return JSONResponse(
         status_code=200,
         content={

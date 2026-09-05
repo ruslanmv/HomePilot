@@ -37,7 +37,7 @@ failing over an optional measurement would be a worse product than one that answ
 image it was given.
 """
 
-from .adapter import AdaptedImage, Part, adapt, describe  # noqa: F401
+from .adapter import AdaptedImage, Part, adapt, crops, describe  # noqa: F401
 from .profiles import (  # noqa: F401
     PHOTO,
     SCREEN_OVERVIEW,
@@ -55,6 +55,7 @@ __all__ = [
     "SCREEN_OVERVIEW",
     "SCREEN_TEXT",
     "adapt",
+    "crops",
     "describe",
     "profile_for",
     "supports_multiple_images",
