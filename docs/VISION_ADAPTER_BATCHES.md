@@ -1,6 +1,6 @@
 # Local Vision Adapter — Batch Plan (screen understanding)
 
-**Status:** V1, V2 and V3 are **shipped**; V4–V8 are still planning.
+**Status:** V1, V2, V3 and V4 are **shipped**; V5–V8 are still planning.
 Below, the shipped batches keep their original text and carry a ✅ with what actually landed.
 **Scope:** `ruslanmv/HomePilot` — `backend/app/multimodal.py`, a new
 `backend/app/vision_adapter/`, `frontend/public/js/homepilot-screensense.js`,
@@ -250,7 +250,26 @@ defence rather than the only one.
 
 ### V4 — The adapter seam, changing nothing
 
-`backend/app/vision_adapter/` with `passthrough` only, applied to **every** path including
+✅ **Shipped.** `backend/app/vision_adapter/` exists and both paths meet at it. `adapt()`
+measures with Pillow when Pillow is installed, records what it saw, and hands the same bytes
+back — `strategy: "passthrough"`, `scale: 1.0`, `tiles: 1`. Every response now carries
+`meta.adapter`, which is the batch's real deliverable: until it existed, "the model returned
+nothing", "the image was forty megapixels" and "the resize destroyed the text" all arrived as
+the same silence.
+
+Two things came out of routing both paths through one place. The `image_b64` path now decodes
+before it encodes, so `meta.image_size_bytes` is the measured number rather than V3's
+`(len(img_b64) * 3) // 4` estimate — that branch is now dead code, which is how you can tell
+the seam is real. And a measurement that cannot be taken is never a failure: no Pillow, a
+format it cannot open, or zero bytes all pass through with `width: null` and a warning
+(`unmeasured`, `empty`, `unknown-purpose:…`), because a vision request that started failing
+over an optional measurement would be a worse product than one that says it does not know.
+
+`model` is accepted and unused. V5 reads it to pick a profile; taking it now means the four
+call sites are already passing it, and a seam whose signature changes on the day it does
+something is not a seam.
+
+*Original plan:* `backend/app/vision_adapter/` with `passthrough` only, applied to **every** path including
 `image_b64`. Behaviour identical, byte for byte, on every existing call.
 
 Fix `meta.image_size_bytes` here, since the adapter is the first place that reliably knows the

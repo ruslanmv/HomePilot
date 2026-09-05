@@ -27,6 +27,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import vision_adapter
 from .config import OLLAMA_BASE_URL, TOOL_TIMEOUT_S
 
 
@@ -342,16 +343,23 @@ async def analyze_image_ollama(
             "meta": {"model": None, "mode": mode},
         }
 
-    # Load and encode image. ``image_b64`` skips the disk entirely — the avatar director's
-    # vision path (spec v1.1 §6.13) must never write a frame anywhere, so it hands the bytes
-    # straight in rather than staging a file for this function to read back. Every existing
-    # caller passes a URL and is unaffected.
+    # Load the image. ``image_b64`` skips the disk entirely — the avatar director's vision
+    # path (spec v1.1 §6.13) must never write a frame anywhere, so it hands the bytes straight
+    # in rather than staging a file for this function to read back.
+    #
+    # V4. Both paths then meet at the adapter, and that is the whole of this batch. They used
+    # to diverge right through to the request, which is how `image_size_bytes` came to report
+    # 0 for every avatar and remote-screenshot analysis: there was no one place, so the fix had
+    # to be made twice. The adapter is `passthrough` today — same bytes, same behaviour — and
+    # V5 changes one file rather than every caller.
     if image_b64:
-        raw_bytes, mime_type = b"", "image/jpeg"
-        img_b64 = image_b64
+        raw_bytes, mime_type = base64.b64decode(image_b64, validate=False), "image/jpeg"
     else:
         raw_bytes, mime_type = await _load_image_bytes(image_url, upload_path)
-        img_b64 = _image_to_base64(raw_bytes)
+
+    adapted = vision_adapter.adapt(raw_bytes, mime_type=mime_type, model=mdl, purpose="screen")
+    raw_bytes, mime_type = adapted.data, adapted.mime_type
+    img_b64 = _image_to_base64(raw_bytes)
 
     # Build prompt
     system_prompt = _NSFW_SYSTEM_PROMPT if nsfw_mode else _SFW_SYSTEM_PROMPT
@@ -437,12 +445,15 @@ async def analyze_image_ollama(
     meta = {
         "model": mdl,
         "mode": mode,
-        # `raw_bytes` is empty on the `image_b64` path, where the caller handed us the encoded
-        # image and there was never a decoded copy. Reporting 0 there said "the image was
-        # empty" about every avatar-director and remote-screenshot analysis. Base64 is 4 bytes
-        # per 3, so the encoded length recovers the real size closely enough to be useful.
-        "image_size_bytes": len(raw_bytes) if raw_bytes else (len(img_b64) * 3) // 4,
+        # V3 estimated this from the encoded length on the `image_b64` path, because there
+        # was no decoded copy to measure. V4 decodes first, so it is the real number on both
+        # paths and the estimate is gone.
+        "image_size_bytes": len(raw_bytes),
         "mime_type": mime_type,
+        # V4. What the adapter saw and what it did. Until this existed, "the model returned
+        # nothing", "the image was forty megapixels" and "the resize destroyed the text" all
+        # arrived as the same silence.
+        "adapter": adapted.meta(),
     }
 
     if not content:
