@@ -1,0 +1,21 @@
+# HomePilot Local Speech — NVIDIA CUDA 12 (batch LS1)
+#
+#     pip install -r requirements/speech-cuda12.txt
+#
+# Same packages as the CPU set; the difference is the host, not the requirements. CTranslate2
+# ships one wheel and picks its backend at runtime, so what makes this a separate file is the
+# contract it states: **CUDA 12 with cuDNN 9 must already be present on the machine.** With an
+# older pair, CTranslate2 loads and then falls back to CPU *silently* — which is exactly the
+# failure `WhisperLocalSTTProvider.device` exists to make visible, because a silent fallback
+# looks like a working install that is ten times slower than the budget assumed.
+#
+# NOT VALIDATED HERE. This sandbox has no GPU, so nothing in CI exercises this file beyond
+# checking that it is pinned. Treat it as untested until somebody runs it on real hardware and
+# `/v1/meetingsense/status` reports `device: cuda`.
+
+-r speech-cpu.txt
+
+# Installed by CUDA itself on most systems. Listed as a comment rather than a dependency
+# because pip installing a CUDA runtime beside the system one is how two of them end up
+# loaded, and the resulting crash is far worse than the missing-library error:
+#   nvidia-cublas-cu12, nvidia-cudnn-cu12  (cuDNN 9)

@@ -57,6 +57,15 @@ docs = [
     "python-docx>=0.8.11",
     "openpyxl>=3.1.0",
 ]
+# HomePilot Local Speech (LS1) — opt-in via `pip install .[whisper]`.
+# Kept out of the base dependencies deliberately: CTranslate2 carries a native runtime and a
+# CUDA/cuDNN compatibility matrix, and dragging that into every install breaks unrelated
+# deployments the first time a wheel does not match the host. Mirrors
+# requirements/speech-cpu.txt, which is the form the docs point people at.
+whisper = [
+    "faster-whisper==1.2.1",
+    "ctranslate2==4.8.2",
+]
 # CrewAI integration — opt-in via `pip install .[crewai]` or `uv pip install -e ".[crewai]"`
 # Enables real CrewAI Agent/Task/Crew orchestration for the Teams crew workflow engine.
 # Also set TEAMS_CREWAI_ENABLED=true at runtime.

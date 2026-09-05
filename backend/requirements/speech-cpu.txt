@@ -1,0 +1,21 @@
+# HomePilot Local Speech — CPU (batch LS1)
+#
+# Install this and MeetingSense transcribes locally, with no environment variable to set and
+# no speech service to sign up for:
+#
+#     pip install -r requirements/speech-cpu.txt
+#
+# Kept out of `requirements.txt` on purpose. CTranslate2 carries a native runtime and a
+# CUDA/cuDNN compatibility matrix, and a base install that drags that in breaks unrelated
+# deployments the first time a wheel does not match the host. So local speech is one deliberate
+# extra command, not a surprise inside `pip install -r requirements.txt`.
+#
+# Pinned rather than floated, for the same reason: this is the layer where "it worked last
+# week" goes wrong quietly, and a range would let a native ABI change arrive on its own.
+# There is a test asserting these stay pinned.
+
+faster-whisper==1.2.1
+# CTranslate2 is faster-whisper's runtime and the piece with the native ABI. Named here as
+# well as inherited so a version bump is a decision somebody makes rather than one that
+# arrives with a transitive resolve.
+ctranslate2==4.8.2

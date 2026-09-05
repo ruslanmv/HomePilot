@@ -101,9 +101,12 @@ class MeetingBridge:
             return self._transcribe
         self._provider_loaded = True
         try:
-            from ..voice.providers import get_stt_provider
+            # LS2. The meeting's own policy, not the shared one: a session opened through
+            # the avatar is still a meeting, and a configured remote endpoint must not decide
+            # where its audio goes.
+            from ..voice.providers import get_meeting_stt_provider
 
-            provider = get_stt_provider()
+            provider = get_meeting_stt_provider()
             if getattr(provider, "available", False):
 
                 async def transcribe(data: bytes, *, fmt: str = "wav", duration_s=None):

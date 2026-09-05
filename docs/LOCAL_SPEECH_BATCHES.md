@@ -1,6 +1,7 @@
 # HomePilot Local Speech — Batch Plan (MeetingSense transcription)
 
-**Status:** planning artifact. No product code changes in this document.
+**Status:** LS1 and LS2 are **shipped**; LS3–LS8 are still planning.
+The shipped batches keep their original text and carry a ✅ with what actually landed.
 **Scope:** `ruslanmv/HomePilot` — `backend/app/voice/`, a new `backend/app/local_speech/`,
 `backend/app/meetingsense/`, and the Settings surface in `frontend/src/ui/`.
 **Rule for every batch below:** additive only. New files in new directories; existing files
@@ -88,6 +89,8 @@ stops working.
 
 ### LS1 — Make local speech real on a normal install
 
+✅ **Shipped.** `requirements/speech-cpu.txt` and `speech-cuda12.txt`, pinned, plus a `.[whisper]` extra that a test keeps in step with the CPU set. `WHISPER_MODEL` now defaults to `small` — turbo is the design's eventual default, but making a CPU-only machine's first meeting a 1.6 GB download is a worse first experience than a model that works; that swap belongs with LS3's pinned pack and LS5's hardware profile. The CUDA set is untested here: no GPU.
+
 Packaging, and nothing else.
 
 * `requirements/speech-cpu.txt` and `requirements/speech-cuda12.txt` as **pinned** constraint
@@ -105,6 +108,8 @@ and mark CUDA as untested until somebody runs it on real hardware.
 ---
 
 ### LS2 — The meeting gets its own policy
+
+✅ **Shipped.** `get_meeting_stt_provider()` with `MEETINGSENSE_STT_POLICY` defaulting to `local`; `get_stt_provider()` untouched, so voice calls behave exactly as before. `/status` gained `policy`, `remote_configured` and `offer_remote`, and `remote` changed meaning from *one is configured* to *this meeting is using one*. Ten test stubs across five MeetingSense suites moved to the new function, and one status test that asserted the old behaviour was rewritten — that assertion was the bug, written down.
 
 The privacy fix. Add:
 

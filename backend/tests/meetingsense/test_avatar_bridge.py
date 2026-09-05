@@ -519,7 +519,7 @@ class TestRemoteOk:
             supports_segments = True
             device = "cuda"
 
-        monkeypatch.setattr(providers, "get_stt_provider", lambda: Ready())
+        monkeypatch.setattr(providers, "get_meeting_stt_provider", lambda: Ready())
         return self._client(modules).get("/v1/meetingsense/status").json()
 
     def test_it_is_false_while_meetingsense_is_off(self, modules, monkeypatch):
@@ -546,7 +546,7 @@ class TestRemoteOk:
         monkeypatch.setenv("MEETINGSENSE_REMOTE", "true")
         import app.voice.providers as providers
 
-        monkeypatch.setattr(providers, "get_stt_provider", lambda: None)
+        monkeypatch.setattr(providers, "get_meeting_stt_provider", lambda: None)
         assert self._client(modules).get("/v1/meetingsense/status").json()["remote_ok"] is False
 
 

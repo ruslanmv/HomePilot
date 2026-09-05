@@ -60,10 +60,13 @@ def stt_capability() -> Dict[str, Any]:
     was asked for — ``auto`` falls back to CPU silently when CUDA is present but unusable,
     and that silence is how someone concludes the latency budget is unachievable.
 
-    ``provider`` is named rather than merely counted because ``get_stt_provider()`` prefers
-    the OpenAI-compatible endpoint whenever ``STT_BASE_URL`` is set. Someone who configured
-    that months ago for voice calls would otherwise ship an hour of meeting audio to it
-    without being told. Naming it here is what lets the consent sheet name it too.
+    ``provider`` is named rather than merely counted because a remote endpoint is a different
+    privacy answer from a local model, and the consent sheet has to be able to say which.
+    Until LS2 it was also the *surprising* answer: the shared selection preferred a configured
+    ``STT_BASE_URL`` over local Whisper, so somebody who set that months ago for voice calls
+    had every hour of meeting audio shipped there without being told. Meetings now ask
+    ``get_meeting_stt_provider()``, which starts from local and never crosses that boundary on
+    its own; ``policy`` reports which rule is in force.
     """
     info: Dict[str, Any] = {
         "available": False,
@@ -71,12 +74,15 @@ def stt_capability() -> Dict[str, Any]:
         "segments": False,
         "remote": False,
         "device": None,
-        "hint": "Set WHISPER_MODEL (e.g. small) for local transcription, or STT_BASE_URL for a remote one.",
+        "policy": "local",
+        "offer_remote": False,
+        "hint": "Install local speech (pip install -r requirements/speech-cpu.txt) to transcribe meetings on this computer.",
     }
     try:
-        from ..voice.providers import get_stt_provider
+        from ..voice.providers import get_meeting_stt_provider, meeting_stt_policy
 
-        provider = get_stt_provider()
+        info["policy"] = meeting_stt_policy()
+        provider = get_meeting_stt_provider()
         info["provider"] = getattr(provider, "name", None)
         info["available"] = bool(getattr(provider, "available", False))
         # Not "does the method exist" — MS1 put `transcribe_segments` on the base class so a
@@ -85,8 +91,11 @@ def stt_capability() -> Dict[str, Any]:
         # whether the timings were *measured*, which is what `supports_segments` reports.
         info["segments"] = bool(getattr(provider, "supports_segments", False))
         # A remote provider is a legitimate choice, not an error — but the user should be
-        # the one making it, so it is surfaced rather than assumed.
-        info["remote"] = bool(os.getenv("STT_BASE_URL", "").strip())
+        # the one making it. LS2: this is now whether the meeting *is* using a remote
+        # provider, not merely whether one is configured somewhere. Those were the same
+        # question while a configured endpoint silently won, and are not any more.
+        info["remote"] = getattr(provider, "name", "") == "openai-compat"
+        info["remote_configured"] = bool(os.getenv("STT_BASE_URL", "").strip())
         # None until the model has loaded once — a different answer from "loaded on CPU",
         # and reported as such rather than flattened into a guess.
         info["device"] = getattr(provider, "device", None)
@@ -95,6 +104,16 @@ def stt_capability() -> Dict[str, Any]:
             info["device_note"] = f"requested {requested}, running on {info['device']}"
         if info["available"]:
             info["hint"] = None
+        elif info["remote_configured"] and info["policy"] == "local":
+            # The one case where the honest answer is a question rather than an instruction.
+            # Defaulting meetings to local is right, and silently taking away transcription
+            # from somebody who was relying on their configured endpoint is not — so the UI
+            # is told the offer exists and lets them make it.
+            info["offer_remote"] = True
+            info["hint"] = (
+                "Local transcription isn't installed on this computer. You have a remote "
+                "speech service configured — meetings won't use it unless you say so."
+            )
     except Exception as exc:  # noqa: BLE001 — every failure here is "cannot transcribe"
         info["hint"] = f"Speech providers unavailable: {exc}"
     return info
@@ -269,9 +288,9 @@ async def meetingsense_session(websocket: WebSocket) -> None:
 
     provider = None
     try:
-        from ..voice.providers import get_stt_provider
+        from ..voice.providers import get_meeting_stt_provider
 
-        candidate = get_stt_provider()
+        candidate = get_meeting_stt_provider()
         if getattr(candidate, "available", False):
             provider = candidate
     except Exception as exc:  # noqa: BLE001
