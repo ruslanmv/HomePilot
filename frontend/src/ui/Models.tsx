@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink } from 'lucide-react'
 import OllaBridgeModels from './components/OllaBridgeModels'
 import { isAccountsUxEnabled } from './account/featureFlags'
+import { GENERATED_CATALOGS } from '../generated/modelCatalog'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -216,293 +217,19 @@ type CivitaiSearchResponse = {
 }
 
 // -----------------------------------------------------------------------------
-// Fallback Model Catalogs (when backend /model-catalog is not available)
+// Fallback Model Catalog (when backend /model-catalog is not available)
 // -----------------------------------------------------------------------------
+//
+// V7. Generated from `backend/app/model_catalog_data.json`, which is the one catalog. This used
+// to be 283 lines of hand-maintained copy of that file, and the two had drifted 43 field
+// differences apart across 94 shared entries — in both directions. The frontend offered
+// `internvl3:8b` and `smolvlm2:latest`, which the backend had never heard of; the frontend was
+// missing every OpenAI, Claude and watsonx chat model, so the list a person saw *changed* once
+// the backend answered. Two hand-maintained lists always end here. One list and a generator
+// cannot, and `modelCatalog.generated.test.ts` fails if they ever separate again.
 
-const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
-  ollama: {
-    chat: [
-      // Standard Chat
-      { id: 'llama3:8b', label: 'Llama 3 8B', recommended: true },
-      { id: 'llama3:70b', label: 'Llama 3 70B' },
-      { id: 'llama3.1', label: 'Llama 3.1 (8B)', recommended: true },
-      { id: 'llama3.1:70b', label: 'Llama 3.1 70B' },
-      { id: 'llama3.2', label: 'Llama 3.2 (3B)', recommended: true, recommended_expert: true, expert_hint: "Ultra-fast 3B for Expert 'Fast' mode. Runs on almost any GPU." },
-      { id: 'mistral:7b', label: 'Mistral 7B' },
-      { id: 'mistral-nemo', label: 'Mistral Nemo (12B)', recommended: true, recommended_expert: true, expert_hint: "Balanced 12B; Expert 'Heavy' mode fits 12 GB VRAM at Q4." },
-      { id: 'mixtral:8x7b', label: 'Mixtral 8x7B' },
-      { id: 'qwen2.5', label: 'Qwen 2.5 (7B)', recommended: true, recommended_expert: true, expert_hint: "Fast capable 7B. Solid Expert Fast/Expert default; ~4.7 GB VRAM." },
-      { id: 'gemma2', label: 'Gemma 2 (9B)' },
-      { id: 'phi3:3.8b', label: 'Phi-3 3.8B' },
-      { id: 'phi4', label: 'Phi-4 (14B)', recommended_expert: true, expert_hint: "14B logic-heavy reasoning from Microsoft. Great for Expert 'Think'." },
-      { id: 'deepseek-r1:latest', label: 'DeepSeek R1 (7B)', recommended_expert: true, expert_hint: "7B chain-of-thought reasoning — ideal Expert 'Think' model at 12 GB." },
-      { id: 'deepseek-r1:32b', label: 'DeepSeek R1 (32B)', recommended_expert: true, expert_hint: '32B top-tier reasoning. Needs ~20 GB VRAM — save for cloud / large-GPU deploys.' },
-      // Uncensored & Roleplay (hidden when Spice Mode off)
-      { id: 'dolphin3', label: 'Dolphin 3.0 (8B)', nsfw: true, recommended_nsfw: true },
-      { id: 'dolphin-llama3', label: 'Dolphin Llama 3 (8B)', nsfw: true },
-      { id: 'dolphin-mistral', label: 'Dolphin Mistral (7B)', nsfw: true, recommended_nsfw: true },
-      { id: 'dolphin-mixtral:8x7b', label: 'Dolphin Mixtral (8x7B MoE)', nsfw: true },
-      { id: 'hermes3', label: 'Hermes 3 (8B)', nsfw: true, recommended_nsfw: true },
-      { id: 'solar', label: 'Solar (10.7B)', nsfw: true },
-      { id: 'wizardlm2', label: 'WizardLM2 (7B)', nsfw: true },
-      // Legacy Uncensored
-      { id: 'llama2-uncensored', label: 'Llama 2 Uncensored (7B)', nsfw: true },
-      { id: 'wizardlm-uncensored', label: 'WizardLM Uncensored (13B)', nsfw: true },
-      { id: 'wizard-vicuna-uncensored', label: 'Wizard Vicuna Uncensored (7B)', nsfw: true },
-      // Abliterated - Mannix
-      { id: 'mannix/llama3.1-8b-abliterated', label: 'Llama 3.1 Abliterated (8B)', nsfw: true },
-      { id: 'mannix/dolphin-2.9-llama3-8b', label: 'Dolphin 2.9 Llama 3 (8B)', nsfw: true },
-      // Abliterated - Huihui.ai
-      { id: 'huihui_ai/qwen3-abliterated', label: 'Qwen3 Abliterated', nsfw: true, recommended_nsfw: true },
-      { id: 'huihui_ai/qwen3-abliterated:8b', label: 'Qwen3 Abliterated (8B)', nsfw: true, recommended_nsfw: true },
-      { id: 'huihui_ai/qwen3-abliterated:4b', label: 'Qwen3 Abliterated (4B)', nsfw: true, recommended_nsfw: true },
-      { id: 'huihui_ai/qwen3-coder-abliterated', label: 'Qwen3 Coder Abliterated', nsfw: true },
-      { id: 'huihui_ai/qwen3-next-abliterated', label: 'Qwen3-Next Abliterated', nsfw: true },
-      { id: 'huihui_ai/dolphin3-abliterated', label: 'Dolphin 3 Abliterated (8B)', nsfw: true, recommended_nsfw: true },
-      { id: 'huihui_ai/huihui-moe-abliterated', label: 'Huihui MoE Abliterated', nsfw: true },
-      { id: 'huihui_ai/gpt-oss-abliterated', label: 'GPT-OSS Abliterated', nsfw: true },
-      // Abliterated - JOSIEFIED
-      { id: 'goekdenizguelmez/JOSIEFIED-Qwen3', label: 'JOSIEFIED Qwen3', nsfw: true, recommended_nsfw: true },
-      { id: 'goekdenizguelmez/JOSIEFIED-Qwen3:8b', label: 'JOSIEFIED Qwen3 (8B)', nsfw: true, recommended_nsfw: true },
-      { id: 'goekdenizguelmez/JOSIEFIED-Qwen2.5', label: 'JOSIEFIED Qwen2.5', nsfw: true },
-      { id: 'goekdenizguelmez/JOSIEFIED-Qwen2.5:7b', label: 'JOSIEFIED Qwen2.5 (7B)', nsfw: true, recommended_nsfw: true },
-      { id: 'goekdenizguelmez/JOSIEFIED-Qwen2.5:14b', label: 'JOSIEFIED Qwen2.5 (14B)', nsfw: true },
-      { id: 'goekdenizguelmez/JOSIEFIED-Qwen2.5:3b', label: 'JOSIEFIED Qwen2.5 (3B)', nsfw: true, recommended_nsfw: true },
-      // Vision
-      { id: 'huihui_ai/qwen3-vl-abliterated:8b-instruct', label: 'Qwen3 Vision Abliterated (8B)', nsfw: true },
-      // Niche Uncensored
-      { id: 'yarn-mistral', label: 'Yarn Mistral (7B)', nsfw: true },
-      { id: 'openhermes', label: 'OpenHermes (7B)', nsfw: true },
-      { id: 'neural-chat', label: 'Neural Chat (7B)', nsfw: true },
-      // Additional Abliterated
-      { id: 'huihui_ai/llama3.2-abliterate:3b', label: 'Llama 3.2 Abliterated (3B)', nsfw: true },
-      { id: 'huihui_ai/gemma3-abliterated', label: 'Gemma 3 Abliterated', nsfw: true },
-      { id: 'huihui_ai/deepseek-r1-abliterated:8b', label: 'DeepSeek R1 Abliterated (8B)', nsfw: true },
-      { id: 'huihui_ai/deepseek-r1-abliterated:14b', label: 'DeepSeek R1 Abliterated (14B)', nsfw: true, recommended_expert: true, expert_hint: '14B uncensored reasoning. Tightest on 12 GB but the best quality.' },
-      { id: 'huihui_ai/deepseek-r1-abliterated:1.5b', label: 'DeepSeek R1 Abliterated (1.5B)', nsfw: true },
-      { id: 'dolphincoder', label: 'Dolphin Coder (7B)', nsfw: true },
-      { id: 'goekdenizguelmez/JOSIEFIED-Llama', label: 'JOSIEFIED Llama', nsfw: true, recommended_nsfw: true },
-      { id: 'samantha-mistral', label: 'Samantha Mistral (7B)', nsfw: true, recommended_nsfw: true },
-    ],
-    multimodal: [
-      // SFW Vision Models
-      { id: 'moondream', label: 'Moondream (1.6 GB)', recommended: true, description: 'Ultra-light vision captioning + OCR.' },
-      { id: 'gemma3:4b', label: 'Gemma 3 Vision 4B (3 GB)', recommended: true, description: 'Best overall edge multimodal model.' },
-      { id: 'llava:7b', label: 'LLaVA 1.6 7B (4.7 GB)', recommended: true, description: 'Strong general-purpose vision model.' },
-      { id: 'minicpm-v:latest', label: 'MiniCPM-V 2.6 (5 GB)', description: 'Strong multi-image reasoning.' },
-      { id: 'llama3.2-vision:11b', label: 'Llama 3.2 Vision 11B (7 GB)', description: 'Best reasoning near RAM limit.' },
-      // NSFW Vision Models
-      { id: 'huihui_ai/qwen3-vl-abliterated:8b-instruct', label: 'Qwen3-VL Abliterated 8B (5 GB)', nsfw: true, recommended_nsfw: true, description: 'Unfiltered image descriptions.' },
-      { id: 'internvl3:8b', label: 'InternVL3 8B (7 GB)', nsfw: true, recommended_nsfw: true, description: 'Detailed scene analysis.' },
-      { id: 'smolvlm2:latest', label: 'SmolVLM2 2.2B (2 GB)', nsfw: true, recommended_nsfw: true, description: 'Fast unrestricted captioning.' },
-    ],
-  },
-  comfyui: {
-    image: [
-      // Standard SFW models
-      { id: 'sd_xl_base_1.0.safetensors', label: 'SDXL Base 1.0 (7GB)', recommended: true, nsfw: false },
-      { id: 'flux1-schnell.safetensors', label: 'Flux.1 Schnell (23GB)', nsfw: false },
-      { id: 'flux1-dev.safetensors', label: 'Flux.1 Dev (23GB)', nsfw: false },
-      { id: 'sd15.safetensors', label: 'Stable Diffusion 1.5 (4GB)', nsfw: false },
-      { id: 'realisticVisionV51.safetensors', label: 'Realistic Vision v5.1 (2GB)', nsfw: false },
-      // NSFW models (shown when Spice Mode enabled)
-      { id: 'ponyDiffusionV6XL.safetensors', label: 'Pony Diffusion v6 XL (7GB)', nsfw: true },
-      { id: 'dreamshaper_8.safetensors', label: 'DreamShaper 8 (2GB)', nsfw: true, recommended_nsfw: true },
-      { id: 'deliberate_v3.safetensors', label: 'Deliberate v3 (2GB)', nsfw: true },
-      { id: 'epicrealism_pureEvolution.safetensors', label: 'epiCRealism Pure Evolution (2GB)', nsfw: true, recommended_nsfw: true },
-      { id: 'cyberrealistic_v42.safetensors', label: 'CyberRealistic v4.2 (2GB)', nsfw: true },
-      { id: 'absolutereality_v181.safetensors', label: 'AbsoluteReality v1.8.1 (2GB)', nsfw: true },
-      { id: 'aZovyaRPGArtist_v5.safetensors', label: 'aZovya RPG Artist v5 (2GB)', nsfw: true },
-      { id: 'unstableDiffusion.safetensors', label: 'Unstable Diffusion (4GB)', nsfw: true },
-      { id: 'majicmixRealistic_v7.safetensors', label: 'MajicMix Realistic v7 (2GB)', nsfw: true },
-      { id: 'bbmix_v4.safetensors', label: 'BBMix v4 (2GB)', nsfw: true },
-      { id: 'realisian_v50.safetensors', label: 'Realisian v5.0 (2GB)', nsfw: true },
-    ],
-    video: [
-      { id: 'svd_xt_1_1.safetensors', label: 'Stable Video Diffusion XT 1.1 (10GB)', recommended: true, nsfw: false },
-      { id: 'svd_xt.safetensors', label: 'Stable Video Diffusion XT (10GB)', nsfw: false },
-      { id: 'svd.safetensors', label: 'Stable Video Diffusion (10GB)', nsfw: false },
-      { id: 'ltx-video-2b-v0.9.1.safetensors', label: 'LTX-Video 2B v0.9.1 (6GB)', recommended: true, nsfw: false, description: 'Best for RTX 4080. Fast, lightweight video model.' },
-      { id: 'hunyuanvideo_t2v_720p_gguf_q4_k_m_pack', label: 'HunyuanVideo GGUF Q4_K_M Pack (10GB)', recommended: true, nsfw: false, description: 'GGUF pack for 16GB cards. Requires ComfyUI-GGUF.' },
-      { id: 'wan2.2_5b_fp16_pack', label: 'Wan 2.2 5B FP16 Pack (22GB)', recommended: true, nsfw: false, description: 'Strong motion + modern video. Official Comfy-Org repack.' },
-      { id: 'mochi_preview_fp8_pack', label: 'Mochi 1 Preview FP8 Pack (28GB)', nsfw: false, description: 'Heavier model - may push VRAM limits on 16GB.' },
-      { id: 'cogvideox1.5_5b_i2v_snapshot', label: 'CogVideoX 1.5 5B I2V (20GB)', nsfw: false, description: 'Diffusers-style repo. Requires CogVideoX wrapper.' },
-    ],
-    edit: [
-      { id: 'sd_xl_base_1.0_inpainting_0.1.safetensors', label: 'SDXL Inpainting 0.1 (7GB)', recommended: true, nsfw: false },
-      { id: 'sd-v1-5-inpainting.ckpt', label: 'SD 1.5 Inpainting (4GB)', recommended: true, nsfw: false },
-      { id: 'control_v11p_sd15_inpaint.safetensors', label: 'ControlNet Inpaint (1.5GB)', recommended: true, nsfw: false },
-      { id: 'sam_vit_h_4b8939.pth', label: 'SAM ViT-H (2.5GB)', nsfw: false },
-      { id: 'u2net.onnx', label: 'Background Remove U2Net (170MB)', nsfw: false },
-    ],
-    enhance: [
-      { id: '4x-UltraSharp.pth', label: '4x UltraSharp (Upscale)', recommended: true, nsfw: false, description: 'Sharp, clean 4x upscaler for general photos.' },
-      { id: 'RealESRGAN_x4plus.pth', label: 'RealESRGAN x4+ (Photo)', recommended: true, nsfw: false, description: 'Excellent photo upscaling with natural texture recovery.' },
-      { id: 'realesr-general-x4v3.pth', label: 'Real-ESRGAN General x4v3', nsfw: false, description: 'General-purpose Real-ESRGAN model, good for mixed content.' },
-      { id: 'SwinIR_4x.pth', label: 'SwinIR 4x (Restore)', nsfw: false, description: 'Restoration upscaler for compression and mild blur cleanup.' },
-      { id: 'GFPGANv1.4.pth', label: 'GFPGAN v1.4 (Face Restore)', nsfw: false, description: 'Optional face restoration after heavy edits or upscaling.' },
-      { id: 'u2net.onnx', label: 'U2Net (Background Remove)', recommended: true, nsfw: false, description: 'Background removal for Edit mode. Downloads to ~/.u2net or models/comfy/rembg.' },
-    ],
-    addons: [
-      // Text Encoders (required for video models)
-      {
-        id: 't5xxl_fp8_e4m3fn.safetensors',
-        label: 'T5-XXL FP8 Text Encoder (5GB)',
-        recommended: true,
-        nsfw: false,
-        description: 'For 12-16GB VRAM (RTX 4080, 3080). Uses ~5GB vs ~10GB for FP16. Required for LTX-Video on limited VRAM.',
-        install: {
-          type: 'hf_files',
-          files: [{
-            repo_id: 'comfyanonymous/flux_text_encoders',
-            filename: 't5xxl_fp8_e4m3fn.safetensors',
-            dest: 'models/clip/t5xxl_fp8_e4m3fn.safetensors'
-          }],
-          hint: 'Download to ComfyUI/models/clip folder'
-        }
-      },
-      {
-        id: 't5xxl_fp16.safetensors',
-        label: 'T5-XXL FP16 Text Encoder (10GB)',
-        recommended: true,
-        nsfw: false,
-        description: 'For 24GB+ VRAM (RTX 4090, A5000). Full precision for best quality. Baseline ~20GB + sampling ~6-10GB peak.',
-        install: {
-          type: 'hf_files',
-          files: [{
-            repo_id: 'comfyanonymous/flux_text_encoders',
-            filename: 't5xxl_fp16.safetensors',
-            dest: 'models/clip/t5xxl_fp16.safetensors'
-          }],
-          hint: 'Download to ComfyUI/models/clip folder'
-        }
-      },
-      // VAE Models
-      {
-        id: 'mochi_vae.safetensors',
-        label: 'Mochi VAE (400MB)',
-        nsfw: false,
-        description: 'Required VAE for Mochi video model.',
-        install: {
-          type: 'hf_files',
-          files: [{
-            repo_id: 'Comfy-Org/mochi_preview_repackaged',
-            filename: 'split_files/vae/mochi_vae.safetensors',
-            dest: 'models/vae/mochi_vae.safetensors'
-          }],
-          hint: 'Download to ComfyUI/models/vae folder'
-        }
-      },
-      // CLIP Models
-      {
-        id: 'clip_l.safetensors',
-        label: 'CLIP-L Text Encoder (250MB)',
-        nsfw: false,
-        description: 'CLIP-L text encoder for SDXL and video models.',
-        install: {
-          type: 'hf_files',
-          files: [{
-            repo_id: 'comfyanonymous/flux_text_encoders',
-            filename: 'clip_l.safetensors',
-            dest: 'models/clip/clip_l.safetensors'
-          }],
-          hint: 'Download to ComfyUI/models/clip folder'
-        }
-      },
-    ],
-  },
-  openai_compat: {
-    chat: [
-      { id: 'local-model', label: 'Local Model (auto-detect)', recommended: true },
-    ],
-  },
-  civitai: {
-    image: [
-      // Recommended Civitai models for image generation
-      {
-        id: 'pony_diffusion_v6_xl',
-        label: 'Pony Diffusion V6 XL',
-        recommended: true,
-        nsfw: true,
-        description: 'Base model for character consistency and prompt adherence',
-        civitai_url: 'https://civitai.com/models/257749/pony-diffusion-v6-xl',
-        civitai_version_id: '290640'
-      },
-      {
-        id: 'cyberrealistic_pony',
-        label: 'CyberRealistic Pony',
-        recommended: true,
-        nsfw: true,
-        description: 'Best blend of Pony prompt understanding with photorealism',
-        civitai_url: 'https://civitai.com/models/443821/cyberrealistic-pony',
-        civitai_version_id: '544666'
-      },
-      {
-        id: 'realvisxl_v50',
-        label: 'RealVisXL V5.0',
-        recommended: true,
-        nsfw: false,
-        description: 'Gold standard for photorealistic skin texture and lighting',
-        civitai_url: 'https://civitai.com/models/139562/realvisxl-v50',
-        civitai_version_id: '361593'
-      },
-      {
-        id: 'juggernaut_xl',
-        label: 'Juggernaut XL',
-        recommended: true,
-        nsfw: false,
-        description: 'Cinematic and moody photorealism',
-        civitai_url: 'https://civitai.com/models/133005/juggernaut-xl',
-        civitai_version_id: '471120'
-      },
-      {
-        id: 'flux1_checkpoint',
-        label: 'Flux.1 Checkpoint (Easy)',
-        nsfw: false,
-        description: 'High-quality Flux checkpoint for ComfyUI',
-        civitai_url: 'https://civitai.com/models/628682/flux-1-checkpoint-easy-to-use',
-        civitai_version_id: '704954'
-      },
-    ],
-    video: [
-      // Recommended Civitai models for video generation
-      {
-        id: 'ltx_video_workflow',
-        label: 'LTX Video (I2V)',
-        recommended: true,
-        nsfw: false,
-        description: 'Fast, lightweight video generation for RTX cards',
-        civitai_url: 'https://civitai.com/models/995093/ltx-image-to-video-with-stg-caption-and-clip-extend-workflow',
-        civitai_version_id: '1119428'
-      },
-      {
-        id: 'mochi_1_pack',
-        label: 'Mochi 1 Video Pack',
-        recommended: true,
-        nsfw: false,
-        description: 'High motion fidelity video model',
-        civitai_url: 'https://civitai.com/models/886896/donut-mochi-pack-video-generation',
-        civitai_version_id: '992820'
-      },
-      {
-        id: 'animatediff_sdxl',
-        label: 'AnimateDiff SDXL',
-        nsfw: false,
-        description: 'Animate SDXL images using AnimateDiff',
-        civitai_url: 'https://civitai.com/models/331700/odinson-sdxl-animatediff',
-        civitai_version_id: '373089'
-      },
-      {
-        id: 'animatediff_lightning',
-        label: 'AnimateDiff Lightning',
-        nsfw: false,
-        description: 'Fast 4-step AnimateDiff model',
-        civitai_url: 'https://civitai.com/models/500187/animatediff-lightning',
-        civitai_version_id: '554533'
-      },
-    ],
-  },
-}
+const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> =
+  GENERATED_CATALOGS as Record<string, Record<string, ModelCatalogEntry[]>>
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -875,6 +602,11 @@ export default function ModelsView(props: ModelsParams) {
       civitai_version_id?: string
       status: 'installed' | 'missing' | 'installed_unsupported'
       install?: ModelCatalogEntry['install']
+      // V7. The hand-written fallback used to spell the download size into the label
+      // ("Moondream (1.6 GB)"); the backend catalog carries it as a field and the label stays
+      // clean. Rendering the field keeps the size where a person could already see it — and puts
+      // it on the online list too, which never had it.
+      size_gb?: number
     }> = []
 
     // Supported first
@@ -882,6 +614,7 @@ export default function ModelsView(props: ModelsParams) {
       rows.push({
         id: s.id,
         label: safeLabel(s.id, s.label),
+        size_gb: s.size_gb,
         recommended: s.recommended,
         recommended_nsfw: s.recommended_nsfw,
         recommended_expert: s.recommended_expert,
@@ -2217,7 +1950,12 @@ export default function ModelsView(props: ModelsParams) {
                           ) : null}
                         </div>
 
-                        <div className="font-bold text-base text-white truncate group-hover:text-white transition-colors">{row.label}</div>
+                        <div className="font-bold text-base text-white truncate group-hover:text-white transition-colors">
+                          {row.label}
+                          {row.size_gb ? (
+                            <span className="ml-2 text-[11px] font-normal text-white/40 tabular-nums">{row.size_gb} GB</span>
+                          ) : null}
+                        </div>
                         <div className="text-[11px] text-white/40 font-mono truncate mt-1">{row.id}</div>
                         {row.description ? (
                           <div className="text-[11px] text-white/30 truncate mt-1">{row.description}</div>
