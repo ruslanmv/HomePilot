@@ -100,7 +100,7 @@ def stt(modules, monkeypatch):
     provider = StubSTT()
     import app.voice.providers as providers
 
-    monkeypatch.setattr(providers, "get_stt_provider", lambda: provider)
+    monkeypatch.setattr(providers, "get_meeting_stt_provider", lambda: provider)
     return provider
 
 
@@ -226,7 +226,7 @@ class TestStart:
     def test_without_speech_it_still_starts_and_says_stt_false(self, client, enabled, monkeypatch):
         import app.voice.providers as providers
 
-        monkeypatch.setattr(providers, "get_stt_provider", lambda: None)
+        monkeypatch.setattr(providers, "get_meeting_stt_provider", lambda: None)
         with client.websocket_connect("/v1/meetingsense/session") as ws:
             ready = start(ws)
         # A meeting that records slides and markers without a transcript is still a meeting.
@@ -239,7 +239,7 @@ class TestStart:
         def boom():
             raise RuntimeError("no ctranslate2")
 
-        monkeypatch.setattr(providers, "get_stt_provider", boom)
+        monkeypatch.setattr(providers, "get_meeting_stt_provider", boom)
         with client.websocket_connect("/v1/meetingsense/session") as ws:
             assert start(ws)["stt"] is False
 
@@ -366,7 +366,7 @@ class TestAudio:
     def test_audio_without_a_provider_is_a_named_refusal(self, client, enabled, monkeypatch):
         import app.voice.providers as providers
 
-        monkeypatch.setattr(providers, "get_stt_provider", lambda: None)
+        monkeypatch.setattr(providers, "get_meeting_stt_provider", lambda: None)
         with client.websocket_connect("/v1/meetingsense/session") as ws:
             start(ws)
             ws.send_json({"type": "audio", "format": "pcm16", "data_b64": b64(pcm([1]))})

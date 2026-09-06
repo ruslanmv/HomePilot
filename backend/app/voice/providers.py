@@ -447,8 +447,22 @@ class WhisperLocalSTTProvider(STTProvider):
 
     name = "whisper-local"
 
+    #: What to transcribe with when nobody said (LS1).
+    #:
+    #: Before this, ``WHISPER_MODEL`` had to be set *and* ``faster_whisper`` installed, so a
+    #: normal install reported "Not configured" however it was configured — and the Settings
+    #: card taught an environment variable to somebody who wanted to record a meeting.
+    #: Installing the speech package is now the whole of what a person does.
+    #:
+    #: ``small`` rather than ``large-v3-turbo``, which the design names as the eventual
+    #: default, because turbo is a 1.6 GB download and this batch is packaging: it has no
+    #: hardware profile (LS5) and no pinned local model pack (LS3) to make that a good first
+    #: experience on a CPU-only machine. Turbo becomes the default when those land; setting
+    #: ``WHISPER_MODEL=large-v3-turbo`` picks it today.
+    DEFAULT_MODEL = "small"
+
     def __init__(self) -> None:
-        self.model_name = os.getenv("WHISPER_MODEL", "").strip()
+        self.model_name = os.getenv("WHISPER_MODEL", "").strip() or self.DEFAULT_MODEL
         self.requested_device = os.getenv("WHISPER_DEVICE", "auto").strip() or "auto"
         self.compute_type = os.getenv("WHISPER_COMPUTE", "default").strip() or "default"
         self._model = None
@@ -648,6 +662,84 @@ def get_stt_provider() -> STTProvider:
     provider = _build_stt_provider()
     _stt_cache = (key, provider)
     return provider
+
+
+#: MeetingSense's own policy, read at call time (LS2). ``local`` (the default), ``remote``,
+#: or ``auto`` for the pre-LS2 behaviour where a configured endpoint wins.
+MEETING_STT_POLICY_ENV = "MEETINGSENSE_STT_POLICY"
+
+
+def meeting_stt_policy() -> str:
+    """What MeetingSense is allowed to send meeting audio to. Default ``local``."""
+    value = os.getenv(MEETING_STT_POLICY_ENV, "local").strip().lower()
+    return value if value in ("local", "remote", "auto") else "local"
+
+
+def build_meeting_stt_provider() -> STTProvider:
+    """The speech provider for a *meeting*, which is not the same question as for a call.
+
+    ``_build_stt_provider`` returns a configured ``STT_BASE_URL`` endpoint before it even
+    constructs the local one. That is a defensible default for voice calls, where somebody who
+    pointed the app at a speech service meant it. It is the wrong default for a meeting
+    recorder: a person who set that variable months ago for calls has since had every hour of
+    meeting audio shipped there, and nothing in the product said so.
+
+    So a meeting asks a different question, in a different order, and never crosses the
+    boundary on its own:
+
+        local available            → local
+        user chose remote, and it is available → remote
+        otherwise                  → nothing, and the UI says which of the two is missing
+
+    Notice what is absent: no ``if local_failed: fall back to the cloud``. A privacy boundary
+    must not be crossed as error recovery — a CUDA library failing is not consent.
+
+    ``auto`` is kept for an operator who genuinely wants the old precedence back, and has to
+    ask for it by name.
+    """
+    policy = meeting_stt_policy()
+    if policy == "auto":
+        return _build_stt_provider()
+
+    local = WhisperLocalSTTProvider()
+    if policy == "local":
+        if local.available:
+            return local
+        # Deliberately not the remote endpoint, even when one is configured and working. The
+        # UI's job here is to offer it as a choice; this function's job is not to make it.
+        return NullSTTProvider()
+
+    cloud = OpenAICompatSTTProvider()
+    if cloud.available:
+        return cloud
+    # `remote` chosen and unreachable still prefers local over silence: the user asked for a
+    # remote service, not for the meeting to go untranscribed.
+    return local if local.available else NullSTTProvider()
+
+
+_meeting_stt_cache: "tuple[str, STTProvider] | None" = None
+
+
+def get_meeting_stt_provider() -> STTProvider:
+    """Cached :func:`build_meeting_stt_provider`, keyed the same way calls are.
+
+    The model lives on the provider instance and costs hundreds of megabytes to load, so a
+    caller that fetched one per utterance would reload it per utterance. The policy is part of
+    the key, so flipping it in Settings takes effect without a restart.
+    """
+    global _meeting_stt_cache
+    key = f"{meeting_stt_policy()}|{_stt_config_key()}"
+    if _meeting_stt_cache is not None and _meeting_stt_cache[0] == key:
+        return _meeting_stt_cache[1]
+    provider = build_meeting_stt_provider()
+    _meeting_stt_cache = (key, provider)
+    return provider
+
+
+def reset_meeting_stt_provider_cache() -> None:
+    """Drop the cached meeting provider. For tests, and for anything reloading configuration."""
+    global _meeting_stt_cache
+    _meeting_stt_cache = None
 
 
 def reset_stt_provider_cache() -> None:

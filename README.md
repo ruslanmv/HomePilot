@@ -126,6 +126,8 @@ HomePilot processes text, images, documents, and voice through **four topologies
 
 Switch topologies anytime from Settings. See [docs/MULTIMODAL.md](docs/MULTIMODAL.md) for the full guide.
 
+Screenshots are fitted and, where a model supports it, read in overlapping crops so small text survives — measured, not assumed ([docs/VISION_ADAPTER_BATCHES.md](docs/VISION_ADAPTER_BATCHES.md)); meeting transcription loads a pinned pack from disk and opens no sockets ([docs/LOCAL_SPEECH_BATCHES.md](docs/LOCAL_SPEECH_BATCHES.md)).
+
 ### 🎨 Avatar Studio — Zero-Prompt Character Creation
 Create AI portrait avatars from reference photos, random faces, or face+style combinations — all without writing a single text prompt. A complete character management system inspired by RPG mechanics:
 
