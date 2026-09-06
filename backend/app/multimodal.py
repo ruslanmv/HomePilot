@@ -304,6 +304,7 @@ async def analyze_image_ollama(
     mode: str = "both",  # caption | ocr | both
     purpose: str = "screen",  # screen | photo | document — chooses the adapter profile (V5)
     image_b64: Optional[str] = None,
+    _allow_runner_fallback: bool = True,
 ) -> Dict[str, Any]:
     """
     Analyze an image using an Ollama vision model.
@@ -386,7 +387,6 @@ async def analyze_image_ollama(
         }
 
     images_b64 = [_image_to_base64(part.data) for part in adapted.parts] or [""]
-    img_b64 = images_b64[0]
 
     # Build prompt
     system_prompt = _NSFW_SYSTEM_PROMPT if nsfw_mode else _SFW_SYSTEM_PROMPT
@@ -457,9 +457,45 @@ async def analyze_image_ollama(
                     "analysis_text": "",
                     "meta": {"model": mdl, "mode": mode},
                 }
+            response_text = e.response.text[:200]
+            runner_stopped = (
+                e.response.status_code >= 500
+                and "runner has unexpectedly stopped" in response_text.lower()
+            )
+            if runner_stopped and _allow_runner_fallback:
+                # Ollama can leave an installed model visible in /api/tags even when its
+                # runner cannot start (most commonly because the selected model does not fit
+                # available RAM/VRAM).  When another vision model is installed, use it for
+                # this request rather than turning a recoverable local-model failure into a
+                # 422 in the chat UI.  The guard makes this a single retry, never a loop.
+                fallback = await _detect_best_vision_model(base)
+                if fallback and fallback != mdl:
+                    retried = await analyze_image_ollama(
+                        image_url,
+                        upload_path,
+                        base_url=base,
+                        model=fallback,
+                        user_prompt=user_prompt,
+                        nsfw_mode=nsfw_mode,
+                        mode=mode,
+                        purpose=purpose,
+                        image_b64=image_b64,
+                        _allow_runner_fallback=False,
+                    )
+                    retried_meta = dict(retried.get("meta") or {})
+                    retried_meta["fallback_from"] = mdl
+                    retried["meta"] = retried_meta
+                    return retried
             return {
                 "ok": False,
-                "error": f"Ollama HTTP {e.response.status_code}: {e.response.text[:200]}",
+                "error_code": "model_runner_stopped" if runner_stopped else "ollama_http_error",
+                "error": (
+                    f"Ollama could not keep model '{mdl}' running. It may exceed this "
+                    "computer's available RAM or VRAM. Select a smaller multimodal model "
+                    "or check the Ollama server logs."
+                    if runner_stopped
+                    else f"Ollama HTTP {e.response.status_code}: {response_text}"
+                ),
                 "analysis_text": "",
                 "meta": {"model": mdl, "mode": mode},
             }

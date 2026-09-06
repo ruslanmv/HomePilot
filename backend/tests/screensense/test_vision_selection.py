@@ -156,6 +156,87 @@ def test_a_real_answer_is_still_a_success(monkeypatch):
     assert out["analysis_text"] == "A code editor with a traceback."
 
 
+def test_a_stopped_ollama_runner_falls_back_to_another_installed_model(monkeypatch):
+    calls = []
+
+    class Response(_Response):
+        text = ""
+
+        def __init__(self, payload, status_code=200, text=""):
+            super().__init__(payload)
+            self.status_code = status_code
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                request = mm.httpx.Request("POST", "http://ollama/api/chat")
+                response = mm.httpx.Response(self.status_code, request=request, text=self.text)
+                raise mm.httpx.HTTPStatusError("runner stopped", request=request, response=response)
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return Response({"models": [{"name": "moondream:latest"}, {"name": "gemma3:4b"}]})
+
+        async def post(self, url, json):
+            calls.append(json["model"])
+            if json["model"] == "moondream:latest":
+                return Response(
+                    {},
+                    500,
+                    '{"error":"model runner has unexpectedly stopped, this may be due to resource limitations"}',
+                )
+            return Response({"message": {"content": "A settings window."}})
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", Client)
+    out = run(mm.analyze_image_ollama("", None, model="moondream:latest", image_b64="Zm9v"))
+
+    assert out["ok"] is True
+    assert out["analysis_text"] == "A settings window."
+    assert out["meta"]["model"] == "gemma3:4b"
+    assert out["meta"]["fallback_from"] == "moondream:latest"
+    assert calls == ["moondream:latest", "gemma3:4b"]
+
+
+def test_a_stopped_runner_returns_an_actionable_typed_error_without_an_alternative(monkeypatch):
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return _Response({"models": [{"name": "moondream:latest"}]})
+
+        async def post(self, url, json):
+            request = mm.httpx.Request("POST", url)
+            response = mm.httpx.Response(
+                500,
+                request=request,
+                text='{"error":"model runner has unexpectedly stopped"}',
+            )
+            raise mm.httpx.HTTPStatusError("runner stopped", request=request, response=response)
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", Client)
+    out = run(mm.analyze_image_ollama("", None, model="moondream:latest", image_b64="Zm9v"))
+
+    assert out["ok"] is False
+    assert out["error_code"] == "model_runner_stopped"
+    assert "RAM or VRAM" in out["error"]
+
+
 def test_the_reported_image_size_is_not_zero_on_the_base64_path(monkeypatch):
     # `raw_bytes` is empty when the caller hands in an encoded image, so this used to report
     # 0 bytes for every avatar-director and remote-screenshot analysis.
