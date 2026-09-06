@@ -1,6 +1,6 @@
 # Local Vision Adapter — Batch Plan (screen understanding)
 
-**Status:** V1–V7 are **shipped**; V8 is still planning.
+**Status:** V1–V8 are **shipped**. The series is complete.
 Below, the shipped batches keep their original text and carry a ✅ with what actually landed.
 **Scope:** `ruslanmv/HomePilot` — `backend/app/multimodal.py`, a new
 `backend/app/vision_adapter/`, `frontend/public/js/homepilot-screensense.js`,
@@ -454,7 +454,60 @@ them from diverging again.
 
 ### V8 — The bench set
 
-Desktop screenshot · code error · browser page · SVG · settings window · terminal ·
+✅ **Shipped.** `backend/app/vision_bench/` — twenty cases, generated as code rather than
+committed as PNGs, run through the adapter and measured. `python -m app.vision_bench`. No Ollama,
+no GPU, no download.
+
+**It measures the one failure mode that never had a number.** Five of the plan's six are already
+visible in a response; *"the resize damaged OCR resolution"* was not, and it is the one this whole
+series exists because of — it is why the product used to answer "try a larger model" to a problem
+the model had no part in. `metrics.py` measures the **stroke**, not the letter: a bar `w` source
+pixels wide scaled by `s` lands on `w × s` output pixels and below about one it averages into the
+ground. The answer comes back in source pixels, which is a sentence about the user's screen.
+
+| case | source | → | scale | whole screen | best crop |
+|---|---|---|---|---|---|
+| desktop-1920 | 1920×1080 | 1400×788 | 0.729 | 2px | **1px** |
+| desktop-3840 | 3840×2160 | 1400×788 | 0.365 | 3px | **2px** |
+| terminal | 1920×1080 | 1400×788 | 0.729 | 2px | **1px** |
+| ultrawide | 5120×1440 | 1400×394 | 0.273 | 4px | **2px** |
+| very-tall-page | 1200×4200 | 400×1400 | 0.333 | 3px | **1px** |
+| tiny-icon | 96×64 | 96×64 | 1.000 | 1px | — |
+
+That last column is V5's claim and V6's whole argument, measured: **a crop recovers one to two
+source pixels of stroke fidelity, on 8 of the 17 measurable cases.** Ultrawide is the worst screen
+and gains the most, which is what one would expect and is now a number rather than an expectation.
+
+**Two gaps it found on the first run**, both fixed in `vision_adapter`:
+
+* **the decompression bomb decoded.** 315 KB on disk, a hundred megapixels in memory, no
+  complaint. "The image exceeded a safety limit" was a failure mode with nothing behind it,
+  because nothing enforced a limit. There is a pre-decode ceiling now (`MAX_PIXELS`, 80 MP —
+  past two 8K monitors captured as one surface), checked against the **header** so refusing costs
+  nothing, and `image_too_large` above it. Byte count says nothing about what decoding will cost,
+  which is the entire trick, so the check cannot be on `len(payload)`;
+* **animated files passed through silently.** The model is handed one frame of several and has no
+  way to say so, which made "she described the wrong moment" indistinguishable from "she misread
+  it". Recorded as `animated:N`, not refused — the first frame of a screen recording is still an
+  answer.
+
+**And two bugs in the bench itself**, both worth naming because they are the ways a metric lies:
+the stroke scan read only rows, so an EXIF-rotated case whose bars become horizontal measured the
+*gaps between* bars and reported 6px on an image that keeps 2px; and `getpixel` per pixel made a
+run take 45 seconds, which is how a bench stops being run. Both fixed — it reads both
+orientations, off one flat buffer, in under three seconds of measurement.
+
+**`failures.py` keeps the six apart.** Each is exercised with the response that produces it, and
+`distinguishable()` asserts every mode is observed alone somewhere — a report where two always
+travel together cannot tell them apart, and telling them apart is the only job it has. A request
+with two problems reports both: picking a winner is how a report loses the interesting half.
+
+**What it cannot do from here.** Run a model. This repository has no Ollama, so every row is the
+adapter's half of the story — which is exactly why V5's verified multi-image set and V7's
+`vision_input` metadata are both still empty. `run(analyze=...)` takes a real one; filling those
+in is a measurement somebody takes on hardware, and this is the harness that takes it.
+
+*Original plan:* Desktop screenshot · code error · browser page · SVG · settings window · terminal ·
 1920×1080 · 2560×1440 · 3840×2160 · ultrawide 5120×1440 · very tall page · tiny image that
 must not be enlarged · transparent PNG · EXIF-rotated JPEG · animated GIF/WebP · corrupt bytes
 · decompression bomb · dense terminal text · multi-monitor as one surface · unknown model with

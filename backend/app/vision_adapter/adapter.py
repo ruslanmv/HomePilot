@@ -46,6 +46,18 @@ class Part:
     label: str = "overview"
     width: Optional[int] = None
     height: Optional[int] = None
+    #: The region of the *original* this came from, as ``(left, top, right, bottom)``. Carried so
+    #: a reader of the metadata — or V8's bench — can work out this crop's own scale, which is
+    #: not the overview's and is the whole reason a crop is worth sending.
+    source_box: Optional[Tuple[int, int, int, int]] = None
+
+    @property
+    def scale(self) -> float:
+        """This part's own reduction from the source region it covers."""
+        if not self.source_box or not self.width:
+            return 1.0
+        span = self.source_box[2] - self.source_box[0]
+        return round(self.width / float(span), 4) if span else 1.0
 
     def meta(self) -> Dict[str, Any]:
         return {
@@ -54,6 +66,8 @@ class Part:
             "height": self.height,
             "bytes": len(self.data),
             "mime_type": self.mime_type,
+            "source_box": list(self.source_box) if self.source_box else None,
+            "scale": self.scale,
         }
 
 
@@ -122,23 +136,25 @@ def _pillow():
         return None
 
 
-def _measure(data: bytes) -> Tuple[Optional[int], Optional[int], Optional[str]]:
-    """``(width, height, mime)`` — any of them ``None`` when they cannot be read.
+def _measure(data: bytes) -> Tuple[Optional[int], Optional[int], Optional[str], int]:
+    """``(width, height, mime, frames)`` — the first three ``None`` when they cannot be read.
 
     Never raises. A measurement is a nice-to-have; a vision request that failed because an
     optional library could not decode a frame would be a worse product than one that says
-    ``width: null``.
+    ``width: null``. ``Image.open`` reads the header and nothing else, so this costs no memory
+    even for the file the size check exists to catch.
     """
     Image = _pillow()
     if Image is None:
-        return None, None, None
+        return None, None, None, 1
     try:
         with Image.open(io.BytesIO(data)) as image:
             fmt = (image.format or "").lower()
             mime = f"image/{'jpeg' if fmt == 'jpg' else fmt}" if fmt else None
-            return image.width, image.height, mime
+            frames = int(getattr(image, "n_frames", 1) or 1)
+            return image.width, image.height, mime, frames
     except Exception:
-        return None, None, None
+        return None, None, None, 1
 
 
 def _encode(image, mime_hint: str) -> Tuple[bytes, str]:
@@ -173,6 +189,19 @@ def _encode(image, mime_hint: str) -> Tuple[bytes, str]:
 #: JPEG regardless of size — a screenshot that large is exactly the case where the text matters.
 _PNG_CEILING = 4 * 1024 * 1024
 
+#: The most pixels this will decode. Checked against the *header*, before anything is allocated.
+#:
+#: V8's bench set is what put a number here. Its decompression-bomb case is 315 KB on disk and a
+#: hundred megapixels once decoded — roughly 300 MB of process memory — and the adapter decoded
+#: it without comment, because "the image exceeded a safety limit" was a failure mode with
+#: nothing behind it. Byte count says nothing about what decoding will cost, so the check has to
+#: be on the dimensions, and it has to happen before `load()`.
+#:
+#: 80 megapixels is past any real screen: 8K is 33, and two 8K monitors captured as one surface
+#: are 66. A file above it is a photograph nobody meant to send to a vision model, or it is
+#: hostile, and both want the same answer.
+MAX_PIXELS = 80_000_000
+
 
 def adapt(
     data: bytes,
@@ -200,7 +229,7 @@ def adapt(
         warnings.append("empty")
 
     profile = profile_for(purpose, mode)
-    width, height, sniffed = _measure(payload)
+    width, height, sniffed, frames = _measure(payload)
     # A sniffed type beats a declared one: `/upload` maps by file extension, and an extension is
     # what somebody typed.
     resolved_mime = sniffed or mime_type or "image/png"
@@ -209,6 +238,19 @@ def adapt(
         if payload:
             warnings.append("unmeasured")
         return _unchanged(payload, resolved_mime, profile, warnings)
+
+    if frames > 1:
+        # The model is handed one image out of several and has no way to say so. Recorded, not
+        # refused: the first frame of a screen recording is still an answer to "what is on my
+        # screen", and "she described the wrong moment" should not be indistinguishable from
+        # "she misread it".
+        warnings.append(f"animated:{frames}")
+
+    if width * height > MAX_PIXELS:
+        # Refused before `load()`, which is the only point at which refusing is cheap. Passing
+        # the original bytes on instead would hand the same hundred megapixels to the model.
+        warnings.append(f"over-limit:{width}x{height}")
+        return _unchanged(b"", resolved_mime, profile, warnings, width, height, original_bytes=len(payload))
 
     target = _profiles.fit(width, height, profile)
     Image = _pillow()
@@ -234,7 +276,7 @@ def adapt(
                 if untouched
                 else _encode(source if target == (width, height) else source.resize(target, Image.LANCZOS), resolved_mime)
             )
-            parts = [Part(overview, over_mime, "overview", target[0], target[1])]
+            parts = [Part(overview, over_mime, "overview", target[0], target[1], (0, 0, width, height))]
             strategy = PASSTHROUGH if untouched else RESIZED
 
             if profile.tile and target != (width, height):
@@ -314,7 +356,7 @@ def _tiles(Image, source, profile: Profile, width: int, height: int) -> List[Par
         if size != (crop.width, crop.height):
             crop = crop.resize(size, Image.LANCZOS)
         data, mime = _encode(crop, "image/png")
-        out.append(Part(data, mime, label, crop.width, crop.height))
+        out.append(Part(data, mime, label, crop.width, crop.height, box))
     return out
 
 
@@ -325,17 +367,18 @@ def _unchanged(
     warnings: List[str],
     width: Optional[int] = None,
     height: Optional[int] = None,
+    original_bytes: Optional[int] = None,
 ) -> AdaptedImage:
     """V4's behaviour, which is still the right answer whenever the image cannot be worked on."""
     return AdaptedImage(
-        parts=[Part(payload, mime, "overview", width, height)],
+        parts=[Part(payload, mime, "overview", width, height, (0, 0, width or 0, height or 0))],
         strategy=PASSTHROUGH,
         profile=profile.name,
         width=width,
         height=height,
         original_width=width,
         original_height=height,
-        original_bytes=len(payload),
+        original_bytes=len(payload) if original_bytes is None else original_bytes,
         warnings=warnings,
     )
 
@@ -362,9 +405,11 @@ def crops(
     if not profile.tile:
         return []
 
-    width, height, _sniffed = _measure(data or b"")
+    width, height, _sniffed, _frames = _measure(data or b"")
     Image = _pillow()
     if Image is None or width is None:
+        return []
+    if width * height > MAX_PIXELS:
         return []
     if _profiles.fit(width, height, profile) == (width, height):
         return []

@@ -366,6 +366,25 @@ async def analyze_image_ollama(
         raw_bytes, mime_type=mime_type, model=mdl, purpose=purpose, mode=mode
     )
     raw_bytes, mime_type = adapted.data, adapted.mime_type
+
+    # V8. The adapter refuses an image past its pixel ceiling *before* decoding it, and hands
+    # back no bytes. Sending nothing to the model would come back as "the model returned
+    # nothing", which is the wrong sentence about the wrong problem — so it is its own typed
+    # failure, with the size in it, because that is the only thing the person can act on.
+    over = next((w for w in adapted.warnings if w.startswith("over-limit:")), "")
+    if over:
+        size = over.split(":", 1)[1]
+        return {
+            "ok": False,
+            "error_code": "image_too_large",
+            "error": (
+                f"That image is {size} pixels, which is larger than anything this can safely "
+                "decode. A screenshot of one screen, or a smaller copy, will work."
+            ),
+            "analysis_text": "",
+            "meta": {"model": mdl, "mode": mode, "adapter": adapted.meta()},
+        }
+
     images_b64 = [_image_to_base64(part.data) for part in adapted.parts] or [""]
     img_b64 = images_b64[0]
 

@@ -296,7 +296,7 @@ def test_a_resize_that_throws_falls_back_to_the_original():
 
     original = ad._pillow
     measured = ad._measure
-    ad._measure = lambda _d: (3840, 2160, "image/png")
+    ad._measure = lambda _d: (3840, 2160, "image/png", 1)
     ad._pillow = lambda: Boom
     try:
         out = vision_adapter.adapt(data, purpose="screen", mode="ocr")
