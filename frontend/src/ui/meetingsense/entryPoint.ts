@@ -33,6 +33,13 @@ export interface SttStatus {
     device?: string | null;
     device_note?: string;
     hint?: string | null;
+    /**
+     * LS3/LS7. The pinned local pack, what it loaded on, and the measured profile. Optional
+     * because an older server does not send it and every consumer must keep working without it.
+     * Typed as `unknown` here and narrowed where it is read, so this shared status type does not
+     * grow a dependency on the local-speech card's shape.
+     */
+    local_speech?: unknown;
 }
 
 export interface MeetingSenseStatus {

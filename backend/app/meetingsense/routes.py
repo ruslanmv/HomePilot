@@ -116,7 +116,37 @@ def stt_capability() -> Dict[str, Any]:
             )
     except Exception as exc:  # noqa: BLE001 — every failure here is "cannot transcribe"
         info["hint"] = f"Speech providers unavailable: {exc}"
+
+    # LS3/LS5/LS7. The pinned local pack, the measured hardware profile, and the six failure
+    # modes kept apart, added as one nested key. Additive on purpose: every field above keeps its
+    # meaning and every existing consumer keeps working, and a client that has not been updated
+    # simply does not read `local_speech`.
+    try:
+        info["local_speech"] = _local_speech_capability()
+    except Exception as exc:  # noqa: BLE001 — a status endpoint must not fail at reporting
+        info["local_speech"] = {"available": False, "error": f"{type(exc).__name__}: {exc}"}
     return info
+
+
+def _local_speech_capability() -> Dict[str, Any]:
+    """The LS7 payload: what is installed, what it loaded on, and what it measured.
+
+    Reads only. Nothing here loads a model — a status endpoint that warms a model as a side
+    effect of being asked is a status endpoint that makes the machine slower every time somebody
+    opens Settings.
+    """
+    from ..local_speech import benchmark as _benchmark  # noqa: PLC0415
+    from ..local_speech import status as _status  # noqa: PLC0415
+    from ..local_speech.provider import HomePilotLocalSTTProvider  # noqa: PLC0415
+
+    provider = HomePilotLocalSTTProvider()
+    body = _status.payload(
+        provider=provider,
+        profile=_benchmark.load(),
+        remote_in_use=False,
+        remote_configured=bool(os.getenv("STT_BASE_URL", "").strip()),
+    )
+    return body
 
 
 def vision_capability(configured_model: str) -> Dict[str, Any]:
