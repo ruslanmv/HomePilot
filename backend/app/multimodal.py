@@ -293,6 +293,59 @@ async def _detect_best_vision_model(base_url: str) -> Optional[str]:
 _detect_first_vision_model = _detect_best_vision_model
 
 
+async def _retry_with_better_model(
+    failed_model: str,
+    reason: str,
+    *,
+    image_url: str,
+    upload_path,
+    base: str,
+    user_prompt: Optional[str],
+    nsfw_mode: bool,
+    mode: str,
+    purpose: str,
+    image_b64: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """One more attempt with the best *other* installed vision model, or ``None``.
+
+    Two different failures land here and they have the same remedy. A stopped runner means
+    Ollama listed a model in ``/api/tags`` that it cannot actually load — almost always
+    because it does not fit in RAM or VRAM. An empty generation means the model loaded and
+    had nothing to say, which small caption models do on tall screenshots. Neither says
+    anything about the *upload*, and in both cases another installed model will usually
+    answer, so turning either into a red error in the chat is giving up early.
+
+    ``None`` when there is nothing better to try — the caller then returns its own typed
+    failure, which is the honest answer once the alternatives are exhausted.
+
+    The single-shot guard is the whole safety argument: the retry passes
+    ``_allow_model_fallback=False``, so this can never recurse. Without that, a machine
+    where every installed model fails would walk the list forever on one upload.
+    """
+    fallback = await _detect_best_vision_model(base)
+    if not fallback or fallback == failed_model:
+        return None
+    retried = await analyze_image_ollama(
+        image_url,
+        upload_path,
+        base_url=base,
+        model=fallback,
+        user_prompt=user_prompt,
+        nsfw_mode=nsfw_mode,
+        mode=mode,
+        purpose=purpose,
+        image_b64=image_b64,
+        _allow_model_fallback=False,
+    )
+    # Say which model actually answered and why the first one did not. Without this the
+    # meta reports a model the user never chose, with no account of how it got there.
+    retried_meta = dict(retried.get("meta") or {})
+    retried_meta["fallback_from"] = failed_model
+    retried_meta["fallback_reason"] = reason
+    retried["meta"] = retried_meta
+    return retried
+
+
 async def analyze_image_ollama(
     image_url: str,
     upload_path: Path,
@@ -304,7 +357,7 @@ async def analyze_image_ollama(
     mode: str = "both",  # caption | ocr | both
     purpose: str = "screen",  # screen | photo | document — chooses the adapter profile (V5)
     image_b64: Optional[str] = None,
-    _allow_runner_fallback: bool = True,
+    _allow_model_fallback: bool = True,
 ) -> Dict[str, Any]:
     """
     Analyze an image using an Ollama vision model.
@@ -398,9 +451,18 @@ async def analyze_image_ollama(
     elif mode == "ocr":
         prompt = "Extract and transcribe all text visible in this image. Preserve formatting."
     else:  # both
+        # Phrased as the question a person would actually type, not as an instruction.
+        #
+        # This is the difference between the two halves of a real report: an upload *with*
+        # "what you can see" was answered fine by `moondream:latest`, and the same image with
+        # no text — which lands here — came back empty. Small caption models are trained on
+        # visual question answering, and an imperative "Describe this image" is off that
+        # distribution in a way "What can you see in this image?" is not.
+        #
+        # It costs the larger models nothing: they answer both identically.
         prompt = (
-            "Describe this image in detail. If there is any readable text, "
-            "transcribe it exactly and note where it appears."
+            "What can you see in this image? Describe it in detail. If there is readable "
+            "text, transcribe it exactly and note where it appears."
         )
 
     # V5. When detail crops were sent, say what they are. Without this the model is handed five
@@ -462,29 +524,25 @@ async def analyze_image_ollama(
                 e.response.status_code >= 500
                 and "runner has unexpectedly stopped" in response_text.lower()
             )
-            if runner_stopped and _allow_runner_fallback:
+            if runner_stopped and _allow_model_fallback:
                 # Ollama can leave an installed model visible in /api/tags even when its
                 # runner cannot start (most commonly because the selected model does not fit
                 # available RAM/VRAM).  When another vision model is installed, use it for
                 # this request rather than turning a recoverable local-model failure into a
                 # 422 in the chat UI.  The guard makes this a single retry, never a loop.
-                fallback = await _detect_best_vision_model(base)
-                if fallback and fallback != mdl:
-                    retried = await analyze_image_ollama(
-                        image_url,
-                        upload_path,
-                        base_url=base,
-                        model=fallback,
-                        user_prompt=user_prompt,
-                        nsfw_mode=nsfw_mode,
-                        mode=mode,
-                        purpose=purpose,
-                        image_b64=image_b64,
-                        _allow_runner_fallback=False,
-                    )
-                    retried_meta = dict(retried.get("meta") or {})
-                    retried_meta["fallback_from"] = mdl
-                    retried["meta"] = retried_meta
+                retried = await _retry_with_better_model(
+                    mdl,
+                    "model_runner_stopped",
+                    image_url=image_url,
+                    upload_path=upload_path,
+                    base=base,
+                    user_prompt=user_prompt,
+                    nsfw_mode=nsfw_mode,
+                    mode=mode,
+                    purpose=purpose,
+                    image_b64=image_b64,
+                )
+                if retried is not None:
                     return retried
             return {
                 "ok": False,
@@ -532,6 +590,27 @@ async def analyze_image_ollama(
     }
 
     if not content:
+        if _allow_model_fallback:
+            # An empty generation says something about this model, not about the upload. It
+            # is what a small caption model does with a tall screenshot, and the model the
+            # user has installed alongside it will usually answer. Same one-shot retry as a
+            # stopped runner, for the same reason: a red error in the chat is giving up while
+            # an answer is still available.
+            retried = await _retry_with_better_model(
+                mdl,
+                "empty_model_response",
+                image_url=image_url,
+                upload_path=upload_path,
+                base=base,
+                user_prompt=user_prompt,
+                nsfw_mode=nsfw_mode,
+                mode=mode,
+                purpose=purpose,
+                image_b64=image_b64,
+            )
+            if retried is not None:
+                return retried
+
         # V3. An empty generation is not a success with nothing in it.
         #
         # This used to return `ok: True` with `analysis_text: ""`, which left the browser's

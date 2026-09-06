@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
+import { visionErrorMessage } from './lib/visionError'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
 import { ComputerStatusPill } from './account/ComputerStatusPill'
@@ -4188,7 +4189,6 @@ export default function App() {
             return
           } catch (visionErr: any) {
             // Vision failed — show error with retry, then fall through to normal chat
-            const errMsg = typeof visionErr?.message === 'string' ? visionErr.message : 'analysis failed'
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === tmpId
@@ -4196,7 +4196,7 @@ export default function App() {
                       ...m,
                       pending: false,
                       error: true,
-                      text: `Vision analysis failed: ${errMsg}. Make sure a multimodal model is installed.`,
+                      text: visionErrorMessage(visionErr),
                       retry: {
                         requestText: trimmed,
                         mode: mode as Mode,
@@ -4747,11 +4747,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             }
           }
         } catch (err: any) {
-          const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
           setMessages((prev) =>
             prev.map((m) =>
               m.id === failedId
-                ? { ...m, pending: false, error: true, text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).` }
+                ? { ...m, pending: false, error: true, text: visionErrorMessage(err) }
                 : m
             )
           )
@@ -5098,14 +5097,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             }
           }
         } catch (err: any) {
-          const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
           setMessages((prev) =>
             prev.map((m) =>
               m.id === tmpId
                 ? {
                     ...m,
                     pending: false,
-                    text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).`,
+                    text: visionErrorMessage(err),
                     error: true,
                     retry: {
                       requestText: userDisplayText,

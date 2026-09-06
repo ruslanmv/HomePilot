@@ -149,6 +149,197 @@ def test_an_empty_generation_is_a_typed_failure(monkeypatch):
     assert isinstance(out["error"], str) and "moondream:latest" in out["error"]
 
 
+def test_an_upload_with_no_text_asks_the_question_a_person_would(monkeypatch):
+    """The half of the report that failed.
+
+    An upload *with* "what you can see" was answered fine by `moondream:latest`. The same
+    image with no text came back empty — and no-text is the path that builds its own prompt
+    here. Small caption models are trained on visual question answering, and an imperative
+    "Describe this image" is off that distribution in a way a question is not.
+    """
+    seen = {}
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json):
+            seen.update(json)
+            return _Response({"message": {"content": "A phone screen."}})
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", Client)
+    out = run(mm.analyze_image_ollama("", None, model="moondream:latest", image_b64="Zm9v"))
+
+    assert out["ok"] is True
+    assert seen["messages"][1]["content"].startswith("What can you see in this image?")
+    # The OCR half of "both" has to survive the rewording, or a screenshot stops being read.
+    assert "transcribe it exactly" in seen["messages"][1]["content"]
+
+
+def test_a_typed_question_is_still_the_one_that_is_asked(monkeypatch):
+    # The default is a fallback, never an override. Rewriting what somebody typed would be a
+    # far worse bug than the one this fixes.
+    seen = {}
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json):
+            seen.update(json)
+            return _Response({"message": {"content": "Yes."}})
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", Client)
+    run(
+        mm.analyze_image_ollama(
+            "", None, model="gemma3:4b", image_b64="Zm9v", user_prompt="is there a cat in this"
+        )
+    )
+    assert seen["messages"][1]["content"] == "is there a cat in this"
+
+
+def _two_models(post):
+    """An Ollama with `moondream:latest` and `gemma3:4b` installed."""
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return _Response({"models": [{"name": "moondream:latest"}, {"name": "gemma3:4b"}]})
+
+        async def post(self, url, json):
+            return post(json)
+
+    return Client
+
+
+def test_an_empty_generation_falls_back_to_a_better_installed_model(monkeypatch):
+    """The user has both installed and the weaker one says nothing.
+
+    Answering with the model they also installed beats a red error in the chat, and it is
+    the same remedy a stopped runner already gets — an empty generation is a fact about this
+    model, not about the upload.
+    """
+    calls = []
+
+    def post(json):
+        calls.append(json["model"])
+        content = "" if json["model"] == "moondream:latest" else "A portrait on a phone screen."
+        return _Response({"message": {"content": content}})
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", _two_models(post))
+    out = run(mm.analyze_image_ollama("", None, model="moondream:latest", image_b64="Zm9v"))
+
+    assert out["ok"] is True
+    assert out["analysis_text"] == "A portrait on a phone screen."
+    assert out["meta"]["model"] == "gemma3:4b"
+    # Say which model answered and why the first one did not, or the meta names a model the
+    # user never chose with no account of how it got there.
+    assert out["meta"]["fallback_from"] == "moondream:latest"
+    assert out["meta"]["fallback_reason"] == "empty_model_response"
+    assert calls == ["moondream:latest", "gemma3:4b"]
+
+
+def test_the_fallback_never_recurses(monkeypatch):
+    """Every installed model failing must cost one extra call, not a walk of the list.
+
+    This is the whole safety argument for the retry, and it is the one thing a reader cannot
+    check by eye — so it is asserted by counting.
+    """
+    calls = []
+
+    def post(json):
+        calls.append(json["model"])
+        return _Response({"message": {"content": ""}})
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", _two_models(post))
+    out = run(mm.analyze_image_ollama("", None, model="moondream:latest", image_b64="Zm9v"))
+
+    assert out["ok"] is False
+    assert out["error_code"] == "empty_model_response"
+    assert calls == ["moondream:latest", "gemma3:4b"]
+
+
+def test_the_guard_holds_even_when_the_best_model_changes_mid_request(monkeypatch):
+    """The single-shot flag, on its own.
+
+    Normally it is invisible: `_detect_best_vision_model` returns the same answer every time,
+    so a second retry stops at "the fallback is the model that just failed". The flag only
+    shows itself when that answer *moves* — a pull finishing between calls, a model being
+    removed — and then it is the sole thing standing between one upload and a walk of the
+    whole installed list. So the ranking is made to change on every call, deliberately.
+    """
+    calls = []
+    catalog = [
+        # Each answer must be strictly better than the model that just failed, or the
+        # `fallback == failed_model` guard stops the walk and this proves nothing. Ranks
+        # run moondream 12 → llava 8 → llama3.2-vision 6 → gemma3 5 → qwen2.5vl 1.
+        [{"name": "moondream:latest"}, {"name": "llava:13b"}],
+        [{"name": "llava:13b"}, {"name": "llama3.2-vision:11b"}],
+        [{"name": "llama3.2-vision:11b"}, {"name": "gemma3:4b"}],
+        [{"name": "gemma3:4b"}, {"name": "qwen2.5vl:7b"}],
+    ]
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return _Response({"models": catalog.pop(0) if catalog else []})
+
+        async def post(self, url, json):
+            calls.append(json["model"])
+            return _Response({"message": {"content": ""}})
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", Client)
+    out = run(mm.analyze_image_ollama("", None, model="moondream:latest", image_b64="Zm9v"))
+
+    assert out["ok"] is False
+    # Exactly one retry. Never a third call, however tempting the next-best model looks.
+    assert len(calls) == 2, f"expected one retry, walked {calls}"
+
+
+def test_the_best_installed_model_returning_nothing_is_not_retried(monkeypatch):
+    # Already the best choice: there is nothing better to try, so the typed failure stands
+    # rather than the same model being asked twice.
+    calls = []
+
+    def post(json):
+        calls.append(json["model"])
+        return _Response({"message": {"content": ""}})
+
+    monkeypatch.setattr(mm.httpx, "AsyncClient", _two_models(post))
+    out = run(mm.analyze_image_ollama("", None, model="gemma3:4b", image_b64="Zm9v"))
+
+    assert out["ok"] is False
+    assert calls == ["gemma3:4b"]
+
+
 def test_a_real_answer_is_still_a_success(monkeypatch):
     _ollama(monkeypatch, {"message": {"content": "  A code editor with a traceback.  "}})
     out = run(mm.analyze_image_ollama("", None, model="gemma3:4b", image_b64="Zm9v"))
