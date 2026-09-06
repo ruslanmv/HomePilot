@@ -73,7 +73,9 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	}
 	@echo "✓ Installing backend with uv..."
 	@cd backend && uv venv .venv --python 3.11 || uv venv .venv
-	@cd backend && uv pip install -e .
+	@# Meeting transcription is a core feature, not a post-install option. The
+	@# whisper extra is pinned and defaults to local CPU/automatic device selection.
+	@cd backend && uv pip install -e ".[whisper]"
 	@cd backend && uv pip install --group dev
 	@echo ""
 	@echo "✓ Installing edit-session service with uv..."
