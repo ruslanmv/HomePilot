@@ -595,22 +595,6 @@
           "context_window": 8192,
           "uncensored": true,
           "vision": true
-        },
-        {
-          "id": "internvl3:8b",
-          "label": "InternVL3 (8B)",
-          "description": "Detailed scene analysis.",
-          "size_gb": 7.0,
-          "nsfw": true,
-          "recommended_nsfw": true
-        },
-        {
-          "id": "smolvlm2:latest",
-          "label": "SmolVLM2 (2.2B)",
-          "description": "Fast unrestricted captioning.",
-          "size_gb": 2.0,
-          "nsfw": true,
-          "recommended_nsfw": true
         }
       ]
     },

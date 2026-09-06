@@ -10,7 +10,7 @@
 // test is what stops the two lists separating again, which is what happened to the hand-written
 // copy this file replaced.
 //
-// Catalog version: "1.0.0"   Entries: 135
+// Catalog version: "1.0.0"   Entries: 133
 
 export type GeneratedCatalogEntry = {
     id: string;
@@ -487,22 +487,6 @@ export const GENERATED_CATALOGS: Record<string, Record<string, GeneratedCatalogE
                 "recommended_nsfw": true,
                 "nsfw": true,
                 "size_gb": 4
-            },
-            {
-                "id": "internvl3:8b",
-                "label": "InternVL3 (8B)",
-                "description": "Detailed scene analysis.",
-                "recommended_nsfw": true,
-                "nsfw": true,
-                "size_gb": 7
-            },
-            {
-                "id": "smolvlm2:latest",
-                "label": "SmolVLM2 (2.2B)",
-                "description": "Fast unrestricted captioning.",
-                "recommended_nsfw": true,
-                "nsfw": true,
-                "size_gb": 2
             }
         ]
     },

@@ -424,6 +424,19 @@ the committed file has drifted, fails if the projection starts shipping backend-
 audits `Models.tsx` itself for a pasted-back literal — because without that last one V7 is one
 paste away from being undone with every other test still green.
 
+**Two bugs the merge exposed.** `internvl3:8b` and `smolvlm2:latest` — the two entries only the
+frontend had — do not exist in Ollama's library at all (both 404 at `ollama.com/library`), and
+both broke the backend catalog's own rule that an `nsfw` entry is also `uncensored`. Two lists is
+how a model nobody can pull stayed on offer for as long as it did. They are gone, rather than the
+rule being loosened to accommodate them.
+
+Separately, four screensense tests turned out to pass alone and fail whenever a file requesting
+the session-scoped `client` fixture ran first: `conftest._load_app()` purges every `app*` module
+and re-imports, so a module captured at collection time is stale, and
+`monkeypatch.setattr(mm, "analyze_image", …)` was patching an object nothing called.
+`test_vision_selection.py` now re-resolves per test. Pre-existing, and invisible under
+alphabetical ordering.
+
 `vision_input` (`max_long_edge`, `max_megapixels`, `preferred_mime`, `supports_multiple_images`,
 `strategy`) is carried through the projection and populated for **nothing**, on the same
 discipline that keeps V5's verified multi-image set empty: V8's bench set fills it in from

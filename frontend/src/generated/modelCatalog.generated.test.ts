@@ -58,12 +58,16 @@ describe('the generated model catalog', () => {
         expect(entries.some((entry) => 'context_window' in entry)).toBe(false);
     });
 
-    it('still offers the vision models the hand-written list used to', () => {
-        // These two were frontend-only before V7 — a person could pick a model the server had
-        // never heard of. They are in the JSON now, so generating from it must not drop them.
+    it('no longer offers two models that cannot be installed', () => {
+        // `internvl3:8b` and `smolvlm2:latest` were frontend-only, and merging them into the one
+        // catalog is what exposed them: neither exists in Ollama's library (both 404 at
+        // ollama.com/library), and both broke the backend catalog's own rule that an `nsfw`
+        // entry is also `uncensored`. Two lists is how a model nobody can pull stayed on offer
+        // for as long as it did — so the fix is to stop offering them, not to loosen the rule.
         const multimodal = GENERATED_CATALOGS.ollama.multimodal.map((entry) => entry.id);
-        expect(multimodal).toContain('internvl3:8b');
-        expect(multimodal).toContain('smolvlm2:latest');
+        expect(multimodal).not.toContain('internvl3:8b');
+        expect(multimodal).not.toContain('smolvlm2:latest');
+        expect(multimodal).toContain('moondream');
     });
 
     it('offers the chat models the hand-written list was missing', () => {

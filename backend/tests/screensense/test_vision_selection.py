@@ -18,6 +18,7 @@ Three defects, each of which made the product look like a weak model when it was
 from __future__ import annotations
 
 import asyncio
+import importlib
 
 import pytest
 
@@ -27,6 +28,27 @@ from app.screensense import routes
 
 def run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
+
+
+@pytest.fixture(autouse=True)
+def _live_modules():
+    """Re-bind `mm` and `routes` to whatever is in ``sys.modules`` right now.
+
+    ``conftest._load_app()`` purges every ``app*`` module and re-imports the backend so that a
+    test's environment overrides are seen at import time. That is deliberate and load-bearing —
+    but it means a module object captured at *collection* time is stale afterwards, and
+    ``monkeypatch.setattr(mm, "analyze_image", ...)`` then patches an object nothing calls: the
+    route's own lazy import reads ``sys.modules["app.multimodal"]``, which is the new one.
+
+    The symptom was four tests here that passed alone and failed whenever a file requesting the
+    session-scoped ``client`` fixture ran first — invisible under alphabetical ordering, and a
+    coin flip under random ordering. Re-resolving per test costs nothing and makes this file
+    independent of what ran before it.
+    """
+    global mm, routes
+    mm = importlib.import_module("app.multimodal")
+    routes = importlib.import_module("app.screensense.routes")
+    yield
 
 
 @pytest.fixture(autouse=True)
