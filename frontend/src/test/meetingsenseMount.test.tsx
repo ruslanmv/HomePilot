@@ -424,10 +424,42 @@ describe('when it cannot start', () => {
 
 describe('screen-share awareness', () => {
     function sense() {
-        const stub = { bindConversation: vi.fn(), setAwareness: vi.fn() };
+        const stub = { bindConversation: vi.fn(), setAwareness: vi.fn(), setVision: vi.fn() };
         (globalThis as Record<string, unknown>).hpScreenSense = stub;
         return stub;
     }
+
+    it('hands ScreenSense the vision model the user chose (V1)', () => {
+        // Settings stored these three and /v1/multimodal/analyze accepted them, but nothing
+        // carried one to the other — so the floating button asked with no model and the
+        // backend auto-detected. Somebody with a good model selected got moondream's answer.
+        const stub = sense();
+        localStorage.setItem('homepilot_provider_multimodal', 'ollama');
+        localStorage.setItem('homepilot_base_url_multimodal', 'http://vision.local:11434');
+        localStorage.setItem('homepilot_model_multimodal', 'gemma3:4b');
+        render(<MeetingSenseProvider conversationId="c1" status={OFF}><div /></MeetingSenseProvider>);
+        expect(stub.setVision).toHaveBeenCalledWith({
+            provider: 'ollama',
+            baseUrl: 'http://vision.local:11434',
+            model: 'gemma3:4b',
+        });
+    });
+
+    it('an unchosen model is an empty string, which means "let the backend decide"', () => {
+        const stub = sense();
+        localStorage.removeItem('homepilot_model_multimodal');
+        render(<MeetingSenseProvider conversationId="c1" status={OFF}><div /></MeetingSenseProvider>);
+        expect(stub.setVision).toHaveBeenCalledWith(
+            expect.objectContaining({ model: '' }),
+        );
+    });
+
+    it('an older copy of the addon without setVision is not a crash', () => {
+        (globalThis as Record<string, unknown>).hpScreenSense = { bindConversation: vi.fn() };
+        expect(() =>
+            render(<MeetingSenseProvider conversationId="c1" status={OFF}><div /></MeetingSenseProvider>),
+        ).not.toThrow();
+    });
 
     it('tells ScreenSense which conversation a share belongs to', () => {
         const stub = sense();

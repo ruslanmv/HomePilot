@@ -85,6 +85,10 @@ async def index_image_to_knowledge(
             user_prompt=None,
             nsfw_mode=nsfw_mode,
             mode="both",
+            # V5. An ingested image is a photograph or a scan, not somebody's screen: fit it
+            # and send one image. Tiling exists to rescue small text from a downscale, and a
+            # photo does not have any.
+            purpose="photo",
         )
     except Exception as e:
         return {

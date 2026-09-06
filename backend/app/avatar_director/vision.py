@@ -249,6 +249,10 @@ async def _default_analyze(*, image_b64: str, model: Optional[str], user_prompt:
         model=model,
         user_prompt=user_prompt,
         mode="caption",
+        # V5. This is a webcam frame of a person, and `caption` already keeps it to a single
+        # fitted image — naming the purpose stops `meta.adapter.profile` from calling it a
+        # screen in the logs.
+        purpose="photo",
     )
 
 

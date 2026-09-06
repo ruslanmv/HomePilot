@@ -77,6 +77,21 @@
     /** The user's own switch (Settings → Multimodal). Off means nothing is ever sent. */
     let awareness = true;
 
+    /**
+     * The vision provider the user picked in Settings (V1).
+     *
+     * Settings has always stored `homepilot_provider_multimodal`, `homepilot_base_url_multimodal`
+     * and `homepilot_model_multimodal`, and `/v1/multimodal/analyze` has always accepted all
+     * three — but nothing carried them from one to the other. The floating button auto-mounts
+     * with no options, so `opts.model` was `undefined`, the field was omitted, and the backend
+     * auto-detected instead. The user's choice was read, stored, and dropped.
+     *
+     * Held here rather than read from storage on each ask: this file has no opinion about
+     * where the host app keeps its settings, and a host that keeps them somewhere else needs
+     * only to call `setVision`.
+     */
+    let vision = { provider: '', baseUrl: '', model: '' };
+
     function tellBackend(action, conversationId, extra) {
         // Checked here rather than at each call site, so a future caller cannot forget it.
         // "stop" is always allowed through: turning the setting off mid-share must retract
@@ -368,8 +383,15 @@
                     persist: !!opts.conversationId,
                 };
                 if (opts.conversationId) body.conversation_id = opts.conversationId;
-                if (opts.model) body.model = opts.model;
-                if (opts.baseUrl) body.base_url = opts.baseUrl;
+                // An explicit option wins; otherwise whatever the user chose in Settings.
+                // Empty strings are not choices — they fall through to the backend's own
+                // detection rather than being sent as a provider named "".
+                const model = opts.model || vision.model;
+                const baseUrl = opts.baseUrl || vision.baseUrl;
+                const provider = opts.provider || vision.provider;
+                if (model) body.model = model;
+                if (baseUrl) body.base_url = baseUrl;
+                if (provider) body.provider = provider;
 
                 const an = await fetch(API_BASE + '/v1/multimodal/analyze', {
                     method: 'POST',
@@ -377,8 +399,17 @@
                     body: JSON.stringify(body),
                     credentials: 'include',
                 });
-                if (!an.ok) throw new Error('analyze ' + an.status);
-                const out = await an.json();
+                // V3. A vision model that returned nothing is now a 422 with a typed code
+                // rather than a 200 with empty text. Read the body before deciding it is a
+                // transport failure: `analyze 422` would be a worse message than the one the
+                // panel already knows how to show, and would throw away the model's name.
+                const out = await an.json().catch(() => null);
+                if (!an.ok) {
+                    if (out && out.error_code === 'empty_model_response') {
+                        return { ok: false, error: '', empty: true, meta: out.meta || {}, mode: this.mode };
+                    }
+                    throw new Error((out && out.error) || 'analyze ' + an.status);
+                }
                 // MS29. Two facts the chat needs: a screen is being shared, and this is the
                 // most recent thing read off it. Sent after the answer rather than before, so
                 // a failed capture never leaves the persona claiming to see a screen it did
@@ -438,6 +469,28 @@
             tellBackend('start', this._conversationId, { mode: this.mode });
         }
         return next;
+    };
+
+    /**
+     * Tell ScreenSense which vision model the user chose (V1).
+     *
+     * Called by the host app when Settings change. Partial updates are merged, so a host that
+     * only knows the model does not have to invent a provider — and passing nothing at all
+     * clears nothing, which keeps a mount-time call from wiping a later one.
+     */
+    HPScreenSense.prototype.setVision = function (next) {
+        const patch = next || {};
+        vision = {
+            provider: String(patch.provider === undefined ? vision.provider : patch.provider || '').trim(),
+            baseUrl: String(patch.baseUrl === undefined ? vision.baseUrl : patch.baseUrl || '').trim(),
+            model: String(patch.model === undefined ? vision.model : patch.model || '').trim(),
+        };
+        return Object.assign({}, vision);
+    };
+
+    /** What ScreenSense will ask for, for a host that wants to show it. */
+    HPScreenSense.prototype.getVision = function () {
+        return Object.assign({}, vision);
     };
 
     HPScreenSense.prototype.isScreenQuery = function (text) {
@@ -545,24 +598,25 @@
                     apiKey: opts.apiKey || window.HOMEPILOT_API_KEY,
                     model: opts.model,
                 });
-                if (!r.ok) {
+                // Two ways the model can fail to describe the screen, and they read the
+                // same to a person: it returned nothing (V3's typed `empty`), or it returned
+                // something `usableAnswer` will not print. Same sentence for both.
+                const answer = r.ok ? usableAnswer(r.analysis_text) : '';
+                if (!r.ok && !r.empty) {
                     say(r.error || 'The screen could not be captured.', 'weak');
+                } else if (answer) {
+                    say(answer);
                 } else {
-                    const answer = usableAnswer(r.analysis_text);
-                    if (answer) {
-                        say(answer);
-                    } else {
-                        // Naming the model is the useful part: this outcome nearly always
-                        // means the configured vision model is too small for the question,
-                        // and the fix is to change it rather than to press the button again.
-                        const model = (r.meta && (r.meta.model || r.meta.name)) || 'the vision model';
-                        say(
-                            'No usable answer from ' + model + '. It returned nothing that '
-                            + 'reads as a description of your screen — try a larger vision '
-                            + 'model (Settings → Multimodal).',
-                            'weak',
-                        );
-                    }
+                    // Naming the model is the useful part: this outcome nearly always
+                    // means the configured vision model is too small for the question,
+                    // and the fix is to change it rather than to press the button again.
+                    const model = (r.meta && (r.meta.model || r.meta.name)) || 'the vision model';
+                    say(
+                        'No usable answer from ' + model + '. It returned nothing that '
+                        + 'reads as a description of your screen — try a larger vision '
+                        + 'model (Settings → Multimodal).',
+                        'weak',
+                    );
                 }
                 if (r.ok && typeof opts.onResult === 'function') opts.onResult(r);
             } finally {

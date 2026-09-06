@@ -174,12 +174,17 @@ def test_stt_probe_survives_a_missing_provider_module(routes, monkeypatch):
 
 
 def test_stt_probe_names_the_provider(routes, monkeypatch):
-    # Naming it is what lets the consent sheet name it. `get_stt_provider()` prefers the
-    # remote endpoint whenever STT_BASE_URL is set, and a user who configured that months
-    # ago for voice calls should not discover it by shipping an hour of meeting audio.
+    # Naming it is what lets the consent sheet name it.
+    #
+    # This test used to assert that setting STT_BASE_URL made the meeting remote — which was
+    # true, and was the bug. LS2 gave meetings their own policy, so a configured endpoint is
+    # now reported as *configured* and not as *in use*: it is used when the user says so.
+    # Those were one question while a configured endpoint silently won, and are two now.
     monkeypatch.setenv("STT_BASE_URL", "https://api.example/v1")
     info = routes.stt_capability()
-    assert info["remote"] is True
+    assert info["remote"] is False
+    assert info["remote_configured"] is True
+    assert info["policy"] == "local"
     assert info["provider"] is not None
 
 

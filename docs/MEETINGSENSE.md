@@ -115,9 +115,45 @@ the recorder on never turns on something a later wave built.
 | `MEETINGSENSE_VISION_MODEL` | *(multimodal default)* | Model that captions slides (W3) |
 | `MEETINGSENSE_MAX_KEYFRAMES_PER_HOUR` | `60` | Cap on captured slides |
 | `MEETINGSENSE_PANEL_MAX_KB` | `64` | Card size on the avatar surface. Mirrors `avatar_director.panels.DEFAULT_MAX_KB`; a test asserts the two stay equal |
-| `WHISPER_MODEL`, `STT_BASE_URL` | *(existing)* | Speech selection — unchanged, shared with voice calls |
+| `MEETINGSENSE_STT_POLICY` | `local` | `local` \| `remote` \| `auto`. Where meeting audio may go (LS2) |
+| `WHISPER_MODEL` | `small` | The local model. Since LS1 it has a default, so installing the speech package is the whole of the setup |
+| `STT_BASE_URL` | *(existing)* | A remote speech endpoint. Used by **voice calls** as before; a meeting uses it only when the policy says `remote` |
 | `WHISPER_DEVICE` | `auto` | `auto` \| `cuda` \| `cpu`. `auto` is what faster-whisper already picked, so setting nothing keeps today's behaviour |
 | `WHISPER_COMPUTE` | `default` | e.g. `float16` on CUDA, `int8` on CPU. `default` is again today's behaviour |
+
+### Local transcription (LS1, LS2)
+
+Install it once, on the machine that records:
+
+```sh
+pip install -r requirements/speech-cpu.txt     # or .[whisper]
+```
+
+That is the whole of the setup — no environment variable, no speech service. `WHISPER_MODEL`
+defaults to `small`; set `large-v3-turbo` for better quality at a larger download.
+
+The CUDA set (`requirements/speech-cuda12.txt`) needs CUDA 12 and cuDNN 9 already present, and
+is **untested here** — this build environment has no GPU.
+
+### Where meeting audio is allowed to go
+
+A meeting asks a different question from a voice call, and asks it in a different order:
+
+```text
+local available                        → local
+user chose remote, and it is available → remote
+otherwise                              → nothing, and the UI says which is missing
+```
+
+There is deliberately no `if local failed: use the cloud`. A privacy boundary is not crossed as
+error recovery — a missing package is not consent. Before LS2 the shared selection returned a
+configured `STT_BASE_URL` *before it even constructed* the local provider, so somebody who set
+that variable months ago for voice calls had every hour of meeting audio shipped there with
+nothing in the product saying so. Voice calls are unchanged.
+
+When local is unavailable **and** a remote endpoint is already configured, `/status` reports
+`offer_remote: true` and the UI offers it as a choice rather than taking transcription away.
+`remote` now means *this meeting is using one*; `remote_configured` means *one exists*.
 
 ### Why the device is reported, not just configurable
 

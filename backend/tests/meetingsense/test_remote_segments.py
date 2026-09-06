@@ -259,7 +259,7 @@ class TestWhatTheRestOfTheStackSeesNow:
         import app.voice.providers as providers
 
         monkeypatch.setenv("STT_BASE_URL", "https://speech.example/v1")
-        monkeypatch.setattr(providers, "get_stt_provider", lambda: providers.OpenAICompatSTTProvider())
+        monkeypatch.setattr(providers, "get_meeting_stt_provider", lambda: providers.OpenAICompatSTTProvider())
         info = routes.stt_capability()
         assert info["provider"] == "openai-compat"
         assert info["segments"] is True
@@ -272,5 +272,5 @@ class TestWhatTheRestOfTheStackSeesNow:
         import app.voice.providers as providers
 
         monkeypatch.setenv("STT_BASE_URL", "https://user:secret@speech.example/v1")
-        monkeypatch.setattr(providers, "get_stt_provider", lambda: providers.OpenAICompatSTTProvider())
+        monkeypatch.setattr(providers, "get_meeting_stt_provider", lambda: providers.OpenAICompatSTTProvider())
         assert "secret" not in str(routes.stt_capability())

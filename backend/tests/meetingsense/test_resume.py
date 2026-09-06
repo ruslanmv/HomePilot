@@ -97,7 +97,7 @@ def stt(modules, monkeypatch):
     provider = StubSTT()
     import app.voice.providers as providers
 
-    monkeypatch.setattr(providers, "get_stt_provider", lambda: provider)
+    monkeypatch.setattr(providers, "get_meeting_stt_provider", lambda: provider)
     return provider
 
 
