@@ -188,11 +188,22 @@ def test_stt_probe_names_the_provider(routes, monkeypatch):
     assert info["provider"] is not None
 
 
-def test_stt_probe_reports_no_timestamps_before_ms1(routes):
-    # Honest today: the design cites t0 per note, and nothing produces timed spans until MS1
-    # adds `transcribe_segments`. When that lands this flips with no edit here, because the
-    # probe asks for the method rather than for a version.
-    assert routes.stt_capability()["segments"] is False
+def test_stt_probe_reports_whether_the_timings_were_measured(routes):
+    """`segments` tracks the provider, which is what its own comment always promised.
+
+    The previous version asserted ``False`` and said "when MS1 lands this flips with no edit
+    here". Both halves could not be true: a frozen expectation is exactly the thing that needs
+    an edit when the world moves. MS1 landed and local speech became part of a standard
+    install, so the answer flipped in CI and the test failed on the machine where the feature
+    works.
+
+    The invariant is the linkage — the probe reports measured timings when, and only when, the
+    provider it selected measures them — and that holds either way.
+    """
+    from app.voice.providers import get_meeting_stt_provider
+
+    expected = bool(getattr(get_meeting_stt_provider(), "supports_segments", False))
+    assert routes.stt_capability()["segments"] is expected
 
 
 def test_vision_probe_is_a_capability_not_a_blocker(routes):

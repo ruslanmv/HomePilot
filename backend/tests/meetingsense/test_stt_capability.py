@@ -71,7 +71,27 @@ class TestNothingExistingChanged:
         monkeypatch.setenv("STT_BASE_URL", "https://api.example/v1")
         assert P.get_stt_provider().name == "openai-compat"
 
-    def test_nothing_configured_is_still_the_null_provider(self):
+    def test_nothing_configured_selects_local_speech_when_it_is_installed(self):
+        """The selection rule, rather than one environment's answer.
+
+        This used to assert ``null`` outright, which was true only while ``faster-whisper``
+        was absent from a standard install. Making local transcription part of that install
+        changed the answer in CI and nowhere else, so the test failed on the machine where
+        the feature works and passed on the machine where it does not — the wrong way round.
+
+        The rule itself did not change: a configured remote endpoint wins, then local
+        Whisper, then nothing. So that is what is asserted, and it holds on a full install
+        and on a slim one.
+        """
+        expected = "whisper-local" if P.WhisperLocalSTTProvider().available else "null"
+        assert P.get_stt_provider().name == expected
+
+    def test_and_a_slim_install_still_falls_through_to_null(self, monkeypatch):
+        # The other branch, forced, so the fallback is covered on a machine that has the
+        # dependency — otherwise the `null` path would only ever be exercised by accident of
+        # what happens to be installed.
+        monkeypatch.setattr(P.WhisperLocalSTTProvider, "available", property(lambda self: False))
+        P.get_stt_provider.__globals__["_stt_cache"] = None
         assert P.get_stt_provider().name == "null"
 
     def test_whisper_defaults_reproduce_the_old_call(self, monkeypatch):
