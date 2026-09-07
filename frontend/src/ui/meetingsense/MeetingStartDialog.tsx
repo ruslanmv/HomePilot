@@ -54,7 +54,7 @@ export function MeetingStartDialog({
     const remember = useRef<HTMLInputElement | null>(null);
 
     const privacyLines = useMemo(
-        () => consentSentences({ ...status, mode: capture.mode }),
+        () => consentSentences({ ...(status || {}), mode: capture.mode }),
         [status, capture.mode],
     );
     const selectedMode = MODES.find((mode) => mode.id === capture.mode) ?? MODES[0];
@@ -294,7 +294,7 @@ export function MeetingStartDialog({
                         type="button"
                         onClick={() => onAccept(Boolean(remember.current?.checked))}
                         data-testid="ms-consent-accept"
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4.5 text-xs font-semibold text-black shadow-[0_8px_28px_-10px_rgba(255,255,255,0.45)] transition hover:bg-white/90 focus:outline-none focus:ring-2 focus:ring-violet-300 focus:ring-offset-2 focus:ring-offset-[#101014]"
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-[18px] text-xs font-semibold text-black shadow-[0_8px_28px_-10px_rgba(255,255,255,0.45)] transition hover:bg-white/90 focus:outline-none focus:ring-2 focus:ring-violet-300 focus:ring-offset-2 focus:ring-offset-[#101014]"
                     >
                         <Mic2 size={14} strokeWidth={2} />
                         Start meeting
