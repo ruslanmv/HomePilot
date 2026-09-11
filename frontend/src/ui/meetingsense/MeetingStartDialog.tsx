@@ -1,10 +1,9 @@
 /**
  * Premium meeting preflight (additive UX layer).
  *
- * This component deliberately does not know how a meeting is recorded. It only edits the
- * existing CaptureOptions object and hands the final choice back to MeetingSenseProvider.
- * The provider remains the single place that starts capture, enforces the server flag and
- * handles consent persistence.
+ * This component edits the existing CaptureOptions object and hands the final
+ * choice back to MeetingSenseProvider. The provider remains the single place
+ * that starts capture, enforces the server flag and persists consent.
  */
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
@@ -36,7 +35,7 @@ const captureItems: Array<{
     key: CaptureKey;
     label: string;
     detail: string;
-    icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+    icon: typeof AudioLines;
 }> = [
     { key: 'audio', label: 'Meeting audio', detail: 'Hear the people in the call', icon: AudioLines },
     { key: 'mic', label: 'My microphone', detail: 'Include what you say', icon: Mic2 },
@@ -102,10 +101,7 @@ export function MeetingStartDialog({
     };
 
     return (
-        <div
-            className="fixed inset-0 z-[100] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-6"
-            aria-hidden="false"
-        >
+        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-6">
             <div
                 ref={dialog}
                 role="dialog"
@@ -139,13 +135,7 @@ export function MeetingStartDialog({
                                     <h2 id="ms-consent-title" className="text-xl font-semibold tracking-[-0.02em] text-white sm:text-[22px]">
                                         Start a meeting
                                     </h2>
-                                    <span
-                                        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.08em] ${
-                                            remote
-                                                ? 'border-amber-300/20 bg-amber-300/[0.08] text-amber-200/90'
-                                                : 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/90'
-                                        }`}
-                                    >
+                                    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.08em] ${remote ? 'border-amber-300/20 bg-amber-300/[0.08] text-amber-200/90' : 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/90'}`}>
                                         {remote ? <Cloud size={11} /> : <HardDrive size={11} />}
                                         {remote ? 'Remote speech' : 'Processed locally'}
                                     </span>
@@ -181,11 +171,7 @@ export function MeetingStartDialog({
                                             aria-checked={active}
                                             onClick={() => toggleCapture(item.key)}
                                             data-testid={`ms-start-${item.key}`}
-                                            className={`group flex min-h-[86px] items-start gap-3 rounded-2xl border p-3.5 text-left transition focus:outline-none focus:ring-2 focus:ring-violet-400/60 ${
-                                                active
-                                                    ? 'border-violet-300/25 bg-violet-400/[0.08] shadow-inner shadow-violet-200/[0.03]'
-                                                    : 'border-white/[0.08] bg-white/[0.02] hover:border-white/15 hover:bg-white/[0.04]'
-                                            }`}
+                                            className={`group flex min-h-[86px] items-start gap-3 rounded-2xl border p-3.5 text-left transition focus:outline-none focus:ring-2 focus:ring-violet-400/60 ${active ? 'border-violet-300/25 bg-violet-400/[0.08] shadow-inner shadow-violet-200/[0.03]' : 'border-white/[0.08] bg-white/[0.02] hover:border-white/15 hover:bg-white/[0.04]'}`}
                                         >
                                             <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${active ? 'border-violet-300/20 bg-violet-300/10 text-violet-200' : 'border-white/10 bg-white/[0.03] text-white/35'}`}>
                                                 <Icon size={15} strokeWidth={1.8} />
@@ -194,10 +180,7 @@ export function MeetingStartDialog({
                                                 <span className={`block text-xs font-medium ${active ? 'text-white' : 'text-white/55'}`}>{item.label}</span>
                                                 <span className="mt-1 block text-[10px] leading-4 text-white/30">{item.detail}</span>
                                             </span>
-                                            <span
-                                                aria-hidden="true"
-                                                className={`mt-1 flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition ${active ? 'justify-end bg-violet-400' : 'justify-start bg-white/15'}`}
-                                            >
+                                            <span aria-hidden="true" className={`mt-1 flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition ${active ? 'justify-end bg-violet-400' : 'justify-start bg-white/15'}`}>
                                                 <span className="h-3 w-3 rounded-full bg-white shadow-sm" />
                                             </span>
                                         </button>
@@ -228,11 +211,7 @@ export function MeetingStartDialog({
                                             aria-checked={selected}
                                             onClick={() => onCaptureChange({ ...capture, mode: mode.id })}
                                             data-testid={`ms-start-mode-${mode.id ?? 'note-taker'}`}
-                                            className={`rounded-xl border px-3 py-2 text-xs transition focus:outline-none focus:ring-2 focus:ring-violet-400/60 ${
-                                                selected
-                                                    ? 'border-violet-300/30 bg-violet-400/10 text-violet-100'
-                                                    : 'border-white/[0.08] bg-white/[0.02] text-white/45 hover:border-white/15 hover:text-white/75'
-                                            }`}
+                                            className={`rounded-xl border px-3 py-2 text-xs transition focus:outline-none focus:ring-2 focus:ring-violet-400/60 ${selected ? 'border-violet-300/30 bg-violet-400/10 text-violet-100' : 'border-white/[0.08] bg-white/[0.02] text-white/45 hover:border-white/15 hover:text-white/75'}`}
                                         >
                                             {mode.label}
                                         </button>
@@ -244,10 +223,7 @@ export function MeetingStartDialog({
                             </p>
                         </section>
 
-                        <section
-                            aria-labelledby="ms-privacy-heading"
-                            className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"
-                        >
+                        <section aria-labelledby="ms-privacy-heading" className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
                             <div className="flex gap-3">
                                 <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-emerald-300/15 bg-emerald-300/[0.06] text-emerald-200/80">
                                     <ShieldCheck size={16} strokeWidth={1.8} />
