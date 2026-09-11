@@ -23,6 +23,9 @@ COPY frontend/ ./
 # aliases. WORKDIR is /build, so ../packages must be at /packages. TS source,
 # not npm deps — the npm install above is unchanged.
 COPY packages/ /packages/
+# Package tsconfigs extend ../../tsconfig.base.json. With packages mounted at
+# /packages, Vite/esbuild resolves that parent config at /tsconfig.base.json.
+COPY tsconfig.base.json /tsconfig.base.json
 ENV VITE_API_URL=""
 RUN npm run build && ls -la dist/
 
