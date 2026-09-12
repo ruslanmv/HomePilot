@@ -29,6 +29,19 @@ type MountedHosts = {
 const MEDIA_TAB_ATTR = 'data-homepilot-audio-video-tab';
 const MEDIA_CONTENT_ATTR = 'data-homepilot-audio-video-content';
 
+function findSettingsContentHost(body: HTMLElement, navElements: HTMLElement[]) {
+  return (
+    Array.from(body.children).find(
+      (node): node is HTMLElement =>
+        node instanceof HTMLElement &&
+        node.tagName !== 'NAV' &&
+        !navElements.includes(node) &&
+        node.classList.contains('flex-1') &&
+        node.classList.contains('overflow-y-auto'),
+    ) ?? null
+  );
+}
+
 /**
  * Additive wrapper around the canonical Enterprise Settings panel.
  *
@@ -61,12 +74,11 @@ export default function SettingsPanelWithMedia(props: SettingsPanelProps) {
         ? Array.from(dialog.querySelectorAll<HTMLElement>('nav[aria-label="Settings sections"]'))
         : [];
       const body = navElements[0]?.parentElement ?? null;
-      const content = body
-        ? Array.from(body.children).find(
-            (node): node is HTMLElement =>
-              node instanceof HTMLElement && node.classList.contains('overflow-y-auto'),
-          ) ?? null
-        : null;
+      // Both the desktop sidebar and the right content pane scroll. The old
+      // selector picked the first `overflow-y-auto` child, which is the sidebar
+      // on desktop. Only accept the non-nav, flexing sibling that owns the
+      // Settings section content.
+      const content = body ? findSettingsContentHost(body, navElements) : null;
 
       if (!dialog || navElements.length === 0 || !content) {
         attempts += 1;
@@ -108,6 +120,8 @@ export default function SettingsPanelWithMedia(props: SettingsPanelProps) {
       const contentHost = document.createElement('div');
       contentHost.setAttribute(MEDIA_CONTENT_ATTR, 'true');
       contentHost.style.display = 'none';
+      contentHost.style.width = '100%';
+      contentHost.style.minWidth = '0';
       content.appendChild(contentHost);
 
       if (!cancelled) {
