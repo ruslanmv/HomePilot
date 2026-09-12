@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Video } from 'lucide-react';
-// Import the canonical TypeScript settings panel explicitly. Vite resolves .tsx
-// before generated .jsx mirrors in this repository, so the wrapper must sit on
-// top of the source that the application actually uses.
-import LegacySettingsPanel from './SettingsPanel.tsx';
+// The Vite pre-resolver only redirects App.tsx's `./SettingsPanel` import to
+// this wrapper. From here, normal TypeScript resolution reaches the canonical
+// SettingsPanel.tsx, so there is no recursion and no stale JSX fallback.
+import LegacySettingsPanel from './SettingsPanel';
 import AudioVideoSettings from './components/AudioVideoSettings';
 
 type SettingsPanelProps = {
@@ -32,11 +32,11 @@ const MEDIA_CONTENT_ATTR = 'data-homepilot-audio-video-content';
 /**
  * Additive wrapper around the canonical Enterprise Settings panel.
  *
- * The repository currently keeps generated TSX/JSX twins. Vite explicitly
- * resolves TypeScript first, so App's extensionless `./SettingsPanel` import is
- * aliased to this wrapper in vite.config.ts. This component then imports the
- * canonical SettingsPanel.tsx explicitly and adds one real navigation item plus
- * an Audio & Video content surface without forking the large existing panel.
+ * HomePilot currently keeps generated TSX/JSX twins. A tiny Vite pre-resolver
+ * redirects only App.tsx's extensionless SettingsPanel import to this wrapper.
+ * This component then resolves `./SettingsPanel` normally back to the canonical
+ * TypeScript implementation and adds one real navigation item plus an Audio &
+ * Video content surface without forking the large existing panel.
  *
  * The DOM adapter is deliberately narrow: it anchors to the dialog's accessible
  * labels and direct body structure, not pixel positions or generated class names.
