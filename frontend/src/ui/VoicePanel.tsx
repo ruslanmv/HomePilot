@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useVoiceController, VoiceState } from "./voice/useVoiceController";
+import { microphoneDebug } from "./media/microphoneDebug";
 
 declare global {
   interface Window {
@@ -7,7 +8,6 @@ declare global {
   }
 }
 
-// State-based status messages for compact display
 const STATE_MESSAGES: Record<VoiceState, string> = {
   OFF: "Click 'Talk' to speak",
   IDLE: "Listening for voice...",
@@ -26,26 +26,43 @@ export default function VoicePanel({
   setTtsEnabled: (v: boolean) => void;
 }) {
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
-
   const voice = useVoiceController(onSendText);
 
-  // Sync TTS enabled state with parent
   React.useEffect(() => {
     voice.setTtsEnabled(ttsEnabled);
   }, [ttsEnabled, voice.setTtsEnabled]);
 
-  if (!window.SpeechService) {
-    return null; // Speech service not loaded
-  }
+  if (!window.SpeechService) return null;
 
   const isListening = voice.state === 'LISTENING';
+
+  const handleTalkClick = () => {
+    const action = isListening
+      ? 'stop_listening'
+      : voice.state === 'SPEAKING'
+        ? 'stop_tts'
+        : 'start_listening';
+    microphoneDebug('chat', 'talk_button_click', {
+      action,
+      state: voice.state,
+      handsFree: voice.isHandsFree,
+      sttSupported: voice.sttSupported,
+    });
+
+    if (isListening) {
+      voice.stopManualListening();
+    } else if (voice.state === 'SPEAKING') {
+      voice.stopSpeaking();
+    } else {
+      void voice.startManualListening();
+    }
+  };
 
   return (
     <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-3">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="text-sm font-bold text-white">Voice Assistant</div>
-          {/* State indicator badge */}
           <div className={`px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider ${
             voice.state === 'OFF' ? 'bg-gray-800 text-gray-400' :
             voice.state === 'LISTENING' ? 'bg-green-900/50 text-green-400' :
@@ -75,7 +92,6 @@ export default function VoicePanel({
         </div>
       </div>
 
-      {/* Voice Settings Panel */}
       {showVoiceSettings && (
         <div className="mb-3 p-3 rounded-lg bg-black/30 border border-white/5">
           <label className="block text-xs text-white/60 mb-2">Assistant Voice</label>
@@ -95,7 +111,6 @@ export default function VoicePanel({
             Choose the voice personality for the assistant's responses
           </div>
 
-          {/* Audio level debug (only in hands-free mode) */}
           {voice.isHandsFree && (
             <div className="mt-3 pt-3 border-t border-white/10">
               <div className="text-[10px] text-white/40 mb-1">Audio Levels</div>
@@ -123,15 +138,7 @@ export default function VoicePanel({
                 ? "bg-blue-600 hover:bg-blue-700"
                 : "bg-blue-600 hover:bg-blue-700"
           } text-white`}
-          onClick={() => {
-            if (isListening) {
-              voice.stopManualListening();
-            } else if (voice.state === 'SPEAKING') {
-              voice.stopSpeaking();
-            } else {
-              voice.startManualListening();
-            }
-          }}
+          onClick={handleTalkClick}
         >
           {isListening ? "Stop" : voice.state === 'SPEAKING' ? "Stop TTS" : "Talk"}
         </button>
@@ -142,7 +149,13 @@ export default function VoicePanel({
               ? "bg-yellow-500/30 text-yellow-200 border-yellow-500/30"
               : "bg-white/5 text-white/80 hover:bg-white/10"
           }`}
-          onClick={() => voice.setHandsFree(!voice.isHandsFree)}
+          onClick={() => {
+            microphoneDebug('chat', 'handsfree_button_click', {
+              enabled: !voice.isHandsFree,
+              state: voice.state,
+            });
+            voice.setHandsFree(!voice.isHandsFree);
+          }}
           title="Hands-free mode: automatically detect when you start speaking"
         >
           {voice.isHandsFree ? "Auto" : "Manual"}
@@ -150,11 +163,7 @@ export default function VoicePanel({
       </div>
 
       <div className="mt-2 text-xs text-white/70 min-h-[18px]">
-        {voice.interimText ? (
-          <span>{voice.interimText}</span>
-        ) : (
-          STATE_MESSAGES[voice.state]
-        )}
+        {voice.interimText ? <span>{voice.interimText}</span> : STATE_MESSAGES[voice.state]}
       </div>
     </div>
   );
