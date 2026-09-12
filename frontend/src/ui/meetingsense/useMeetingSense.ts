@@ -1,20 +1,13 @@
 /**
- * The hook that joins the recorder to the card (batch MS6).
+ * Bridge the plain MeetingSense recorder into React state.
  *
- * MS4's addon is a plain browser script that publishes DOM events on `window`; this turns
- * those into React state. Events rather than a direct dependency on purpose: the pill and the
- * card are different components on different surfaces, and neither owns the recorder.
- *
- * The one piece of real logic here is the **undo window**, and it is not what it looks like.
- * Pressing Stop does *not* stop the recorder. It starts a ten-second countdown during which
- * capture keeps running, and only then sends `stop`. Undoing therefore leaves no hole — which
- * it would if Stop had actually stopped, since the ten seconds a user spends deciding are
- * usually the ten seconds somebody was still talking.
+ * The recorder owns capture and the socket; this hook owns the UI view. Ending a meeting is
+ * deliberately immediate: the recorder is stopped as soon as the user confirms End, so mic
+ * and display tracks are released before recap generation starts.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     EMPTY_VIEW,
-    UNDO_WINDOW_MS,
     dismissChip,
     mergeChip,
     mergeSegment,
@@ -22,15 +15,15 @@ import {
     resolveChip,
     type MeetingView,
     type Phase,
+    type Segment,
+    type Slide,
 } from './meetingState';
+import type { MeetingRecord } from './meetingRecord';
 
 export interface Recorder {
     start: (options: Record<string, unknown>) => Promise<{ ok: boolean; meetingId?: string; error?: string }>;
     stop: () => Promise<unknown>;
     muteMic: (muted: boolean) => void;
-    /** MS25. Takes an id — the card never sends a chip body back. Optional because an older
-     *  addon on a newer card is the ordinary case, and the button is hidden rather than
-     *  throwing when it is missing. */
     acceptChip?: (id: string) => boolean;
     levels?: number[];
     behindMs?: number;
@@ -42,18 +35,48 @@ function recorderOf(): Recorder | null {
 }
 
 export interface UseMeetingSenseOptions {
-    /** Injected in tests; defaults to `window.hpMeetingSense`. */
     recorder?: Recorder | null;
     provider?: string | null;
-    /** Injected in tests; defaults to `window`. */
     target?: EventTarget;
+}
+
+function numberOr(value: unknown, fallback = 0): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function segmentFromRecord(row: Record<string, unknown>, index: number): Segment {
+    return {
+        id: typeof row.id === 'string' ? row.id : `stored-segment-${index}`,
+        seq: typeof row.seq === 'number' ? row.seq : undefined,
+        t0: numberOr(row.t0 ?? row.t0_ms),
+        t1: row.t1 == null && row.t1_ms == null ? null : numberOr(row.t1 ?? row.t1_ms),
+        speaker: typeof row.speaker === 'string' ? row.speaker : null,
+        text: typeof row.text === 'string' ? row.text : '',
+        conf: typeof row.conf === 'number' ? row.conf : null,
+    };
+}
+
+function slideFromRecord(row: Record<string, unknown>, index: number): Slide | null {
+    const url = typeof row.url === 'string' ? row.url : '';
+    if (!url) return null;
+    return {
+        id: typeof row.id === 'string' ? row.id : `stored-slide-${index}`,
+        t: numberOr(row.t ?? row.t_ms),
+        url,
+        caption: typeof row.caption === 'string' ? row.caption : null,
+        hash: typeof row.hash === 'string' ? row.hash : null,
+        reused: row.reused === true,
+    };
 }
 
 export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
     const [view, setView] = useState<MeetingView>(EMPTY_VIEW);
-    const [undoSecondsLeft, setUndoSecondsLeft] = useState<number | null>(null);
-    const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Kept in the public API for compatibility with older controls. The dedicated workspace no
+    // longer offers capture-while-counting-down undo, so this remains null.
+    const [undoSecondsLeft] = useState<number | null>(null);
     const tick = useRef<ReturnType<typeof setInterval> | null>(null);
+    const stopping = useRef(false);
 
     const target = options.target || (globalThis as unknown as EventTarget);
     const recorder = options.recorder !== undefined ? options.recorder : recorderOf();
@@ -68,14 +91,10 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
             setView((current) => ({
                 ...current,
                 segments: mergeSegment(current.segments, detail),
-                // The provisional line has been superseded by the real one. Cleared here
-                // rather than left to time out, so the same words are never on screen twice.
                 partial: null,
             }));
         };
-        const onPartial = (event: Event) => {
-            patch({ partial: (event as CustomEvent).detail });
-        };
+        const onPartial = (event: Event) => patch({ partial: (event as CustomEvent).detail });
         const onSlide = (event: Event) => {
             const detail = (event as CustomEvent).detail;
             if (!detail || !detail.url) return;
@@ -92,11 +111,9 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
                 error: detail.type === 'error' ? detail.msg || detail.code : current.error,
                 phase: detail.type === 'final' ? 'ended' : current.phase,
             }));
+            if (detail.type === 'final') stopping.current = false;
         };
         const onChip = (event: Event) => {
-            // No guard here: `mergeChip` already refuses a chip with no id, and a second copy
-            // of that rule is a second thing to keep in step. MS2 settled this — one
-            // implementation, tested where it lives.
             setView((current) => ({
                 ...current,
                 chips: mergeChip(current.chips, (event as CustomEvent).detail),
@@ -104,13 +121,9 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         };
         const onChipResult = (event: Event) => {
             const detail = (event as CustomEvent).detail;
-            // This one *is* needed: it reads `detail.id` before handing it on.
             if (!detail) return;
             setView((current) => ({ ...current, chips: resolveChip(current.chips, detail.id, detail) }));
         };
-        // MS27. The mode is server state (MS24): the card displays what the server says the
-        // meeting is in, and never decides it. A client that could set its own mode could put
-        // a meeting into Practice for one frame, which is an escalation rather than a mode.
         const onMode = (event: Event) => {
             const detail = (event as CustomEvent).detail || {};
             if (detail.mode) patch({ mode: detail.mode });
@@ -144,7 +157,6 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         };
     }, [target, patch]);
 
-    /** Poll the recorder for the level meter rather than having it push fifty events a second. */
     useEffect(() => {
         if (view.phase === 'idle' || view.phase === 'ended' || !recorder) return undefined;
         tick.current = setInterval(() => {
@@ -159,6 +171,7 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
     const start = useCallback(
         async (opts: Record<string, unknown>) => {
             if (!recorder) return { ok: false, error: 'the recorder is not loaded' };
+            stopping.current = false;
             const result = await recorder.start(opts);
             if (result.ok) {
                 setView({
@@ -174,43 +187,27 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         [recorder, options.provider],
     );
 
-    const finishStop = useCallback(async () => {
-        undoTimer.current = null;
-        setUndoSecondsLeft(null);
-        patch({ phase: 'ended' });
-        await recorder?.stop();
-    }, [recorder, patch]);
-
     /**
-     * Begin stopping — and keep recording.
-     *
-     * The recorder is untouched until the window closes. A Stop that stopped immediately would
-     * make Undo a lie: the ten seconds somebody spends deciding are usually ten seconds
-     * somebody else was still talking.
+     * End means end. The recorder's stop path flushes the current utterance and tears down all
+     * media tracks synchronously before its promise settles; recap work can continue after the
+     * browser/OS capture indicators have already gone away.
      */
-    const stop = useCallback(() => {
-        if (undoTimer.current) return;
+    const stop = useCallback(async () => {
+        if (stopping.current || view.phase === 'idle' || view.phase === 'ended') return;
+        stopping.current = true;
         patch({ phase: 'stopping' });
-        setUndoSecondsLeft(Math.round(UNDO_WINDOW_MS / 1000));
-        undoTimer.current = setTimeout(finishStop, UNDO_WINDOW_MS);
-    }, [finishStop, patch]);
+        try {
+            await recorder?.stop();
+        } finally {
+            stopping.current = false;
+            patch({ phase: 'ended' });
+        }
+    }, [recorder, patch, view.phase]);
 
-    const undo = useCallback(() => {
-        if (!undoTimer.current) return;
-        clearTimeout(undoTimer.current);
-        undoTimer.current = null;
-        setUndoSecondsLeft(null);
-        // Straight back to live, with no gap in the transcript: nothing ever stopped.
-        patch({ phase: 'live' });
-    }, [patch]);
-
-    useEffect(() => {
-        if (undoSecondsLeft === null) return undefined;
-        const timer = setInterval(() => {
-            setUndoSecondsLeft((n) => (n === null ? null : Math.max(0, n - 1)));
-        }, 1000);
-        return () => clearInterval(timer);
-    }, [undoSecondsLeft === null]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Compatibility only. The previous 10-second undo kept recording after Stop; the Meeting
+    // Workspace intentionally removes that behavior because a confirmed End must release
+    // capture immediately.
+    const undo = useCallback(() => undefined, []);
 
     const muteMic = useCallback(
         (muted: boolean) => {
@@ -220,14 +217,6 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         [recorder, patch],
     );
 
-    /**
-     * MS25. Accept a chip's offer.
-     *
-     * An id goes to the recorder, never the chip: the server offered it and still has it, so
-     * what runs is what was shown rather than whatever this page currently holds. The chip is
-     * marked pending immediately, because the round trip goes to a tool and a button that
-     * looks unpressed for two seconds gets pressed twice.
-     */
     const acceptChip = useCallback(
         (id: string) => {
             if (!recorder?.acceptChip) return;
@@ -240,23 +229,61 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         [recorder],
     );
 
-    /** Local, and not a deletion: one reader is not interested, which is not a fact about the
-     *  meeting. Nothing is sent and the record is untouched. */
     const dismissChipById = useCallback((id: string) => {
         setView((current) => ({ ...current, chips: dismissChip(current.chips, id) }));
     }, []);
 
+    /** Rebuild an origin meeting conversation as a recap workspace when History opens it. */
+    const hydrateRecord = useCallback((record: MeetingRecord) => {
+        const meeting = record.meeting || null;
+        const segments = (record.segments || [])
+            .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+            .map(segmentFromRecord)
+            .filter((segment) => Boolean(segment.text));
+        const slideList = (record.keyframes || [])
+            .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+            .map(slideFromRecord)
+            .filter((slide): slide is Slide => Boolean(slide));
+        const started = typeof meeting?.started_at === 'number' ? meeting.started_at : null;
+        const ended = typeof meeting?.ended_at === 'number' ? meeting.ended_at : null;
+        const elapsedMs = started != null && ended != null ? Math.max(0, Math.round((ended - started) * 1000)) : 0;
+        setView({
+            ...EMPTY_VIEW,
+            phase: record.live ? 'live' : 'ended',
+            meetingId: typeof meeting?.id === 'string' ? meeting.id : null,
+            segments,
+            elapsedMs,
+            provider: options.provider ?? null,
+            audioMode: meeting?.audio_mode ?? null,
+            slides: slideList.length,
+            slideList,
+        });
+    }, [options.provider]);
+
+    const reset = useCallback(() => {
+        stopping.current = false;
+        setView({ ...EMPTY_VIEW });
+    }, []);
+
     useEffect(
         () => () => {
-            if (undoTimer.current) clearTimeout(undoTimer.current);
             if (tick.current) clearInterval(tick.current);
         },
         [],
     );
 
     return {
-        view, start, stop, undo, muteMic, acceptChip, dismissChip: dismissChipById,
-        undoSecondsLeft, setPhase: (p: Phase) => patch({ phase: p }),
+        view,
+        start,
+        stop,
+        undo,
+        muteMic,
+        acceptChip,
+        dismissChip: dismissChipById,
+        hydrateRecord,
+        reset,
+        undoSecondsLeft,
+        setPhase: (p: Phase) => patch({ phase: p }),
     };
 }
 
