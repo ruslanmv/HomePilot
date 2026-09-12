@@ -9,6 +9,12 @@
  * - Never stops during TTS (barge-in capable)
  */
 
+import {
+  buildAudioConstraints,
+  getMediaPreferences,
+  isDeviceSelectionError,
+} from '../media/mediaPreferences';
+
 export type VADConfig = {
   // Detection thresholds
   baseThreshold: number;       // Base threshold above noise floor (0.02-0.05)
@@ -248,14 +254,21 @@ export function createVAD(
         analyser.fftSize = 1024;
         analyser.smoothingTimeConstant = 0.3;
 
-        // Request microphone with echo cancellation, noise suppression, and auto gain
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          }
-        });
+        // The Settings → Audio & Video tab is the source of truth for the
+        // microphone device and browser DSP. If the saved device was removed,
+        // fall back to the system default so voice mode remains usable.
+        const mediaPreferences = getMediaPreferences();
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: buildAudioConstraints(mediaPreferences),
+          });
+        } catch (err) {
+          if (!mediaPreferences.microphoneDeviceId || !isDeviceSelectionError(err)) throw err;
+          console.warn('[VAD] Saved microphone unavailable; falling back to system default');
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: buildAudioConstraints(mediaPreferences, { ignoreDeviceId: true }),
+          });
+        }
 
         // Guard: If stop() was called during async getUserMedia, abort gracefully.
         // Covers React StrictMode double-mount AND the useVoiceController
@@ -282,7 +295,13 @@ export function createVAD(
         calibrationSamples = [];
         isCalibrating = true;
 
-        console.log('[VAD] Started with AEC/NS/AGC enabled');
+        const trackSettings = stream.getAudioTracks()[0]?.getSettings();
+        console.log('[VAD] Started with saved media preferences', {
+          deviceId: trackSettings?.deviceId || 'default',
+          echoCancellation: trackSettings?.echoCancellation,
+          noiseSuppression: trackSettings?.noiseSuppression,
+          autoGainControl: trackSettings?.autoGainControl,
+        });
 
         // Start detection loop
         raf = requestAnimationFrame(tick);
@@ -351,4 +370,3 @@ export function createVAD(
     getThreshold: () => getAdaptiveThreshold(),
   };
 }
-
