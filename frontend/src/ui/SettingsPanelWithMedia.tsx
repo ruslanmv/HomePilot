@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Video } from 'lucide-react';
-// SettingsPanel.jsx is the checked-in runtime twin currently selected by Vite
-// for extensionless imports. Keep it explicit here so the compatibility bridge
-// below cannot recurse back into this wrapper.
-// @ts-ignore -- legacy generated JSX sibling has no declaration file.
-import LegacySettingsPanel from './SettingsPanel.jsx';
+// Import the canonical TypeScript settings panel explicitly. Vite resolves .tsx
+// before generated .jsx mirrors in this repository, so the wrapper must sit on
+// top of the source that the application actually uses.
+import LegacySettingsPanel from './SettingsPanel.tsx';
 import AudioVideoSettings from './components/AudioVideoSettings';
 
 type SettingsPanelProps = {
@@ -31,19 +30,17 @@ const MEDIA_TAB_ATTR = 'data-homepilot-audio-video-tab';
 const MEDIA_CONTENT_ATTR = 'data-homepilot-audio-video-content';
 
 /**
- * Compatibility wrapper for the repository's generated TSX/JSX twin setup.
+ * Additive wrapper around the canonical Enterprise Settings panel.
  *
- * The Enterprise Settings implementation currently ships as both
- * SettingsPanel.tsx and SettingsPanel.jsx, and Vite selects the JSX runtime
- * sibling for App.jsx. Rather than fork the large legacy panel, this wrapper
- * adds one real navigation item and swaps only the scrollable content region
- * while the Audio & Video tab is active. Existing settings behavior, save/
- * cancel semantics, feature flags, and every legacy section remain untouched.
+ * The repository currently keeps generated TSX/JSX twins. Vite explicitly
+ * resolves TypeScript first, so App's extensionless `./SettingsPanel` import is
+ * aliased to this wrapper in vite.config.ts. This component then imports the
+ * canonical SettingsPanel.tsx explicitly and adds one real navigation item plus
+ * an Audio & Video content surface without forking the large existing panel.
  *
- * The DOM adapter is deliberately narrow: it anchors only to the dialog's
- * accessible labels and direct body structure, not to pixel positions or
- * generated class names. It can be removed once the repository stops checking
- * in generated JSX twins and SettingsPanel.tsx becomes the runtime source.
+ * The DOM adapter is deliberately narrow: it anchors to the dialog's accessible
+ * labels and direct body structure, not pixel positions or generated class names.
+ * It can be removed once Audio & Video becomes a native SettingsPanel section.
  */
 export default function SettingsPanelWithMedia(props: SettingsPanelProps) {
   const [mediaOpen, setMediaOpen] = useState(false);
