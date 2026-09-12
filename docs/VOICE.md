@@ -156,6 +156,72 @@ Same thing from a JSON body (`{"data_b64": "...", "format": "wav"}`), matching t
 
 ---
 
+## 3.5 Meetings are a different path — read this before debugging them
+
+Meeting transcription does **not** go through anything in §2 or §3. It is a separate
+subsystem, deliberately:
+
+| | Meetings | Chat / Voice |
+|---|---|---|
+| Recorder | `frontend/public/js/homepilot-meetingsense.js` (AudioWorklet, its own VAD) | `media/sttService.ts` |
+| Transport | `WS /v1/meetingsense/session`, continuous frames | `POST /v1/voice/transcribe`, one clip |
+| Sources | `getDisplayMedia` (PC/tab audio) **+** `getUserMedia` (your mic), kept as two channels into a `ChannelMerger` so the server can label speakers | one microphone |
+| Provider | `get_meeting_stt_provider()` — **local-first, never crosses to a remote endpoint on its own** | `get_stt_provider()` — prefers `STT_BASE_URL` when set |
+| Live text | **Yes** — `partial` then `segment` | per turn, no interim on the backend path |
+
+That provider split is a privacy decision, not an oversight: somebody who set `STT_BASE_URL`
+months ago for voice calls should not thereby have every hour of meeting audio shipped
+offsite. `meeting_stt_policy()` reports which rule is in force.
+
+### How live meeting text works
+
+The recorder cuts audio into utterances on silence and sends each as a `wav` frame. Closing
+an utterance needs a 350 ms pause (`SILENCE_CLOSE_MS`) — or, for somebody speaking without
+pausing, the 8 s hard cut (`HARD_CUT_MS`). Eight seconds of blank screen while a person is
+plainly talking reads as broken.
+
+So the open utterance is *also* sent early, every ~1.2 s (`PARTIAL_EVERY_MS`), with
+`partial: true`. The server's `on_partial` transcribes it, emits a `partial` frame and
+**stores nothing**; the card shows that text greyed and replaces it when the real segment
+lands. `Segmenter.takePartial(tMs)` produces the snapshot, and copies the frames — the array
+it comes from keeps growing as the person talks.
+
+Three rules stop provisional text from costing the transcript that gets kept:
+
+| Rule | Why |
+|---|---|
+| Sent **straight down the socket**, never through `_queue` | The queue makes a dropped connection free; that is exactly wrong here. A partial arriving after its own utterance closed would overwrite real text with a stale guess. Sent if it can go now, dropped if not, never counted in `behind_ms`. |
+| **One in flight at a time** | The next read waits for the previous reply, so a CPU-only machine throttles itself to what it can keep up with instead of queueing work it will never finish. `PARTIAL_TIMEOUT_MS` is the release valve, because the server stays silent when a provisional read finds no words. |
+| **Never while `_queue` is non-empty** | Real audio is already waiting; provisional text must not jump its own transcript. |
+
+`hpMeetingSense.partialsDisabled = true` turns live text off. The transcript still arrives,
+one utterance at a time — it is a throughput dial, not a feature flag.
+
+### The meeting microphone
+
+The recorder reads `homepilot_media_preferences_v1` directly (`micConstraints()`) — it is a
+classic script in `public/` and cannot import `media/mediaPreferences.ts`, so **the key and
+the field names are the contract between the two**, and a test keeps them in step. It had
+previously called `getUserMedia` with no `deviceId` and hardcoded `true` for all three
+processing flags, which meant meetings recorded the OS default input and the Audio & Video
+toggles did nothing for them.
+
+`deviceId` is sent as `exact`, so an unplugged device fails loudly; the recorder then retries
+on the default and emits `ms:mic_fallback` rather than letting you assume your headset is
+being recorded.
+
+> **Echo cancellation matters most here.** With system audio on speakers, turning it off puts
+> the call's own voices into your microphone channel, and the server labels them as you.
+
+### Editing the recorder
+
+`frontend/public/js/homepilot-meetingsense.js` is **mirrored** at
+`community/addons/meetingsense/homepilot-meetingsense.js`, and
+`src/test/meetingsenseAddon.test.js` asserts the two have the same SHA digest. Change one,
+copy it to the other, or that test fails.
+
+---
+
 ## 4. Text to speech
 
 There is exactly one runtime path, and **everything must use it**:
@@ -315,6 +381,7 @@ no split to warn about.
 | `frontend/src/ui/components/AudioVideoSettings.tsx` | Device pickers, record-and-play-back test |
 | `frontend/public/js/speech-service.js` | Legacy global: recognition lifecycle, stop guard, `speak()` |
 | `frontend/src/ui/App.tsx` | Chat composer microphone (`toggleListening`) |
+| `frontend/public/js/homepilot-meetingsense.js` | Meeting recorder: system+mic capture, `Segmenter`, partials, `micConstraints()`. **Mirrored** in `community/addons/meetingsense/` |
 
 ### Tests
 
@@ -327,6 +394,7 @@ no split to warn about.
 | `frontend/src/test/voiceSelfTest.test.ts` | Failure explanation, routing detection, voice resolution |
 | `frontend/src/test/voiceAssistantTesting.test.js` | Wiring contracts across all of the above |
 | `frontend/src/test/microphoneDiagnostics.test.js` | The original diagnostics contract |
+| `frontend/src/test/meetingsenseRealtime.test.js` | `takePartial` cadence and snapshot isolation, `micConstraints`, the three partial rules |
 
 ---
 
@@ -373,3 +441,7 @@ pip install -r requirements/speech-cpu.txt     # or .[whisper]
 | "Test voice" sounds unlike assistant replies | Fixed. Both go through `speakThroughRuntime()`. |
 | TTS silent, no error | §4 `never_started`. Output device, volume, removed voice, or autoplay block. |
 | `network` error on every turn | Web Speech needs internet. Install local speech and use the backend path. |
+| Meeting transcript only moves every ~8 s | Partials are not getting through. Check `_partialsWanted`: a non-empty `_queue` (you are behind), a backed-up socket, or `partialsDisabled`. |
+| Meeting records the wrong microphone | §3.5. Was fixed; check `ms:mic_fallback` for a selected device that was gone. |
+| Meeting hears the call's voices as you | Echo cancellation off with system audio on speakers. §3.5. |
+| Meeting transcript is blank but slides work | `get_meeting_stt_provider()` has no local model. Meetings never fall back to `STT_BASE_URL` on their own — see `meeting_stt_policy()`. |

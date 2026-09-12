@@ -34,6 +34,14 @@ rules — see [`VOICE.md`](VOICE.md). Meetings deliberately ask `get_meeting_stt
 which starts from local and never crosses to a configured remote endpoint on its own; voice
 asks `get_stt_provider()`, which does prefer one.
 
+**Live text.** The transcript does not wait for an utterance to close. The open utterance is
+transcribed provisionally every ~1.2 s and shown greyed, then replaced by the real segment —
+so a speaker who does not pause still produces text rather than eight seconds of blank
+screen. It is sent outside the retry queue, one read at a time, and never while real audio is
+waiting, so provisional text cannot cost the transcript that gets kept. The mechanics, and
+the microphone selection meetings now honour, are in
+[`VOICE.md` §3.5](VOICE.md#35-meetings-are-a-different-path--read-this-before-debugging-them).
+
 ## Is it available on this machine?
 
 ```bash

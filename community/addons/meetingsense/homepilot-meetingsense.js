@@ -14,7 +14,10 @@
  * ── The audio graph ──────────────────────────────────────────────────────────────────────
  *
  *   getDisplayMedia({video, audio})  ──▶ gain ──▶ merger input 0   (the call: "them")
- *   getUserMedia({audio})            ──▶ gain ──▶ merger input 1   (this mic: "me")
+ *   getUserMedia({audio: selected})  ──▶ gain ──▶ merger input 1   (this mic: "me")
+ *
+ * `selected` is the microphone and the AEC/NS/AGC choices from Settings → Audio & Video, not
+ * the OS default — see `micConstraints()`.
  *                                                     │
  *                                                AudioWorklet ──▶ 20 ms frames ──▶ VAD
  *
@@ -35,6 +38,25 @@
  * Consecutive chunks **overlap by 200 ms**, because cutting on silence still cuts words: a
  * speaker who pauses mid-phrase puts the boundary inside "recog-"/"-nition". Overlapping means
  * the word is whole in at least one chunk, and the server removes the duplicate.
+ *
+ * ── Live text while somebody is still talking (partials) ─────────────────────────────────
+ *
+ * The frames above are sent when an utterance *closes*, which is a 350 ms pause — or, for
+ * somebody speaking without pausing, the 8 s hard cut. So the same chunk is also sent early,
+ * with `partial: true`, roughly every 1.2 s while the utterance is still open. The server
+ * transcribes it, emits a `partial` frame and stores nothing; the card shows that text and
+ * replaces it when the real segment lands.
+ *
+ * Three rules keep provisional text from costing the transcript that gets kept:
+ *
+ *   - it goes **straight down the socket, never through the queue**. The queue exists so a
+ *     dropped connection costs nothing, and that is exactly wrong here: a partial arriving
+ *     after its own utterance closed would overwrite real text with a stale guess. Sent if it
+ *     can go now, dropped if it cannot, and never counted in `behind_ms`;
+ *   - **one at a time.** The next provisional read waits for the previous reply, so a
+ *     CPU-only machine throttles itself to what it can keep up with rather than queueing work
+ *     it will never finish;
+ *   - **never while the queue is non-empty**, because real audio is already waiting.
  *
  * ── When the network goes (MS4-a, decision D10) ───────────────────────────────────────────
  *
@@ -64,6 +86,7 @@
  *   ms:partial     provisional text            detail: {t0, speaker, text}
  *   ms:status      counters, mute, behind_ms   detail: {elapsed, segments, slides, ...}
  *   ms:audio_lost  a track ended mid-meeting   detail: {track, audioMode}
+ *   ms:mic_fallback  the selected mic was gone   detail: {requestedDeviceId}
  *   ms:reconnecting  the socket dropped        detail: {attempt, delay, meetingId}
  *   ms:resumed       the meeting continued     detail: {meeting_id, segments, seq}
  *   ms:chip        an offer on the card        detail: {id, kind, text, t0, proposal?}
@@ -88,6 +111,35 @@
 
     /** How much of the previous chunk each new one repeats. See the header. */
     const OVERLAP_MS = 200;
+
+    /**
+     * How often an utterance that is still open is transcribed provisionally.
+     *
+     * Without this the transcript only moves when an utterance *closes*, which is a 350 ms
+     * pause — or, for somebody speaking without pausing, the 8 s hard cut. Eight seconds of a
+     * blank screen while a person is plainly talking reads as broken, and it is the gap the
+     * server's `partial` frame was designed to close.
+     *
+     * 1200 ms is a compromise, not a tuning: shorter re-transcribes the same growing audio
+     * often enough to matter on a CPU-only machine, longer stops feeling live. The real
+     * protection against a slow transcriber is the in-flight rule below rather than this
+     * number.
+     */
+    const PARTIAL_EVERY_MS = 1200;
+
+    /** Don't bother with a provisional read of less audio than this — there are no words yet. */
+    const MIN_PARTIAL_MS = 700;
+
+    /**
+     * How long to wait for a partial to come back before allowing the next one.
+     *
+     * Only one partial is in flight at a time, so a machine that transcribes slowly throttles
+     * itself to whatever it can actually keep up with instead of queueing work it will never
+     * finish. But the server sends *nothing* back when a provisional read finds no words, so
+     * waiting on a reply that is never coming would stop partials for the rest of the meeting.
+     * This is the release valve.
+     */
+    const PARTIAL_TIMEOUT_MS = 4000;
 
     /** Shorter than this is a cough, a chair, or a keyboard, and transcribing it costs a
      *  round trip to say so. */
@@ -390,6 +442,8 @@
             this.silenceMs = opts.silenceMs != null ? opts.silenceMs : SILENCE_CLOSE_MS;
             this.hardCutMs = opts.hardCutMs != null ? opts.hardCutMs : HARD_CUT_MS;
             this.overlapFrames = Math.round((opts.overlapMs != null ? opts.overlapMs : OVERLAP_MS) / this.frameMs);
+            this.partialEveryMs = opts.partialEveryMs != null ? opts.partialEveryMs : PARTIAL_EVERY_MS;
+            this.minPartialMs = opts.minPartialMs != null ? opts.minPartialMs : MIN_PARTIAL_MS;
 
             this._ring = []; // ambient recent past, so a word's attack is not clipped off
             this._carry = []; // the overlap a hard cut owes the next utterance
@@ -398,6 +452,37 @@
             this._quietMs = 0;
             this._startMs = 0;
             this._speechMs = 0;
+            this._lastPartialMs = 0; // when the open utterance was last read provisionally
+        }
+
+        /**
+         * A snapshot of the utterance still being spoken, or `null`.
+         *
+         * Deliberately a second method rather than another return value from `push()`: a
+         * partial is not an utterance, nothing downstream may store it, and the caller has to
+         * be free to skip it when the socket is behind. Keeping `push()`'s contract — "a closed
+         * utterance, or null" — means the shedding and queueing logic needs no new cases.
+         *
+         * The frames are copied. The array they come from keeps being appended to as the
+         * person talks, and a snapshot that mutates underneath the WAV encoder is a transcript
+         * bug nobody would find.
+         */
+        takePartial(tMs) {
+            if (!this._inSpeech) return null;
+            const durationMs = this._frames.length * this.frameMs;
+            if (durationMs < this.minPartialMs) return null;
+            if (this._lastPartialMs && tMs - this._lastPartialMs < this.partialEveryMs) return null;
+            // Also rate-limit the *first* partial of an utterance from its start, so opening
+            // one does not immediately spend a transcription on 700 ms of audio.
+            if (!this._lastPartialMs && durationMs < this.partialEveryMs) return null;
+
+            this._lastPartialMs = tMs;
+            return {
+                frames: this._frames.slice(),
+                t0: this._startMs,
+                t1: this._startMs + durationMs,
+                speechMs: this._speechMs,
+            };
         }
 
         /**
@@ -479,6 +564,7 @@
             this._inSpeech = false;
             this._quietMs = 0;
             this._speechMs = 0;
+            this._lastPartialMs = 0;
             return utterance;
         }
     }
@@ -716,6 +802,46 @@
         window.dispatchEvent(new CustomEvent(name, { detail: detail }));
     }
 
+    /**
+     * The microphone constraints Settings → Audio & Video asked for.
+     *
+     * This recorder used to call `getUserMedia({audio: {echoCancellation: true, ...}})` with
+     * no `deviceId`, so "my mic" was whatever the operating system had as default — the same
+     * class of bug that made chat and Voice transcribe a device nobody was speaking into. A
+     * meeting recorded the wrong microphone silently: the level meter moved, because it reads
+     * this stream, and the words were simply somebody else's room.
+     *
+     * Read from `localStorage` rather than imported: this file is a classic script served from
+     * `public/`, so it cannot import `media/mediaPreferences.ts`. The key and the field names
+     * are the contract between the two, and a test asserts they stay in step.
+     *
+     * The three processing flags are read too, because they are user choices and hardcoding
+     * them meant the toggles in Settings did nothing for meetings. `echoCancellation` matters
+     * most here: with system audio playing through speakers, turning it off puts the call's
+     * own voices into the microphone channel and the server labels them as you.
+     */
+    function micConstraints() {
+        // Defaults match DEFAULT_MEDIA_PREFERENCES in media/mediaPreferences.ts.
+        const constraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+        let saved = null;
+        try {
+            saved = JSON.parse(window.localStorage.getItem('homepilot_media_preferences_v1') || 'null');
+        } catch (_) {
+            saved = null;
+        }
+        if (!saved || typeof saved !== 'object') return constraints;
+
+        if (typeof saved.echoCancellation === 'boolean') constraints.echoCancellation = saved.echoCancellation;
+        if (typeof saved.noiseSuppression === 'boolean') constraints.noiseSuppression = saved.noiseSuppression;
+        if (typeof saved.autoGainControl === 'boolean') constraints.autoGainControl = saved.autoGainControl;
+        if (typeof saved.microphoneDeviceId === 'string' && saved.microphoneDeviceId) {
+            // `exact`, so a saved device that has been unplugged fails loudly and the caller
+            // retries on the default rather than recording an hour from the wrong input.
+            constraints.deviceId = { exact: saved.microphoneDeviceId };
+        }
+        return constraints;
+    }
+
     // ── The recorder ──────────────────────────────────────────────────────────────────────
 
     class HPMeetingSense {
@@ -731,9 +857,22 @@
             /** Unsent audio, in milliseconds. What the card's "catching up" label reads. */
             this.behindMs = 0;
             this.reconnecting = false;
+            /**
+             * Turn off provisional transcription for this recorder.
+             *
+             * Live text costs a transcription of the same growing audio every
+             * `PARTIAL_EVERY_MS`, which on a machine already struggling is work taken from
+             * the transcript that gets kept. Off means the transcript still arrives — one
+             * utterance at a time, as before — so this is a throughput dial, not a feature
+             * flag.
+             */
+            this.partialsDisabled = false;
             this._lastSeq = 0;
             this._queue = [];
             this._attempt = 0;
+            /** A provisional read is out and has not come back. See `_partialsWanted`. */
+            this._partialInFlight = false;
+            this._partialSentAt = 0;
             this._reconnectTimer = null;
             this._ws = null;
             this._ctx = null;
@@ -792,12 +931,24 @@
                 system = null;
                 screen = null;
             }
+            const wanted = micConstraints();
             try {
-                mic = await navigator.mediaDevices.getUserMedia({
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                });
+                mic = await navigator.mediaDevices.getUserMedia({ audio: wanted });
             } catch (_) {
                 mic = null;
+            }
+            if (!mic && wanted.deviceId) {
+                // The selected microphone is gone — unplugged, or claimed exclusively. A
+                // meeting on the default input beats no microphone at all, but the user is
+                // told rather than left assuming their headset is being recorded.
+                const fallback = Object.assign({}, wanted);
+                delete fallback.deviceId;
+                try {
+                    mic = await navigator.mediaDevices.getUserMedia({ audio: fallback });
+                    emit('ms:mic_fallback', { requestedDeviceId: wanted.deviceId.exact });
+                } catch (_) {
+                    mic = null;
+                }
             }
 
             // MS17. The shared surface's own name — "Q3 planning | Microsoft Teams" — which
@@ -1016,8 +1167,71 @@
                 const tMs = Math.round((this._elapsedSamples / TARGET_RATE) * 1000);
                 this._elapsedSamples += frame[0].length;
                 const utterance = this._segmenter.push(frame, tMs);
-                if (utterance) this._sendUtterance(utterance);
+                if (utterance) {
+                    // The real chunk supersedes anything provisional, so stop waiting on a
+                    // reply for audio that is about to be transcribed for keeps.
+                    this._partialInFlight = false;
+                    this._sendUtterance(utterance);
+                } else if (this._partialsWanted()) {
+                    const partial = this._segmenter.takePartial(tMs);
+                    if (partial) this._sendPartial(partial);
+                }
             }
+        }
+
+        /**
+         * Whether it is worth transcribing an open utterance right now.
+         *
+         * Every condition here is "the provisional read would arrive too late to be worth
+         * what it costs":
+         *
+         *   - the queue is non-empty, so real audio is already waiting and provisional text
+         *     would jump ahead of the transcript it belongs to;
+         *   - the socket is closed or backed up, which is the reconnect path's business;
+         *   - a previous partial has not come back, which is how a slow machine throttles
+         *     itself instead of queueing work it cannot finish.
+         */
+        _partialsWanted() {
+            if (this.partialsDisabled) return false;
+            if (!this._ws || this._ws.readyState !== 1) return false;
+            if (this._ws.bufferedAmount > SOCKET_HIGH_WATER) return false;
+            if (this._queue.length) return false;
+            if (this._partialInFlight) {
+                // Released on the reply, and on a timeout because the server stays silent
+                // when a provisional read found no words.
+                if (Date.now() - (this._partialSentAt || 0) < PARTIAL_TIMEOUT_MS) return false;
+                this._partialInFlight = false;
+            }
+            return true;
+        }
+
+        /**
+         * Send an open utterance for a provisional read.
+         *
+         * Straight down the socket, never through `_queue`: the queue exists so a dropped
+         * connection costs nothing, and that guarantee is exactly wrong here. A partial that
+         * arrives after its own utterance closed is worse than no partial — it would overwrite
+         * the real text with a stale guess. So it is sent if it can go now and dropped if it
+         * cannot, and it never counts toward `behind_ms`.
+         */
+        _sendPartial(partial) {
+            const wav = utteranceToWav(partial.frames, TARGET_RATE);
+            try {
+                this._ws.send(JSON.stringify({
+                    type: 'audio',
+                    format: 'wav',
+                    // The flag the server reads to emit `partial` and store nothing.
+                    partial: true,
+                    data_b64: bytesToBase64(wav),
+                    t0: partial.t0,
+                    t1: partial.t1,
+                }));
+            } catch (_) {
+                // A send that throws is a socket on its way out; the reconnect path owns it.
+                return;
+            }
+            this._partialInFlight = true;
+            this._partialSentAt = Date.now();
         }
 
         _flush() {
@@ -1297,8 +1511,14 @@
                         // server replays anything above it — the frames that died in the old
                         // socket exist only in the store.
                         if (typeof frame.seq === 'number') this._lastSeq = Math.max(this._lastSeq, frame.seq);
+                        // A real segment ends whatever the provisional text was guessing at.
+                        this._partialInFlight = false;
                         emit('ms:segment', frame);
                     } else if (frame.type === 'partial') {
+                        // The round trip is done, so the next provisional read may go. This is
+                        // the throttle: on a slow machine partials arrive as fast as the
+                        // transcriber manages and no faster.
+                        this._partialInFlight = false;
                         emit('ms:partial', frame);
                     } else if (frame.type === 'meta') {
                         // The meeting acquiring a name, moments after it started (MS17).
@@ -1364,6 +1584,9 @@
             this._attempt += 1;
             const delay = backoffDelay(this._attempt);
             this.reconnecting = true;
+            // The reply to any in-flight partial died with the socket. Left set, it would
+            // block provisional text for the rest of the meeting.
+            this._partialInFlight = false;
             emit('ms:reconnecting', { attempt: this._attempt, delay: delay, meetingId: this.meetingId });
             this._reconnectTimer = setTimeout(() => {
                 this._reconnectTimer = null;
@@ -1443,6 +1666,7 @@
         shedQueue: shedQueue,
         utteranceToWav: utteranceToWav,
         trackLabel: trackLabel,
+        micConstraints: micConstraints,
         grayscale: grayscale,
         changedRatio: changedRatio,
         dhash: dhash,
@@ -1453,6 +1677,9 @@
             TARGET_RATE: TARGET_RATE,
             FRAME_MS: FRAME_MS,
             OVERLAP_MS: OVERLAP_MS,
+            PARTIAL_EVERY_MS: PARTIAL_EVERY_MS,
+            MIN_PARTIAL_MS: MIN_PARTIAL_MS,
+            PARTIAL_TIMEOUT_MS: PARTIAL_TIMEOUT_MS,
             MIN_UTTERANCE_MS: MIN_UTTERANCE_MS,
             SILENCE_CLOSE_MS: SILENCE_CLOSE_MS,
             HARD_CUT_MS: HARD_CUT_MS,
