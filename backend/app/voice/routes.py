@@ -1,36 +1,38 @@
-"""Backend voice session endpoint (MB2) — the 'smart backend' keystone.
+"""Backend voice endpoints — shared STT plus the optional smart voice session.
 
-`WS /v1/voice/session` lets a thin client (mobile or web) hold a spoken
-conversation while the server does the work: it receives an utterance, calls the
-LLM, and returns reply text + synthesized audio. STT/TTS sit behind providers so
-free→premium is a server swap. Barge-in is a client signal the server honors.
+The browser uses ``POST /v1/voice/transcribe`` for Chat dictation and Voice mode so both
+surfaces transcribe the *same selected microphone stream* instead of handing recognition to
+Web Speech's browser-managed/default microphone.  The endpoint deliberately reuses the
+existing STT provider abstraction (local Whisper by default, remote only when explicitly
+configured) and is independent of ``VOICE_BACKEND_ENABLED``; that feature flag only gates the
+full conversational WebSocket.
 
-Protocol (JSON frames):
+``GET /v1/voice/stt/status`` is intentionally small and credential-free so the client can
+choose the backend path before it starts recording.  It never returns endpoint URLs or keys.
+
+Protocol for the optional ``WS /v1/voice/session`` remains:
   client → server
-    {"type":"text","text":"..."}        # an utterance (typed, or client STT)
-    {"type":"audio","format":"wav",     # raw audio → transcribed by the STT
-     "data_b64":"..."}                  #   provider, then answered
-    {"type":"config","persona_id":"…"}  # pick a persona (or {"system":"…"})
-    {"type":"interrupt"}                # barge-in: stop speaking
+    {"type":"text","text":"..."}
+    {"type":"audio","format":"wav","data_b64":"..."}
+    {"type":"config","persona_id":"…"}
+    {"type":"interrupt"}
     {"type":"ping"}
   server → client
     {"type":"ready","tts":bool,"stt":bool}
-    {"type":"transcript","text":"..."}   # what STT heard (after an audio frame)
+    {"type":"transcript","text":"..."}
     {"type":"configured","persona_id":"…","label":"…"}
     {"type":"reply","text":"...","audio"?:{"format","data_b64"}}
     {"type":"error","error":"..."}
     {"type":"pong"}
-
-Additive + flag-gated (`VOICE_BACKEND_ENABLED`, default off): the route exists but
-rejects connections until enabled, so including it is a prod no-op until switched
-on. The web's existing client-side voice mode is untouched.
 """
 
 from __future__ import annotations
 
 import base64
+import binascii
+import re
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from app import config
 
@@ -38,6 +40,69 @@ from .providers import get_stt_provider, get_tts_provider
 from .session import VoiceOrchestrator
 
 router = APIRouter()
+
+# A spoken turn should be tiny compared with normal upload limits.  Keeping a hard cap here
+# prevents a broken client from base64-expanding an unbounded recording into backend memory.
+_MAX_TRANSCRIBE_BYTES = 12 * 1024 * 1024
+_FORMAT_RE = re.compile(r"^[a-z0-9]{2,8}$")
+
+
+@router.get("/v1/voice/stt/status")
+async def voice_stt_status() -> dict:
+    """Return whether the configured voice STT provider can transcribe right now."""
+
+    stt = get_stt_provider()
+    return {
+        "available": bool(stt.available),
+        "provider": getattr(stt, "name", "unknown"),
+    }
+
+
+@router.post("/v1/voice/transcribe")
+async def voice_transcribe(request: Request) -> dict:
+    """Transcribe one browser-recorded utterance with HomePilot's configured STT provider.
+
+    The payload is JSON rather than multipart so the public browser runtime can stay dependency
+    free.  Audio is base64 only on the wire; it is never persisted by this route.
+    """
+
+    stt = get_stt_provider()
+    if not stt.available:
+        raise HTTPException(status_code=503, detail="Speech-to-text is not configured")
+
+    try:
+        payload = await request.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Invalid transcription request") from exc
+
+    fmt = str((payload or {}).get("format") or "webm").strip().lower().lstrip(".")
+    if not _FORMAT_RE.fullmatch(fmt):
+        raise HTTPException(status_code=400, detail="Unsupported audio format")
+
+    encoded = str((payload or {}).get("data_b64") or "")
+    if not encoded:
+        raise HTTPException(status_code=400, detail="Audio payload is empty")
+
+    try:
+        audio = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Audio payload is not valid base64") from exc
+
+    if not audio:
+        raise HTTPException(status_code=400, detail="Audio payload is empty")
+    if len(audio) > _MAX_TRANSCRIBE_BYTES:
+        raise HTTPException(status_code=413, detail="Audio payload is too large")
+
+    try:
+        transcript = (await stt.transcribe(audio, fmt=fmt)).strip()
+    except Exception as exc:  # noqa: BLE001 — return an actionable client error
+        raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+
+    return {
+        "text": transcript,
+        "provider": getattr(stt, "name", "unknown"),
+        "audio_bytes": len(audio),
+    }
 
 
 @router.websocket("/v1/voice/session")
@@ -89,7 +154,6 @@ async def voice_session(websocket: WebSocket) -> None:
                 if not transcript:
                     await websocket.send_json({"type": "error", "error": "no speech detected"})
                     continue
-                # Echo what we heard, then answer it — same path as a text turn.
                 await websocket.send_json({"type": "transcript", "text": transcript})
                 try:
                     await websocket.send_json(await orchestrator.respond(transcript))
@@ -97,9 +161,6 @@ async def voice_session(websocket: WebSocket) -> None:
                     await websocket.send_json({"type": "error", "error": f"llm failed: {exc}"})
 
             elif kind == "config":
-                # MB4 — pick a persona/voice companion. Resolve a persona_id to
-                # its system prompt (reusing the personality registry), or accept
-                # a raw system prompt. Switching resets the conversation.
                 prompt = (msg.get("system") or "").strip()
                 persona_id = (msg.get("persona_id") or "").strip()
                 label = None
@@ -122,7 +183,6 @@ async def voice_session(websocket: WebSocket) -> None:
                     await websocket.send_json({"type": "error", "error": "unknown persona"})
 
             elif kind == "interrupt":
-                # Barge-in hook: streaming TTS would be cancelled here.
                 await websocket.send_json({"type": "interrupted"})
 
             elif kind == "ping":
