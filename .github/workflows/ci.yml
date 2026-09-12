@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v4
         with:
           python-version: "3.11"
       - run: pip install -r backend/requirements.txt
@@ -54,6 +54,9 @@ jobs:
         with:
           node-version: "20"
       - run: npm install
+        working-directory: frontend
+      - name: MeetingSense media routing regression test
+        run: npx vitest run src/test/meetingsenseMediaRouting.test.js
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
