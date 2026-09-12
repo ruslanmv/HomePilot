@@ -7,7 +7,24 @@ import { fileURLToPath } from 'node:url'
 // consumed as build-time source aliases (not npm workspace deps), so the
 // standalone frontend build/Docker image is unaffected except for copying
 // packages/ into the build context. Matches the tsconfig "paths" entry.
-const PACKAGES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../packages')
+const FRONTEND_DIR = path.dirname(fileURLToPath(import.meta.url))
+const PACKAGES_DIR = path.resolve(FRONTEND_DIR, '../packages')
+const SETTINGS_WITH_MEDIA = path.resolve(FRONTEND_DIR, 'src/ui/SettingsPanelWithMedia.tsx')
+
+// Redirect only the real App.tsx Settings import through the additive media
+// wrapper. The wrapper itself imports `./SettingsPanel` normally, so TypeScript
+// resolves back to the canonical SettingsPanel.tsx with no recursion.
+const settingsMediaResolver = {
+  name: 'homepilot-settings-media',
+  enforce: 'pre' as const,
+  resolveId(source: string, importer?: string) {
+    const normalizedImporter = importer?.replace(/\\/g, '/') || ''
+    if (source === './SettingsPanel' && normalizedImporter.endsWith('/src/ui/App.tsx')) {
+      return SETTINGS_WITH_MEDIA
+    }
+    return null
+  },
+}
 
 // The Vite dev server runs on :3000 but the HomePilot backend lives on
 // :8000. Anything the frontend calls with a relative path must be
@@ -49,7 +66,7 @@ const API_PREFIXES = [
 ] as const
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [settingsMediaResolver, react()],
   // Vite's default resolve.extensions puts .jsx BEFORE .tsx, so a bare
   // import like ``./ui/App`` (from main.tsx) silently picks the stale
   // App.jsx mirror over the canonical App.tsx. That's how the Expert
