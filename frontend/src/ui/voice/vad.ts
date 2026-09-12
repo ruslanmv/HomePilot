@@ -14,21 +14,17 @@ import {
   getMediaPreferences,
   isDeviceSelectionError,
 } from '../media/mediaPreferences';
+import { microphoneDebug, microphoneDebugError } from '../media/microphoneDebug';
 
 export type VADConfig = {
-  // Detection thresholds
-  baseThreshold: number;       // Base threshold above noise floor (0.02-0.05)
-  hysteresisHigh: number;      // Multiplier for speech start (1.5-2.0)
-  hysteresisLow: number;       // Multiplier for speech end (0.8-1.0)
-
-  // Timing
-  minSpeechMs: number;         // Min speech duration to trigger (150-300ms)
-  silenceMs: number;           // Silence before speech end (600-1000ms)
-
-  // Smoothing
-  emaAlpha: number;            // EMA smoothing factor (0.1-0.3)
-  noiseFloorDecay: number;     // Noise floor adaptation rate (0.995-0.999)
-  noiseFloorMin: number;       // Minimum noise floor (0.001-0.01)
+  baseThreshold: number;
+  hysteresisHigh: number;
+  hysteresisLow: number;
+  minSpeechMs: number;
+  silenceMs: number;
+  emaAlpha: number;
+  noiseFloorDecay: number;
+  noiseFloorMin: number;
 };
 
 export type VADState = 'idle' | 'speech' | 'silence_pending';
@@ -72,39 +68,28 @@ export function createVAD(
   const cfg: VADConfig = { ...DEFAULT_CONFIG, ...config };
   const callbacks: VADCallbacks = { onSpeechStart, onSpeechEnd };
 
-  // Audio context and nodes
   let ctx: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
   let src: MediaStreamAudioSourceNode | null = null;
   let stream: MediaStream | null = null;
   let raf = 0;
-  // Serialize start/stop so a rapid stop→start cycle (e.g. the controller
-  // effect re-running because ``cfg.vadConfig`` changed reference on every
-  // render) doesn't create a new AudioContext that races the previous
-  // ``getUserMedia`` awaiter. Callers that care about ordering can await
-  // ``start()``; ``stop()`` awaits any in-flight start before tearing
-  // down so the old context never races the new one.
   let startInFlight: Promise<void> | null = null;
 
-  // State tracking
   let state: VADState = 'idle';
   let running = false;
   let paused = false;
 
-  // Level tracking with EMA smoothing
   let currentLevel = 0;
   let smoothedLevel = 0;
   let noiseFloor = cfg.noiseFloorMin;
 
-  // Timing
   let speechStartAt = 0;
   let lastAboveAt = 0;
   let silenceStartAt = 0;
 
-  // Calibration
   let calibrationSamples: number[] = [];
   let isCalibrating = true;
-  const CALIBRATION_SAMPLES = 30; // ~500ms at 60fps
+  const CALIBRATION_SAMPLES = 30;
 
   function setState(newState: VADState) {
     if (state !== newState) {
@@ -123,21 +108,21 @@ export function createVAD(
   }
 
   function updateNoiseFloor(level: number) {
-    // During calibration, collect samples
     if (isCalibrating) {
       calibrationSamples.push(level);
       if (calibrationSamples.length >= CALIBRATION_SAMPLES) {
-        // Set initial noise floor as median of calibration samples
         calibrationSamples.sort((a, b) => a - b);
         const median = calibrationSamples[Math.floor(calibrationSamples.length / 2)];
         noiseFloor = Math.max(median * 1.2, cfg.noiseFloorMin);
         isCalibrating = false;
-        console.log('[VAD] Calibration complete, noise floor:', noiseFloor.toFixed(4));
+        microphoneDebug('vad', 'calibration_complete', {
+          noiseFloor: Number(noiseFloor.toFixed(5)),
+          threshold: Number(getAdaptiveThreshold().toFixed(5)),
+        });
       }
       return;
     }
 
-    // Adaptive noise floor: slowly decay toward current level when quiet
     if (level < noiseFloor * 2) {
       noiseFloor = Math.max(
         cfg.noiseFloorMin,
@@ -147,18 +132,14 @@ export function createVAD(
   }
 
   function getAdaptiveThreshold(): number {
-    // Threshold is noise floor + base threshold, with hysteresis
     const base = noiseFloor + cfg.baseThreshold;
-    if (state === 'idle') {
-      return base * cfg.hysteresisHigh; // Higher threshold to start speaking
-    }
-    return base * cfg.hysteresisLow; // Lower threshold to continue speaking
+    if (state === 'idle') return base * cfg.hysteresisHigh;
+    return base * cfg.hysteresisLow;
   }
 
   function tick() {
     if (!analyser || !running) return;
 
-    // Skip processing if paused (but keep RAF running)
     if (paused) {
       raf = requestAnimationFrame(tick);
       return;
@@ -166,35 +147,30 @@ export function createVAD(
 
     const data = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteTimeDomainData(data);
-
-    // Calculate RMS level
     currentLevel = calculateRMS(data);
-
-    // Apply EMA smoothing
     smoothedLevel = cfg.emaAlpha * currentLevel + (1 - cfg.emaAlpha) * smoothedLevel;
-
-    // Update noise floor estimation
     updateNoiseFloor(smoothedLevel);
 
     const threshold = getAdaptiveThreshold();
     const now = performance.now();
-
-    // Report level changes for visualization
     callbacks.onLevelChange?.(smoothedLevel, threshold, noiseFloor);
 
-    // Skip detection during calibration
     if (isCalibrating) {
       raf = requestAnimationFrame(tick);
       return;
     }
 
-    // State machine
     switch (state) {
       case 'idle':
         if (smoothedLevel >= threshold) {
           lastAboveAt = now;
           speechStartAt = now;
           setState('speech');
+          microphoneDebug('vad', 'speech_detected', {
+            level: Number(smoothedLevel.toFixed(5)),
+            threshold: Number(threshold.toFixed(5)),
+            noiseFloor: Number(noiseFloor.toFixed(5)),
+          });
           callbacks.onSpeechStart();
         }
         break;
@@ -203,15 +179,18 @@ export function createVAD(
         if (smoothedLevel >= threshold * cfg.hysteresisLow) {
           lastAboveAt = now;
         } else {
-          // Check if we've been silent long enough
           const silenceDur = now - lastAboveAt;
           const speechDur = now - speechStartAt;
 
           if (speechDur >= cfg.minSpeechMs && silenceDur >= cfg.silenceMs) {
             setState('idle');
+            microphoneDebug('vad', 'speech_ended', {
+              speechMs: Math.round(speechDur),
+              silenceMs: Math.round(silenceDur),
+              level: Number(smoothedLevel.toFixed(5)),
+            });
             callbacks.onSpeechEnd();
           } else if (silenceDur > 100) {
-            // Brief silence, might be between words
             silenceStartAt = lastAboveAt;
             setState('silence_pending');
           }
@@ -220,7 +199,6 @@ export function createVAD(
 
       case 'silence_pending':
         if (smoothedLevel >= threshold * cfg.hysteresisLow) {
-          // Speech resumed
           lastAboveAt = now;
           setState('speech');
         } else {
@@ -229,6 +207,11 @@ export function createVAD(
 
           if (speechDur >= cfg.minSpeechMs && silenceDur >= cfg.silenceMs) {
             setState('idle');
+            microphoneDebug('vad', 'speech_ended', {
+              speechMs: Math.round(speechDur),
+              silenceMs: Math.round(silenceDur),
+              level: Number(smoothedLevel.toFixed(5)),
+            });
             callbacks.onSpeechEnd();
           }
         }
@@ -239,42 +222,43 @@ export function createVAD(
   }
 
   async function start(): Promise<void> {
-    if (running) return;
-    // If a previous start() is still awaiting getUserMedia, reuse its
-    // promise instead of spawning a second AudioContext that would race
-    // it. The original "Context closed during startup, aborting" guard
-    // below still catches the case where stop() ran during that await.
-    if (startInFlight) return startInFlight;
+    if (running) {
+      microphoneDebug('vad', 'start_skipped_already_running');
+      return;
+    }
+    if (startInFlight) {
+      microphoneDebug('vad', 'start_joined_inflight');
+      return startInFlight;
+    }
 
     const run = async (): Promise<void> => {
+      const mediaPreferences = getMediaPreferences();
+      const requestedConstraints = buildAudioConstraints(mediaPreferences);
+      microphoneDebug('vad', 'capture_request', {
+        selectedDeviceId: mediaPreferences.microphoneDeviceId || 'system-default',
+        constraints: requestedConstraints,
+      });
+
       try {
-        // Create audio context
         ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         analyser = ctx.createAnalyser();
         analyser.fftSize = 1024;
         analyser.smoothingTimeConstant = 0.3;
 
-        // The Settings → Audio & Video tab is the source of truth for the
-        // microphone device and browser DSP. If the saved device was removed,
-        // fall back to the system default so voice mode remains usable.
-        const mediaPreferences = getMediaPreferences();
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: buildAudioConstraints(mediaPreferences),
-          });
+          stream = await navigator.mediaDevices.getUserMedia({ audio: requestedConstraints });
         } catch (err) {
           if (!mediaPreferences.microphoneDeviceId || !isDeviceSelectionError(err)) throw err;
-          console.warn('[VAD] Saved microphone unavailable; falling back to system default');
+          microphoneDebugError('vad', 'selected_device_unavailable_fallback_default', err, {
+            selectedDeviceId: mediaPreferences.microphoneDeviceId,
+          });
           stream = await navigator.mediaDevices.getUserMedia({
             audio: buildAudioConstraints(mediaPreferences, { ignoreDeviceId: true }),
           });
         }
 
-        // Guard: If stop() was called during async getUserMedia, abort gracefully.
-        // Covers React StrictMode double-mount AND the useVoiceController
-        // effect re-running because vadConfig changed reference.
         if (!ctx || ctx.state === 'closed') {
-          console.log('[VAD] Context closed during startup, aborting');
+          microphoneDebug('vad', 'capture_aborted_context_closed');
           if (stream) {
             stream.getTracks().forEach(t => t.stop());
             stream = null;
@@ -282,10 +266,39 @@ export function createVAD(
           return;
         }
 
+        const track = stream.getAudioTracks()[0];
+        if (!track) throw new Error('No microphone audio track was returned.');
+        const trackSettings = track.getSettings();
+
+        microphoneDebug('vad', 'capture_opened', {
+          label: track.label || 'unlabelled microphone',
+          readyState: track.readyState,
+          enabled: track.enabled,
+          muted: track.muted,
+          deviceId: trackSettings.deviceId || 'browser-default',
+          sampleRate: trackSettings.sampleRate,
+          channelCount: trackSettings.channelCount,
+          echoCancellation: trackSettings.echoCancellation,
+          noiseSuppression: trackSettings.noiseSuppression,
+          autoGainControl: trackSettings.autoGainControl,
+        });
+
+        track.addEventListener('mute', () => microphoneDebug('vad', 'track_muted', {
+          label: track.label || 'unlabelled microphone',
+          readyState: track.readyState,
+        }));
+        track.addEventListener('unmute', () => microphoneDebug('vad', 'track_unmuted', {
+          label: track.label || 'unlabelled microphone',
+          readyState: track.readyState,
+        }));
+        track.addEventListener('ended', () => microphoneDebug('vad', 'track_ended', {
+          label: track.label || 'unlabelled microphone',
+          readyState: track.readyState,
+        }));
+
         src = ctx.createMediaStreamSource(stream);
         src.connect(analyser);
 
-        // Reset state
         running = true;
         paused = false;
         state = 'idle';
@@ -295,18 +308,11 @@ export function createVAD(
         calibrationSamples = [];
         isCalibrating = true;
 
-        const trackSettings = stream.getAudioTracks()[0]?.getSettings();
-        console.log('[VAD] Started with saved media preferences', {
-          deviceId: trackSettings?.deviceId || 'default',
-          echoCancellation: trackSettings?.echoCancellation,
-          noiseSuppression: trackSettings?.noiseSuppression,
-          autoGainControl: trackSettings?.autoGainControl,
-        });
-
-        // Start detection loop
         raf = requestAnimationFrame(tick);
       } catch (err) {
-        console.error('[VAD] Failed to start:', err);
+        microphoneDebugError('vad', 'capture_start_failed', err, {
+          selectedDeviceId: mediaPreferences.microphoneDeviceId || 'system-default',
+        });
         throw err;
       }
     };
@@ -320,6 +326,13 @@ export function createVAD(
   }
 
   function stop() {
+    const track = stream?.getAudioTracks()[0];
+    microphoneDebug('vad', 'capture_stop', {
+      running,
+      label: track?.label || null,
+      readyState: track?.readyState || null,
+    });
+
     running = false;
     paused = false;
 
@@ -341,20 +354,18 @@ export function createVAD(
     analyser = null;
     src = null;
     state = 'idle';
-
-    console.log('[VAD] Stopped');
   }
 
   function pause() {
     if (!running || paused) return;
     paused = true;
-    console.log('[VAD] Paused');
+    microphoneDebug('vad', 'detection_paused');
   }
 
   function resume() {
     if (!running || !paused) return;
     paused = false;
-    console.log('[VAD] Resumed');
+    microphoneDebug('vad', 'detection_resumed');
   }
 
   return {
