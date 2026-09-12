@@ -58,5 +58,8 @@ jobs:
       - name: MeetingSense media routing regression test
         run: npx vitest run src/test/meetingsenseMediaRouting.test.js
         working-directory: frontend
+      - name: Microphone diagnostics and playback regression test
+        run: npx vitest run src/test/microphoneDiagnostics.test.js
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
