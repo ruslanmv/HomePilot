@@ -23,7 +23,8 @@
  * can be hidden is a recorder that records something it should not.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { ConsentSheet, consentAcknowledged, rememberConsent } from './ConsentSheet';
+import { consentAcknowledged, rememberConsent } from './ConsentSheet';
+import { MeetingStartDialog } from './MeetingStartDialog';
 import { MeetingCard } from './MeetingCard';
 import { RecordingPill } from './RecordingPill';
 import { useMeetingSense } from './useMeetingSense';
@@ -194,8 +195,7 @@ export function MeetingSenseProvider({
             if (remember) rememberConsent(storage);
             setPendingStart(false);
             void actuallyStart();
-        },
-        [storage, actuallyStart],
+        }, [storage, actuallyStart],
     );
 
     // MS29. ScreenSense's own 👁 button can start a share before the user has typed anything,
@@ -264,8 +264,10 @@ export function MeetingSenseProvider({
         <MeetingSenseContext.Provider value={controls}>
             {children}
             {pendingStart ? (
-                <ConsentSheet
+                <MeetingStartDialog
                     status={status}
+                    capture={capture}
+                    onCaptureChange={setCapture}
                     onAccept={onAccept}
                     onCancel={() => setPendingStart(false)}
                 />

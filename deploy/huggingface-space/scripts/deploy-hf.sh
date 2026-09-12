@@ -52,6 +52,10 @@ echo ">> copying Dockerfile + README + scripts"
 install -m 0644 "$SPACE_DIR/Dockerfile"  "$STAGE_DIR/Dockerfile"
 install -m 0644 "$SPACE_DIR/README.md"   "$STAGE_DIR/README.md"
 install -m 0755 "$SPACE_DIR/start.sh"    "$STAGE_DIR/start.sh"
+# Shared package tsconfigs extend ../../tsconfig.base.json. The Space bundle is
+# intentionally assembled from selected repo paths, so carry that root config
+# explicitly or Vite/esbuild cannot resolve it from /packages/*/tsconfig.json.
+install -m 0644 "$REPO_ROOT/tsconfig.base.json" "$STAGE_DIR/tsconfig.base.json"
 
 # Deploy scripts (hf_wrapper, auto_import)
 mkdir -p "$STAGE_DIR/deploy/huggingface-space"
@@ -159,7 +163,7 @@ done
 echo ""
 echo "========================================"
 echo " Builder Space deployed"
-echo " https://huggingface.co/spaces/${HF_SPACE}"
+echo " https://huggingface.co/spaces/$HF_SPACE"
 echo "========================================"
 
 # ─────────────────────────────────────────────────────────
