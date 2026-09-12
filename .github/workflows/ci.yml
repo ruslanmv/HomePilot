@@ -67,5 +67,8 @@ jobs:
       - name: Settings Audio & Video pane routing regression test
         run: npx vitest run src/test/settingsAudioVideoPane.test.js
         working-directory: frontend
+      - name: Voice STT/TTS runtime regression test
+        run: npx vitest run src/test/voiceSttTtsRuntime.test.js
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
