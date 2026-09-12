@@ -1,24 +1,12 @@
 /**
  * Schema-driven Settings section for the active TTS engine.
  *
- * This component is deliberately self-contained so SettingsPanel can mount
- * it with one line and stay agnostic of which engines are installed.
- *
- * Behavior:
- *   - Dropdown to pick the active engine (only ``isAvailable()`` ones).
- *   - Below: controls rendered from the active provider's
- *     ``getSettingsSchema()`` — ``select`` / ``range`` / ``toggle``.
- *   - The Web Speech provider's ``voiceId`` schema has a placeholder
- *     options list; we merge in the browser's live voices at render
- *     time so the user sees their actual installed voices.
- *   - Every edit persists to the registry's per-user scoped settings
- *     bucket AND to ``value`` via ``onChangeDraft`` so the existing
- *     Voice Assistant code continues to read ``value.selectedVoice``.
- *
- * Purely additive: the existing System Voice select stays untouched
- * above this component, and this section only appears when the user
- * opts into it by picking a non-default engine (or leaves it on
- * ``web-speech-api`` where we render the same controls the old UI did).
+ * In addition to engine configuration this section owns two diagnostics:
+ *  - Test voice: exercises the *same* window.SpeechService path Chat/Voice use.
+ *  - Speech → text → voice: records the selected Settings microphone, transcribes that exact
+ *    sample through HomePilot STT, then reads the recognized text back through the active TTS
+ *    engine. This catches the class of bug where VAD hears one device while browser Web Speech
+ *    listens to another.
  */
 
 import React, { useEffect, useMemo, useState } from 'react'
@@ -31,13 +19,17 @@ import {
   writeTtsProviderSettings,
 } from '../tts'
 import type { SettingsField, TtsProvider } from '../tts'
+import { buildAudioConstraints, getMediaPreferences } from '../media/mediaPreferences'
 
 interface Props {
-  /** Optional: used by the Web Speech engine to populate its voice
-   *  dropdown with the browser's live voices. Passing undefined is
-   *  safe — we fall back to ``getVoices()``. */
   systemVoices?: readonly SpeechSynthesisVoice[]
 }
+
+type VoiceTestState = 'idle' | 'starting' | 'speaking' | 'ok' | 'error'
+type PipelineState = 'idle' | 'requesting' | 'recording' | 'transcribing' | 'speaking' | 'ok' | 'error'
+
+const PIPELINE_RECORD_MS = 4000
+const PREVIEW_TEXT = 'Hello, this is a preview of your selected voice.'
 
 function _fieldValue(schema: SettingsField, saved: Record<string, unknown>): string | number | boolean {
   const v = saved[schema.key]
@@ -64,9 +56,69 @@ function _mergeWebSpeechOptions(
   return { ...field, options: [...field.options, ...live] }
 }
 
+function speechService(): any {
+  return typeof window !== 'undefined' ? (window as any).SpeechService : null
+}
+
+function speechRuntime(): any {
+  return typeof window !== 'undefined' ? (window as any).hpSpeechRuntime : null
+}
+
+function pickRecorderMimeType(): string | undefined {
+  if (typeof MediaRecorder === 'undefined') return undefined
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg']
+  for (const candidate of candidates) {
+    try {
+      if (!MediaRecorder.isTypeSupported || MediaRecorder.isTypeSupported(candidate)) return candidate
+    } catch {
+      // Try the next browser-supported container.
+    }
+  }
+  return undefined
+}
+
+function recordStream(stream: MediaStream, durationMs: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    if (typeof MediaRecorder === 'undefined') {
+      reject(new Error('MediaRecorder is not supported by this browser.'))
+      return
+    }
+
+    const mimeType = pickRecorderMimeType()
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
+    const chunks: Blob[] = []
+    let timer = 0
+
+    const cleanup = () => {
+      if (timer) window.clearTimeout(timer)
+    }
+
+    recorder.ondataavailable = (event) => {
+      if (event.data?.size) chunks.push(event.data)
+    }
+    recorder.onerror = (event: any) => {
+      cleanup()
+      reject(event?.error || new Error('Microphone recording failed.'))
+    }
+    recorder.onstop = () => {
+      cleanup()
+      const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' })
+      if (!blob.size) {
+        reject(new Error('The microphone recording was empty.'))
+        return
+      }
+      resolve(blob)
+    }
+
+    recorder.start(250)
+    timer = window.setTimeout(() => {
+      if (recorder.state !== 'inactive') recorder.stop()
+    }, durationMs)
+  })
+}
+
 export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
   const [activeId, setActiveIdState] = useState<string>(() => getActiveTtsEngineId())
-  // Re-render when another component swaps the active engine.
   useEffect(() => onActiveTtsEngineChange((id) => setActiveIdState(id)), [])
 
   const providers = useMemo<readonly TtsProvider[]>(
@@ -79,7 +131,6 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
     [providers, activeId],
   )
 
-  // Saved settings blob for the active provider.
   const [settings, setSettings] = useState<Record<string, unknown>>(
     () => readTtsProviderSettings(activeId),
   )
@@ -87,46 +138,120 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
     setSettings(readTtsProviderSettings(activeId))
   }, [activeId])
 
-  // When the default engine is selected the host panel already renders
-  // a dedicated "Assistant Voice" / "System Voice" dropdown above us
-  // that covers voice + rate + pitch for Web Speech. Rendering our
-  // schema-driven twin on top of it is pure duplication — skip it
-  // unless the user has opted into a non-default engine (Piper etc.).
   const isDefaultEngine = activeId === 'web-speech-api'
   const schema = active && !isDefaultEngine ? active.getSettingsSchema() : []
 
-  // Test-voice state: the button speaks through whichever engine is
-  // active right now so the user can hear their pick without leaving
-  // Settings. Mirrors the Preview button in the Creator Studio wizard.
-  const [testing, setTesting] = useState(false)
-  const [testError, setTestError] = useState<string | null>(null)
-  const onTest = () => {
-    setTestError(null)
-    if (!active) return
-    if (testing) {
-      try { active.stop() } catch { /* ignore */ }
-      setTesting(false)
+  const [voiceTestState, setVoiceTestState] = useState<VoiceTestState>('idle')
+  const [voiceTestMessage, setVoiceTestMessage] = useState<string | null>(null)
+  const [pipelineState, setPipelineState] = useState<PipelineState>('idle')
+  const [pipelineMessage, setPipelineMessage] = useState<string | null>(null)
+  const [pipelineTranscript, setPipelineTranscript] = useState<string>('')
+
+  const speakThroughRuntime = async (text: string): Promise<void> => {
+    const svc = speechService()
+    if (!svc?.speak) throw new Error('HomePilot Text-to-Speech runtime is not available.')
+
+    let didStart = false
+    let callbackError: unknown = null
+    const result = await Promise.resolve(
+      svc.speak(text, {
+        onStart: () => {
+          didStart = true
+          setVoiceTestState('speaking')
+        },
+        onError: (error: unknown) => {
+          callbackError = error
+        },
+      }),
+    )
+
+    if (callbackError) {
+      throw callbackError instanceof Error ? callbackError : new Error(String(callbackError))
+    }
+    if (result === false || (!didStart && result !== true && result !== undefined)) {
+      throw new Error('Text-to-Speech did not start. Make sure Enable Text-to-Speech is on.')
+    }
+  }
+
+  const onTest = async () => {
+    setVoiceTestMessage(null)
+    if (voiceTestState === 'starting' || voiceTestState === 'speaking') {
+      try { speechService()?.stopSpeaking?.() } catch { /* best effort */ }
+      setVoiceTestState('idle')
+      setVoiceTestMessage('Voice test stopped.')
       return
     }
-    setTesting(true)
-    const voiceId = typeof settings.voiceId === 'string' ? settings.voiceId : undefined
-    const rate = typeof settings.rate === 'number' ? settings.rate : undefined
-    const pitch = typeof settings.pitch === 'number' ? settings.pitch : undefined
-    active
-      .speak('Hello, this is a preview of your selected voice.', {
-        voiceId,
-        rate,
-        pitch,
-        onEnd: () => setTesting(false),
-        onError: (err) => {
-          setTestError(String(err?.message || err))
-          setTesting(false)
-        },
+
+    setVoiceTestState('starting')
+    try {
+      await speakThroughRuntime(PREVIEW_TEXT)
+      setVoiceTestState('ok')
+      setVoiceTestMessage('Voice test passed — HomePilot completed playback through the active TTS runtime.')
+    } catch (error) {
+      setVoiceTestState('error')
+      setVoiceTestMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const runPipelineTest = async () => {
+    if (pipelineState === 'requesting' || pipelineState === 'recording' || pipelineState === 'transcribing' || pipelineState === 'speaking') {
+      return
+    }
+
+    setPipelineState('requesting')
+    setPipelineMessage('Opening the microphone selected in Audio & Video…')
+    setPipelineTranscript('')
+    let stream: MediaStream | null = null
+
+    try {
+      const runtime = speechRuntime()
+      if (!runtime?.transcribeBlob) {
+        throw new Error('HomePilot speech diagnostics runtime is not loaded. Reload the page and try again.')
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('This browser does not support microphone capture.')
+      }
+
+      const preferences = getMediaPreferences()
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: buildAudioConstraints(preferences),
       })
-      .catch((err) => {
-        setTestError(String(err?.message || err))
-        setTesting(false)
-      })
+      const track = stream.getAudioTracks()[0]
+      if (!track || track.readyState !== 'live') {
+        throw new Error('The selected microphone did not return a live audio track.')
+      }
+
+      setPipelineState('recording')
+      setPipelineMessage('Recording for 4 seconds — say a short sentence normally.')
+      const blob = await recordStream(stream, PIPELINE_RECORD_MS)
+
+      // Never play TTS while the capture stream is still open; stop first so the test cannot
+      // feed the assistant voice back into the microphone and create a false pass.
+      stream.getTracks().forEach((mediaTrack) => mediaTrack.stop())
+      stream = null
+
+      setPipelineState('transcribing')
+      setPipelineMessage('Transcribing the recorded sample with HomePilot STT…')
+      const result = await runtime.transcribeBlob(blob, 'settings')
+      const text = String(result?.text || '').trim()
+      if (!text) throw new Error('STT returned no speech. Check the microphone playback test, then try again.')
+      setPipelineTranscript(text)
+
+      setPipelineState('speaking')
+      setPipelineMessage(`Transcription passed (${result?.provider || 'configured STT'}). Testing TTS playback…`)
+      setVoiceTestState('starting')
+      await speakThroughRuntime(`I heard: ${text}`)
+      setVoiceTestState('ok')
+
+      setPipelineState('ok')
+      setPipelineMessage('Voice pipeline passed — selected microphone → transcription → Text-to-Speech all completed.')
+    } catch (error) {
+      setPipelineState('error')
+      setPipelineMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop())
+    }
   }
 
   const onChangeField = (key: string, value: string | number | boolean) => {
@@ -157,9 +282,8 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
           </select>
           {active?.id === 'piper-wasm' && (
             <div className="mt-1 text-[10px] text-white/40 leading-relaxed">
-              Piper runs fully in-browser via WebAssembly. First use
-              downloads a voice model (~20 MB, cached). Falls back to the
-              HomePilot mirror when the upstream CDN is unreachable.
+              Piper runs fully in-browser via WebAssembly. First use downloads a voice model
+              (~20 MB, cached). Falls back to the HomePilot mirror when the upstream CDN is unreachable.
             </div>
           )}
         </div>
@@ -181,18 +305,14 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
             if (resolved.kind === 'select') {
               return (
                 <div key={resolved.key}>
-                  <label className="block text-[10px] text-white/50 mb-2">
-                    {resolved.label}
-                  </label>
+                  <label className="block text-[10px] text-white/50 mb-2">{resolved.label}</label>
                   <select
                     className="w-full bg-black border border-white/10 rounded-lg px-3 py-2 text-xs text-white"
                     value={String(value)}
                     onChange={(e) => onChangeField(resolved.key, e.target.value)}
                   >
                     {resolved.options.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
+                      <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
                   {resolved.description ? (
@@ -224,7 +344,6 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
               )
             }
 
-            // toggle
             return (
               <label key={resolved.key} className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -238,41 +357,72 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
             )
           })
         ) : !active ? (
-          <div className="text-[10px] text-white/40">
-            No TTS engine available in this environment.
-          </div>
+          <div className="text-[10px] text-white/40">No TTS engine available in this environment.</div>
         ) : null}
 
         {active && !isDefaultEngine && !active.capabilities.pitch && (
           <div className="text-[10px] text-white/40 italic">
-            The {active.displayName.split(' (')[0]} engine does not support a pitch control in
-            playback. The Creator Studio export applies pitch post-synthesis via ffmpeg.
+            The {active.displayName.split(' (')[0]} engine does not support pitch during playback.
           </div>
         )}
 
-        {/* Test voice button — positioned AFTER the voice + rate + pitch
-            controls so users pick their voice first, then preview it
-            (best-practice: action sits at the end of the configuration
-            flow). Always visible; mirrors the "Preview voice" affordance
-            in the Creator Studio export wizard. */}
         {active && (
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onTest}
-              className="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white/80"
-              aria-pressed={testing}
-            >
-              {testing ? 'Stop' : 'Test voice'}
-            </button>
-            <span className="text-[10px] text-white/40">
-              Hello, this is a preview of your selected voice.
-            </span>
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void onTest()}
+                className="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white/80 disabled:opacity-50"
+                aria-pressed={voiceTestState === 'starting' || voiceTestState === 'speaking'}
+              >
+                {voiceTestState === 'starting' ? 'Starting…' : voiceTestState === 'speaking' ? 'Stop voice test' : 'Test voice'}
+              </button>
+              <span className="text-[10px] text-white/40">{PREVIEW_TEXT}</span>
+            </div>
+            {voiceTestMessage ? (
+              <div className={voiceTestState === 'error' ? 'text-[10px] text-red-300/80' : voiceTestState === 'ok' ? 'text-[10px] text-emerald-300/80' : 'text-[10px] text-white/45'}>
+                {voiceTestMessage}
+              </div>
+            ) : null}
           </div>
         )}
-        {testError ? (
-          <div className="text-[10px] text-red-300/80">{testError}</div>
-        ) : null}
+
+        <div className="border-t border-white/[0.07] pt-3 space-y-2">
+          <div>
+            <div className="text-[11px] text-white/80 font-semibold">Speech → text → voice check</div>
+            <div className="text-[10px] text-white/40 leading-relaxed mt-0.5">
+              Records the microphone selected in Audio &amp; Video for 4 seconds, transcribes that
+              recording with HomePilot STT, then reads the recognized sentence back through the
+              active TTS engine. The sample is not stored.
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => void runPipelineTest()}
+              disabled={pipelineState === 'requesting' || pipelineState === 'recording' || pipelineState === 'transcribing' || pipelineState === 'speaking'}
+              className="text-[11px] px-3 py-1.5 rounded-lg bg-[#9b5cff]/15 hover:bg-[#9b5cff]/25 border border-[#9b5cff]/30 text-white/85 disabled:opacity-50"
+            >
+              {pipelineState === 'requesting' ? 'Opening mic…' :
+                pipelineState === 'recording' ? 'Recording…' :
+                  pipelineState === 'transcribing' ? 'Transcribing…' :
+                    pipelineState === 'speaking' ? 'Testing TTS…' :
+                      pipelineState === 'ok' ? 'Run again' : 'Run voice pipeline test'}
+            </button>
+            {pipelineState === 'ok' ? <span className="text-[10px] text-emerald-300">Passed</span> : null}
+            {pipelineState === 'error' ? <span className="text-[10px] text-red-300">Needs attention</span> : null}
+          </div>
+          {pipelineMessage ? (
+            <div className={pipelineState === 'error' ? 'text-[10px] text-red-300/80' : pipelineState === 'ok' ? 'text-[10px] text-emerald-300/80' : 'text-[10px] text-white/45'}>
+              {pipelineMessage}
+            </div>
+          ) : null}
+          {pipelineTranscript ? (
+            <div className="rounded-lg border border-white/[0.07] bg-black/25 px-3 py-2 text-[10px] text-white/65">
+              <span className="text-white/35">Transcribed: </span>{pipelineTranscript}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   )
