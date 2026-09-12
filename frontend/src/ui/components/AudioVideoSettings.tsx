@@ -37,6 +37,12 @@ type SinkAudioContext = AudioContext & {
   setSinkId?: (sinkId: string) => Promise<void>;
 };
 
+type AudioTrackSettings = MediaTrackSettings & {
+  echoCancellation?: boolean;
+  noiseSuppression?: boolean;
+  autoGainControl?: boolean;
+};
+
 function Switch({ checked, label, onChange, disabled = false }: {
   checked: boolean;
   label: string;
@@ -129,37 +135,40 @@ function TestBadge({ state, idleLabel, runningLabel = 'Testing…', okLabel = 'W
   );
 }
 
-function friendlyError(error: unknown): string {
+function friendlyError(error: unknown, subject = 'device'): string {
   const err = error as { name?: string; message?: string } | null;
   if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-    return 'Permission was blocked. Allow camera/microphone access in your browser, then try again.';
+    return `${subject} permission was blocked. Allow it in your browser, then try again.`;
   }
   if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-    return 'The selected device is no longer available. Choose another device or System default.';
+    return `The selected ${subject.toLowerCase()} is no longer available. Choose another device or System default.`;
   }
   if (err?.name === 'OverconstrainedError') {
-    return 'The selected device cannot satisfy this configuration. Choose another device.';
+    return `The selected ${subject.toLowerCase()} cannot satisfy this configuration. Choose another device.`;
   }
   if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
-    return 'The device is busy in another app or could not be started.';
+    return `The ${subject.toLowerCase()} is busy in another app or could not be started.`;
   }
-  return err?.message || 'The media test could not start.';
+  return err?.message || `The ${subject.toLowerCase()} test could not start.`;
 }
 
 export default function AudioVideoSettings() {
   const [preferences, setPreferences] = useState<MediaPreferences>(() => getMediaPreferences());
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceError, setDeviceError] = useState<string | null>(null);
-  const [previewState, setPreviewState] = useState<TestState>('idle');
+  const [cameraState, setCameraState] = useState<TestState>('idle');
+  const [microphoneState, setMicrophoneState] = useState<TestState>('idle');
   const [speakerState, setSpeakerState] = useState<TestState>('idle');
   const [screenState, setScreenState] = useState<TestState>('idle');
-  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
+  const [cameraMessage, setCameraMessage] = useState<string | null>(null);
+  const [microphoneMessage, setMicrophoneMessage] = useState<string | null>(null);
   const [speakerMessage, setSpeakerMessage] = useState<string | null>(null);
   const [screenMessage, setScreenMessage] = useState<string | null>(null);
   const [micLevel, setMicLevel] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const microphoneStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const animationRef = useRef<number>(0);
 
@@ -178,12 +187,17 @@ export default function AudioVideoSettings() {
   const speakers = devices.filter((device) => device.kind === 'audiooutput');
 
   const persist = useCallback((patch: Partial<MediaPreferences>) => {
-    setPreferences((current) => {
-      const next = setMediaPreferences({ ...current, ...patch });
-      return next;
-    });
-    if (streamRef.current) {
-      setPreviewMessage('Settings changed. Restart the camera & microphone test to verify the new source.');
+    setPreferences((current) => setMediaPreferences({ ...current, ...patch }));
+
+    if (cameraStreamRef.current && Object.prototype.hasOwnProperty.call(patch, 'cameraDeviceId')) {
+      setCameraMessage('Camera changed. Restart the camera test to verify the new source.');
+    }
+    if (
+      microphoneStreamRef.current &&
+      ['microphoneDeviceId', 'echoCancellation', 'noiseSuppression', 'autoGainControl']
+        .some((key) => Object.prototype.hasOwnProperty.call(patch, key))
+    ) {
+      setMicrophoneMessage('Microphone settings changed. Restart the microphone test to verify them.');
     }
   }, []);
 
@@ -193,25 +207,41 @@ export default function AudioVideoSettings() {
       setDeviceError(null);
       setDevices(await navigator.mediaDevices.enumerateDevices());
     } catch (error) {
-      setDeviceError(friendlyError(error));
+      setDeviceError(friendlyError(error, 'Device discovery'));
     }
   }, []);
 
-  const stopPreview = useCallback(() => {
+  const releaseCamera = useCallback(() => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
+
+  const releaseMicrophone = useCallback(() => {
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
       animationRef.current = 0;
     }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
+    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+    microphoneStreamRef.current = null;
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close().catch(() => {});
     }
     audioContextRef.current = null;
     setMicLevel(0);
-    setPreviewState('idle');
   }, []);
+
+  const stopCamera = useCallback(() => {
+    releaseCamera();
+    setCameraState('idle');
+    setCameraMessage('Camera test stopped.');
+  }, [releaseCamera]);
+
+  const stopMicrophone = useCallback(() => {
+    releaseMicrophone();
+    setMicrophoneState('idle');
+    setMicrophoneMessage('Microphone test stopped.');
+  }, [releaseMicrophone]);
 
   useEffect(() => {
     if (!mediaSupported) return;
@@ -220,27 +250,57 @@ export default function AudioVideoSettings() {
     navigator.mediaDevices.addEventListener?.('devicechange', onDeviceChange);
     return () => {
       navigator.mediaDevices.removeEventListener?.('devicechange', onDeviceChange);
-      stopPreview();
+      releaseCamera();
+      releaseMicrophone();
     };
-  }, [mediaSupported, refreshDevices, stopPreview]);
+  }, [mediaSupported, refreshDevices, releaseCamera, releaseMicrophone]);
 
-  const startPreview = useCallback(async () => {
+  const startCameraTest = useCallback(async () => {
     if (!mediaSupported) return;
-    stopPreview();
-    setPreviewState('running');
-    setPreviewMessage(null);
+    releaseCamera();
+    setCameraState('running');
+    setCameraMessage(null);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: buildVideoConstraints(preferences),
-        audio: buildAudioConstraints(preferences),
+        audio: false,
       });
-      streamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      if (!track || track.readyState !== 'live') throw new Error('No live camera track was returned.');
+      cameraStreamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play().catch(() => undefined);
       }
+
+      const settings = track.getSettings();
+      const size = settings.width && settings.height ? `${settings.width}×${settings.height}` : 'live video';
+      setCameraState('ok');
+      setCameraMessage(`Camera is live (${size}). This test did not open the microphone.`);
+      await refreshDevices();
+    } catch (error) {
+      releaseCamera();
+      setCameraState('error');
+      setCameraMessage(friendlyError(error, 'Camera'));
+    }
+  }, [mediaSupported, preferences, refreshDevices, releaseCamera]);
+
+  const startMicrophoneTest = useCallback(async () => {
+    if (!mediaSupported) return;
+    releaseMicrophone();
+    setMicrophoneState('running');
+    setMicrophoneMessage(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: buildAudioConstraints(preferences),
+      });
+      const track = stream.getAudioTracks()[0];
+      if (!track || track.readyState !== 'live') throw new Error('No live microphone track was returned.');
+      microphoneStreamRef.current = stream;
 
       const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (AudioContextCtor) {
@@ -255,7 +315,7 @@ export default function AudioVideoSettings() {
         const data = new Uint8Array(analyser.fftSize);
 
         const readLevel = () => {
-          if (!streamRef.current || audioContextRef.current !== ctx) return;
+          if (!microphoneStreamRef.current || audioContextRef.current !== ctx) return;
           analyser.getByteTimeDomainData(data);
           let sum = 0;
           for (let i = 0; i < data.length; i += 1) {
@@ -269,21 +329,24 @@ export default function AudioVideoSettings() {
         readLevel();
       }
 
-      const videoSettings = stream.getVideoTracks()[0]?.getSettings();
-      const audioSettings = stream.getAudioTracks()[0]?.getSettings();
-      const parts = [
-        videoSettings?.width && videoSettings?.height ? `${videoSettings.width}×${videoSettings.height}` : null,
-        audioSettings?.sampleRate ? `${Math.round(audioSettings.sampleRate / 1000)} kHz mic` : 'microphone active',
+      const settings = track.getSettings() as AudioTrackSettings;
+      const sampleRate = settings.sampleRate ? `${Math.round(settings.sampleRate / 1000)} kHz` : 'live input';
+      const processing = [
+        settings.echoCancellation === true ? 'echo cancellation' : null,
+        settings.noiseSuppression === true ? 'noise suppression' : null,
+        settings.autoGainControl === true ? 'auto gain' : null,
       ].filter(Boolean);
-      setPreviewMessage(`Live test is using the selected devices${parts.length ? ` (${parts.join(', ')})` : ''}.`);
-      setPreviewState('ok');
+      setMicrophoneState('ok');
+      setMicrophoneMessage(
+        `Microphone is live (${sampleRate}${processing.length ? `; ${processing.join(', ')}` : ''}). This test did not open the camera.`,
+      );
       await refreshDevices();
     } catch (error) {
-      stopPreview();
-      setPreviewState('error');
-      setPreviewMessage(friendlyError(error));
+      releaseMicrophone();
+      setMicrophoneState('error');
+      setMicrophoneMessage(friendlyError(error, 'Microphone'));
     }
-  }, [mediaSupported, preferences, refreshDevices, stopPreview]);
+  }, [mediaSupported, preferences, refreshDevices, releaseMicrophone]);
 
   const chooseSpeaker = useCallback(async () => {
     const outputDevices = navigator.mediaDevices as OutputMediaDevices;
@@ -303,7 +366,7 @@ export default function AudioVideoSettings() {
     } catch (error) {
       if ((error as { name?: string })?.name === 'NotAllowedError') return;
       setSpeakerState('error');
-      setSpeakerMessage(friendlyError(error));
+      setSpeakerMessage(friendlyError(error, 'Speaker'));
     }
   }, [persist, preferences.speakerDeviceId, refreshDevices]);
 
@@ -336,7 +399,7 @@ export default function AudioVideoSettings() {
       setSpeakerMessage('Test tone played. If you heard it, speaker output is working.');
     } catch (error) {
       setSpeakerState('error');
-      setSpeakerMessage(friendlyError(error));
+      setSpeakerMessage(friendlyError(error, 'Speaker'));
     } finally {
       await ctx?.close().catch(() => undefined);
     }
@@ -363,7 +426,7 @@ export default function AudioVideoSettings() {
         setScreenMessage('Screen-share test cancelled.');
       } else {
         setScreenState('error');
-        setScreenMessage(friendlyError(error));
+        setScreenMessage(friendlyError(error, 'Screen sharing'));
       }
     } finally {
       stream?.getTracks().forEach((track) => track.stop());
@@ -372,13 +435,13 @@ export default function AudioVideoSettings() {
 
   const deviceLabel = (device: MediaDeviceInfo, index: number, fallback: string) => device.label || `${fallback} ${index + 1}`;
   const selectedSpeaker = speakers.find((speaker) => speaker.deviceId === preferences.speakerDeviceId);
-  const selectAudioOutputSupported = !!(navigator.mediaDevices as OutputMediaDevices | undefined)?.selectAudioOutput;
+  const selectAudioOutputSupported = typeof navigator !== 'undefined' && !!(navigator.mediaDevices as OutputMediaDevices | undefined)?.selectAudioOutput;
 
   if (!mediaSupported || !secureEnough) {
     return (
       <Card
         title="Audio & Video"
-        description="Choose and verify the devices HomePilot uses for live conversations."
+        description="Choose and verify the devices HomePilot uses for live conversations and meetings."
         icon={<Camera size={16} />}
       >
         <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 text-xs text-amber-200/90 leading-relaxed">
@@ -394,10 +457,10 @@ export default function AudioVideoSettings() {
     <div className="space-y-4">
       <Card
         title="Camera"
-        description="Select the camera used for live video and verify the real capture before a conversation."
+        description="Select and test video independently. Testing the camera never opens your microphone."
         icon={<Camera size={16} />}
       >
-        <SettingRow label="Camera" description="Device labels appear after you grant media permission." stack>
+        <SettingRow label="Camera" description="Device labels appear after you grant camera permission." stack>
           <div className="flex flex-col sm:flex-row gap-2">
             <select
               aria-label="Camera"
@@ -429,26 +492,39 @@ export default function AudioVideoSettings() {
             className={[
               'w-full h-full object-cover',
               preferences.mirrorCameraPreview ? '-scale-x-100' : '',
-              previewState === 'ok' ? 'opacity-100' : 'opacity-40',
+              cameraState === 'ok' ? 'opacity-100' : 'opacity-40',
             ].join(' ')}
           />
-          {previewState !== 'ok' && (
+          {cameraState !== 'ok' && (
             <div className="absolute inset-0 flex items-center justify-center text-center p-6">
               <div>
                 <Camera size={24} className="mx-auto text-white/25 mb-2" />
-                <div className="text-xs text-white/45">Start the device test to see your camera.</div>
+                <div className="text-xs text-white/45">Run the camera test to see your preview.</div>
               </div>
             </div>
           )}
         </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          {cameraState === 'ok' ? (
+            <button type="button" className={BUTTON_CLS} onClick={stopCamera}><Square size={14} /> Stop camera test</button>
+          ) : (
+            <button type="button" className={BUTTON_CLS} onClick={() => void startCameraTest()} disabled={cameraState === 'running'}>
+              {cameraState === 'running' ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+              Test camera
+            </button>
+          )}
+          <TestBadge state={cameraState} idleLabel="Not tested" okLabel="Live" />
+        </div>
+        {cameraMessage ? <p className={cameraState === 'error' ? 'text-xs text-red-300/80' : 'text-xs text-white/45'}>{cameraMessage}</p> : null}
       </Card>
 
       <Card
         title="Microphone"
-        description="HomePilot Voice uses this same microphone and the same processing settings below."
+        description="Select and test audio independently. HomePilot Voice and MeetingSense use these same microphone preferences."
         icon={<Mic2 size={16} />}
       >
-        <SettingRow label="Microphone" stack>
+        <SettingRow label="Microphone" description="The test opens only this audio input; it does not start the camera." stack>
           <select
             aria-label="Microphone"
             className={SELECT_CLS}
@@ -462,14 +538,14 @@ export default function AudioVideoSettings() {
           </select>
         </SettingRow>
 
-        <SettingRow label="Input level" description="Speak normally. The meter should move without staying pinned at 100%.">
+        <SettingRow label="Input level" description="Speak normally. During a microphone test the meter should move without staying pinned at 100%.">
           <div className="h-2.5 rounded-full bg-white/10 overflow-hidden border border-white/[0.06]" aria-label={`Microphone input level ${Math.round(micLevel * 100)}%`}>
-            <div className="h-full bg-[#9b5cff] transition-[width] duration-75" style={{ width: `${Math.max(2, micLevel * 100)}%` }} />
+            <div className="h-full bg-[#9b5cff] transition-[width] duration-75" style={{ width: `${microphoneState === 'ok' ? Math.max(2, micLevel * 100) : 0}%` }} />
           </div>
         </SettingRow>
 
         <div className="border-t border-white/[0.06] pt-4 space-y-4">
-          <SettingRow label="Echo cancellation" description="Reduces sound from HomePilot or other speakers feeding back into your mic.">
+          <SettingRow label="Echo cancellation" description="Reduces sound from speakers feeding back into your microphone.">
             <Switch
               checked={preferences.echoCancellation}
               label="Echo cancellation"
@@ -496,17 +572,17 @@ export default function AudioVideoSettings() {
         </div>
 
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
-          {previewState === 'ok' ? (
-            <button type="button" className={BUTTON_CLS} onClick={stopPreview}><Square size={14} /> Stop camera &amp; mic test</button>
+          {microphoneState === 'ok' ? (
+            <button type="button" className={BUTTON_CLS} onClick={stopMicrophone}><Square size={14} /> Stop microphone test</button>
           ) : (
-            <button type="button" className={BUTTON_CLS} onClick={() => void startPreview()} disabled={previewState === 'running'}>
-              {previewState === 'running' ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
-              Test camera &amp; microphone
+            <button type="button" className={BUTTON_CLS} onClick={() => void startMicrophoneTest()} disabled={microphoneState === 'running'}>
+              {microphoneState === 'running' ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+              Test microphone
             </button>
           )}
-          <TestBadge state={previewState} idleLabel="Not tested" okLabel="Live" />
+          <TestBadge state={microphoneState} idleLabel="Not tested" okLabel="Listening" />
         </div>
-        {previewMessage ? <p className={previewState === 'error' ? 'text-xs text-red-300/80' : 'text-xs text-white/45'}>{previewMessage}</p> : null}
+        {microphoneMessage ? <p className={microphoneState === 'error' ? 'text-xs text-red-300/80' : 'text-xs text-white/45'}>{microphoneMessage}</p> : null}
       </Card>
 
       <Card
@@ -536,31 +612,42 @@ export default function AudioVideoSettings() {
 
       <Card
         title="Troubleshooting"
-        description="Verify the browser permissions and capture paths HomePilot depends on."
+        description="Run audio, video, and screen-sharing tests independently so a failure identifies the exact capture path."
         icon={<ShieldCheck size={16} />}
       >
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <div className="rounded-xl bg-[#050505] border border-white/10 p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-sm text-white/80"><Camera size={15} /> Camera &amp; microphone</div>
-              <TestBadge state={previewState} idleLabel="Not tested" />
+              <div className="flex items-center gap-2 text-sm text-white/80"><Camera size={15} /> Camera</div>
+              <TestBadge state={cameraState} idleLabel="Not tested" />
             </div>
-            <p className="text-[11px] text-white/40 leading-relaxed">Checks real camera frames, microphone capture, the input meter, and your selected DSP constraints.</p>
-            <button type="button" className={BUTTON_CLS + ' w-full'} onClick={() => void startPreview()} disabled={previewState === 'running'}>Run test</button>
+            <p className="text-[11px] text-white/40 leading-relaxed">Checks the selected camera and real video frames only. It never opens the microphone.</p>
+            <button type="button" className={BUTTON_CLS + ' w-full'} onClick={() => void startCameraTest()} disabled={cameraState === 'running'}>Run video test</button>
           </div>
+
+          <div className="rounded-xl bg-[#050505] border border-white/10 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm text-white/80"><Mic2 size={15} /> Microphone</div>
+              <TestBadge state={microphoneState} idleLabel="Not tested" />
+            </div>
+            <p className="text-[11px] text-white/40 leading-relaxed">Checks the selected microphone, input meter, and DSP constraints only. It never opens the camera.</p>
+            <button type="button" className={BUTTON_CLS + ' w-full'} onClick={() => void startMicrophoneTest()} disabled={microphoneState === 'running'}>Run audio test</button>
+          </div>
+
           <div className="rounded-xl bg-[#050505] border border-white/10 p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm text-white/80"><MonitorUp size={15} /> Screen sharing</div>
               <TestBadge state={screenState} idleLabel="Not tested" />
             </div>
-            <p className="text-[11px] text-white/40 leading-relaxed">Opens the browser's screen picker, verifies a live display track, then stops the test immediately.</p>
-            <button type="button" className={BUTTON_CLS + ' w-full'} onClick={() => void testScreenSharing()} disabled={screenState === 'running'}>Run test</button>
+            <p className="text-[11px] text-white/40 leading-relaxed">Opens the browser screen picker, verifies a live display track, then stops the test immediately.</p>
+            <button type="button" className={BUTTON_CLS + ' w-full'} onClick={() => void testScreenSharing()} disabled={screenState === 'running'}>Run screen test</button>
           </div>
         </div>
+
         {screenMessage ? <p className={screenState === 'error' ? 'text-xs text-red-300/80' : 'text-xs text-white/45'}>{screenMessage}</p> : null}
         {deviceError ? <p className="text-xs text-red-300/80">Device discovery: {deviceError}</p> : null}
         <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] px-3.5 py-3 text-[11px] text-white/40 leading-relaxed">
-          Device choices and microphone processing are saved automatically on this browser. HomePilot Voice reads the same microphone source and processing preferences when it starts listening.
+          Device choices and microphone processing are saved automatically on this browser. HomePilot Voice and MeetingSense both use the same selected microphone and processing preferences.
         </div>
       </Card>
     </div>

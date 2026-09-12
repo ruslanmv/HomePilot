@@ -18,6 +18,9 @@
     <!-- MS29. The recorder. Inert until `hpMeetingSense.start()` is called, so loading it
          costs a parse and changes nothing until somebody presses record. -->
     <script src="/js/homepilot-meetingsense.js"></script>
+    <!-- Media routing owns browser device acquisition so preflight capture switches and the
+         Audio & Video microphone preference are authoritative for MeetingSense. -->
+    <script src="/js/homepilot-meetingsense-media.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
