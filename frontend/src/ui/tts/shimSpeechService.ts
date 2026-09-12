@@ -1,51 +1,24 @@
 /**
- * Non-destructive monkey-patch that lets the legacy
- * ``window.SpeechService`` (see /public/js/speech-service.js, called from
- * App.tsx:4012 on every assistant message) honor the TTS plugin
- * registry.
+ * Non-destructive monkey-patch that lets the legacy `window.SpeechService`
+ * honor the active TTS plugin registry.
  *
- * Problem this fixes
- * ------------------
- * The in-app chat TTS goes through ``window.SpeechService.speak(text)``,
- * which calls ``speechSynthesis`` directly. Our plugin registry was
- * only read by the Settings UI and the Creator Studio export wizard —
- * so picking Piper in the engine dropdown did not change what the user
- * heard when an assistant message played. The chat path always used
- * the Web Speech API regardless of the engine setting.
- *
- * How this fixes it
- * -----------------
- * When ``./tts/index`` is imported (which SettingsPanel and the voice
- * settings modal both do on mount), this module is pulled in and
- * ``install()`` runs once. It swaps ``window.SpeechService.speak`` and
- * ``window.SpeechService.stopSpeaking`` for thin wrappers that:
- *
- *   - Look up the active engine id via the registry.
- *   - If the active engine is NOT ``web-speech-api`` AND the provider
- *     is available, route speak()/stop() to ``provider.speak()`` /
- *     ``provider.stop()``. The provider supplies its own voice model,
- *     rate, etc. — no contact with ``speechSynthesis`` happens.
- *   - Otherwise, call the original ``SpeechService`` function
- *     unchanged. This is the fast path for users who never touched
- *     the engine picker.
- *
- * The original functions are held in closure so a second install is a
- * no-op, and uninstall() restores them if ever needed (e.g. tests).
+ * This is also the final runtime diagnostic boundary for TTS: regardless of
+ * whether the public speech runtime wrapped SpeechService before or after this
+ * module installs, every engine selection and provider lifecycle emits a
+ * metadata-only `[HomePilot:TTS]` trace. Spoken text itself is never logged.
  */
 
 import { getActiveTtsEngineId, getTtsProvider, readTtsProviderSettings } from './index'
 
 type AnyFn = (...args: unknown[]) => unknown
 
-// NB: we intentionally do NOT `declare global` augment Window.SpeechService
-// here. Other files (useVoiceController, teams TTS) already declare it as
-// `any` to reach methods we do not touch — widening back to `any` would
-// conflict in strict declaration-merge mode. Local `any` cast is enough
-// for the two methods we swap.
-
 let _installed = false
 let _originalSpeak: AnyFn | null = null
 let _originalStop: AnyFn | null = null
+
+function trace(event: string, details: Record<string, unknown> = {}): void {
+  console.info(`[HomePilot:TTS] ${event}`, details)
+}
 
 /** Install the shim. Safe to call repeatedly. */
 export function install(): void {
@@ -53,8 +26,8 @@ export function install(): void {
   if (typeof window === 'undefined') return
   const svc = (window as unknown as { SpeechService?: Record<string, AnyFn> }).SpeechService
   if (!svc) {
-    // SpeechService loads from /public/js via a <script> tag. In dev
-    // it may appear slightly after the TS bundle; retry up to 2 s.
+    // SpeechService loads from /public/js via a <script> tag. In dev it may
+    // appear slightly after the TS bundle; retry for up to 2 seconds.
     let tries = 0
     const tick = () => {
       tries += 1
@@ -71,51 +44,49 @@ export function install(): void {
   _originalSpeak = svc.speak ? svc.speak.bind(svc) : null
   _originalStop = svc.stopSpeaking ? svc.stopSpeaking.bind(svc) : null
   _installed = true
+  trace('registry_shim_installed')
 
   svc.speak = ((text: string, callbacks: Record<string, unknown> = {}) => {
     const engineId = getActiveTtsEngineId()
+    trace('engine_selected', { engineId, chars: String(text || '').length })
+
+    // System Voice uses the legacy SpeechService/Web Speech runtime. If the
+    // public diagnostic wrapper is installed it will emit the detailed
+    // speak_requested/start/completed/error events around this call.
     if (engineId === 'web-speech-api') {
+      trace('system_voice_delegate', { engineId })
       return _originalSpeak ? _originalSpeak(text, callbacks) : undefined
     }
 
     const provider = getTtsProvider(engineId)
     if (!provider || !provider.isAvailable()) {
-      // Fall back silently so the user always hears something.
+      trace('provider_unavailable_fallback', { engineId })
+      // Fall back to system voice so a provider/model failure does not make
+      // assistant replies silently disappear.
       return _originalSpeak ? _originalSpeak(text, callbacks) : undefined
     }
 
-    // Pull the voice / rate the user saved in Settings for this engine.
     const saved = readTtsProviderSettings(engineId)
     const voiceId = typeof saved.voiceId === 'string' ? saved.voiceId : undefined
     const rate = typeof saved.rate === 'number' ? saved.rate : undefined
     const pitch = typeof saved.pitch === 'number' ? saved.pitch : undefined
 
-    // speech-service.js accepts a callbacks object with onStart/onEnd/onError.
-    // Forward the subset our providers understand so existing caller
-    // wiring (transcript highlighting, mouth-animation) keeps working.
     const cb = callbacks as {
       onStart?: () => void
       onEnd?: () => void
       onError?: (err: unknown) => void
     }
 
-    // CRITICAL: the legacy VoiceController polls ``svc.isSpeaking`` at 50 ms
-    // to drive its SPEAKING → IDLE transition. The legacy speak() path
-    // flipped this flag directly on itself when speechSynthesis fired
-    // start/end events. Our provider path plays audio via Web Audio (for
-    // Piper) or speechSynthesis (for the Web Speech provider with no
-    // isSpeaking mirror), so we have to mirror the flag ourselves —
-    // otherwise the controller's SPEAKING state never clears and the
-    // user has to wait for the ~30s THINKING-timeout safety net after
-    // every AI response before they can talk again.
+    // VoiceController polls this legacy flag to drive SPEAKING -> IDLE.
     const markSpeaking = (v: boolean) => {
       try {
         svc.isSpeaking = v as unknown as AnyFn
       } catch {
-        /* best-effort — some implementations may freeze the object */
+        // Best effort: some tests/frozen implementations may reject writes.
       }
     }
     markSpeaking(true)
+    trace('provider_requested', { engineId, voiceId: voiceId || 'default', rate, pitch })
 
     const clearFlag = () => markSpeaking(false)
     return provider
@@ -123,27 +94,37 @@ export function install(): void {
         voiceId,
         rate,
         pitch,
-        onStart: cb.onStart,
+        onStart: () => {
+          trace('provider_started', { engineId })
+          try { cb.onStart?.() } catch { /* caller callback must not break TTS */ }
+        },
         onEnd: () => {
           clearFlag()
-          try { cb.onEnd?.() } catch { /* ignore */ }
+          trace('provider_completed', { engineId })
+          try { cb.onEnd?.() } catch { /* ignore caller callback failure */ }
         },
         onError: (err) => {
           clearFlag()
-          try { cb.onError?.(err) } catch { /* ignore */ }
+          trace('provider_error', {
+            engineId,
+            error: err instanceof Error ? err.message : String(err || 'unknown'),
+          })
+          try { cb.onError?.(err) } catch { /* ignore caller callback failure */ }
         },
       })
       .then(
         () => {
-          // Providers that resolve without calling onEnd still need the
-          // flag cleared — belt-and-braces for both WebSpeech and Piper.
+          // Providers that resolve without firing onEnd must still release the
+          // legacy speaking state.
           clearFlag()
+          trace('provider_promise_resolved', { engineId })
         },
         (err) => {
           clearFlag()
-          // Last-resort fallback: if the provider blows up mid-synthesis
-          // (e.g. Piper model download failure), speak through the
-          // browser engine so the user still hears the message.
+          trace('provider_rejected_fallback', {
+            engineId,
+            error: err instanceof Error ? err.message : String(err || 'unknown'),
+          })
           try { cb.onError?.(err) } catch { /* ignore */ }
           if (_originalSpeak) return _originalSpeak(text, callbacks)
         },
@@ -152,11 +133,10 @@ export function install(): void {
 
   svc.stopSpeaking = (() => {
     const engineId = getActiveTtsEngineId()
+    trace('stop_requested', { engineId })
     if (engineId !== 'web-speech-api') {
       const provider = getTtsProvider(engineId)
       try { provider?.stop() } catch { /* ignore */ }
-      // Mirror the legacy behavior: isSpeaking drops to false on stop
-      // so the VoiceController's SPEAKING→IDLE transition fires.
       try { svc.isSpeaking = false as unknown as AnyFn } catch { /* ignore */ }
     }
     return _originalStop ? _originalStop() : undefined
@@ -175,6 +155,4 @@ export function uninstall(): void {
   _originalStop = null
 }
 
-// Auto-install on import. ``./tts`` barrels this file so any feature
-// that touches the registry automatically gets runtime wiring.
 install()
