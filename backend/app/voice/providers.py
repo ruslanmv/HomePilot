@@ -430,8 +430,10 @@ class OpenAICompatSTTProvider(STTProvider):
 
 
 class WhisperLocalSTTProvider(STTProvider):
-    """Local faster-whisper STT. Active only when ``WHISPER_MODEL`` is set (e.g.
-    ``base``, ``small``) and the ``faster_whisper`` package is installed.
+    """Local faster-whisper STT, included in standard HomePilot installations.
+
+    ``WHISPER_MODEL`` can override the built-in ``small`` model choice (for example with
+    ``base`` or ``large-v3-turbo``), but it is not required to enable meeting transcription.
 
     ``WHISPER_DEVICE`` and ``WHISPER_COMPUTE`` default to ``auto`` and ``default``, which is
     exactly what faster-whisper picks on its own — so an install that sets neither behaves

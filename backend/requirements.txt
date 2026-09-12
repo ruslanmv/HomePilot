@@ -14,3 +14,7 @@ bcrypt>=4.0.0
 psutil>=5.9.0
 langgraph>=0.2.0
 langchain-core>=0.3.0
+# Meeting transcription is built in. Pin the native inference runtime so the
+# backend and packaged HomePilot container do not silently lose local speech.
+faster-whisper==1.2.1
+ctranslate2==4.8.2

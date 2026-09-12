@@ -5,10 +5,9 @@
 #
 #     pip install -r requirements/speech-cpu.txt
 #
-# Kept out of `requirements.txt` on purpose. CTranslate2 carries a native runtime and a
-# CUDA/cuDNN compatibility matrix, and a base install that drags that in breaks unrelated
-# deployments the first time a wheel does not match the host. So local speech is one deliberate
-# extra command, not a surprise inside `pip install -r requirements.txt`.
+# This file remains as a compatibility entry point for existing deployment scripts. The same
+# packages are now selected by every standard HomePilot installation path, so `make install`
+# and the packaged desktop container both have meeting transcription out of the box.
 #
 # Pinned rather than floated, for the same reason: this is the layer where "it worked last
 # week" goes wrong quietly, and a range would let a native ABI change arrive on its own.

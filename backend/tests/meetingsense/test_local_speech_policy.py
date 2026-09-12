@@ -3,10 +3,10 @@
 Two defects, one of them a privacy defect that nobody could see.
 
 **LS1 — "Not configured" was a packaging state, not a configuration one.**
-``requirements.txt`` never installed ``faster-whisper``, and ``WhisperLocalSTTProvider``
-reports itself available only when the package imports *and* ``WHISPER_MODEL`` is set. So a
-normal install said "Meeting transcription — Not configured" however it was configured, and
-the Settings card taught an environment variable to somebody who wanted to record a meeting.
+Standard backend installation must include ``faster-whisper``, and
+``WhisperLocalSTTProvider`` must choose a model without requiring ``WHISPER_MODEL``. Otherwise
+a normal install says "Meeting transcription — Not configured" and sends somebody who only
+wants to record a meeting into Settings.
 
 **LS2 — a configured remote endpoint silently won.** ``_build_stt_provider`` returns the
 OpenAI-compatible provider before it constructs the local one. That is defensible for voice
@@ -94,6 +94,31 @@ def test_the_whisper_extra_matches_the_cpu_requirements():
         if re.match(r"^[A-Za-z0-9._-]+==\d", line.strip())
     }
     assert extra == pinned
+
+
+def test_local_speech_is_part_of_every_backend_install():
+    """Both install paths used by HomePilot must include the local provider.
+
+    ``make install`` resolves ``pyproject.toml`` while the backend and desktop container images
+    resolve ``requirements.txt``. Checking both prevents one distribution from regressing to
+    the misleading "Not configured" state.
+    """
+    import pathlib
+    import re
+    import tomllib
+
+    backend = pathlib.Path(__file__).resolve().parents[2]
+    project = tomllib.loads((backend / "pyproject.toml").read_text())
+    requirements = {
+        line.strip()
+        for line in (backend / "requirements.txt").read_text().splitlines()
+        if re.match(r"^[A-Za-z0-9._-]+==\d", line.strip())
+    }
+    speech_dependencies = set(project["project"]["optional-dependencies"]["whisper"])
+    makefile = (backend.parent / "Makefile").read_text()
+
+    assert 'uv pip install -e ".[whisper]"' in makefile
+    assert speech_dependencies <= requirements
 
 
 # ── LS2: whose speech service ───────────────────────────────────────────────
