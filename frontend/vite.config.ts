@@ -11,6 +11,21 @@ const FRONTEND_DIR = path.dirname(fileURLToPath(import.meta.url))
 const PACKAGES_DIR = path.resolve(FRONTEND_DIR, '../packages')
 const SETTINGS_WITH_MEDIA = path.resolve(FRONTEND_DIR, 'src/ui/SettingsPanelWithMedia.tsx')
 
+// Redirect only the real App.tsx Settings import through the additive media
+// wrapper. The wrapper itself imports `./SettingsPanel` normally, so TypeScript
+// resolves back to the canonical SettingsPanel.tsx with no recursion.
+const settingsMediaResolver = {
+  name: 'homepilot-settings-media',
+  enforce: 'pre' as const,
+  resolveId(source: string, importer?: string) {
+    const normalizedImporter = importer?.replace(/\\/g, '/') || ''
+    if (source === './SettingsPanel' && normalizedImporter.endsWith('/src/ui/App.tsx')) {
+      return SETTINGS_WITH_MEDIA
+    }
+    return null
+  },
+}
+
 // The Vite dev server runs on :3000 but the HomePilot backend lives on
 // :8000. Anything the frontend calls with a relative path must be
 // proxied through to the backend — otherwise Vite's SPA fallback
@@ -51,7 +66,7 @@ const API_PREFIXES = [
 ] as const
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [settingsMediaResolver, react()],
   // Vite's default resolve.extensions puts .jsx BEFORE .tsx, so a bare
   // import like ``./ui/App`` (from main.tsx) silently picks the stale
   // App.jsx mirror over the canonical App.tsx. That's how the Expert
@@ -62,11 +77,6 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^@homepilot\/(.*)$/, replacement: `${PACKAGES_DIR}/$1/src` },
-      // Enterprise Settings has an additive Audio & Video wrapper. Make the
-      // runtime route explicit instead of relying on extension precedence:
-      // App.tsx imports `./SettingsPanel`, while the wrapper itself imports
-      // `./SettingsPanel.tsx` explicitly so there is no alias recursion.
-      { find: /^\.\/SettingsPanel$/, replacement: SETTINGS_WITH_MEDIA },
     ],
     extensions: ['.tsx', '.ts', '.mts', '.jsx', '.js', '.mjs', '.json'],
   },
