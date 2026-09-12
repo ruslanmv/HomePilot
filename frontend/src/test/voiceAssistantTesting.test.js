@@ -23,6 +23,10 @@ const selfTest = read('frontend/src/ui/components/VoiceAssistantSelfTest.tsx');
 const settingsPanel = read('frontend/src/ui/SettingsPanel.tsx');
 const ttsSection = read('frontend/src/ui/components/TtsEngineSection.tsx');
 const audioVideo = read('frontend/src/ui/components/AudioVideoSettings.tsx');
+const sttService = read('frontend/src/ui/media/sttService.ts');
+const vad = read('frontend/src/ui/voice/vad.ts');
+const transcribeRoute = read('backend/app/voice/transcribe.py');
+const mainApp = read('backend/app/main.py');
 
 describe('SpeechService recognition instrumentation', () => {
   it('traces into the shared HomePilot:Mic buffer from a classic script', () => {
@@ -68,6 +72,58 @@ describe('voice controller stop reasons', () => {
   });
 });
 
+describe('one selected-microphone transcription path', () => {
+  it('is served by an ungated backend endpoint', () => {
+    // VOICE_BACKEND_ENABLED guards server-side LLM+TTS orchestration. Gating
+    // transcription behind it would leave the web client with no alternative
+    // to the device split this path exists to remove.
+    expect(transcribeRoute).toContain('@router.post("/v1/voice/transcribe")');
+    expect(transcribeRoute).toContain('@router.get("/v1/voice/stt/status")');
+    // The docstring names the flag to explain why it is *not* consulted, so
+    // assert the absence of a gate rather than of the word.
+    expect(transcribeRoute).not.toMatch(/getattr\(\s*config\s*,\s*["']VOICE_BACKEND_ENABLED/);
+    expect(transcribeRoute).not.toMatch(/config\.VOICE_BACKEND_ENABLED/);
+    expect(mainApp).toContain('voice_transcribe_router');
+  });
+
+  it('records the microphone selected in Audio & Video', () => {
+    expect(sttService).toContain('buildAudioConstraints(preferences)');
+    expect(sttService).toContain('stt_selected_device_unavailable_fallback_default');
+    expect(sttService).toContain('new MediaRecorder(stream)');
+  });
+
+  it('keeps Web Speech only as a fallback, and names which engine is in use', () => {
+    expect(sttService).toContain("export type SttEngine = 'homepilot-backend' | 'web-speech'");
+    expect(sttService).toContain('SttUnavailableError');
+    expect(controller).toContain("engine: SttEngine = capability.available ? 'homepilot-backend' : 'web-speech'");
+    expect(controller).toContain('stt_engine_resolved');
+    expect(controller).toContain('usesOsDefaultInput');
+  });
+
+  it('transcribes the VAD’s own capture, so detection and text cannot disagree', () => {
+    expect(vad).toContain('getStream: () => stream');
+    expect(controller).toContain('vadRef.current?.getStream?.()');
+    expect(controller).toContain('recorder_started');
+  });
+
+  it('does not gate voice on Web Speech when the backend transcribes', () => {
+    // Otherwise a perfectly working setup (Firefox, or a Chromium build with no
+    // recognizer) is refused for a capability it no longer needs.
+    expect(controller).toContain('mediaRecorderSupported');
+    expect(controller).toContain("(sttEngine === 'homepilot-backend' && mediaRecorderSupported) || webSpeechSupported");
+  });
+
+  it('discards a turn nobody is waiting for instead of paying to transcribe it', () => {
+    expect(controller).toContain("discardRecording('turn_lock')");
+    expect(controller).toContain("discardRecording('handsfree_cleanup')");
+  });
+
+  it('reports silence as silence, not as a failure', () => {
+    expect(controller).toContain('stt_no_speech');
+    expect(transcribeRoute).toContain('successful transcription of silence');
+  });
+});
+
 describe('chat composer microphone button', () => {
   it('traces every outcome, so the first chat tab is no longer silent', () => {
     expect(app).toContain("microphoneDebug('chat', 'composer_mic_start_click'");
@@ -83,6 +139,18 @@ describe('chat composer microphone button', () => {
     // A page can hold only one SpeechRecognition. Starting a second one used to
     // abort silently, which is what made the button look dead.
     expect(app).toContain("shared.abortSTT?.('chat_composer_mic')");
+  });
+
+  it('prefers HomePilot transcription and falls back only when it is absent', () => {
+    expect(app).toContain('getSttCapability().then');
+    expect(app).toContain('startBackendListening');
+    expect(app).toContain('composer_mic_fallback_web_speech');
+    expect(app).toContain('recordAndTranscribe({');
+  });
+
+  it('shows a transcribing state rather than a still-pulsing record button', () => {
+    expect(app).toContain('micTranscribing');
+    expect(app).toContain('aria-label="Transcribing"');
   });
 
   it('tells the user why nothing was captured', () => {
@@ -104,23 +172,39 @@ describe('Settings voice self-test', () => {
     expect(settingsPanel).toContain('<VoiceAssistantSelfTest />');
   });
 
-  it('offers both a speech-to-text and a text-to-speech test', () => {
+  it('offers speech-to-text, text-to-speech and the full loop', () => {
     expect(selfTest).toContain('Test speech-to-text');
     expect(selfTest).toContain('Test text-to-speech');
+    expect(selfTest).toContain('Test speech → text → voice');
     expect(selfTest).toContain('Recognized text');
   });
 
+  it('exercises the same transcription path chat and Voice use', () => {
+    // A test that calls a parallel implementation can pass while the real path
+    // fails, which is the whole reason the old preview was misleading.
+    expect(selfTest).toContain('recordAndTranscribe({');
+    expect(selfTest).toContain('getSttCapability()');
+    expect(selfTest).toContain('SttUnavailableError');
+  });
+
+  it('speaks through the runtime path, not a parallel provider call', () => {
+    expect(selfTest).toContain('speakThroughRuntime(TTS_TEST_SENTENCE)');
+    expect(selfTest).not.toContain('provider.speak(');
+  });
+
+  it('reads the recognized text back aloud for the end-to-end check', () => {
+    expect(selfTest).toContain('speakThroughRuntime(`I heard: ${result.text}`)');
+    expect(selfTest).toContain('The whole voice loop is working');
+  });
+
   it('shows the recognized text so the user can confirm what was heard', () => {
-    expect(selfTest).toContain('setHeard(transcriptRef.current)');
+    expect(selfTest).toContain('setHeard(result.text)');
     expect(selfTest).toContain('explainSttOutcome(diagnosticsRef.current, transcriptRef.current)');
   });
 
-  it('fails the TTS test when the engine never starts speaking', () => {
-    // speechSynthesis reports no error for a missing voice, a muted output or a
-    // blocked autoplay, so only the absence of onStart exposes it.
-    expect(selfTest).toContain('TTS_START_TIMEOUT_MS');
-    expect(selfTest).toContain('tts_test_never_started');
-    expect(selfTest).toContain('The voice never started speaking');
+  it('says which engine is in use, including the fallback device caveat', () => {
+    expect(selfTest).toContain('records your operating system default input');
+    expect(selfTest).toContain('recordings leave this computer');
   });
 
   it('does not clobber the recognition callbacks hands-free voice installed', () => {
@@ -128,20 +212,25 @@ describe('Settings voice self-test', () => {
     expect(selfTest).not.toContain('setRecognitionCallbacks');
   });
 
-  it('speaks the test sentence with the voice the assistant will actually use', () => {
-    expect(selfTest).toContain('resolveAssistantVoiceId(activeEngineId, engineSettings)');
-    expect(selfTest).toContain('voiceId: resolvedVoiceId || undefined');
+  it('treats Stop as "transcribe what I said", not "discard it"', () => {
+    expect(selfTest).toContain('Stop and check');
+    expect(selfTest).toContain('stopRecordingRef.current()');
   });
 
-  it('traces both tests into the shared microphone buffer', () => {
+  it('traces every test into the shared microphone buffer', () => {
     expect(selfTest).toContain("microphoneDebug('settings', 'stt_test_started'");
     expect(selfTest).toContain("microphoneDebug('settings', 'stt_test_finished'");
-    expect(selfTest).toContain("microphoneDebug('settings', 'tts_test_started'");
-    expect(selfTest).toContain("microphoneDebug('settings', 'tts_test_completed'");
+    expect(selfTest).toContain("microphoneDebug('settings', 'voice_loop_test_started'");
+    expect(selfTest).toContain("microphoneDebug('settings', 'voice_loop_test_completed'");
   });
 });
 
 describe('Test voice preview', () => {
+  it('goes through the runtime path so it cannot pass while replies fail', () => {
+    expect(ttsSection).toContain('isRuntimeTtsAvailable()');
+    expect(ttsSection).toContain('speakThroughRuntime(');
+  });
+
   it('resolves the Assistant Voice instead of an empty engine bucket', () => {
     expect(ttsSection).toContain('resolveAssistantVoiceId(activeId, settings)');
     expect(ttsSection).not.toContain("const voiceId = typeof settings.voiceId === 'string' ? settings.voiceId : undefined");
@@ -162,5 +251,11 @@ describe('microphone routing warning', () => {
   it('repeats the warning where the voice tests are run', () => {
     expect(selfTest).toContain('describeMicrophoneRouting');
     expect(selfTest).toContain('Microphone routing:');
+  });
+
+  it('suppresses the warning when the backend transcribes the selected device', () => {
+    // On that path the bytes transcribed are the bytes captured, so there is no
+    // split to warn about and the notice would be noise.
+    expect(selfTest).toContain('if (backendStt) return { mismatch: false, message: null }');
   });
 });

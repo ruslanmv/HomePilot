@@ -466,6 +466,16 @@ app.include_router(files_router)
 from .voice import router as voice_router
 app.include_router(voice_router)
 
+# One-shot speech-to-text (POST /v1/voice/transcribe, GET /v1/voice/stt/status).
+# NOT behind VOICE_BACKEND_ENABLED: that flag guards server-side LLM+TTS
+# orchestration, while this only turns recorded bytes into text. The web client
+# needs it because the browser's own recognizer cannot be pointed at the
+# microphone selected in Settings, so without it the level meter and the
+# transcript can come from two different devices. The status route reports
+# `available: false` when nothing can transcribe, so clients fall back cleanly.
+from .voice import transcribe_router as voice_transcribe_router
+app.include_router(voice_transcribe_router)
+
 # Include MeetingSense status (MS0 — additive, flag-gated MEETINGSENSE_ENABLED).
 # The status route answers whether the flag is on or off, deliberately: a frontend has to
 # tell "disabled" apart from "enabled but this machine cannot transcribe", and a 404 would

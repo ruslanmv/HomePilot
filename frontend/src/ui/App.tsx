@@ -9,6 +9,7 @@ import {
   Search,
   MessageSquare,
   Mic,
+  Loader2,
   Folder,
   Clock,
   Settings,
@@ -38,6 +39,7 @@ import {
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
 import { explainSttError, explainSttOutcome, getSpeechRecognitionCtor, type SttDiagnostics } from './media/voiceSelfTest'
+import { getSttCapability, recordAndTranscribe, SttUnavailableError } from './media/sttService'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
@@ -1622,22 +1624,24 @@ function QueryBar({
   const recognitionRef = useRef<any>(null)
   const micDiagnosticsRef = useRef<SttDiagnostics>({})
   const micTranscriptRef = useRef('')
+  // Set while the backend path is recording, so the same button stops it.
+  const micStopRecordingRef = useRef<(() => void) | null>(null)
+  const [micTranscribing, setMicTranscribing] = useState(false)
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const modeMenuRef = useRef<HTMLDivElement | null>(null)
   const modeButtonRef = useRef<HTMLButtonElement | null>(null)
   const modeMenuPanelRef = useRef<HTMLDivElement | null>(null)
   const [modeMenuPos, setModeMenuPos] = useState<{ top: number; right: number } | null>(null)
 
-  const toggleListening = useCallback(() => {
-    // Stop if already listening
-    if (isListening && recognitionRef.current) {
-      microphoneDebug('chat', 'composer_mic_stop_click')
-      try { recognitionRef.current.stop() } catch { /* already ending */ }
-      return
-    }
-
-    setMicNotice(null)
-
+  /**
+   * Web Speech fallback for the composer microphone.
+   *
+   * Used only when HomePilot's own speech-to-text is unavailable. It carries
+   * the browser's device caveat — `SpeechRecognition` takes no `deviceId` and
+   * records the OS default input, not the microphone chosen in Settings — so
+   * the notice text says so when it hears nothing.
+   */
+  const startWebSpeechListening = useCallback(() => {
     const SR = getSpeechRecognitionCtor()
     if (!SR) {
       microphoneDebug('chat', 'composer_mic_unsupported')
@@ -1753,7 +1757,88 @@ function QueryBar({
       const outcome = explainSttError(name)
       setMicNotice(`${outcome.headline}. ${outcome.detail}`)
     }
-  }, [isListening, setInput])
+  }, [setInput])
+
+  /**
+   * Record the microphone selected in Settings and transcribe it server-side.
+   *
+   * This is the path that removes the device split: the bytes sent for
+   * transcription are the bytes captured from the selected input, so the
+   * meter and the transcript cannot come from different microphones.
+   */
+  const startBackendListening = useCallback(async () => {
+    setIsListening(true)
+    try {
+      const result = await recordAndTranscribe({
+        scope: 'chat',
+        maxMs: 20_000,
+        onRecording: ({ stop }) => { micStopRecordingRef.current = stop },
+      })
+      micStopRecordingRef.current = null
+      setIsListening(false)
+      setMicTranscribing(false)
+
+      if (result.text) {
+        setInput(result.text)
+        return
+      }
+      // Empty text is a successful transcription of silence — a different fact
+      // from a failure, and the user needs to be told which happened.
+      setMicNotice(
+        `No speech was found in the recording from ${result.deviceLabel}. ` +
+        'Speak a full sentence, and check the input level meter in Settings → Audio & Video.',
+      )
+    } catch (error) {
+      micStopRecordingRef.current = null
+      setIsListening(false)
+      setMicTranscribing(false)
+      microphoneDebugError('chat', 'composer_mic_backend_failed', error)
+
+      if (error instanceof SttUnavailableError) {
+        // The server lost its provider mid-session. Fall back rather than
+        // leaving the user with a dead button.
+        microphoneDebug('chat', 'composer_mic_fallback_web_speech')
+        startWebSpeechListening()
+        return
+      }
+      const message = error instanceof Error ? error.message : 'Voice input failed.'
+      setMicNotice(message)
+    }
+  }, [setInput, startWebSpeechListening])
+
+  const toggleListening = useCallback(() => {
+    // Stop if already listening — whichever path owns the turn.
+    if (isListening) {
+      microphoneDebug('chat', 'composer_mic_stop_click')
+      if (micStopRecordingRef.current) {
+        // Stopping means "transcribe what I said", not "discard it".
+        setMicTranscribing(true)
+        micStopRecordingRef.current()
+        return
+      }
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop() } catch { /* already ending */ }
+      }
+      return
+    }
+
+    setMicNotice(null)
+
+    // Prefer HomePilot's own transcription; the capability is cached, so this
+    // costs a round trip once per session rather than once per press.
+    void getSttCapability().then((capability) => {
+      microphoneDebug('chat', 'composer_mic_engine', {
+        engine: capability.available ? 'homepilot-backend' : 'web-speech',
+        provider: capability.provider,
+        remote: capability.remote,
+      })
+      if (capability.available) {
+        void startBackendListening()
+        return
+      }
+      startWebSpeechListening()
+    })
+  }, [isListening, startBackendListening, startWebSpeechListening])
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
@@ -1915,7 +2000,20 @@ function QueryBar({
               : null}
             </div>
           ) : null}
-          {isListening ? (
+          {micTranscribing ? (
+            /* Transcription is a round trip. Showing it as a distinct state
+               beats a still-pulsing record button that implies it is
+               listening, or a dead button that implies nothing happened. */
+            <button
+              type="button"
+              disabled
+              className="h-10 w-10 rounded-full grid place-items-center bg-white/10 text-white/60 cursor-wait"
+              aria-label="Transcribing"
+              title="Transcribing…"
+            >
+              <Loader2 size={18} className="animate-spin" />
+            </button>
+          ) : isListening ? (
             <button
               type="button"
               className="h-10 w-10 rounded-full grid place-items-center bg-red-500/20 text-red-400 ring-2 ring-red-500/60 animate-pulse transition-colors"

@@ -47,6 +47,18 @@ export interface VADInstance {
   getCurrentLevel: () => number;
   getNoiseFloor: () => number;
   getThreshold: () => number;
+  /**
+   * The live capture, so a recorder can transcribe the *same* microphone the
+   * VAD is listening to.
+   *
+   * This is the whole point: the browser's own `SpeechRecognition` accepts no
+   * `deviceId` and records the OS default input, so detection and
+   * transcription could come from two different devices with no error raised.
+   * Sharing this stream makes that impossible.
+   */
+  getStream: () => MediaStream | null;
+  /** Label of the device actually opened, for the UI to show back. */
+  getDeviceLabel: () => string | null;
 }
 
 const DEFAULT_CONFIG: VADConfig = {
@@ -379,5 +391,7 @@ export function createVAD(
     getCurrentLevel: () => smoothedLevel,
     getNoiseFloor: () => noiseFloor,
     getThreshold: () => getAdaptiveThreshold(),
+    getStream: () => stream,
+    getDeviceLabel: () => stream?.getAudioTracks()[0]?.label || null,
   };
 }

@@ -33,6 +33,7 @@ import {
 import type { SettingsField, TtsProvider } from '../tts'
 import { resolveAssistantVoiceId } from '../tts/resolveAssistantVoice'
 import { TTS_START_TIMEOUT_MS } from '../media/voiceSelfTest'
+import { explainRuntimeTts, isRuntimeTtsAvailable, speakThroughRuntime } from '../media/runtimeTts'
 
 interface Props {
   /** Optional: used by the Web Speech engine to populate its voice
@@ -132,6 +133,22 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
     const voiceId = resolvedVoiceId || undefined
     const rate = typeof settings.rate === 'number' ? settings.rate : undefined
     const pitch = typeof settings.pitch === 'number' ? settings.pitch : undefined
+    // Prefer the runtime path — `window.SpeechService.speak()`, which the
+    // registry shim wraps — so this preview cannot pass while real assistant
+    // audio fails. Falls back to the provider directly when the runtime
+    // service has not loaded (it arrives from a <script> tag in /public).
+    if (isRuntimeTtsAvailable()) {
+      void speakThroughRuntime('Hello, this is a preview of your selected voice.', {
+        startTimeoutMs: TTS_START_TIMEOUT_MS,
+      }).then((result) => {
+        setTesting(false)
+        if (!result.ok) {
+          setTestError(explainRuntimeTts(result, 'the selected voice').detail)
+        }
+      })
+      return
+    }
+
     let started = false
     startWatchdog.current = setTimeout(() => {
       startWatchdog.current = null
