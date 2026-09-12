@@ -61,5 +61,11 @@ jobs:
       - name: Meeting Workspace lifecycle regression test
         run: npx vitest run src/test/meetingWorkspaceContract.test.js
         working-directory: frontend
+      - name: Microphone diagnostics and playback regression test
+        run: npx vitest run src/test/microphoneDiagnostics.test.js
+        working-directory: frontend
+      - name: Settings Audio & Video pane routing regression test
+        run: npx vitest run src/test/settingsAudioVideoPane.test.js
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
