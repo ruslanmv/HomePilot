@@ -302,10 +302,21 @@ export function useVoiceController(
         setState('LISTENING');
       },
       onEnd: () => {
+        // The SpeechService diagnostics distinguish "never captured audio" from
+        // "captured silence" from "heard speech but produced no transcript".
+        // Without them a bare `hadResult: false` cannot be acted on.
+        const diagnostics = svc.getSttDiagnostics?.() || {};
         microphoneDebug('voice', 'stt_onend', {
           hadResult: pendingResultRef.current,
           state: stateRef.current,
           handsFree: isHandsFree,
+          sawAudioStart: diagnostics.sawAudioStart ?? null,
+          sawSpeechStart: diagnostics.sawSpeechStart ?? null,
+          sawInterim: diagnostics.sawInterim ?? null,
+          sawNoMatch: diagnostics.sawNoMatch ?? null,
+          stoppedBy: diagnostics.stoppedBy ?? null,
+          elapsedMs: diagnostics.elapsedMs ?? null,
+          lang: diagnostics.lang ?? null,
         });
         lastSttEndRef.current = Date.now();
         if (stateRef.current === 'LISTENING') {
@@ -417,7 +428,10 @@ export function useVoiceController(
             if (stateRef.current === 'LISTENING') {
               try {
                 microphoneDebug('voice', 'stt_stop_requested', { reason: 'vad_silence' });
-                svc.stopSTT?.();
+                // Not forced: SpeechService defers a stop that would cut the
+                // recognizer off during warm-up, which is what silently
+                // produced empty turns for short utterances.
+                svc.stopSTT?.({ reason: 'vad_silence' });
               } catch (error) {
                 microphoneDebugError('voice', 'stt_stop_failed', error, { reason: 'vad_silence' });
                 const msg = error instanceof Error ? error.message : 'stt_stop_failed';
@@ -508,7 +522,8 @@ export function useVoiceController(
     });
     if (!svc) return;
     try {
-      svc.stopSTT?.();
+      // An explicit press of Stop must stop now, not after the warm-up guard.
+      svc.stopSTT?.({ reason: 'manual_button', force: true });
     } catch (error) {
       microphoneDebugError('voice', 'manual_stop_failed', error);
       const msg = error instanceof Error ? error.message : 'stt_stop_failed';
@@ -543,7 +558,9 @@ export function useVoiceController(
         `[VoiceController] Listening suppression ${suppressed ? 'enabled' : 'disabled'} (reason=${reason})`,
       );
       if (suppressed && stateRef.current === 'LISTENING') {
-        try { svc?.stopSTT?.(); } catch { /* no-op */ }
+        // A turn lock releases the microphone immediately; waiting on a
+        // transcript here would let the locked turn keep recording.
+        try { svc?.stopSTT?.({ reason: 'turn_lock', force: true }); } catch { /* no-op */ }
         setState(isHandsFree ? 'IDLE' : 'OFF');
       }
     },

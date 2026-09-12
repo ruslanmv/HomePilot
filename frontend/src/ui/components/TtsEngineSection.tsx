@@ -21,7 +21,7 @@
  * ``web-speech-api`` where we render the same controls the old UI did).
  */
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   getActiveTtsEngineId,
   listTtsProviders,
@@ -31,6 +31,8 @@ import {
   writeTtsProviderSettings,
 } from '../tts'
 import type { SettingsField, TtsProvider } from '../tts'
+import { resolveAssistantVoiceId } from '../tts/resolveAssistantVoice'
+import { TTS_START_TIMEOUT_MS } from '../media/voiceSelfTest'
 
 interface Props {
   /** Optional: used by the Web Speech engine to populate its voice
@@ -100,30 +102,68 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
   // Settings. Mirrors the Preview button in the Creator Studio wizard.
   const [testing, setTesting] = useState(false)
   const [testError, setTestError] = useState<string | null>(null)
+  // `speechSynthesis.speak()` can silently produce neither audio nor an error
+  // (missing voice, blocked autoplay, muted output), which used to leave this
+  // button stuck on "Stop" forever. The watchdog releases it.
+  const startWatchdog = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearWatchdog = () => {
+    if (startWatchdog.current) {
+      clearTimeout(startWatchdog.current)
+      startWatchdog.current = null
+    }
+  }
+  useEffect(() => clearWatchdog, [])
+
   const onTest = () => {
     setTestError(null)
     if (!active) return
     if (testing) {
+      clearWatchdog()
       try { active.stop() } catch { /* ignore */ }
       setTesting(false)
       return
     }
     setTesting(true)
-    const voiceId = typeof settings.voiceId === 'string' ? settings.voiceId : undefined
+    // On the default engine this section renders no voice field, so
+    // `settings.voiceId` is empty and previewing it would speak with the
+    // browser default rather than the voice chosen in Assistant Voice above.
+    // Resolve through the same keys the assistant itself reads.
+    const resolvedVoiceId = resolveAssistantVoiceId(activeId, settings)
+    const voiceId = resolvedVoiceId || undefined
     const rate = typeof settings.rate === 'number' ? settings.rate : undefined
     const pitch = typeof settings.pitch === 'number' ? settings.pitch : undefined
+    let started = false
+    startWatchdog.current = setTimeout(() => {
+      startWatchdog.current = null
+      if (started) return
+      try { active.stop() } catch { /* ignore */ }
+      setTesting(false)
+      setTestError(
+        'The engine accepted the text but never started speaking. Check your output device and volume, then try again.',
+      )
+    }, TTS_START_TIMEOUT_MS)
+
     active
       .speak('Hello, this is a preview of your selected voice.', {
         voiceId,
         rate,
         pitch,
-        onEnd: () => setTesting(false),
+        onStart: () => {
+          started = true
+          clearWatchdog()
+        },
+        onEnd: () => {
+          clearWatchdog()
+          setTesting(false)
+        },
         onError: (err) => {
+          clearWatchdog()
           setTestError(String(err?.message || err))
           setTesting(false)
         },
       })
       .catch((err) => {
+        clearWatchdog()
         setTestError(String(err?.message || err))
         setTesting(false)
       })

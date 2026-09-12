@@ -17,6 +17,7 @@ import {
   type MediaPreferences,
 } from '../media/mediaPreferences';
 import { microphoneDebug, microphoneDebugError } from '../media/microphoneDebug';
+import { describeMicrophoneRouting } from '../media/voiceSelfTest';
 
 const SELECT_CLS =
   'w-full h-11 sm:h-10 bg-[#050505] border border-white/10 rounded-xl px-3 text-base sm:text-sm text-white ' +
@@ -197,6 +198,15 @@ export default function AudioVideoSettings() {
   const cameras = devices.filter((device) => device.kind === 'videoinput');
   const microphones = devices.filter((device) => device.kind === 'audioinput');
   const speakers = devices.filter((device) => device.kind === 'audiooutput');
+
+  // Recording and voice detection honour the selection below; browser speech
+  // recognition cannot, because the Web Speech API accepts no deviceId. When
+  // the two resolve to different microphones the meter moves while nothing is
+  // transcribed, which is invisible without saying so here.
+  const microphoneRouting = useMemo(
+    () => describeMicrophoneRouting(devices, preferences.microphoneDeviceId),
+    [devices, preferences.microphoneDeviceId],
+  );
 
   const persist = useCallback((patch: Partial<MediaPreferences>) => {
     setPreferences((current) => setMediaPreferences({ ...current, ...patch }));
@@ -686,6 +696,13 @@ export default function AudioVideoSettings() {
             ))}
           </select>
         </SettingRow>
+
+        {microphoneRouting.message ? (
+          <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-3.5 py-3 text-[11px] leading-relaxed text-amber-200/90">
+            <span className="font-semibold">Speech-to-text uses a different input. </span>
+            {microphoneRouting.message}
+          </div>
+        ) : null}
 
         <SettingRow label="Input level" description="Speak normally while the 5-second recording is running. The meter should move without staying pinned at 100%.">
           <div className="h-2.5 rounded-full bg-white/10 overflow-hidden border border-white/[0.06]" aria-label={`Microphone input level ${Math.round(micLevel * 100)}%`}>

@@ -4,6 +4,60 @@
  * Extended with queue-based speaking for TV Mode / Play Story integration
  */
 
+/**
+ * Minimum time a recognition session must stay open before a caller-requested
+ * stop is honoured.
+ *
+ * Chrome does not start streaming audio the instant `recognition.start()`
+ * resolves — it opens its own capture, connects to the recognizer, and only then
+ * begins emitting `audiostart` / `speechstart` / results. HomePilot's VAD, by
+ * contrast, fires as soon as the waveform crosses the threshold, so a short
+ * utterance can reach `vad_silence` while the recognizer is still warming up.
+ * Stopping there finalizes an empty session: no result, and not even a
+ * `no-speech` error, because `stop()` ends cleanly.
+ *
+ * So a stop arriving before this deadline is deferred rather than dropped.
+ */
+const STT_MIN_LISTEN_MS = 1600;
+
+/**
+ * Hard ceiling for a deferred stop, so a recognizer that never reports audio
+ * cannot hold the turn open forever.
+ */
+const STT_MAX_LISTEN_MS = 12000;
+
+/**
+ * Mirror of `microphoneDebug()` from `src/ui/media/microphoneDebug.ts`.
+ *
+ * This file is a plain classic script served from `public/`, so it cannot
+ * import the TypeScript module. It appends to the same ring buffer with the
+ * same entry shape and the same console prefix, so one DevTools filter on
+ * `HomePilot:Mic` still shows Settings, chat, Voice, VAD and this service
+ * interleaved in real order.
+ *
+ * Metadata only — never audio bytes and never recognized transcript text.
+ */
+function micTrace(event, details) {
+    const entry = {
+        seq: (micTrace._seq = (micTrace._seq || 0) + 1),
+        at: new Date().toISOString(),
+        scope: 'speech-service',
+        event,
+        details: details || {},
+    };
+    try {
+        const history = window.__HOMEPILOT_MIC_DEBUG__ || [];
+        history.push(entry);
+        if (history.length > 200) history.splice(0, history.length - 200);
+        window.__HOMEPILOT_MIC_DEBUG__ = history;
+        window.dispatchEvent(new CustomEvent('homepilot:microphone-debug', { detail: entry }));
+    } catch (e) {
+        // Diagnostics must never interfere with microphone capture.
+    }
+    console.info(`[HomePilot:Mic][speech-service] ${event}`, entry.details);
+    return entry;
+}
+
 class SpeechService {
     constructor() {
         // Speech Recognition (Speech-to-Text)
@@ -19,6 +73,30 @@ class SpeechService {
             onStart: null,
             onEnd: null,
         };
+
+        // Language used for recognition. Overridable so a non-English user is
+        // not silently transcribed as English (a very common "it hears nothing"
+        // report that is really "it heard the wrong language").
+        this.recognitionLang = this.loadRecognitionLang();
+
+        /**
+         * What the browser actually reported during the most recent recognition
+         * session. This is the evidence needed to tell the three failure modes
+         * apart, which are indistinguishable from `hadResult: false` alone:
+         *
+         *   - `sawAudioStart === false` → the recognizer never opened a capture
+         *     (permission, or another consumer holds the default input).
+         *   - `sawAudioStart && !sawSpeechStart` → it captured, but from a
+         *     silent device — typically the OS default while HomePilot's VAD
+         *     watches a different, explicitly selected microphone.
+         *   - `sawSpeechStart && !sawResult` → it heard speech but produced no
+         *     transcript (cut off too early, wrong language, or `nomatch`).
+         */
+        this.lastSttDiagnostics = this.emptySttDiagnostics();
+
+        this.sttStartedAt = 0;
+        this.pendingStopTimer = null;
+        this.stopRequested = false;
 
         // Speech Synthesis (Text-to-Speech)
         this.synthesis = window.speechSynthesis;
@@ -45,6 +123,54 @@ class SpeechService {
 
         this.initializeSpeechRecognition();
         this.initializeSpeechSynthesis();
+    }
+
+    emptySttDiagnostics() {
+        return {
+            startedAt: 0,
+            elapsedMs: 0,
+            sawAudioStart: false,
+            sawSoundStart: false,
+            sawSpeechStart: false,
+            sawInterim: false,
+            sawResult: false,
+            sawNoMatch: false,
+            error: null,
+            lang: this.recognitionLang || 'en-US',
+            stoppedBy: null,
+        };
+    }
+
+    /**
+     * Snapshot of the last recognition session, for the Settings self-test and
+     * for anyone reading `window.SpeechService.getSttDiagnostics()` in DevTools.
+     */
+    getSttDiagnostics() {
+        return { ...this.lastSttDiagnostics };
+    }
+
+    loadRecognitionLang() {
+        try {
+            const saved = localStorage.getItem('homepilot_stt_lang');
+            if (saved) return saved;
+        } catch (e) {
+            // Storage can be unavailable in locked-down contexts.
+        }
+        return (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+    }
+
+    /**
+     * Change the recognition language. Takes effect on the next session.
+     */
+    setRecognitionLang(lang) {
+        this.recognitionLang = lang || 'en-US';
+        if (this.recognition) this.recognition.lang = this.recognitionLang;
+        try {
+            localStorage.setItem('homepilot_stt_lang', this.recognitionLang);
+        } catch (e) {
+            // Non-fatal: the language still applies for this session.
+        }
+        micTrace('recognition_lang_set', { lang: this.recognitionLang });
     }
 
     /**
@@ -118,11 +244,46 @@ class SpeechService {
             this.recognition = new SpeechRecognition();
             this.recognition.continuous = false;
             this.recognition.interimResults = true;
-            this.recognition.lang = 'en-US';
+            this.recognition.lang = this.recognitionLang;
 
             this.recognition.onstart = () => {
                 this.isRecognizing = true;
+                micTrace('recognition_onstart', { lang: this.recognition.lang });
                 if (this.recognitionCallbacks.onStart) this.recognitionCallbacks.onStart();
+            };
+
+            // The four lifecycle events below are what make a silent failure
+            // diagnosable. Without them `onend` with no result looks identical
+            // whether the recognizer never got audio, got audio from a silent
+            // device, or heard speech it could not transcribe.
+            this.recognition.onaudiostart = () => {
+                this.lastSttDiagnostics.sawAudioStart = true;
+                micTrace('recognition_audiostart', {
+                    elapsedMs: this.sttElapsedMs(),
+                });
+            };
+
+            this.recognition.onsoundstart = () => {
+                this.lastSttDiagnostics.sawSoundStart = true;
+                micTrace('recognition_soundstart', { elapsedMs: this.sttElapsedMs() });
+            };
+
+            this.recognition.onspeechstart = () => {
+                this.lastSttDiagnostics.sawSpeechStart = true;
+                micTrace('recognition_speechstart', { elapsedMs: this.sttElapsedMs() });
+            };
+
+            this.recognition.onspeechend = () => {
+                micTrace('recognition_speechend', { elapsedMs: this.sttElapsedMs() });
+            };
+
+            this.recognition.onaudioend = () => {
+                micTrace('recognition_audioend', { elapsedMs: this.sttElapsedMs() });
+            };
+
+            this.recognition.onnomatch = () => {
+                this.lastSttDiagnostics.sawNoMatch = true;
+                micTrace('recognition_nomatch', { elapsedMs: this.sttElapsedMs() });
             };
 
             this.recognition.onresult = (event) => {
@@ -138,17 +299,46 @@ class SpeechService {
                     }
                 }
 
-                if (interimTranscript && this.recognitionCallbacks.onInterim) {
-                    this.recognitionCallbacks.onInterim(interimTranscript.trim());
+                if (interimTranscript) {
+                    // Recorded whether or not anyone is subscribed: "the browser
+                    // produced an interim" is evidence about the *device*, and a
+                    // caller with no onInterim handler must not erase it.
+                    this.lastSttDiagnostics.sawInterim = true;
+                    // Character count only — the trace never carries transcript text.
+                    micTrace('recognition_interim', {
+                        characters: interimTranscript.trim().length,
+                        elapsedMs: this.sttElapsedMs(),
+                    });
+                    if (this.recognitionCallbacks.onInterim) {
+                        this.recognitionCallbacks.onInterim(interimTranscript.trim());
+                    }
                 }
 
-                if (finalTranscript && this.recognitionCallbacks.onResult) {
-                    this.recognitionCallbacks.onResult(finalTranscript.trim());
+                if (finalTranscript) {
+                    this.lastSttDiagnostics.sawResult = true;
+                    micTrace('recognition_final', {
+                        characters: finalTranscript.trim().length,
+                        elapsedMs: this.sttElapsedMs(),
+                    });
+                    // A result makes any deferred stop moot: the turn is over.
+                    this.clearPendingStop();
+                    if (this.recognitionCallbacks.onResult) {
+                        this.recognitionCallbacks.onResult(finalTranscript.trim());
+                    }
                 }
             };
 
             this.recognition.onerror = (event) => {
                 this.isRecognizing = false;
+                this.clearPendingStop();
+                this.lastSttDiagnostics.error = event.error || 'unknown';
+                this.lastSttDiagnostics.elapsedMs = this.sttElapsedMs();
+                micTrace('recognition_onerror', {
+                    error: event.error || 'unknown',
+                    elapsedMs: this.lastSttDiagnostics.elapsedMs,
+                    sawAudioStart: this.lastSttDiagnostics.sawAudioStart,
+                    sawSpeechStart: this.lastSttDiagnostics.sawSpeechStart,
+                });
                 if (this.recognitionCallbacks.onError) {
                     this.recognitionCallbacks.onError(event.error);
                 }
@@ -156,9 +346,34 @@ class SpeechService {
 
             this.recognition.onend = () => {
                 this.isRecognizing = false;
+                this.clearPendingStop();
+                this.lastSttDiagnostics.elapsedMs = this.sttElapsedMs();
+                micTrace('recognition_onend', {
+                    elapsedMs: this.lastSttDiagnostics.elapsedMs,
+                    sawAudioStart: this.lastSttDiagnostics.sawAudioStart,
+                    sawSpeechStart: this.lastSttDiagnostics.sawSpeechStart,
+                    sawInterim: this.lastSttDiagnostics.sawInterim,
+                    sawResult: this.lastSttDiagnostics.sawResult,
+                    sawNoMatch: this.lastSttDiagnostics.sawNoMatch,
+                    stoppedBy: this.lastSttDiagnostics.stoppedBy,
+                    error: this.lastSttDiagnostics.error,
+                });
                 if (this.recognitionCallbacks.onEnd) this.recognitionCallbacks.onEnd();
             };
         }
+    }
+
+    sttElapsedMs() {
+        if (!this.sttStartedAt) return 0;
+        return Math.max(0, Math.round(performance.now() - this.sttStartedAt));
+    }
+
+    clearPendingStop() {
+        if (this.pendingStopTimer) {
+            clearTimeout(this.pendingStopTimer);
+            this.pendingStopTimer = null;
+        }
+        this.stopRequested = false;
     }
 
     initializeSpeechSynthesis() {
@@ -236,27 +451,130 @@ class SpeechService {
 
     async startSTT(callbacks = {}) {
         if (!this.isRecognitionSupported) {
+            micTrace('start_unsupported');
             if (callbacks.onError) callbacks.onError('Speech recognition not supported');
             return false;
         }
 
-        if (this.isRecognizing) return false;
+        if (this.isRecognizing) {
+            micTrace('start_skipped_already_recognizing');
+            return false;
+        }
 
         this.recognitionCallbacks = { ...this.recognitionCallbacks, ...callbacks };
+
+        this.clearPendingStop();
+        this.sttStartedAt = performance.now();
+        this.lastSttDiagnostics = this.emptySttDiagnostics();
+        this.lastSttDiagnostics.startedAt = Date.now();
+        this.recognition.lang = this.recognitionLang;
+
+        micTrace('start_requested', { lang: this.recognition.lang });
 
         try {
             this.recognition.start();
             return true;
         } catch (error) {
-            if (callbacks.onError) callbacks.onError('Failed to start recognition');
+            // `start()` throws InvalidStateError when a session is already live
+            // on this page — including one owned by a *different* recognizer
+            // object. Reporting the real reason beats the old generic message.
+            this.lastSttDiagnostics.error = error && error.name ? error.name : 'start_failed';
+            micTrace('start_failed', {
+                errorName: (error && error.name) || 'Error',
+                errorMessage: (error && error.message) || String(error),
+            });
+            if (callbacks.onError) callbacks.onError(this.lastSttDiagnostics.error);
             return false;
         }
     }
 
-    stopSTT() {
-        if (this.isRecognizing && this.recognition) {
-            this.recognition.stop();
+    /**
+     * Ask the recognizer to finish the current turn.
+     *
+     * A stop that arrives before `STT_MIN_LISTEN_MS` while nothing has been
+     * recognized yet is *deferred*, not dropped. Honouring it immediately is
+     * what produced the classic `stt_onend { hadResult: false }` with no
+     * interim and no error: HomePilot's VAD reaches its silence window before
+     * Chrome's recognizer has streamed enough audio to finalize anything.
+     *
+     * Pass `{ force: true }` to stop right now (an explicit user action, a
+     * teardown, or a turn lock — none of which should wait for a transcript).
+     */
+    stopSTT(options = {}) {
+        const force = Boolean(options.force);
+        const reason = options.reason || 'unspecified';
+
+        if (!this.isRecognizing || !this.recognition) {
+            micTrace('stop_ignored_not_recognizing', { reason, force });
+            return false;
         }
+
+        const elapsedMs = this.sttElapsedMs();
+        const settled = this.lastSttDiagnostics.sawResult;
+        const warmingUp = elapsedMs < STT_MIN_LISTEN_MS && !settled;
+
+        if (!force && warmingUp) {
+            if (this.pendingStopTimer) {
+                micTrace('stop_already_deferred', { reason, elapsedMs });
+                return false;
+            }
+            const waitMs = Math.min(
+                STT_MIN_LISTEN_MS - elapsedMs,
+                Math.max(0, STT_MAX_LISTEN_MS - elapsedMs),
+            );
+            this.stopRequested = true;
+            micTrace('stop_deferred_warming_up', {
+                reason,
+                elapsedMs,
+                waitMs,
+                minListenMs: STT_MIN_LISTEN_MS,
+                sawAudioStart: this.lastSttDiagnostics.sawAudioStart,
+                sawSpeechStart: this.lastSttDiagnostics.sawSpeechStart,
+            });
+            this.pendingStopTimer = setTimeout(() => {
+                this.pendingStopTimer = null;
+                this.stopRequested = false;
+                if (!this.isRecognizing) return;
+                // A result may have landed while we waited; `onresult` already
+                // cleared the timer in that case, so reaching here means the
+                // turn is genuinely over.
+                this.lastSttDiagnostics.stoppedBy = `${reason}:deferred`;
+                micTrace('stop_applied_after_defer', {
+                    reason,
+                    elapsedMs: this.sttElapsedMs(),
+                });
+                try { this.recognition.stop(); } catch (e) { /* already ending */ }
+            }, waitMs);
+            return false;
+        }
+
+        this.lastSttDiagnostics.stoppedBy = force ? `${reason}:forced` : reason;
+        micTrace('stop_applied', { reason, force, elapsedMs });
+        try {
+            this.recognition.stop();
+        } catch (e) {
+            micTrace('stop_failed', { reason, errorName: (e && e.name) || 'Error' });
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Drop the current session immediately without waiting for a transcript.
+     * Used when another surface needs the microphone right now.
+     */
+    abortSTT(reason = 'abort') {
+        this.clearPendingStop();
+        if (!this.recognition) return false;
+        this.lastSttDiagnostics.stoppedBy = `${reason}:aborted`;
+        micTrace('abort_requested', { reason, elapsedMs: this.sttElapsedMs() });
+        try {
+            this.recognition.abort();
+        } catch (e) {
+            return false;
+        }
+        this.isRecognizing = false;
+        return true;
     }
 
     /**
@@ -657,4 +975,6 @@ class SpeechService {
 }
 
 const speechService = new SpeechService();
+speechService.STT_MIN_LISTEN_MS = STT_MIN_LISTEN_MS;
+speechService.STT_MAX_LISTEN_MS = STT_MAX_LISTEN_MS;
 window.SpeechService = speechService;

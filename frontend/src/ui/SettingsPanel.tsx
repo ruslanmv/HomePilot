@@ -34,6 +34,7 @@ import ComputeSettingsTabs from "./components/compute/ComputeSettingsTabs";
 import ModelExecutionSelector from "./components/compute/ModelExecutionSelector";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import TtsEngineSection from "./components/TtsEngineSection";
+import VoiceAssistantSelfTest from "./components/VoiceAssistantSelfTest";
 // MS32. The one place an environment-variable name is allowed to reach a user:
 // they opened Settings, which is the act of asking a configuration question.
 import { MeetingTranscriptionCard } from "./meetingsense/MeetingTranscriptionCard";
@@ -1328,6 +1329,13 @@ export default function SettingsPanel({
 
         <div className="border-t border-white/[0.06] pt-4">
           <TtsEngineSection systemVoices={availableVoices} />
+        </div>
+
+        {/* Verifying voice needs both directions in one place: a microphone
+            playback test proves the device works, but it cannot tell the user
+            whether their speech becomes text. */}
+        <div className="pt-1">
+          <VoiceAssistantSelfTest />
         </div>
 
         {/* Contributes no node at all when MeetingSense is off on this server — the

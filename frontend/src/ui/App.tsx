@@ -36,6 +36,8 @@ import {
   LayoutGrid,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
+import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
+import { explainSttError, explainSttOutcome, getSpeechRecognitionCtor, type SttDiagnostics } from './media/voiceSelfTest'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
@@ -1613,7 +1615,13 @@ function QueryBar({
 
   // ---- Speech-to-text for the mic button ----
   const [isListening, setIsListening] = useState(false)
+  // Surfaced next to the composer. The button used to swallow every failure,
+  // so a blocked permission, an unsupported browser and a recognizer that
+  // heard nothing were all indistinguishable from a dead button.
+  const [micNotice, setMicNotice] = useState<string | null>(null)
   const recognitionRef = useRef<any>(null)
+  const micDiagnosticsRef = useRef<SttDiagnostics>({})
+  const micTranscriptRef = useRef('')
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const modeMenuRef = useRef<HTMLDivElement | null>(null)
   const modeButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -1623,22 +1631,100 @@ function QueryBar({
   const toggleListening = useCallback(() => {
     // Stop if already listening
     if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop()
+      microphoneDebug('chat', 'composer_mic_stop_click')
+      try { recognitionRef.current.stop() } catch { /* already ending */ }
       return
     }
 
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) return
+    setMicNotice(null)
+
+    const SR = getSpeechRecognitionCtor()
+    if (!SR) {
+      microphoneDebug('chat', 'composer_mic_unsupported')
+      setMicNotice('Voice input needs the Web Speech API. Use Chrome or Edge, or type your message.')
+      return
+    }
+
+    // A page can run only one recognition session at a time. Hands-free Voice
+    // mode and the Voice panel both drive `window.SpeechService`, so starting a
+    // second recognizer here used to abort silently and leave the button dead.
+    // Release the shared session first and take the turn deliberately.
+    const shared = (window as any).SpeechService
+    const sharedWasRecognizing = Boolean(shared?.isRecognizing)
+    if (sharedWasRecognizing) {
+      try { shared.abortSTT?.('chat_composer_mic') } catch { /* best effort */ }
+    }
+
+    const lang = shared?.recognitionLang || navigator.language || 'en-US'
+    micDiagnosticsRef.current = {
+      sawAudioStart: false,
+      sawSpeechStart: false,
+      sawInterim: false,
+      sawResult: false,
+      sawNoMatch: false,
+      error: null,
+      lang,
+    }
+    micTranscriptRef.current = ''
+
+    microphoneDebug('chat', 'composer_mic_start_click', {
+      lang,
+      releasedSharedSession: sharedWasRecognizing,
+      recognitionDevice: 'browser-managed-web-speech',
+    })
 
     const recognition = new SR()
     recognition.continuous = false
     recognition.interimResults = true
-    recognition.lang = 'en-US'
+    recognition.lang = lang
     recognitionRef.current = recognition
 
-    recognition.onstart = () => setIsListening(true)
-    recognition.onend = () => { setIsListening(false); recognitionRef.current = null }
-    recognition.onerror = () => { setIsListening(false); recognitionRef.current = null }
+    recognition.onstart = () => {
+      microphoneDebug('chat', 'composer_mic_onstart', { lang })
+      setIsListening(true)
+    }
+
+    // Without these, "it recorded nothing" cannot be told apart from "it never
+    // opened the microphone" — the same blind spot Voice mode had.
+    recognition.onaudiostart = () => {
+      micDiagnosticsRef.current.sawAudioStart = true
+      microphoneDebug('chat', 'composer_mic_audiostart')
+    }
+    recognition.onspeechstart = () => {
+      micDiagnosticsRef.current.sawSpeechStart = true
+      microphoneDebug('chat', 'composer_mic_speechstart')
+    }
+    recognition.onnomatch = () => {
+      micDiagnosticsRef.current.sawNoMatch = true
+      microphoneDebug('chat', 'composer_mic_nomatch')
+    }
+
+    recognition.onend = () => {
+      const diagnostics = micDiagnosticsRef.current
+      microphoneDebug('chat', 'composer_mic_onend', {
+        characters: micTranscriptRef.current.trim().length,
+        sawAudioStart: diagnostics.sawAudioStart ?? null,
+        sawSpeechStart: diagnostics.sawSpeechStart ?? null,
+        sawInterim: diagnostics.sawInterim ?? null,
+        sawNoMatch: diagnostics.sawNoMatch ?? null,
+        error: diagnostics.error ?? null,
+      })
+      setIsListening(false)
+      recognitionRef.current = null
+      // Say why nothing arrived instead of resetting the button in silence.
+      if (!micTranscriptRef.current.trim()) {
+        const outcome = explainSttOutcome(diagnostics, '')
+        setMicNotice(`${outcome.headline}. ${outcome.detail}`)
+      }
+    }
+
+    recognition.onerror = (event: any) => {
+      micDiagnosticsRef.current.error = event?.error || 'unknown'
+      microphoneDebugError('chat', 'composer_mic_error', new Error(event?.error || 'unknown'))
+      // `onend` always follows and renders the verdict; keep the state reset
+      // here so the button never sticks if it does not.
+      setIsListening(false)
+    }
 
     recognition.onresult = (event: any) => {
       let finalTranscript = ''
@@ -1648,11 +1734,25 @@ function QueryBar({
         if (event.results[i].isFinal) finalTranscript += t + ' '
         else interimTranscript += t
       }
+      if (interimTranscript) micDiagnosticsRef.current.sawInterim = true
+      if (finalTranscript) {
+        micDiagnosticsRef.current.sawResult = true
+        micTranscriptRef.current = finalTranscript
+      }
       // Show interim text while speaking, final text when done
       setInput(finalTranscript.trim() || interimTranscript)
     }
 
-    try { recognition.start() } catch { /* already started */ }
+    try {
+      recognition.start()
+    } catch (error) {
+      recognitionRef.current = null
+      setIsListening(false)
+      const name = (error as { name?: string })?.name || 'start_failed'
+      microphoneDebugError('chat', 'composer_mic_start_failed', error)
+      const outcome = explainSttError(name)
+      setMicNotice(`${outcome.headline}. ${outcome.detail}`)
+    }
   }, [isListening, setInput])
 
   useEffect(() => {
@@ -1847,6 +1947,28 @@ function QueryBar({
             </button>
           )}
         </div>
+
+        {/* Why voice input produced nothing. Silently resetting the button is
+            what made it look broken rather than blocked or unsupported. */}
+        {micNotice && (
+          <div className="ps-12 pe-20 pt-2">
+            <div
+              role="status"
+              data-testid="composer-mic-notice"
+              className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-2 text-[11px] leading-relaxed text-amber-200/90"
+            >
+              <span className="flex-1 min-w-0">{micNotice}</span>
+              <button
+                type="button"
+                onClick={() => setMicNotice(null)}
+                className="shrink-0 text-amber-200/60 hover:text-amber-100 transition-colors"
+                aria-label="Dismiss voice input message"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Pending image attachment preview */}
         {pendingPreviewUrl && (
