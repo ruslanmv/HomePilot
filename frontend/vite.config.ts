@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url'
 // consumed as build-time source aliases (not npm workspace deps), so the
 // standalone frontend build/Docker image is unaffected except for copying
 // packages/ into the build context. Matches the tsconfig "paths" entry.
-const PACKAGES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../packages')
+const FRONTEND_DIR = path.dirname(fileURLToPath(import.meta.url))
+const PACKAGES_DIR = path.resolve(FRONTEND_DIR, '../packages')
+const SETTINGS_WITH_MEDIA = path.resolve(FRONTEND_DIR, 'src/ui/SettingsPanelWithMedia.tsx')
 
 // The Vite dev server runs on :3000 but the HomePilot backend lives on
 // :8000. Anything the frontend calls with a relative path must be
@@ -60,6 +62,11 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^@homepilot\/(.*)$/, replacement: `${PACKAGES_DIR}/$1/src` },
+      // Enterprise Settings has an additive Audio & Video wrapper. Make the
+      // runtime route explicit instead of relying on extension precedence:
+      // App.tsx imports `./SettingsPanel`, while the wrapper itself imports
+      // `./SettingsPanel.tsx` explicitly so there is no alias recursion.
+      { find: /^\.\/SettingsPanel$/, replacement: SETTINGS_WITH_MEDIA },
     ],
     extensions: ['.tsx', '.ts', '.mts', '.jsx', '.js', '.mjs', '.json'],
   },
