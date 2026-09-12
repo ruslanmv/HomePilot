@@ -197,6 +197,72 @@ Three rules stop provisional text from costing the transcript that gets kept:
 `hpMeetingSense.partialsDisabled = true` turns live text off. The transcript still arrives,
 one utterance at a time — it is a throughput dial, not a feature flag.
 
+### Media capture — shared audio that never stops
+
+A shared YouTube tab, a video in a deck, music. Every assumption the recorder makes comes
+from *conversation*, and continuous audio breaks all three:
+
+| Assumption | What continuous audio does |
+|---|---|
+| Utterances close on a 350 ms pause | Never closes; every one is an 8 s `HARD_CUT_MS`, so 8 s becomes the whole cadence |
+| Partials are cheap | Re-read a growing buffer ~6× per chunk ≈ **4× realtime** decoding per 1× of audio; a CPU-only box cannot keep up |
+| Quiet means nobody is talking | A quiet passage sits under `SILENCE_RMS`, so nothing opens and that audio is **never registered** |
+| Falling behind is survivable | `shedQueue` drops the oldest **real** utterance once nothing is silent — silent content loss |
+
+So continuous audio gets its own cadence, switched into automatically:
+
+- **Detection** — `MEDIA_STREAK` (2) consecutive hard cuts, i.e. ~16 s of unbroken audio. One
+  hard cut is just a long sentence; switching on it would chop up anyone who talks at length.
+  A close on silence is the counter-evidence and switches straight back.
+- **`MEDIA_HARD_CUT_MS` (2500)** — short fixed windows, still overlapped so the server dedupes.
+  This is also the transcript's latency floor.
+- **No partials** — a 2.5 s segment *is* live text; re-reading the same audio buys nothing.
+  Skipping them is most of what makes continuous capture affordable: decoding becomes linear
+  in the audio instead of quadratic.
+- **`MEDIA_FLOOR_RMS` (0.0015)** — "is anything coming through", not "is somebody talking", so
+  quiet passages are registered. Only essentially digital silence falls below.
+- **`MEDIA_MAX_QUEUE_MS` (120 000)** — media capture promises a *complete record*; nothing in a
+  shared video is a disposable cough, and a transcript that lags beats one with holes. There
+  is still a ceiling, and reaching it fires `ms:audio_dropped` with `lostMs` rather than being
+  absorbed into a counter.
+
+> **The floor governs the close decision too, and it must.** With the speech threshold there, a
+> quiet passage read as silence → closed the utterance → reset the streak out of media mode →
+> and the audio then sat under the speech threshold again and was never registered. The mode
+> oscillated and lost precisely the audio it exists to capture. Above the floor is *content*,
+> so continuous quiet audio hard-cuts on cadence instead.
+
+**Silent channels are not transcribed.** A stereo frame becomes two tracks and each costs an
+inference — so a shared video with nobody talking spent half its budget returning `""` for the
+microphone channel. The client measures the peak per channel while framing (it already
+computes RMS for the meter), sends it as `energy: [them, me]`, and
+`routes.py::_channel_is_silent` skips a track below `SILENT_CHANNEL_PEAK`. It is conservative
+by construction: no hint, a length mismatch, or a non-number all transcribe everything. **A
+hint is an optimisation and must never become the reason something went untranscribed.**
+
+`ms:capture_mode` announces each switch, so shorter segments don't look like a glitch.
+
+#### What you can actually capture
+
+| Share | Audio |
+|---|---|
+| Chrome/Edge **tab** + "Share tab audio" | ✅ |
+| **Window** share | ❌ none, any browser |
+| **Whole screen** | Windows/ChromeOS ✅, macOS ❌, Linux ❌ |
+| Firefox / Safari | ❌ no `getDisplayMedia` audio |
+| Mobile browser | ❌ no `getDisplayMedia` at all |
+| **Desktop app, Windows** | ✅ `audio: 'loopback'` — everything the machine plays, no checkbox |
+| Desktop app, macOS | ❌ no public API; needs a kernel extension or BlackHole |
+
+`desktop/meetingsense-audio.js` is deliberately blunt about this: *"pretending the option
+exists is worse than saying it does not — a user who believes the call is being recorded and
+finds out afterwards that it was not has lost the meeting."*
+
+> **Throughput.** 2.5 s segments at ~1× realtime is within reach of `small` on a decent CPU,
+> but a long video plus a live conversation is two channels of continuous audio. If
+> `ms:audio_dropped` fires, the machine is not keeping up: use `WHISPER_MODEL=large-v3-turbo`
+> on a GPU, or accept the lag.
+
 ### The meeting microphone
 
 The recorder reads `homepilot_media_preferences_v1` directly (`micConstraints()`) — it is a
@@ -445,3 +511,7 @@ pip install -r requirements/speech-cpu.txt     # or .[whisper]
 | Meeting records the wrong microphone | §3.5. Was fixed; check `ms:mic_fallback` for a selected device that was gone. |
 | Meeting hears the call's voices as you | Echo cancellation off with system audio on speakers. §3.5. |
 | Meeting transcript is blank but slides work | `get_meeting_stt_provider()` has no local model. Meetings never fall back to `STT_BASE_URL` on their own — see `meeting_stt_policy()`. |
+| Shared video is not transcribed at all | No audio track: window share, macOS screen share, or "Share tab audio" unticked. See the capture table in §3.5. |
+| Shared video transcript has gaps | `ms:audio_dropped` — the machine is behind. Turbo + GPU, or accept the lag. |
+| Quiet parts of a video are missing | Media mode should cover this via `MEDIA_FLOOR_RMS`; check `ms:capture_mode` actually fired. |
+| Video audio is transcribed twice, as both speakers | Playing through speakers with mic echo cancellation off. |

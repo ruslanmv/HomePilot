@@ -34,6 +34,15 @@ rules — see [`VOICE.md`](VOICE.md). Meetings deliberately ask `get_meeting_stt
 which starts from local and never crosses to a configured remote endpoint on its own; voice
 asks `get_stt_provider()`, which does prefer one.
 
+**Shared media is transcribed too.** Share a tab with a video — or, in the Windows desktop
+app, everything the machine plays — and the audio is captured on its own channel and
+transcribed alongside the room. The recorder notices when audio is continuous rather than
+conversational and switches cadence: short overlapped segments, a floor that registers quiet
+passages instead of reading them as silence, and a queue that holds two minutes rather than
+two seconds, because a shared recording has nothing disposable in it. What each share type can
+and cannot capture — window shares and macOS screen shares carry no audio at all — is in
+[`VOICE.md` §3.5](VOICE.md#media-capture--shared-audio-that-never-stops).
+
 **Live text.** The transcript does not wait for an utterance to close. The open utterance is
 transcribed provisionally every ~1.2 s and shown greyed, then replaced by the real segment —
 so a speaker who does not pause still produces text rather than eight seconds of blank

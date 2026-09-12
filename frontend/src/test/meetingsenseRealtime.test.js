@@ -233,3 +233,119 @@ describe('the real-time contract, as source', () => {
     expect(source).toContain("emit('ms:mic_fallback'");
   });
 });
+
+describe('media capture: continuous audio from a shared tab or the machine', () => {
+  /**
+   * The workload the meeting recorder was never designed for. A shared YouTube tab never
+   * goes quiet, so an utterance never closes on silence: every one is an 8 s hard cut, and
+   * partials re-read a growing buffer ~6 times before the real chunk lands — roughly 4x
+   * realtime of decoding per 1x of audio, which a CPU-only machine cannot sustain. Falling
+   * behind is then what makes the queue shed, so the promise of a complete record fails
+   * quietly.
+   */
+
+  it('switches to a short cadence once the audio is continuous', () => {
+    const segmenter = new ms.Segmenter({});
+    expect(segmenter.isMediaMode()).toBe(false);
+
+    // Unbroken sound. Each 8 s hard cut is evidence; MEDIA_STREAK of them is the verdict.
+    const { closed } = feed(segmenter, LOUD, 20_000);
+
+    expect(closed.length).toBeGreaterThanOrEqual(ms.constants.MEDIA_STREAK);
+    expect(segmenter.isMediaMode()).toBe(true);
+    expect(segmenter.effectiveHardCutMs()).toBe(ms.constants.MEDIA_HARD_CUT_MS);
+  });
+
+  it('does not switch on one long sentence', () => {
+    // A single hard cut is somebody talking at length. Chopping them into 2.5 s pieces would
+    // be a regression, so two consecutive cuts are required.
+    const segmenter = new ms.Segmenter({});
+    feed(segmenter, LOUD, 8200);
+    expect(segmenter.isMediaMode()).toBe(false);
+  });
+
+  it('goes back to conversation cadence when the audio starts pausing again', () => {
+    const segmenter = new ms.Segmenter({});
+    feed(segmenter, LOUD, 20_000);
+    expect(segmenter.isMediaMode()).toBe(true);
+
+    // The video stops and a person speaks: a close on silence is the counter-evidence.
+    const talk = feed(segmenter, LOUD, 1200, 20_000);
+    const pause = feed(segmenter, QUIET, 600, talk.endMs);
+
+    expect(pause.closed.length).toBeGreaterThanOrEqual(1);
+    expect(segmenter.isMediaMode()).toBe(false);
+    expect(segmenter.effectiveHardCutMs()).toBe(ms.constants.HARD_CUT_MS);
+  });
+
+  it('registers quiet audio that the speech threshold would have ignored', () => {
+    // The failure that loses content outright: a quiet passage of a shared video sits under
+    // SILENCE_RMS, so nothing opens and that audio is never transcribed at all.
+    const quietMedia = ms.constants.SILENCE_RMS / 2;
+    expect(quietMedia).toBeGreaterThan(ms.constants.MEDIA_FLOOR_RMS);
+
+    const conversation = new ms.Segmenter({});
+    feed(conversation, quietMedia, 3000);
+    expect(conversation._inSpeech).toBe(false); // below the speech threshold: ignored
+
+    const media = new ms.Segmenter({});
+    feed(media, LOUD, 20_000);
+    expect(media.isMediaMode()).toBe(true);
+    feed(media, quietMedia, 1000, 20_000);
+    expect(media._inSpeech).toBe(true); // any sound at all is registered
+  });
+
+  it('cuts media segments at the short cadence, not the conversational one', () => {
+    const segmenter = new ms.Segmenter({});
+    feed(segmenter, LOUD, 20_000); // establish media mode
+    const after = feed(segmenter, LOUD, 8000, 20_000);
+
+    // 8 s of continuous audio now yields several segments instead of one.
+    expect(after.closed.length).toBeGreaterThanOrEqual(2);
+    for (const utterance of after.closed) {
+      expect(utterance.t1 - utterance.t0).toBeLessThanOrEqual(ms.constants.MEDIA_HARD_CUT_MS + 400);
+      expect(utterance.mediaMode).toBe(true);
+    }
+  });
+
+  it('reports the loudest level per channel so a silent one need not be transcribed', () => {
+    const segmenter = new ms.Segmenter({});
+    // Two channels: the shared tab has sound, the microphone does not.
+    for (let t = 0; t < 1400; t += segmenter.frameMs) {
+      segmenter.push([new Float32Array(320).fill(LOUD), new Float32Array(320).fill(0)], t);
+    }
+    const closed = segmenter.flush();
+
+    expect(closed.peak).toHaveLength(2);
+    expect(closed.peak[0]).toBeGreaterThan(0.1);
+    expect(closed.peak[1]).toBe(0);
+  });
+});
+
+describe('the media-capture contract, as source', () => {
+  const source = readFileSync(SHIPPED, 'utf8');
+
+  it('holds far more media audio before dropping any of it', () => {
+    // Two seconds is right for a conversation, where the newest words are what is awaited.
+    // Media capture promises a complete record, so lagging must beat losing.
+    expect(source).toContain('MEDIA_MAX_QUEUE_MS');
+    expect(source).toContain('const budget = media ? MEDIA_MAX_QUEUE_MS : MAX_QUEUE_MS');
+  });
+
+  it('announces dropped audio instead of only counting it', () => {
+    expect(source).toContain("emit('ms:audio_dropped'");
+    expect(source).toContain('lostMs');
+  });
+
+  it('stops paying for partials once segments arrive every few seconds', () => {
+    expect(source).toContain('this._segmenter.isMediaMode()) return false');
+  });
+
+  it('says when the cadence changed, so shorter segments do not look like a glitch', () => {
+    expect(source).toContain("emit('ms:capture_mode'");
+  });
+
+  it('sends the per-channel energy hint on the wire', () => {
+    expect(source).toContain('energy: utterance.peak');
+  });
+});

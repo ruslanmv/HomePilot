@@ -87,6 +87,8 @@
  *   ms:status      counters, mute, behind_ms   detail: {elapsed, segments, slides, ...}
  *   ms:audio_lost  a track ended mid-meeting   detail: {track, audioMode}
  *   ms:mic_fallback  the selected mic was gone   detail: {requestedDeviceId}
+ *   ms:capture_mode  conversation ⇄ media cadence detail: {mediaMode, segmentMs, audioMode}
+ *   ms:audio_dropped the queue had to shed        detail: {chunks, lostMs, mediaMode}
  *   ms:reconnecting  the socket dropped        detail: {attempt, delay, meetingId}
  *   ms:resumed       the meeting continued     detail: {meeting_id, segments, seq}
  *   ms:chip        an offer on the card        detail: {id, kind, text, t0, proposal?}
@@ -140,6 +142,60 @@
      * This is the release valve.
      */
     const PARTIAL_TIMEOUT_MS = 4000;
+
+    /**
+     * ── Media capture: shared audio that never stops ──────────────────────────────────────
+     *
+     * A shared YouTube tab, a video in a deck, music. Every assumption the recorder makes
+     * comes from *conversation*, and continuous audio breaks all three:
+     *
+     *   - it never goes quiet, so an utterance never closes on silence and every one is an
+     *     8 s hard cut. Eight seconds becomes the transcript's entire cadence;
+     *   - partials then re-read a growing buffer ~6 times before the real chunk arrives,
+     *     which is roughly 4x realtime of decoding per 1x of audio. A CPU-only machine does
+     *     not keep up, and falling behind is what makes the queue start shedding;
+     *   - a quiet passage sits below the speech threshold, so nothing opens at all and that
+     *     audio is never registered.
+     *
+     * So continuous audio gets its own cadence: short fixed windows, still overlapped so the
+     * server can dedupe, and no partials — a 2.5 s segment *is* live text, and reading the
+     * same audio twice buys nothing. Decoding becomes linear in the audio rather than
+     * quadratic, which is what makes "everything the computer played" achievable instead of
+     * aspirational.
+     */
+
+    /** Segment length once the audio is continuous. Also the transcript's latency floor. */
+    const MEDIA_HARD_CUT_MS = 2500;
+
+    /**
+     * Consecutive hard cuts before media cadence takes over.
+     *
+     * Two, so ~16 s of genuinely unbroken audio is the evidence. One hard cut is an ordinary
+     * long sentence, and switching on it would start chopping up anyone who talks at length.
+     */
+    const MEDIA_STREAK = 2;
+
+    /**
+     * The "is anything coming through" floor for media mode, well under the speech threshold.
+     *
+     * `SILENCE_RMS` answers "is somebody talking", which is the wrong question for shared
+     * audio: a quiet passage, distant dialogue or background music all sit beneath it and
+     * would go unregistered. Only true digital silence falls below this, so silence still
+     * costs nothing while quiet audio is no longer thrown away.
+     */
+    const MEDIA_FLOOR_RMS = 0.0015;
+
+    /**
+     * How much unsent media audio to hold before anything is dropped.
+     *
+     * `MAX_QUEUE_MS` is two seconds because in a conversation the newest words are the ones
+     * being waited for, so an old cough is worth dropping. Media capture inverts that: the
+     * point is a complete record, nothing in it is disposable, and a transcript that lags
+     * beats one with holes. Two minutes of 16 kHz mono is tens of megabytes, which is
+     * affordable; unbounded is not — so there is still a ceiling, and reaching it is
+     * announced rather than absorbed.
+     */
+    const MEDIA_MAX_QUEUE_MS = 120000;
 
     /** Shorter than this is a cough, a chair, or a keyboard, and transcribing it costs a
      *  round trip to say so. */
@@ -444,6 +500,11 @@
             this.overlapFrames = Math.round((opts.overlapMs != null ? opts.overlapMs : OVERLAP_MS) / this.frameMs);
             this.partialEveryMs = opts.partialEveryMs != null ? opts.partialEveryMs : PARTIAL_EVERY_MS;
             this.minPartialMs = opts.minPartialMs != null ? opts.minPartialMs : MIN_PARTIAL_MS;
+            /** Whether continuous audio may switch this segmenter to media cadence. */
+            this.adaptiveMedia = opts.adaptiveMedia !== false;
+            this.mediaHardCutMs = opts.mediaHardCutMs != null ? opts.mediaHardCutMs : MEDIA_HARD_CUT_MS;
+            this.mediaStreak = opts.mediaStreak != null ? opts.mediaStreak : MEDIA_STREAK;
+            this.mediaFloor = opts.mediaFloor != null ? opts.mediaFloor : MEDIA_FLOOR_RMS;
 
             this._ring = []; // ambient recent past, so a word's attack is not clipped off
             this._carry = []; // the overlap a hard cut owes the next utterance
@@ -453,6 +514,38 @@
             this._startMs = 0;
             this._speechMs = 0;
             this._lastPartialMs = 0; // when the open utterance was last read provisionally
+            this._hardCutStreak = 0; // consecutive closes that were hard cuts
+            this._mediaMode = false;
+            /** Loudest RMS seen on each channel in the open utterance. Sent as `energy`, so
+             *  the server can skip transcribing a channel that carried no sound at all. */
+            this._peak = [];
+        }
+
+        /**
+         * Whether this segmenter has decided the audio is continuous.
+         *
+         * Read by the recorder to pick a queue budget and to stop sending partials — both are
+         * consequences of the same fact, so the fact lives in one place.
+         */
+        isMediaMode() {
+            return this._mediaMode;
+        }
+
+        /** The threshold that opens an utterance: speech normally, any sound in media mode. */
+        openThreshold() {
+            return this._mediaMode ? Math.min(this.mediaFloor, this.threshold) : this.threshold;
+        }
+
+        /** The cut length in force. Short once the audio is known to be continuous. */
+        effectiveHardCutMs() {
+            return this._mediaMode ? this.mediaHardCutMs : this.hardCutMs;
+        }
+
+        _trackPeak(frame) {
+            for (let c = 0; c < frame.length; c++) {
+                const level = rms(frame[c]);
+                if (this._peak[c] === undefined || level > this._peak[c]) this._peak[c] = level;
+            }
         }
 
         /**
@@ -496,7 +589,9 @@
             const level = Math.max.apply(null, frame.map(rms));
 
             if (!this._inSpeech) {
-                if (level < this.threshold) {
+                // In media mode this floor is "any sound at all", so a quiet passage of a
+                // shared video opens an utterance instead of going unregistered.
+                if (level < this.openThreshold()) {
                     this._ring.push(frame);
                     if (this._ring.length > this.overlapFrames) this._ring.shift();
                     return null;
@@ -512,11 +607,20 @@
                 this._inSpeech = true;
                 this._quietMs = 0;
                 this._speechMs = this.frameMs;
+                this._peak = [];
+                this._trackPeak(frame);
                 return null;
             }
 
             this._frames.push(frame);
-            if (level < this.threshold) {
+            this._trackPeak(frame);
+            // The same floor that opens an utterance also decides what counts as quiet, and
+            // it has to be: with the speech threshold here, a quiet passage of a shared video
+            // read as silence, closed the utterance, reset the streak out of media mode — and
+            // the audio then sat below the speech threshold again and was never registered.
+            // The mode oscillated and lost precisely the audio it exists to capture. Above
+            // the floor is content, so continuous quiet audio hard-cuts on cadence instead.
+            if (level < this.openThreshold()) {
                 this._quietMs += this.frameMs;
             } else {
                 this._quietMs = 0;
@@ -526,7 +630,7 @@
             }
 
             const durationMs = this._frames.length * this.frameMs;
-            if (durationMs >= this.hardCutMs) return this._close(true);
+            if (durationMs >= this.effectiveHardCutMs()) return this._close(true);
             if (this._quietMs >= this.silenceMs && durationMs >= this.minMs) return this._close(false);
             return null;
         }
@@ -551,12 +655,25 @@
          */
         _close(hardCut) {
             const frames = this._frames;
+
+            // Continuous audio is exactly "closes keep being hard cuts". A close on silence
+            // is the counter-evidence, and it resets the streak — so a shared video switches
+            // the cadence within ~16 s, and the conversation after it switches back.
+            if (this.adaptiveMedia) {
+                this._hardCutStreak = hardCut ? this._hardCutStreak + 1 : 0;
+                this._mediaMode = this._hardCutStreak >= this.mediaStreak;
+            }
+
             const utterance = {
                 frames: frames,
                 t0: this._startMs,
                 t1: this._startMs + frames.length * this.frameMs,
                 hardCut: !!hardCut,
                 speechMs: this._speechMs,
+                mediaMode: this._mediaMode,
+                // Loudest level per channel. A channel that carried nothing need not be
+                // transcribed, which is half the work when only one side has sound.
+                peak: this._peak.slice(),
             };
             this._carry = hardCut ? frames.slice(Math.max(0, frames.length - this.overlapFrames)) : [];
             this._ring = [];
@@ -565,6 +682,7 @@
             this._quietMs = 0;
             this._speechMs = 0;
             this._lastPartialMs = 0;
+            this._peak = [];
             return utterance;
         }
     }
@@ -1193,6 +1311,10 @@
          */
         _partialsWanted() {
             if (this.partialsDisabled) return false;
+            // In media mode a segment already arrives every 2.5 s, so a partial would read
+            // the same audio a second time to say what the segment is about to say anyway.
+            // Skipping them is most of what makes continuous capture affordable.
+            if (this._segmenter && this._segmenter.isMediaMode()) return false;
             if (!this._ws || this._ws.readyState !== 1) return false;
             if (this._ws.bufferedAmount > SOCKET_HIGH_WATER) return false;
             if (this._queue.length) return false;
@@ -1242,6 +1364,18 @@
 
         _sendUtterance(utterance) {
             const wav = utteranceToWav(utterance.frames, TARGET_RATE);
+
+            // Announce a cadence change once, when it happens. The card can then say why
+            // segments got shorter rather than leaving it looking like a glitch.
+            if (!!utterance.mediaMode !== !!this._announcedMediaMode) {
+                this._announcedMediaMode = !!utterance.mediaMode;
+                emit('ms:capture_mode', {
+                    mediaMode: this._announcedMediaMode,
+                    segmentMs: this._segmenter ? this._segmenter.effectiveHardCutMs() : null,
+                    audioMode: this.audioMode,
+                });
+            }
+
             this._queue.push({
                 frame: {
                     type: 'audio',
@@ -1249,8 +1383,12 @@
                     data_b64: bytesToBase64(wav),
                     t0: utterance.t0,
                     t1: utterance.t1,
+                    // Per-channel peak level. The server skips transcribing a channel that
+                    // carried no sound, which is half the work when only one side has any.
+                    energy: utterance.peak,
                 },
                 durationMs: utterance.t1 - utterance.t0,
+                mediaMode: !!utterance.mediaMode,
                 // An utterance carrying almost no speech cleared the VAD by accident. When the
                 // queue has to shed, these go first: dropping a cough to keep a sentence.
                 silent: (utterance.speechMs || 0) < MIN_SPEECH_MS,
@@ -1267,9 +1405,29 @@
          * speech a chunk carries rather than by how old it is.
          */
         _pump() {
-            const shed = shedQueue(this._queue, MAX_QUEUE_MS);
+            // Media capture gets a far larger budget, because its promise is a complete
+            // record: nothing in a shared video is a disposable cough, and a transcript that
+            // lags is a much better outcome than one with holes. A conversation keeps the
+            // two-second budget, where the newest words really are the ones being waited for.
+            const media = this._queue.some((item) => item.mediaMode)
+                || (this._segmenter && this._segmenter.isMediaMode());
+            const budget = media ? MEDIA_MAX_QUEUE_MS : MAX_QUEUE_MS;
+
+            const shed = shedQueue(this._queue, budget);
             const dropped = shed.dropped.length;
             this._queue = shed.kept;
+
+            if (dropped) {
+                // Dropping audio used to be a counter on a status frame. For media capture
+                // that is the one failure the user must not have to infer: the recording is
+                // now incomplete, and the transcript will not say so by itself.
+                emit('ms:audio_dropped', {
+                    chunks: dropped,
+                    lostMs: shed.dropped.reduce((n, item) => n + item.durationMs, 0),
+                    mediaMode: !!media,
+                    budgetMs: budget,
+                });
+            }
 
             while (this._queue.length && this._ws && this._ws.readyState === 1) {
                 if (this._ws.bufferedAmount > SOCKET_HIGH_WATER) break;
@@ -1680,6 +1838,10 @@
             PARTIAL_EVERY_MS: PARTIAL_EVERY_MS,
             MIN_PARTIAL_MS: MIN_PARTIAL_MS,
             PARTIAL_TIMEOUT_MS: PARTIAL_TIMEOUT_MS,
+            MEDIA_HARD_CUT_MS: MEDIA_HARD_CUT_MS,
+            MEDIA_STREAK: MEDIA_STREAK,
+            MEDIA_FLOOR_RMS: MEDIA_FLOOR_RMS,
+            MEDIA_MAX_QUEUE_MS: MEDIA_MAX_QUEUE_MS,
             MIN_UTTERANCE_MS: MIN_UTTERANCE_MS,
             SILENCE_CLOSE_MS: SILENCE_CLOSE_MS,
             HARD_CUT_MS: HARD_CUT_MS,
