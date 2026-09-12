@@ -195,6 +195,33 @@
 
 ---
 
+## Voice — speech to text
+
+One-shot transcription for audio the client already recorded. Exists so the web client can
+transcribe **the microphone the user selected**: the browser's `SpeechRecognition` accepts no
+`deviceId` and always records the OS default input, so without this the voice level meter and
+the transcript can come from two different devices with no error reported.
+
+**Not gated by `VOICE_BACKEND_ENABLED`** — that flag guards the server-side LLM+TTS
+orchestration below, not turning bytes into text. `status` reporting `available: false` is how
+a client learns to fall back. Full architecture: [docs/VOICE.md](docs/VOICE.md).
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/v1/voice/stt/status` | GET | Whether this server can transcribe, with provider name and whether it is remote. Never 404s or 500s. |
+| `/v1/voice/transcribe` | POST | Transcribe one recorded clip (multipart: `audio`, optional `format`) |
+| `/v1/voice/transcribe/base64` | POST | Same, from JSON (`data_b64`, optional `format`) |
+| `/v1/voice/session` | WS | Server-side STT → LLM → TTS in one socket. Flag-gated by `VOICE_BACKEND_ENABLED`. |
+
+**Status codes:** `200` with `text: ""` means the clip contained no speech — a success, and a
+different fact from a failure. `413` over 25 MB. `503` no speech provider (body carries
+`capability` and `hint`). `502` the provider itself failed.
+
+**Providers:** `openai-compat` when `STT_BASE_URL` is set (**recordings leave the machine** —
+reported as `remote: true`), else local faster-whisper, else none.
+
+---
+
 ## Logs API (Hugging Face Spaces–style, SSE)
 
 Read-only, additive log streaming for remote debugging — mirrors HF Spaces'

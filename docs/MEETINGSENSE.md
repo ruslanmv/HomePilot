@@ -29,6 +29,11 @@ recorder gets a week of real meetings** — what to run and what to write down i
 > **It ships disabled.** With `MEETINGSENSE_ENABLED` unset, the status endpoint answers
 > honestly, every other route refuses, no table is created and no audio is touched.
 
+Chat and Voice mode speech is a separate path with its own endpoint and its own microphone
+rules — see [`VOICE.md`](VOICE.md). Meetings deliberately ask `get_meeting_stt_provider()`,
+which starts from local and never crosses to a configured remote endpoint on its own; voice
+asks `get_stt_provider()`, which does prefer one.
+
 ## Is it available on this machine?
 
 ```bash

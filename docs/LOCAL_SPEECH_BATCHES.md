@@ -9,6 +9,12 @@ The shipped batches keep their original text and carry a ✅ with what actually 
 receive guarded hooks and nothing else; `get_stt_provider()` keeps its current behaviour for
 voice calls throughout.
 
+> **Related:** this file is the *transcription engine* plan for MeetingSense.
+> [`VOICE.md`](VOICE.md) covers the other consumer of the same providers — chat and Voice mode
+> speech-to-text via `POST /v1/voice/transcribe`, plus text-to-speech and the `HomePilot:Mic`
+> diagnostics. `get_stt_provider()` (voice) and `get_meeting_stt_provider()` (meetings) stay
+> separate on purpose: meetings never cross to a remote endpoint on their own.
+
 ---
 
 ## 0. The experience we are building toward

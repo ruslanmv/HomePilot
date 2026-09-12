@@ -23,6 +23,15 @@ homepilot/
 │           ├── CommunityGallery.tsx  # Community gallery browse + install
 │           ├── communityApi.ts       # Community gallery API client
 │           ├── components/          # Shared UI components
+│           ├── media/               # Microphone & speech plumbing (docs/VOICE.md)
+│           │   ├── mediaPreferences.ts # Selected camera/mic/speaker + constraints
+│           │   ├── sttService.ts    # Record the selected mic → POST /v1/voice/transcribe
+│           │   ├── runtimeTts.ts    # Speak via window.SpeechService (the runtime path)
+│           │   ├── voiceSelfTest.ts # Explains silent STT failures & device routing
+│           │   └── microphoneDebug.ts # The shared `HomePilot:Mic` trace buffer
+│           ├── tts/                 # TTS plugin registry (Web Speech, Piper)
+│           │   ├── shimSpeechService.ts # Routes SpeechService.speak through the registry
+│           │   └── resolveAssistantVoice.ts # Which voice the assistant actually uses
 │           ├── edit/                # Image editing UI (mask, outpaint, background)
 │           ├── enhance/             # Enhancement APIs (upscale, background, capabilities)
 │           ├── sessions/            # Session management UI
@@ -34,7 +43,8 @@ homepilot/
 │               ├── personalities.ts # 15 built-in personality definitions
 │               ├── voices.ts        # 6 voice persona definitions
 │               ├── personalityGating.ts  # Adult gating & persona toggles
-│               └── useVoiceController.ts # Voice state machine
+│               ├── vad.ts           # Adaptive VAD; shares its capture via getStream()
+│               └── useVoiceController.ts # Voice state machine + per-turn recorder
 │
 ├── backend/                         # FastAPI orchestrator (Python 3.11+)
 │   └── app/
@@ -64,6 +74,10 @@ homepilot/
 │       │   ├── policy.py            # Ask-before-acting safety policies
 │       │   ├── runtime_tool_router.py  # Runtime tool dispatch
 │       │   └── sync_service.py      # HomePilot ↔ Forge sync
+│       ├── voice/                   # Speech providers & routes (docs/VOICE.md)
+│       │   ├── providers.py         # get_stt_provider / get_tts_provider selection
+│       │   ├── transcribe.py        # POST /v1/voice/transcribe, GET /v1/voice/stt/status
+│       │   └── routes.py            # WS /v1/voice/session (flag-gated)
 │       ├── personalities/           # Persona & personality system
 │       │   ├── registry.py          # Thread-safe personality registry
 │       │   ├── prompt_builder.py    # Dynamic system prompt assembly

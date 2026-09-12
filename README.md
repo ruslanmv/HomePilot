@@ -614,6 +614,7 @@ ProjectTemplate(
 - [x] Web Search MCP server with SearXNG (home) and Tavily (enterprise) providers
 - [x] Voice mode media rendering (images and videos)
 - [x] Voice Input/Output with browser TTS and speech recognition
+- [x] Speech-to-text on the microphone you selected, transcribed locally, with the browser recognizer as fallback ([docs/VOICE.md](docs/VOICE.md))
 - [x] Voice narration with TTS (6 voice personas, speed control, hands-free mode)
 - [x] 15 built-in personality agents with backend-authoritative prompts
 - [x] Custom Personas with linked/unlinked project modes
