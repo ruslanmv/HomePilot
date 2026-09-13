@@ -675,12 +675,17 @@ export function useVoiceController(
         if (deaf) {
           const recovery = planSttRecovery(deafTurnsRef.current, {
             backendUsable: backendUsableRef.current,
+            // Hands-free holds the selected microphone open for the whole session, so the
+            // browser recognizer was competing with us for the device. That is a second
+            // explanation for an identical trace, and it has a different fix.
+            homepilotHoldsMicrophone: Boolean(vadRef.current?.isRunning?.()),
           });
           if (recovery.action !== 'none') {
             microphoneDebug('voice', 'stt_deaf_recognizer_recovery', {
               action: recovery.action,
               deafTurns: deafTurnsRef.current,
               backendUsable: backendUsableRef.current,
+              homepilotHeldMicrophone: Boolean(vadRef.current?.isRunning?.()),
             });
             // Counted from zero either way: after a switch the next run of deaf turns is
             // about the new engine, and after advice the user needs room to act on it

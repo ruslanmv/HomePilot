@@ -21,6 +21,18 @@
 const STT_MIN_LISTEN_MS = 1600;
 
 /**
+ * How long to keep a recognizer open that has captured audio but heard no speech at all.
+ *
+ * HomePilot's VAD decides the turn is over from *its* microphone, which is not the one the
+ * browser recognizer is recording. When the recognizer has not heard a syllable, that verdict
+ * says nothing about this turn, and honouring it immediately guarantees an empty one. Five
+ * seconds is past the point where Chrome's own endpointer would have fired on real speech, so
+ * a turn that reaches it was never going to produce text — and now says so with evidence
+ * rather than with a stop we chose.
+ */
+const STT_NO_SPEECH_GRACE_MS = 5000;
+
+/**
  * Hard ceiling for a deferred stop, so a recognizer that never reports audio
  * cannot hold the turn open forever.
  */
@@ -94,7 +106,8 @@ class SpeechService {
          */
         this.lastSttDiagnostics = this.emptySttDiagnostics();
 
-        this.sttStartedAt = 0;
+        /** `performance.now()` when the current turn opened, or `null` between turns. */
+        this.sttStartedAt = null;
         this.pendingStopTimer = null;
         this.stopRequested = false;
 
@@ -364,7 +377,10 @@ class SpeechService {
     }
 
     sttElapsedMs() {
-        if (!this.sttStartedAt) return 0;
+        // `null`, not falsy: `performance.now()` can legitimately return 0, and treating that
+        // as "no turn in progress" pins the elapsed reading at 0 for the whole session — which
+        // makes every stop look like it arrived during warm-up and every guard below unreachable.
+        if (this.sttStartedAt === null) return 0;
         return Math.max(0, Math.round(performance.now() - this.sttStartedAt));
     }
 
@@ -512,14 +528,30 @@ class SpeechService {
         const elapsedMs = this.sttElapsedMs();
         const settled = this.lastSttDiagnostics.sawResult;
         const warmingUp = elapsedMs < STT_MIN_LISTEN_MS && !settled;
+        // The recognizer has been listening and has not heard a syllable. Our caller's silence
+        // window is evidence about *its own* microphone, and this recognizer is on a different
+        // one — so it is not evidence that this turn is over. Stopping now can only produce an
+        // empty turn, where waiting costs nothing that was going to become text anyway.
+        //
+        // On a marginal device (a quiet or distant input) the extra window is sometimes all it
+        // needs. On a genuinely silent one it buys the thing the trace could not previously
+        // claim: `sawSpeechStart: false` after the recognizer was given every chance, rather
+        // than after we cut it off at 2.4 s. That difference decides whether "the browser
+        // recognizer is deaf here" is a diagnosis or a guess.
+        const heardNothingYet = !settled
+            && this.lastSttDiagnostics.sawAudioStart
+            && !this.lastSttDiagnostics.sawSpeechStart
+            && !this.lastSttDiagnostics.sawInterim
+            && elapsedMs < STT_NO_SPEECH_GRACE_MS;
 
-        if (!force && warmingUp) {
+        if (!force && (warmingUp || heardNothingYet)) {
             if (this.pendingStopTimer) {
                 micTrace('stop_already_deferred', { reason, elapsedMs });
                 return false;
             }
+            const target = heardNothingYet ? STT_NO_SPEECH_GRACE_MS : STT_MIN_LISTEN_MS;
             const waitMs = Math.min(
-                STT_MIN_LISTEN_MS - elapsedMs,
+                target - elapsedMs,
                 Math.max(0, STT_MAX_LISTEN_MS - elapsedMs),
             );
             this.stopRequested = true;
@@ -527,6 +559,8 @@ class SpeechService {
                 reason,
                 elapsedMs,
                 waitMs,
+                // Which guard held it, so a longer turn does not read as a hang.
+                deferredBy: heardNothingYet && !warmingUp ? 'no_speech_yet' : 'warming_up',
                 minListenMs: STT_MIN_LISTEN_MS,
                 sawAudioStart: this.lastSttDiagnostics.sawAudioStart,
                 sawSpeechStart: this.lastSttDiagnostics.sawSpeechStart,
@@ -976,5 +1010,6 @@ class SpeechService {
 
 const speechService = new SpeechService();
 speechService.STT_MIN_LISTEN_MS = STT_MIN_LISTEN_MS;
+speechService.STT_NO_SPEECH_GRACE_MS = STT_NO_SPEECH_GRACE_MS;
 speechService.STT_MAX_LISTEN_MS = STT_MAX_LISTEN_MS;
 window.SpeechService = speechService;

@@ -49,7 +49,12 @@ const OPTIONS: readonly Option[] = [
     id: 'web-speech',
     label: 'Browser',
     icon: Globe,
-    summary: 'Your browser’s built-in speech recognition. Nothing to install.',
+    // The device caveat is the first bullet below, but the summary is the line people read
+    // before choosing, and it is the single fact that decides whether this option can work
+    // on a given machine. It belongs where the choice is made, not only where it is justified.
+    summary:
+      'Your browser’s built-in speech recognition. Nothing to install, but it records your ' +
+      'system default microphone, not the one selected in Audio & Video.',
     goods: ['Shows words as you speak', 'No setup, no CPU cost'],
     bads: [
       'Records your system default input, not the microphone selected in Audio & Video',

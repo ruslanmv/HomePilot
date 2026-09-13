@@ -93,6 +93,40 @@ describe('planSttRecovery', () => {
     expect(plan.message).toContain('speech model');
   });
 
+  it('blames the device split outright when nothing else was holding the microphone', () => {
+    const plan = planSttRecovery(DEAF_TURNS_BEFORE_RECOVERY, { backendUsable: true });
+    if (plan.action === 'none') throw new Error('expected a recovery');
+    expect(plan.message).toContain('system default input');
+    expect(plan.message).not.toContain('Two things');
+  });
+
+  it('names both causes when HomePilot held the microphone too', () => {
+    // Hands-free keeps the selected microphone open for the whole session, and some drivers
+    // hand a second recorder on the same device a live but silent track. That produces a
+    // trace identical to the device split and needs a different fix, so asserting the split
+    // as fact would send the user to rearrange their operating system for nothing.
+    const plan = planSttRecovery(DEAF_TURNS_BEFORE_RECOVERY, {
+      backendUsable: true,
+      homepilotHoldsMicrophone: true,
+    });
+    if (plan.action === 'none') throw new Error('expected a recovery');
+    expect(plan.message).toContain('Two things');
+    expect(plan.message).toContain('preventing the browser from opening the same device');
+    // And the test that separates them, or naming two causes is just hedging.
+    expect(plan.message).toContain('chat composer');
+  });
+
+  it('does not claim contention when it was not observed', () => {
+    // `undefined` is "not known", and must read the same as "not happening" rather than
+    // inventing a second cause on every machine.
+    const quiet = planSttRecovery(DEAF_TURNS_BEFORE_RECOVERY, { backendUsable: false });
+    const explicit = planSttRecovery(DEAF_TURNS_BEFORE_RECOVERY, {
+      backendUsable: false,
+      homepilotHoldsMicrophone: false,
+    });
+    expect(quiet).toEqual(explicit);
+  });
+
   it('keeps recovering past the threshold rather than giving up', () => {
     expect(planSttRecovery(9, { backendUsable: true }).action).toBe('switch-to-backend');
   });

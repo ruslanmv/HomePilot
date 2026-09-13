@@ -98,11 +98,51 @@ export type SttRecovery =
   /** Nothing to switch to. Explain the fault and what would fix it. */
   | { action: 'advise'; message: string };
 
+export interface SttRecoveryContext {
+  /** HomePilot's own transcription can run here, so there is somewhere to switch to. */
+  backendUsable: boolean;
+  /**
+   * HomePilot's own capture was open on the selected microphone throughout these turns.
+   *
+   * This changes the diagnosis, so it must not be assumed either way. See {@link describeCause}.
+   */
+  homepilotHoldsMicrophone?: boolean;
+}
+
 const OBSERVED =
-  'Your browser’s speech recognition opened your computer’s default microphone and heard ' +
-  'nothing, twice, while HomePilot’s own microphone meter heard you. It cannot use the ' +
-  'microphone you selected in Audio & Video — the Web Speech API always records the system ' +
-  'default input.';
+  'Your browser’s speech recognition opened a microphone and heard nothing, twice, while ' +
+  'HomePilot’s own microphone meter heard you clearly.';
+
+/**
+ * Name the cause with the confidence the evidence actually supports.
+ *
+ * The usual reason is the device split: `SpeechRecognition` takes no `deviceId` and records
+ * the system default input, so it is simply pointed somewhere else. But when HomePilot's own
+ * capture is open on the selected microphone at the same time, there is a second explanation
+ * that produces an identical trace — some audio drivers (Windows DSP-backed inputs among
+ * them) will hand a second recorder on the same endpoint a live but silent track.
+ *
+ * Those two have different fixes, and stating the first as fact when the second is equally
+ * consistent with what was observed sends the user to rearrange their operating system for
+ * nothing. So when both are possible, both are named, along with the one-minute test that
+ * separates them.
+ */
+function describeCause(context: SttRecoveryContext): string {
+  if (!context.homepilotHoldsMicrophone) {
+    return (
+      ' The Web Speech API takes no device setting: it records your system default input, ' +
+      'not the microphone you selected in Audio & Video.'
+    );
+  }
+  return (
+    ' Two things can cause this and they need different fixes. Either the Web Speech API is ' +
+    'recording your system default input — it takes no device setting, so it cannot use the ' +
+    'microphone you selected in Audio & Video — or HomePilot’s own capture, which was open ' +
+    'on that microphone at the time, is preventing the browser from opening the same device. ' +
+    'To tell them apart: turn hands-free off and use the microphone button in the chat ' +
+    'composer, which records nothing in the background. If that works, it was the second.'
+  );
+}
 
 /**
  * Decide what to do about a run of deaf turns.
@@ -113,15 +153,17 @@ const OBSERVED =
  */
 export function planSttRecovery(
   consecutiveDeafTurns: number,
-  options: { backendUsable: boolean },
+  context: SttRecoveryContext,
 ): SttRecovery {
   if (consecutiveDeafTurns < DEAF_TURNS_BEFORE_RECOVERY) return { action: 'none' };
 
-  if (options.backendUsable) {
+  const observed = OBSERVED + describeCause(context);
+
+  if (context.backendUsable) {
     return {
       action: 'switch-to-backend',
       message:
-        `${OBSERVED} HomePilot has switched this session to transcribing on this computer, ` +
+        `${observed} HomePilot has switched this session to transcribing on this computer, ` +
         'which records the microphone you selected. Change this in Settings → Voice ' +
         'Assistant → Speech Recognition.',
     };
@@ -130,7 +172,7 @@ export function planSttRecovery(
   return {
     action: 'advise',
     message:
-      `${OBSERVED} Either make that microphone your system default input, or install a ` +
+      `${observed} Either make that microphone your system default input, or install a ` +
       'speech model and set Settings → Voice Assistant → Speech Recognition to “On this ' +
       'computer”.',
   };

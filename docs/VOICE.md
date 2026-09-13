@@ -123,6 +123,16 @@ nothing** — every other shape is a different fault with a different fix and is
 | `sawAudioStart: false` | not deaf | the capture never opened: permission or device |
 | signals absent (`undefined`) | not deaf | not observed ≠ did not happen |
 
+**The verdict is only worth having if the recognizer was given its chance.** HomePilot's VAD
+calls time on the turn from *its* microphone, and the recognizer is on a different one, so
+that verdict is not evidence this turn is over — honouring it guarantees an empty turn and
+leaves "was it deaf, or did we cut it off?" unanswerable. So a non-forced stop is held while
+the recognizer has captured audio and heard no speech, up to `STT_NO_SPEECH_GRACE_MS` (5 s).
+Turns that heard *anything* — `speechstart`, interim words, a result — are unaffected and stop
+on the VAD's silence as before, so a working recognizer is never slowed down. A forced stop
+(turn lock, teardown, the user pressing stop) always wins, and `STT_MAX_LISTEN_MS` still caps
+everything. The trace says which guard held it: `stop_deferred_warming_up {deferredBy}`.
+
 After **two consecutive** deaf turns (one is a cough or a too-quiet sentence; two in a row is
 a device) `planSttRecovery()` decides:
 
@@ -130,6 +140,16 @@ a device) `planSttRecovery()` decides:
   microphone, and a notice says so and where to change it back;
 - **backend not usable** → a notice naming both ways out: make that microphone the system
   default input, or install a speech model and choose *On this computer*.
+
+**Two causes, not one.** The usual reason is the device split above. But when HomePilot's own
+capture is open on the selected microphone at the same time — which hands-free always is —
+there is a second explanation that produces an *identical* trace: some drivers (Windows
+DSP-backed inputs among them) hand a second recorder on the same endpoint a live but silent
+track. Those need different fixes, so when both are possible the notice names both, plus the
+test that separates them: turn hands-free off and use the composer microphone, which records
+nothing in the background. If that works, it was contention, not routing.
+`stt_deaf_recognizer_recovery` carries `homepilotHeldMicrophone` so the trace says which case
+the advice was written for.
 
 Two rules it keeps deliberately:
 
@@ -713,6 +733,7 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 | "Test voice" sounds unlike assistant replies | Fixed. Both go through `speakThroughRuntime()`. |
 | TTS silent, no error | §4 `never_started`. Output device, volume, removed voice, or autoplay block. |
 | `network` error on every turn | Web Speech needs internet. Install local speech and use the backend path. |
+| Browser mode: turns now take ~5 s before giving up | Deliberate — §2.3. A recognizer that has heard nothing is given until `STT_NO_SPEECH_GRACE_MS` rather than being cut off on another microphone's silence. `stop_deferred_warming_up {deferredBy: 'no_speech_yet'}`. Turns that hear speech are not delayed. |
 | Every turn returns **502**, `libcublas.so.12 not found` | `WHISPER_DEVICE=auto` picked a GPU whose CUDA runtime is incomplete. **CTranslate2 loads the CUDA libraries lazily**, so this surfaces at the *first inference*, not at load — the retry therefore lives in `_run_with_cpu_fallback`, not only in `_ensure_model`. `status.device_note` names the reason. `WHISPER_DEVICE=cpu` skips the wasted attempt. |
 | Browser engine: `sawAudioStart: true, sawSpeechStart: false` every time | The browser recognizer opened a capture on your **OS default input** and heard nothing. It cannot be pointed at the microphone in Audio & Video. HomePilot now detects this after two consecutive turns and switches the session to on-device transcription when it can — see §2.3. Either make that mic the OS default, or set Speech Recognition to *On this computer*. |
 | Manual "press to talk" does nothing, `recorder_start_no_stream` | Fixed. The VAD runs only in hands-free mode, so a manual turn on the local engine had no capture to borrow. It now opens the selected microphone itself (`recorder_opening_own_capture`) and releases it on stop. |
