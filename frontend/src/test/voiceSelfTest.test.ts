@@ -92,7 +92,9 @@ describe('explainSttError', () => {
 
 describe('describeMicrophoneRouting', () => {
   it('stays quiet when HomePilot uses the system default', () => {
-    expect(describeMicrophoneRouting([], '')).toEqual({ mismatch: false, message: null });
+    expect(describeMicrophoneRouting([], '')).toEqual({
+      mismatch: false, known: true, message: null,
+    });
   });
 
   it('stays quiet when the selected input IS the OS default', () => {
@@ -122,8 +124,22 @@ describe('describeMicrophoneRouting', () => {
   });
 
   it('does not guess when the browser exposes no default alias', () => {
+    // Still silent — a warning about a mismatch that may not exist is noise — but `known`
+    // is false, so nothing downstream may report this as "the devices agree". Flattening
+    // the two is what let a trace read `routingMismatch: false` on a machine where the
+    // split was real and the browser recognizer was recording a silent device.
     const devices = [device({ deviceId: 'array-id', groupId: 'g-array' })];
-    expect(describeMicrophoneRouting(devices, 'array-id')).toEqual({ mismatch: false, message: null });
+    expect(describeMicrophoneRouting(devices, 'array-id')).toEqual({
+      mismatch: false, known: false, message: null,
+    });
+  });
+
+  it('says it knows when the devices genuinely match', () => {
+    const devices = [
+      device({ deviceId: 'default', groupId: 'g-array' }),
+      device({ deviceId: 'array-id', groupId: 'g-array' }),
+    ];
+    expect(describeMicrophoneRouting(devices, 'array-id').known).toBe(true);
   });
 });
 

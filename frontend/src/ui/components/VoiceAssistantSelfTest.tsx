@@ -222,7 +222,7 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
   // The routing caveat applies only to the browser recognizer: the backend path
   // transcribes the very bytes captured from the selected device.
   const routing = useMemo(() => {
-    if (backendStt) return { mismatch: false, message: null }
+    if (backendStt) return { mismatch: false, known: true, message: null }
     return describeMicrophoneRouting(devices, getMediaPreferences().microphoneDeviceId)
   }, [devices, backendStt])
 
@@ -347,6 +347,7 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
       selectedDeviceId: getMediaPreferences().microphoneDeviceId || 'system-default',
       recognitionDevice: 'browser-managed-web-speech',
       routingMismatch: routing.mismatch,
+      routingKnown: routing.known,
     })
 
     try {

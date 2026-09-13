@@ -612,7 +612,9 @@ pip install -r requirements/speech-cpu.txt     # or .[whisper]
 | "Test voice" sounds unlike assistant replies | Fixed. Both go through `speakThroughRuntime()`. |
 | TTS silent, no error | §4 `never_started`. Output device, volume, removed voice, or autoplay block. |
 | `network` error on every turn | Web Speech needs internet. Install local speech and use the backend path. |
-| Every turn returns **502**, `libcublas.so.12 not found` | `WHISPER_DEVICE=auto` picked a GPU whose CUDA runtime is incomplete. Whisper now retries on CPU automatically; `status.device_note` names the reason. Set `WHISPER_DEVICE=cpu` to skip the wasted attempt, or repair the CUDA install. |
+| Every turn returns **502**, `libcublas.so.12 not found` | `WHISPER_DEVICE=auto` picked a GPU whose CUDA runtime is incomplete. **CTranslate2 loads the CUDA libraries lazily**, so this surfaces at the *first inference*, not at load — the retry therefore lives in `_run_with_cpu_fallback`, not only in `_ensure_model`. `status.device_note` names the reason. `WHISPER_DEVICE=cpu` skips the wasted attempt. |
+| Browser engine: `sawAudioStart: true, sawSpeechStart: false` every time | The browser recognizer opened a capture on your **OS default input** and heard nothing. It cannot be pointed at the microphone in Audio & Video. Either make that mic the OS default, or set Speech Recognition to *On this computer*. |
+| The trace says `routingMismatch: false` but the split is clearly real | `routingKnown: false` means it could not tell — the browser exposed no `default` alias to compare against. "No mismatch" and "cannot tell" are separate fields for exactly this reason. |
 | Voice reopens the microphone forever (`handsfree_vad_start_requested` counting up) | A render-scoped identity reached the capture effect's dependencies. See §6.1. |
 | Meeting transcript only moves every ~8 s | Partials are not getting through. Check `_partialsWanted`: a non-empty `_queue` (you are behind), a backed-up socket, or `partialsDisabled`. |
 | Meeting records the wrong microphone | §3.5. Was fixed; check `ms:mic_fallback` for a selected device that was gone. |

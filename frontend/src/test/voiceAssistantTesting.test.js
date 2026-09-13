@@ -260,7 +260,7 @@ describe('microphone routing warning', () => {
   it('suppresses the warning when the backend transcribes the selected device', () => {
     // On that path the bytes transcribed are the bytes captured, so there is no
     // split to warn about and the notice would be noise.
-    expect(selfTest).toContain('if (backendStt) return { mismatch: false, message: null }');
+    expect(selfTest).toContain('if (backendStt) return { mismatch: false, known: true, message: null }');
   });
 });
 

@@ -32,11 +32,22 @@ class _FakeInner:
 class _FakeModel:
     """Stands in for `faster_whisper.WhisperModel`, refusing whichever devices it is told to."""
 
+    #: Devices whose *inference* raises, the way CTranslate2 does when it loads the CUDA
+    #: libraries lazily: the constructor succeeds and the first transcribe blows up.
+    lazy_failing_devices: tuple = ()
+
     def __init__(self, name, device="cpu", compute_type="default"):
         self.name = name
         self.device = device
         self.compute_type = compute_type
         self.model = _FakeInner(device)
+
+    def transcribe(self, path):  # noqa: ARG002
+        if self.device in type(self).lazy_failing_devices:
+            raise RuntimeError("Library libcublas.so.12 is not found or cannot be loaded")
+        seg = type("Seg", (), {"text": " hello there", "start": 0.0, "end": 1.0,
+                               "avg_logprob": -0.1})()
+        return [seg], None
 
 
 def _install_fake(monkeypatch, providers, *, failing_devices=(), record=None):
@@ -169,3 +180,75 @@ class TestStatusReportsTheFallback:
             "app.voice.providers.get_stt_provider", lambda: _Fine(), raising=False
         )
         assert "device_note" not in transcribe.stt_capability()
+
+
+class TestLazyCudaFailureAtInference:
+    """The case that actually bit.
+
+    CTranslate2 loads the CUDA libraries lazily, so on a machine with an incomplete runtime
+    the constructor *succeeds* and the failure only appears at the first inference. A
+    fallback that wrapped only the constructor therefore fixed nothing: every turn still came
+    back 502 with `libcublas.so.12 is not found`.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset(self):
+        _FakeModel.lazy_failing_devices = ()
+        yield
+        _FakeModel.lazy_failing_devices = ()
+
+    @pytest.mark.anyio
+    async def test_a_lazy_cuda_failure_is_retried_on_cpu(self, providers, monkeypatch):
+        monkeypatch.setenv("WHISPER_DEVICE", "cuda")
+        monkeypatch.setenv("WHISPER_COMPUTE", "float16")
+        calls: list = []
+        _install_fake(monkeypatch, providers, failing_devices=(), record=calls)
+        _FakeModel.lazy_failing_devices = ("cuda",)
+
+        provider = providers.WhisperLocalSTTProvider()
+        text = await provider.transcribe(b"audio", fmt="webm")
+
+        assert text == "hello there"
+        # Constructed on cuda, then rebuilt on cpu with a CPU-safe compute type.
+        assert [c["device"] for c in calls] == ["cuda", "cpu"]
+        assert calls[1]["compute_type"] == "default"
+        assert provider.device == "cpu"
+        assert "libcublas" in provider.load_error
+
+    @pytest.mark.anyio
+    async def test_the_segments_path_recovers_too(self, providers, monkeypatch):
+        # Meetings go through `transcribe_segments`; leaving it on the broken model would fix
+        # chat and leave meetings 502ing.
+        monkeypatch.setenv("WHISPER_DEVICE", "cuda")
+        _install_fake(monkeypatch, providers, failing_devices=())
+        _FakeModel.lazy_failing_devices = ("cuda",)
+
+        spans = await providers.WhisperLocalSTTProvider().transcribe_segments(b"a", fmt="wav")
+
+        assert [span["text"] for span in spans] == ["hello there"]
+
+    @pytest.mark.anyio
+    async def test_it_retries_once_and_then_gives_up(self, providers, monkeypatch):
+        # A second retry could not help and would only hide the real error behind a
+        # duplicate of itself.
+        monkeypatch.setenv("WHISPER_DEVICE", "cuda")
+        calls: list = []
+        _install_fake(monkeypatch, providers, failing_devices=(), record=calls)
+        _FakeModel.lazy_failing_devices = ("cuda", "cpu")
+
+        with pytest.raises(RuntimeError):
+            await providers.WhisperLocalSTTProvider().transcribe(b"a", fmt="wav")
+
+        assert [c["device"] for c in calls] == ["cuda", "cpu"]
+
+    @pytest.mark.anyio
+    async def test_a_working_gpu_transcribes_without_a_rebuild(self, providers, monkeypatch):
+        monkeypatch.setenv("WHISPER_DEVICE", "cuda")
+        calls: list = []
+        _install_fake(monkeypatch, providers, failing_devices=(), record=calls)
+
+        provider = providers.WhisperLocalSTTProvider()
+        assert await provider.transcribe(b"a", fmt="wav") == "hello there"
+
+        assert [c["device"] for c in calls] == ["cuda"]
+        assert provider.load_error is None

@@ -492,6 +492,9 @@ class WhisperLocalSTTProvider(STTProvider):
         #: went as asked. Surfaced so "why is this suddenly slow" has an answer on screen
         #: rather than only in the server log.
         self.load_error: str | None = None
+        #: Set once the model has been rebuilt on CPU, so a second failure is not met with
+        #: a third pointless retry.
+        self._cpu_forced = False
 
     @property
     def available(self) -> bool:
@@ -560,17 +563,61 @@ class WhisperLocalSTTProvider(STTProvider):
             tmp.write(audio)
             return tmp.name
 
+    def _rebuild_on_cpu(self, reason: str):
+        """Throw away the GPU model and load the same weights on CPU."""
+        from faster_whisper import WhisperModel
+
+        self.load_error = reason
+        self._cpu_forced = True
+        self._model = WhisperModel(
+            self.model_name,
+            device="cpu",
+            compute_type=_cpu_compute_type(self.compute_type),
+        )
+        inner = getattr(self._model, "model", None)
+        self.device = str(getattr(inner, "device", None) or "cpu")
+        return self._model
+
+    async def _run_with_cpu_fallback(self, run):
+        """Run ``run(model)`` off the event loop, retrying once on CPU if the GPU fails.
+
+        The load-time fallback in :meth:`_ensure_model` is not enough on its own, and this is
+        the case that actually bit: **CTranslate2 loads the CUDA libraries lazily**, so on a
+        machine with an incomplete runtime the constructor *succeeds* and the failure only
+        surfaces at the first inference::
+
+            transcription failed: RuntimeError:
+            Library libcublas.so.12 is not found or cannot be loaded
+
+        Wrapping only the constructor therefore fixed nothing: every turn still came back
+        502. So the same retry lives here, where the exception really appears.
+
+        Retried at most once, and never when already on CPU — there is nothing to fall back
+        to, and a second attempt would only hide the real error behind a duplicate one.
+        """
+        model = self._ensure_model()
+        try:
+            return await asyncio.to_thread(run, model)
+        except Exception as exc:  # noqa: BLE001 — CPU is the floor, not a failure
+            if self._cpu_forced or self.device == "cpu" or self.requested_device == "cpu":
+                raise
+            log.warning(
+                "faster-whisper failed on %r at inference (%s: %s); retrying on CPU",
+                self.device or self.requested_device, type(exc).__name__, exc,
+            )
+            model = self._rebuild_on_cpu(f"{type(exc).__name__}: {exc}")
+            return await asyncio.to_thread(run, model)
+
     async def transcribe(self, audio: bytes, *, fmt: str = "wav") -> str:
         """Unchanged in shape and result: the joined text, exactly as before."""
-        model = self._ensure_model()
         path = self._write_temp(audio, fmt)
 
-        def _run() -> str:
+        def _run(model) -> str:
             segments, _ = model.transcribe(path)
             return " ".join(seg.text for seg in segments).strip()
 
         try:
-            return await asyncio.to_thread(_run)
+            return await self._run_with_cpu_fallback(_run)
         finally:
             try:
                 os.unlink(path)
@@ -591,10 +638,9 @@ class WhisperLocalSTTProvider(STTProvider):
         doubtful line, not a calibrated probability, and it is reported as ``None`` when the
         model does not supply one rather than defaulted to something reassuring.
         """
-        model = self._ensure_model()
         path = self._write_temp(audio, fmt)
 
-        def _run() -> List[Span]:
+        def _run(model) -> List[Span]:
             segments, _info = model.transcribe(path)
             spans: List[Span] = []
             for seg in segments:
@@ -619,7 +665,7 @@ class WhisperLocalSTTProvider(STTProvider):
             return spans
 
         try:
-            return await asyncio.to_thread(_run)
+            return await self._run_with_cpu_fallback(_run)
         finally:
             try:
                 os.unlink(path)

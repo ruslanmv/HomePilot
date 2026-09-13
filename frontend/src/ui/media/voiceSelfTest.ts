@@ -161,7 +161,7 @@ export function explainSttOutcome(
       ok: false,
       headline: 'Recognition captured silence',
       detail:
-        'Audio was captured but no speech was found in it. The Web Speech API always records your operating system\'s default input and ignores the microphone chosen in Audio & Video — make the microphone you speak into the OS default, then retest.',
+        'Audio was captured but no speech was found in it. The browser\'s recognizer always records your operating system\'s default input and cannot be pointed at the microphone chosen in Audio & Video. Either make that microphone the OS default, or — quicker — set Speech Recognition to "On this computer", which records the microphone you selected.',
     };
   }
 
@@ -185,6 +185,15 @@ export function explainSttOutcome(
 export interface MicrophoneRoutingNotice {
   /** Whether the selected microphone differs from the OS default input. */
   mismatch: boolean;
+  /**
+   * Whether that could be determined at all.
+   *
+   * `false` when the browser exposes no `default` alias to compare against — Chrome on
+   * Windows often does not. Reporting that as "no mismatch" is what let a trace read
+   * `routingMismatch: false` on a machine where the split was real and the browser
+   * recognizer was recording a silent device.
+   */
+  known: boolean;
   message: string | null;
 }
 
@@ -203,7 +212,8 @@ export function describeMicrophoneRouting(
   selectedDeviceId: string,
 ): MicrophoneRoutingNotice {
   if (!selectedDeviceId) {
-    return { mismatch: false, message: null };
+    // The system default is selected, so the two cannot disagree.
+    return { mismatch: false, known: true, message: null };
   }
 
   const inputs = devices.filter((device) => device.kind === 'audioinput');
@@ -212,6 +222,7 @@ export function describeMicrophoneRouting(
   if (!selected) {
     return {
       mismatch: false,
+      known: true,
       message:
         'The microphone saved in Audio & Video is not currently connected. HomePilot will fall back to the system default input.',
     };
@@ -219,19 +230,21 @@ export function describeMicrophoneRouting(
 
   // `default` is Chrome's alias for "whatever the OS default is", so selecting
   // it can never disagree with recognition.
-  if (selected.deviceId === 'default') return { mismatch: false, message: null };
+  if (selected.deviceId === 'default') return { mismatch: false, known: true, message: null };
 
   const osDefault = inputs.find((device) => device.deviceId === 'default');
-  // Without the alias there is no way to know which input the OS prefers.
-  // Staying quiet beats warning about a mismatch that may not exist.
-  if (!osDefault) return { mismatch: false, message: null };
+  // Without the alias there is no way to know which input the OS prefers. Still quiet — a
+  // warning about a mismatch that may not exist is noise — but `known: false`, so a caller
+  // reporting this never claims the devices agree.
+  if (!osDefault) return { mismatch: false, known: false, message: null };
 
   const sameDevice = Boolean(selected.groupId) && selected.groupId === osDefault.groupId;
-  if (sameDevice) return { mismatch: false, message: null };
+  if (sameDevice) return { mismatch: false, known: true, message: null };
 
   const name = selected.label || 'the selected microphone';
   return {
     mismatch: true,
+    known: true,
     message:
       `Voice detection uses ${name}, but browser speech recognition always records your operating system's default input. ` +
       'Until they are the same device, the level meter can move while nothing is transcribed. ' +
