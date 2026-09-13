@@ -16,7 +16,7 @@ import MeetingWorkspace, {
 } from './MeetingWorkspace';
 import { useMeetingSense } from './useMeetingSense';
 import { modeLabel, phaseLabel, type Phase } from './meetingState';
-import { DEFAULT_CAPTURE, type CaptureOptions } from './CapturePopover';
+import { DEFAULT_CAPTURE, parseNames, type CaptureOptions } from './CapturePopover';
 import { useMeetingRecord } from './useMeetingRecord';
 import type { MeetingRecord } from './meetingRecord';
 import type { MeetingSenseStatus } from './entryPoint';
@@ -224,6 +224,11 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                 audio: capture.audio,
                 mic: capture.mic,
                 ...(capture.mode ? { mode: capture.mode } : {}),
+                // MS26's name lists. Sent as arrays because that is what the `start` frame
+                // takes; the wizard collects them as one comma-separated field each, since
+                // "Ruslan, Rus" is how a person writes the two things they are called.
+                names: parseNames(capture.myNames),
+                assistantNames: parseNames(capture.assistantName),
             });
             if (!result.ok) {
                 setError(result.error || 'The meeting could not start.');

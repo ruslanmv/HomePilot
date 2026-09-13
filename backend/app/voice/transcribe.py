@@ -38,9 +38,38 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 router = APIRouter(tags=["voice"])
 
-#: Ceiling on one clip. A voice turn is seconds long; anything approaching this
-#: is a client bug or an attempt to make the box transcribe a movie.
+#: Default ceiling on one clip. A voice turn is seconds long; anything approaching
+#: this is a client bug or an attempt to make the box transcribe a movie.
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
+
+#: Operator override for :data:`MAX_AUDIO_BYTES`, in bytes.
+MAX_AUDIO_BYTES_ENV = "VOICE_TRANSCRIBE_MAX_BYTES"
+
+
+def max_audio_bytes() -> int:
+    """The clip ceiling in force, read per request rather than bound at import.
+
+    Read through the environment rather than off the module global, because the
+    module global is not reliably the one a caller can reach: the backend test
+    suite purges and re-imports ``app.*`` in several fixtures, so
+    ``sys.modules["app.voice.transcribe"]`` can be a different object from the
+    one whose globals this route closes over. Patching that object then changes
+    nothing here, which is a test that passes alone and fails in the full run.
+
+    An environment variable has one value per process, so it cannot go stale
+    that way — and an operator transcribing long clips gets a knob for free.
+    A missing, unparseable or non-positive value falls back to the default,
+    since the wrong answer here is refusing audio somebody meant to send.
+    """
+    raw = os.getenv(MAX_AUDIO_BYTES_ENV, "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            return MAX_AUDIO_BYTES
+        if value > 0:
+            return value
+    return MAX_AUDIO_BYTES
 
 #: Container formats a provider can be handed. The value is the suffix the
 #: provider writes to a temp file, which is how faster-whisper and the
@@ -166,12 +195,13 @@ async def voice_transcribe(
     data = await audio.read()
     if not data:
         raise HTTPException(status_code=400, detail={"error": "empty audio upload"})
-    if len(data) > MAX_AUDIO_BYTES:
+    limit = max_audio_bytes()
+    if len(data) > limit:
         raise HTTPException(
             status_code=413,
             detail={
                 "error": "audio too large",
-                "max_bytes": MAX_AUDIO_BYTES,
+                "max_bytes": limit,
                 "bytes": len(data),
             },
         )
@@ -195,9 +225,10 @@ async def voice_transcribe_base64(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail={"error": f"invalid base64: {exc}"}) from exc
     if not data:
         raise HTTPException(status_code=400, detail={"error": "empty audio payload"})
-    if len(data) > MAX_AUDIO_BYTES:
+    limit = max_audio_bytes()
+    if len(data) > limit:
         raise HTTPException(
             status_code=413,
-            detail={"error": "audio too large", "max_bytes": MAX_AUDIO_BYTES, "bytes": len(data)},
+            detail={"error": "audio too large", "max_bytes": limit, "bytes": len(data)},
         )
     return await _transcribe_bytes(data, _normalize_format(payload.get("format"), None))

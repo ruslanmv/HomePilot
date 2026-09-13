@@ -139,7 +139,7 @@ type (Chromium sends `audio/webm;codecs=opus`, Safari `audio/mp4`), else assumed
 |---|---|
 | `200` with `text: ""` | **Success.** The clip contained no speech. A different fact from a failure, and the one the old path could not report. |
 | `400` | Empty upload, or undecodable base64. |
-| `413` | Over `MAX_AUDIO_BYTES` (25 MB). |
+| `413` | Over the clip ceiling — 25 MB, or `VOICE_TRANSCRIBE_MAX_BYTES`. |
 | `503` | No speech provider on this server. Body carries `capability` and `hint`; the client falls back to Web Speech. |
 | `502` | The provider itself failed (missing ffmpeg, model load error). Message included. |
 
@@ -241,6 +241,49 @@ by construction: no hint, a length mismatch, or a non-number all transcribe ever
 hint is an optimisation and must never become the reason something went untranscribed.**
 
 `ms:capture_mode` announces each switch, so shorter segments don't look like a glitch.
+
+#### A meeting does not require a screen
+
+The wizard has three independent capture toggles — **Meeting audio**, **My microphone**,
+**Screen & slides** — and the recorder now honours all three. Untick the first and third and
+`getDisplayMedia` is never called: no picker, no dialog, nothing to cancel. That is the whole
+of a phone-on-the-table meeting — put the call on speaker next to the microphone, tick only
+**My microphone**, and the transcript runs.
+
+| `opts` | Effect |
+|---|---|
+| `audio: false`, `watch: false` | The display is never opened |
+| `audio: false`, `watch: true` | Picker shown for the video; the call's audio is **not** recorded |
+| `mic: false` | `getUserMedia` is never called — no microphone indicator, no prompt |
+| both `audio` and `mic` false | Refused up front, rather than recording silence and revealing an empty transcript at the end |
+
+Omitting an option still means yes, so every caller written before these were read behaves
+exactly as it did.
+
+> **Known wart.** When system audio is wanted but slides are not, the display *video* track
+> stays live, so the browser keeps showing its sharing indicator. Stopping that track can tear
+> down the whole capture — including its audio — in some browsers, so it is deliberately left
+> alone rather than fixed untested.
+
+#### Names are what make a role more than a label
+
+MS26's question detector keys on `names` and the assistant answers only to `assistant_names`.
+Nothing in the frontend ever sent either, so **Participant mode — "answers when addressed;
+drafts replies for you" — was inert in the product** regardless of what the user picked. The
+wizard now collects both for the roles that use them (Participant, Presenter, Coach) and sends
+them in the `start` frame, alongside the chosen `mode`.
+
+- **People call me** → `names`. This is what turns "somebody just asked *you* something" from
+  a guess into a fact, and what a `question` chip carries its draft on. Empty means the
+  detector has only second person to go on, which is the narrow default: the failure mode of
+  guessing is the assistant reacting to somebody else's name in front of them.
+- **The assistant answers to** → `assistant_names`. Empty is the safe default; it then answers
+  nobody out loud.
+
+The `mode` is applied in `_begin` rather than by a follow-up request, because a meeting that
+runs even briefly in the default mode has already missed the questions asked in that window.
+An unknown mode name is ignored, never refused — the role picker must not be the reason a
+recording fails to start.
 
 #### What you can actually capture
 
@@ -460,7 +503,9 @@ no split to warn about.
 | `frontend/src/test/voiceSelfTest.test.ts` | Failure explanation, routing detection, voice resolution |
 | `frontend/src/test/voiceAssistantTesting.test.js` | Wiring contracts across all of the above |
 | `frontend/src/test/microphoneDiagnostics.test.js` | The original diagnostics contract |
-| `frontend/src/test/meetingsenseRealtime.test.js` | `takePartial` cadence and snapshot isolation, `micConstraints`, the three partial rules |
+| `frontend/src/test/meetingsenseRealtime.test.js` | `takePartial` cadence and snapshot isolation, `micConstraints`, the three partial rules, media-capture mode |
+| `frontend/src/test/meetingAudioOnly.test.tsx` | Capture sources honoured (no screen required), `parseNames`, the wizard's name fields |
+| `backend/tests/meetingsense/test_silent_channel_skip.py` | The per-channel energy hint, and every way it must fall back to transcribing |
 
 ---
 
@@ -471,6 +516,7 @@ no split to warn about.
 | `STT_BASE_URL`, `STT_API_KEY`, `STT_MODEL` | An OpenAI-compatible transcription endpoint. **Recordings leave the machine** — reported as `remote: true`. |
 | `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE` | Local faster-whisper. `WHISPER_DEVICE=auto` falls back to CPU silently; `status.device` reports where it actually landed. |
 | `VOICE_BACKEND_ENABLED` | `WS /v1/voice/session` only. **Does not** gate transcription. |
+| `VOICE_TRANSCRIBE_MAX_BYTES` | Clip ceiling for `POST /v1/voice/transcribe`, in bytes. Default 25 MB; an unparseable or non-positive value falls back to it, since the wrong answer here is refusing audio somebody meant to send. Read per request via `max_audio_bytes()` rather than bound at import — the backend suite purges and re-imports `app.*` in several fixtures, so the module global is not reliably the one a mounted route reads. |
 
 Browser-side keys: `homepilot_media_preferences_v1` (devices), `homepilot_voice_config` (voice,
 rate, pitch, enabled), `homepilot_voice_uri` (legacy), `homepilot_stt_lang`,

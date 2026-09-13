@@ -67,5 +67,20 @@ jobs:
       - name: Settings Audio & Video pane routing regression test
         run: npx vitest run src/test/settingsAudioVideoPane.test.js
         working-directory: frontend
+      - name: Voice speech-to-text and text-to-speech regression tests
+        run: >-
+          npx vitest run
+          src/test/voiceSelfTest.test.ts
+          src/test/sttService.test.ts
+          src/test/runtimeTts.test.ts
+          src/test/speechServiceStt.test.js
+          src/test/voiceAssistantTesting.test.js
+        working-directory: frontend
+      - name: MeetingSense live transcript and audio-only capture regression tests
+        run: >-
+          npx vitest run
+          src/test/meetingsenseRealtime.test.js
+          src/test/meetingAudioOnly.test.tsx
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend

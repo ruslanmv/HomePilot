@@ -1019,19 +1019,47 @@
          * Screen audio is requested first and the microphone second, because the screen share
          * is the one that shows a browser dialog: a user who cancels it should not have
          * already granted a microphone they now have no use for.
+         *
+         * **A meeting does not require a screen.** `opts.audio` and `opts.mic` are the wizard's
+         * two audio sources and `opts.watch` is its slide capture; when none of them wants the
+         * display, `getDisplayMedia` is not called at all — no dialog, no picker, nothing to
+         * cancel. That is the whole of a phone-on-the-table meeting: put the call on speaker
+         * next to the microphone, tick "My microphone", and the transcript runs.
+         *
+         * Omitting an option still means yes, so every caller written before these were read
+         * behaves exactly as it did.
          */
         async start(options) {
             const opts = options || {};
             if (this.recording) return { ok: false, error: 'already recording' };
             if (!opts.conversationId) return { ok: false, error: 'conversationId is required' };
 
+            const wantsSystemAudio = opts.audio !== false;
+            const wantsMic = opts.mic !== false;
+            const wantsSlides = !!opts.watch;
+            // The display is opened for the call's audio, for the slides, or for neither.
+            const wantsDisplay = wantsSystemAudio || wantsSlides;
+
+            if (!wantsSystemAudio && !wantsMic) {
+                // Refused rather than started: a meeting with no audio source records silence
+                // and produces an empty transcript, and finding that out at the end is the
+                // worst possible moment.
+                return { ok: false, error: 'no audio source selected' };
+            }
+
             let system = null;
             let mic = null;
             let screen = null;
             try {
+                if (!wantsDisplay) throw new Error('display capture not requested');
                 system = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
                 screen = system;
-                if (!system.getAudioTracks().length) {
+                if (!wantsSystemAudio) {
+                    // Slides only. The picker had to be shown for the video, but the call's
+                    // audio was not asked for and is not recorded.
+                    system.getAudioTracks().forEach((t) => t.stop());
+                    system = null;
+                } else if (!system.getAudioTracks().length) {
                     // Chrome on Linux, and every browser when the user picks a window rather
                     // than a tab, share video with no audio. That is a legitimate meeting —
                     // the mic still records this side — so it is reported, not refused.
@@ -1051,11 +1079,15 @@
             }
             const wanted = micConstraints();
             try {
+                // Not asked for: a "them only" meeting must not light the microphone
+                // indicator, and a permission prompt for a device nobody wants is its own
+                // kind of broken.
+                if (!wantsMic) throw new Error('microphone not requested');
                 mic = await navigator.mediaDevices.getUserMedia({ audio: wanted });
             } catch (_) {
                 mic = null;
             }
-            if (!mic && wanted.deviceId) {
+            if (wantsMic && !mic && wanted.deviceId) {
                 // The selected microphone is gone — unplugged, or claimed exclusively. A
                 // meeting on the default input beats no microphone at all, but the user is
                 // told rather than left assuming their headset is being recorded.
@@ -1637,6 +1669,21 @@
                                       window_title: opts.windowTitle || this._windowTitle || '',
                                       notes: !!opts.notes,
                                       watch: !!opts.watch,
+                                      // MS26's two name lists. Without them the question
+                                      // detector has only second person to go on, so the
+                                      // "somebody just asked *you* something" chip — and the
+                                      // draft that rides on it — never fires. The wizard
+                                      // collects them; sending them is what turns the feature
+                                      // on, and sending none keeps the narrow old behaviour.
+                                      names: Array.isArray(opts.names) ? opts.names : [],
+                                      assistant_names: Array.isArray(opts.assistantNames)
+                                          ? opts.assistantNames : [],
+                                      // The helper mode the user picked in the wizard. Server
+                                      // state (MS24), so it is applied there rather than held
+                                      // here; sending it at `start` avoids a window where the
+                                      // meeting runs in the wrong mode while a second request
+                                      // is in flight.
+                                      mode: opts.mode || '',
                                       audio: {
                                           rate: TARGET_RATE,
                                           channels: this._channels || 1,

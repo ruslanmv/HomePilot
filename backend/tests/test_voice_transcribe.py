@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import base64
 
-import importlib
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -152,16 +150,40 @@ class TestTranscribeMultipart:
 
     def test_rejects_a_clip_over_the_ceiling(self, client, monkeypatch):
         _use(monkeypatch, _StubProvider())
-        # Imported here, not at module scope: the `app` fixture purges and
-        # re-imports every `app.*` module, so a module object captured at
-        # collection time is not the one the mounted route uses.
-        transcribe_module = importlib.import_module("app.voice.transcribe")
-        monkeypatch.setattr(transcribe_module, "MAX_AUDIO_BYTES", 8)
+        # Through the environment, not the module global. Several fixtures in
+        # this suite purge and re-import `app.*`, so
+        # `sys.modules["app.voice.transcribe"]` is not reliably the module whose
+        # globals the mounted route reads — patching that object passes when
+        # this file runs alone and fails in the full run.
+        monkeypatch.setenv("VOICE_TRANSCRIBE_MAX_BYTES", "8")
         response = client.post(
             "/v1/voice/transcribe",
             files={"audio": ("long.webm", b"x" * 9, "audio/webm")},
         )
         assert response.status_code == 413
+
+    def test_an_operator_can_raise_the_ceiling(self, client, monkeypatch):
+        # The knob exists because the route has to read the limit per request;
+        # an operator transcribing long clips gets it for free.
+        _use(monkeypatch, _StubProvider())
+        monkeypatch.setenv("VOICE_TRANSCRIBE_MAX_BYTES", "1048576")
+        response = client.post(
+            "/v1/voice/transcribe",
+            files={"audio": ("long.webm", b"x" * 4096, "audio/webm")},
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize("bad", ["", "nonsense", "0", "-5"])
+    def test_a_bad_override_falls_back_to_the_default(self, client, monkeypatch, bad):
+        # The wrong answer here is refusing audio somebody meant to send, so
+        # anything unparseable means "use the default", never "allow nothing".
+        _use(monkeypatch, _StubProvider())
+        monkeypatch.setenv("VOICE_TRANSCRIBE_MAX_BYTES", bad)
+        response = client.post(
+            "/v1/voice/transcribe",
+            files={"audio": ("clip.webm", b"bytes", "audio/webm")},
+        )
+        assert response.status_code == 200
 
     def test_says_so_when_the_server_cannot_transcribe(self, client, monkeypatch):
         # 503 plus the capability payload, so the client can fall back to the
