@@ -260,6 +260,35 @@ def _stt_bridge(provider):
     return transcribe
 
 
+#: Peak RMS below which a channel is treated as having carried nothing.
+#:
+#: An order of magnitude under the client's own "any sound at all" floor, deliberately: the
+#: cost of being wrong in one direction is a wasted inference, and in the other it is missing
+#: transcript. Only a channel that is essentially digital silence is skipped.
+SILENT_CHANNEL_PEAK = 0.0002
+
+
+def _channel_is_silent(energy: Any, index: int, track_count: int) -> bool:
+    """Whether the client measured this channel as carrying no sound.
+
+    Conservative by construction. Anything unexpected — no hint, the wrong length, a
+    non-number — answers False, so the audio is transcribed. A hint is an optimisation and
+    must never become the reason something went untranscribed.
+    """
+    if not isinstance(energy, (list, tuple)):
+        return False
+    # A mismatched length means the split and the measurement disagree about the audio, and
+    # guessing which is right would risk dropping the wrong channel.
+    if len(energy) != track_count:
+        return False
+    if index >= len(energy):
+        return False
+    peak = energy[index]
+    if isinstance(peak, bool) or not isinstance(peak, (int, float)):
+        return False
+    return float(peak) < SILENT_CHANNEL_PEAK
+
+
 async def _handle_audio(session, message: Dict[str, Any], channels: int) -> None:
     """Split one wire frame into per-speaker tracks and push each through the session.
 
@@ -269,7 +298,18 @@ async def _handle_audio(session, message: Dict[str, Any], channels: int) -> None
     """
     tracks = audio_wire.tracks(message, declared_channels=channels)
     partial = bool(message.get("partial"))
-    for track in tracks:
+    energy = message.get("energy")
+    for index, track in enumerate(tracks):
+        # A channel that carried no sound is half the work for none of the transcript. During
+        # a shared video with nobody talking, the microphone channel is silence and
+        # transcribing it costs a full inference to return "". The client measures the peak
+        # while framing the audio, so this is a lookup rather than another pass over the PCM.
+        #
+        # Absent or malformed `energy` transcribes everything, which is what every client
+        # before this hint did — the optimisation must never be the reason audio goes missing.
+        if _channel_is_silent(energy, index, len(tracks)):
+            log.debug("meetingsense: skipping silent channel %s", index)
+            continue
         frame = {
             **message,
             "audio_bytes": track.wav,

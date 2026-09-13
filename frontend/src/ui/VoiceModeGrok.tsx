@@ -1308,6 +1308,33 @@ export default function VoiceModeGrok({
         )}
       </div>
 
+      {/*
+        A transcription path HomePilot changed by itself, said out loud.
+
+        Without this the recovery would be exactly the failure it exists to fix: something
+        happening to the user's audio that they did not ask for and cannot see. It also
+        carries the only explanation available for why Voice was silent for two turns.
+      */}
+      {voice.sttNotice && (
+        <div className="absolute left-0 right-0 bottom-[120px] px-4 z-50 pointer-events-none">
+          <div
+            className="max-w-3xl mx-auto pointer-events-auto flex items-start gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-[13px] leading-relaxed text-amber-100 backdrop-blur"
+            role="status"
+            data-testid="voice-stt-notice"
+          >
+            <span className="flex-1 min-w-0">{voice.sttNotice}</span>
+            <button
+              type="button"
+              onClick={voice.dismissSttNotice}
+              className="shrink-0 text-amber-200/70 hover:text-amber-100"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Bottom Voice Bar */}
       <div className="absolute bottom-0 left-0 right-0 p-4 z-40">
         <div className="max-w-3xl mx-auto">

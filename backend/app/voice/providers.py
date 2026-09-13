@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import logging
 import os
 import shutil
 import math
 import subprocess
 import tempfile
 from typing import Any, Dict, List
+
+log = logging.getLogger(__name__)
 
 
 class TTSProvider(abc.ABC):
@@ -429,6 +432,20 @@ class OpenAICompatSTTProvider(STTProvider):
         return [{"t0": 0.0, "t1": duration_s, "text": text, "conf": None}]
 
 
+#: Compute types that only exist on a GPU. Carrying one onto a CPU fallback would fail the
+#: retry for a second, unrelated reason and hide the first.
+_GPU_ONLY_COMPUTE = ("float16", "int8_float16", "bfloat16", "int8_bfloat16")
+
+
+def _cpu_compute_type(requested: str) -> str:
+    """The compute type to retry with on CPU.
+
+    ``default`` lets CTranslate2 pick what the CPU actually supports, which is the right
+    answer whenever the configured one was chosen for a GPU that turned out to be unusable.
+    """
+    return "default" if (requested or "").strip().lower() in _GPU_ONLY_COMPUTE else requested
+
+
 class WhisperLocalSTTProvider(STTProvider):
     """Local faster-whisper STT, included in standard HomePilot installations.
 
@@ -471,6 +488,13 @@ class WhisperLocalSTTProvider(STTProvider):
         #: Resolved after the first load. ``None`` means "not loaded yet", which is a
         #: different answer from "loaded on CPU" and is reported as such.
         self.device: str | None = None
+        #: Why the requested device was not used, when it was not. ``None`` means the load
+        #: went as asked. Surfaced so "why is this suddenly slow" has an answer on screen
+        #: rather than only in the server log.
+        self.load_error: str | None = None
+        #: Set once the model has been rebuilt on CPU, so a second failure is not met with
+        #: a third pointless retry.
+        self._cpu_forced = False
 
     @property
     def available(self) -> bool:
@@ -496,11 +520,39 @@ class WhisperLocalSTTProvider(STTProvider):
         if self._model is None:
             from faster_whisper import WhisperModel
 
-            self._model = WhisperModel(
-                self.model_name,
-                device=self.requested_device,
-                compute_type=self.compute_type,
-            )
+            try:
+                self._model = WhisperModel(
+                    self.model_name,
+                    device=self.requested_device,
+                    compute_type=self.compute_type,
+                )
+            except Exception as exc:  # noqa: BLE001 — see below; CPU is the floor, not a failure
+                # `auto` is a *request*, and CTranslate2 grants it whenever it can see a GPU —
+                # then raises at load time if the CUDA runtime is incomplete:
+                #
+                #     RuntimeError: Library libcublas.so.12 is not found or cannot be loaded
+                #
+                # A machine with an unusable CUDA install can still transcribe perfectly well
+                # on its CPU, so raising here turns "slower" into "speech-to-text is broken"
+                # — which is exactly what it looked like: every turn came back 502 while the
+                # status endpoint went on reporting the provider as available.
+                #
+                # Deliberately catching everything rather than matching the message. The set
+                # of ways a CUDA stack can be half-installed is not enumerable, the cost of
+                # being wrong is one wasted CPU load attempt, and the cost of being narrow is
+                # the outage above.
+                if self.requested_device == "cpu":
+                    raise
+                self.load_error = f"{type(exc).__name__}: {exc}"
+                log.warning(
+                    "faster-whisper could not load on %r (%s); falling back to CPU",
+                    self.requested_device, self.load_error,
+                )
+                self._model = WhisperModel(
+                    self.model_name,
+                    device="cpu",
+                    compute_type=_cpu_compute_type(self.compute_type),
+                )
             # Read back rather than assume: `auto` is a request, not an outcome.
             inner = getattr(self._model, "model", None)
             self.device = str(getattr(inner, "device", None) or self.requested_device)
@@ -511,17 +563,61 @@ class WhisperLocalSTTProvider(STTProvider):
             tmp.write(audio)
             return tmp.name
 
+    def _rebuild_on_cpu(self, reason: str):
+        """Throw away the GPU model and load the same weights on CPU."""
+        from faster_whisper import WhisperModel
+
+        self.load_error = reason
+        self._cpu_forced = True
+        self._model = WhisperModel(
+            self.model_name,
+            device="cpu",
+            compute_type=_cpu_compute_type(self.compute_type),
+        )
+        inner = getattr(self._model, "model", None)
+        self.device = str(getattr(inner, "device", None) or "cpu")
+        return self._model
+
+    async def _run_with_cpu_fallback(self, run):
+        """Run ``run(model)`` off the event loop, retrying once on CPU if the GPU fails.
+
+        The load-time fallback in :meth:`_ensure_model` is not enough on its own, and this is
+        the case that actually bit: **CTranslate2 loads the CUDA libraries lazily**, so on a
+        machine with an incomplete runtime the constructor *succeeds* and the failure only
+        surfaces at the first inference::
+
+            transcription failed: RuntimeError:
+            Library libcublas.so.12 is not found or cannot be loaded
+
+        Wrapping only the constructor therefore fixed nothing: every turn still came back
+        502. So the same retry lives here, where the exception really appears.
+
+        Retried at most once, and never when already on CPU — there is nothing to fall back
+        to, and a second attempt would only hide the real error behind a duplicate one.
+        """
+        model = self._ensure_model()
+        try:
+            return await asyncio.to_thread(run, model)
+        except Exception as exc:  # noqa: BLE001 — CPU is the floor, not a failure
+            if self._cpu_forced or self.device == "cpu" or self.requested_device == "cpu":
+                raise
+            log.warning(
+                "faster-whisper failed on %r at inference (%s: %s); retrying on CPU",
+                self.device or self.requested_device, type(exc).__name__, exc,
+            )
+            model = self._rebuild_on_cpu(f"{type(exc).__name__}: {exc}")
+            return await asyncio.to_thread(run, model)
+
     async def transcribe(self, audio: bytes, *, fmt: str = "wav") -> str:
         """Unchanged in shape and result: the joined text, exactly as before."""
-        model = self._ensure_model()
         path = self._write_temp(audio, fmt)
 
-        def _run() -> str:
+        def _run(model) -> str:
             segments, _ = model.transcribe(path)
             return " ".join(seg.text for seg in segments).strip()
 
         try:
-            return await asyncio.to_thread(_run)
+            return await self._run_with_cpu_fallback(_run)
         finally:
             try:
                 os.unlink(path)
@@ -542,10 +638,9 @@ class WhisperLocalSTTProvider(STTProvider):
         doubtful line, not a calibrated probability, and it is reported as ``None`` when the
         model does not supply one rather than defaulted to something reassuring.
         """
-        model = self._ensure_model()
         path = self._write_temp(audio, fmt)
 
-        def _run() -> List[Span]:
+        def _run(model) -> List[Span]:
             segments, _info = model.transcribe(path)
             spans: List[Span] = []
             for seg in segments:
@@ -570,7 +665,7 @@ class WhisperLocalSTTProvider(STTProvider):
             return spans
 
         try:
-            return await asyncio.to_thread(_run)
+            return await self._run_with_cpu_fallback(_run)
         finally:
             try:
                 os.unlink(path)

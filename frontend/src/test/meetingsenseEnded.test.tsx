@@ -545,7 +545,12 @@ describe('the header control', () => {
 
 describe('capture options', () => {
     it('starts with everything on and Note taker unlabelled as a mode', () => {
-        expect(DEFAULT_CAPTURE).toEqual({ audio: true, mic: true, slides: true, mode: null });
+        // The two name fields default empty, which is the narrow behaviour on purpose: with
+        // no names declared MS26's detector has only second person to go on, and the
+        // assistant answers to nobody out loud.
+        expect(DEFAULT_CAPTURE).toEqual({
+            audio: true, mic: true, slides: true, mode: null, myNames: '', assistantName: '',
+        });
         const onChange = vi.fn();
         render(<CapturePopover value={DEFAULT_CAPTURE} onChange={onChange} onClose={() => {}} />);
         for (const key of ['audio', 'mic', 'slides']) {
@@ -570,6 +575,8 @@ describe('capture options', () => {
         const onChange = vi.fn();
         render(<CapturePopover value={DEFAULT_CAPTURE} onChange={onChange} onClose={() => {}} />);
         fireEvent.click(screen.getByTestId('ms-cap-slides'));
-        expect(onChange).toHaveBeenCalledWith({ audio: true, mic: true, slides: false, mode: null });
+        expect(onChange).toHaveBeenCalledWith({
+            audio: true, mic: true, slides: false, mode: null, myNames: '', assistantName: '',
+        });
     });
 });
