@@ -619,6 +619,7 @@ no split to warn about.
 | `frontend/src/test/speechServiceStt.test.js` | The stop guard and lifecycle diagnostics |
 | `frontend/src/test/voiceSelfTest.test.ts` | Failure explanation, routing detection, voice resolution |
 | `frontend/src/test/sttPreferences.test.ts` | The engine choice, every preference × capability combination, and the fallback wording |
+| `frontend/src/test/voiceSendPath.test.tsx` | Transcript → `onSendText` on both engines; the manual button opens and closes its own capture |
 | `frontend/src/test/sttTurnHealth.test.ts` | §2.3 — what counts as a deaf turn, and what each run of them does |
 | `frontend/src/test/voiceDeafRecognizerRecovery.test.tsx` | The controller wiring: two deaf turns switch the session and say so; anything else does not |
 | `frontend/src/test/voiceControllerStability.test.tsx` | Nothing render-scoped reaches the capture effect's dependencies |
@@ -652,6 +653,43 @@ pip install -r requirements/speech-cpu.txt     # or .[whisper]
 
 ---
 
+## 9.5 Before shipping: what the tests prove, and what they cannot
+
+Automated tests cover the logic. They **cannot** cover a microphone, a browser's recognizer,
+or a GPU — no CI runner has any of them — so the list below separates the two honestly.
+
+**Proved by the suite** (`make test`, and the named CI steps):
+
+- A recognized sentence reaches `onSendText` on both engines, trimmed, unmodified — and an
+  empty transcript does not (`voiceSendPath.test.tsx`). `VoiceModeGrok` forwards that to
+  `App`'s `sendTextOrIntent`, which is what posts to the model, so this is the join between
+  "speech became text" and "the assistant was asked".
+- The manual listen button opens its own capture when the VAD is not running, and closes it
+  afterwards. Before this it failed with `microphone_not_open` — a dead press-to-talk for
+  everyone on the local engine.
+- A deaf recognizer is detected and recovered from, and never silently (§2.3).
+- Whisper falls back to CPU when CUDA is unusable, at load *and* at first inference.
+- `POST /v1/voice/transcribe` on every format, on silence, over the size ceiling, and with a
+  provider that fails.
+
+**Only a real machine can answer** — run these once against the build you intend to ship:
+
+1. Settings → Audio & Video → **Test microphone**, then play it back. If you cannot hear
+   yourself, nothing downstream matters.
+2. Settings → Voice Assistant → **Test speech-to-text**, then **text-to-speech**, then
+   **speech → text → voice**. The third is the whole loop.
+3. Chat composer microphone: speak, confirm the words land in the input box. (By design it
+   *fills* the composer — it does not press send for you.)
+4. Voice tab, hands-free: speak, confirm the text appears as your message **and** a reply
+   comes back. This is the only check that exercises transcript → `sendTextOrIntent` → model.
+5. Repeat 3–4 with Speech Recognition set to **On this computer**, then to **Browser**. They
+   are different code paths and both ship.
+6. `curl -s localhost:8000/v1/voice/stt/status` — confirm `available: true` and read
+   `device_note`. A note saying it landed on CPU means transcription works but is slow;
+   budget for that before calling it production-ready.
+
+---
+
 ## 10. Debugging checklist
 
 1. **Which engine?** Settings → Voice Assistant says so; or look for `stt_engine_resolved`.
@@ -677,6 +715,7 @@ pip install -r requirements/speech-cpu.txt     # or .[whisper]
 | `network` error on every turn | Web Speech needs internet. Install local speech and use the backend path. |
 | Every turn returns **502**, `libcublas.so.12 not found` | `WHISPER_DEVICE=auto` picked a GPU whose CUDA runtime is incomplete. **CTranslate2 loads the CUDA libraries lazily**, so this surfaces at the *first inference*, not at load — the retry therefore lives in `_run_with_cpu_fallback`, not only in `_ensure_model`. `status.device_note` names the reason. `WHISPER_DEVICE=cpu` skips the wasted attempt. |
 | Browser engine: `sawAudioStart: true, sawSpeechStart: false` every time | The browser recognizer opened a capture on your **OS default input** and heard nothing. It cannot be pointed at the microphone in Audio & Video. HomePilot now detects this after two consecutive turns and switches the session to on-device transcription when it can — see §2.3. Either make that mic the OS default, or set Speech Recognition to *On this computer*. |
+| Manual "press to talk" does nothing, `recorder_start_no_stream` | Fixed. The VAD runs only in hands-free mode, so a manual turn on the local engine had no capture to borrow. It now opens the selected microphone itself (`recorder_opening_own_capture`) and releases it on stop. |
 | Voice changed engine on its own mid-session | §2.3, and the trace says so: `stt_deaf_recognizer_recovery {action: 'switch-to-backend'}`. Your stored preference is untouched; the notice names where to change it. |
 | The trace says `routingMismatch: false` but the split is clearly real | `routingKnown: false` means it could not tell — the browser exposed no `default` alias to compare against. "No mismatch" and "cannot tell" are separate fields for exactly this reason. |
 | Voice reopens the microphone forever (`handsfree_vad_start_requested` counting up) | A render-scoped identity reached the capture effect's dependencies. See §6.1. |

@@ -20,6 +20,7 @@ import { createVAD, VADInstance, VADConfig } from './vad';
 import { microphoneDebug, microphoneDebugError } from '../media/microphoneDebug';
 import {
   getSttCapability,
+  openSelectedMicrophone,
   SttUnavailableError,
   transcribeBlob,
   type SttEngine,
@@ -181,6 +182,8 @@ export function useVoiceController(
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderChunksRef = useRef<Blob[]>([]);
   const recorderDiscardRef = useRef(false);
+  /** Set while a turn is opening its own capture — an async window the recorder ref cannot cover. */
+  const recorderStartingRef = useRef(false);
   const stateRef = useRef<VoiceState>(state);
   const ttsEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thinkingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -402,11 +405,19 @@ export function useVoiceController(
   }, []);
 
   /**
-   * Record this turn from the VAD's own capture, so detection and
-   * transcription cannot disagree about the device.
+   * Record this turn, preferring the VAD's own capture so detection and transcription cannot
+   * disagree about the device.
+   *
+   * When the VAD is not running there is no such capture to borrow, and this used to give up
+   * with `microphone_not_open`. That is every press of the manual listen button on the local
+   * engine — the VAD exists only in hands-free mode — so "press to talk" was a dead button
+   * for anyone on `homepilot-backend`, including anyone the deaf-recognizer recovery had just
+   * moved there. It opens the selected microphone itself in that case, and closes it again
+   * when the turn ends: a capture this function opened is a capture it owns, and leaving one
+   * live would hold the recording indicator on between turns.
    */
-  const startRecordingTurn = useCallback((reason: string): boolean => {
-    if (recorderRef.current) {
+  const startRecordingTurn = useCallback(async (reason: string): Promise<boolean> => {
+    if (recorderRef.current || recorderStartingRef.current) {
       microphoneDebug('voice', 'recorder_start_skipped_active', { reason });
       return true;
     }
@@ -416,11 +427,23 @@ export function useVoiceController(
       return false;
     }
 
-    const stream = vadRef.current?.getStream?.() || null;
+    let stream = vadRef.current?.getStream?.() || null;
+    let ownedStream: MediaStream | null = null;
     if (!stream) {
-      microphoneDebug('voice', 'recorder_start_no_stream', { reason });
-      setLastError('microphone_not_open');
-      return false;
+      // Opening a device is async, so the guard above cannot cover this window on its own:
+      // a second trigger arriving mid-open would start a competing recorder.
+      recorderStartingRef.current = true;
+      try {
+        microphoneDebug('voice', 'recorder_opening_own_capture', { reason });
+        ownedStream = await openSelectedMicrophone('voice');
+        stream = ownedStream;
+      } catch (error) {
+        microphoneDebugError('voice', 'recorder_open_capture_failed', error, { reason });
+        setLastError(error instanceof Error ? error.message : 'microphone_not_open');
+        return false;
+      } finally {
+        recorderStartingRef.current = false;
+      }
     }
 
     let recorder: MediaRecorder;
@@ -440,11 +463,21 @@ export function useVoiceController(
       if (event.data?.size) recorderChunksRef.current.push(event.data);
     };
 
+    // Only a capture this turn opened. The VAD's own stream is borrowed and must outlive the
+    // turn, so releasing it here would shut down speech detection after the first sentence.
+    const releaseOwnedStream = () => {
+      if (!ownedStream) return;
+      ownedStream.getTracks().forEach((track) => track.stop());
+      microphoneDebug('voice', 'recorder_released_own_capture');
+      ownedStream = null;
+    };
+
     recorder.onerror = (event) => {
       const error = (event as Event & { error?: DOMException }).error;
       microphoneDebugError('voice', 'recorder_error', error || new Error('recorder_failed'));
       recorderRef.current = null;
       recorderChunksRef.current = [];
+      releaseOwnedStream();
       setLastError('recorder_failed');
       setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
     };
@@ -455,6 +488,7 @@ export function useVoiceController(
       recorderChunksRef.current = [];
       recorderRef.current = null;
       recorderDiscardRef.current = false;
+      releaseOwnedStream();
 
       if (discarded) return;
 
@@ -744,7 +778,7 @@ export function useVoiceController(
         // recognizer to warm up and no cooldown to respect.
         if (sttEngineRef.current === 'homepilot-backend') {
           if (currentState === 'IDLE' || currentState === 'SPEAKING') {
-            startRecordingTurn('vad_speech_start');
+            void startRecordingTurn('vad_speech_start');
           }
           return;
         }
