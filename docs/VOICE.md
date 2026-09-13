@@ -46,7 +46,32 @@ Both are fixed, and the fix for (1) is architectural: **transcribe the bytes we 
 
 ## 2. The two speech-to-text paths
 
-### 2.1 `homepilot-backend` — preferred
+**Which one runs is the user's choice, not a detection.** Settings → Voice Assistant →
+**Speech Recognition** sets it for chat and the Voice tab; the default is the browser.
+
+Preferring the local engine whenever it reported itself *available* is what broke chat
+speech-to-text on a machine whose CUDA runtime was present but incomplete: the provider
+answered "available" and then failed every single turn, while the browser path would have
+worked. **Availability is not suitability** — only the person using it can weigh privacy
+against latency against setup. So the preference decides and the capability only constrains.
+
+| Preference | Runs |
+|---|---|
+| **Browser** (default) | The browser's recognizer. Falls back to the local engine only where no recognizer exists (Firefox, Safari). |
+| **On this computer** | The local engine. Falls back to the browser when no model is installed or the browser cannot record — **and says so**. |
+| **Automatic** | The local engine when genuinely usable, the browser otherwise. |
+
+`resolveSttEngine()` in `media/sttPreferences.ts` is the whole rule, and it is pure: every
+combination of preference and capability has a defined answer, and a test walks all of them.
+
+> **A fallback is always reported.** Somebody who chose on-device transcription for privacy
+> and is quietly served the browser's — which ships audio to Google — has been failed in a way
+> no later message makes up for. `resolution.fellBack` carries that, the chat composer shows
+> a notice, and Settings says *"Not the engine you chose"*.
+
+Meetings are **not** part of this choice — see §3.5.
+
+### 2.1 `homepilot-backend` — the local engine
 
 ```
 selected microphone ──► getUserMedia(deviceId) ──► MediaRecorder ──► POST /v1/voice/transcribe
@@ -63,11 +88,13 @@ In hands-free Voice mode the recorder attaches to **the VAD's own stream**
 (`vad.getStream()`), so detection and transcription are literally the same capture — not two
 captures that happen to agree.
 
-### 2.2 `web-speech` — fallback only
+### 2.2 `web-speech` — the default
 
-Used when `GET /v1/voice/stt/status` reports `available: false`: no local Whisper installed
-and no `STT_BASE_URL` configured. The device caveat from §1 applies, and the UI says so
-rather than letting you assume otherwise. The warm-up stop guard (§5) applies here.
+What HomePilot behaved like before local transcription existed, and what needs no setup. The
+device caveat from §1 applies — it records the OS default input — and the UI says so rather
+than letting you assume otherwise. The warm-up stop guard (§5) applies here.
+
+It is also the automatic fallback whenever the local engine cannot run.
 
 ### Which one am I on?
 
@@ -167,6 +194,7 @@ subsystem, deliberately:
 | Transport | `WS /v1/meetingsense/session`, continuous frames | `POST /v1/voice/transcribe`, one clip |
 | Sources | `getDisplayMedia` (PC/tab audio) **+** `getUserMedia` (your mic), kept as two channels into a `ChannelMerger` so the server can label speakers | one microphone |
 | Provider | `get_meeting_stt_provider()` — **local-first, never crosses to a remote endpoint on its own** | `get_stt_provider()` — prefers `STT_BASE_URL` when set |
+| Engine choice | **None — there is one engine.** Settings reports it | The user picks: browser, on this computer, or automatic |
 | Live text | **Yes** — `partial` then `segment` | per turn, no interim on the backend path |
 
 That provider split is a privacy decision, not an oversight: somebody who set `STT_BASE_URL`
@@ -504,6 +532,8 @@ no split to warn about.
 | Path | Role |
 |---|---|
 | `frontend/src/ui/media/sttService.ts` | Capability probe, `openSelectedMicrophone`, `transcribeBlob`, `recordAndTranscribe` |
+| `frontend/src/ui/media/sttPreferences.ts` | The stored engine choice and `resolveSttEngine()` — the whole rule, pure |
+| `frontend/src/ui/components/SpeechRecognitionSettings.tsx` | Settings → Speech Recognition: the choice, its cost, and what is actually running |
 | `frontend/src/ui/media/runtimeTts.ts` | `speakThroughRuntime` + verdicts |
 | `frontend/src/ui/media/voiceSelfTest.ts` | `explainSttOutcome`, `explainSttError`, `describeMicrophoneRouting` |
 | `frontend/src/ui/media/microphoneDebug.ts` | The `HomePilot:Mic` ring buffer |
@@ -527,6 +557,8 @@ no split to warn about.
 | `frontend/src/test/runtimeTts.test.ts` | Runtime speech verdicts, including silence-as-failure |
 | `frontend/src/test/speechServiceStt.test.js` | The stop guard and lifecycle diagnostics |
 | `frontend/src/test/voiceSelfTest.test.ts` | Failure explanation, routing detection, voice resolution |
+| `frontend/src/test/sttPreferences.test.ts` | The engine choice, every preference × capability combination, and the fallback wording |
+| `frontend/src/test/voiceControllerStability.test.tsx` | Nothing render-scoped reaches the capture effect's dependencies |
 | `frontend/src/test/voiceAssistantTesting.test.js` | Wiring contracts across all of the above |
 | `frontend/src/test/microphoneDiagnostics.test.js` | The original diagnostics contract |
 | `frontend/src/test/meetingsenseRealtime.test.js` | `takePartial` cadence and snapshot isolation, `micConstraints`, the three partial rules, media-capture mode |
@@ -544,7 +576,8 @@ no split to warn about.
 | `VOICE_BACKEND_ENABLED` | `WS /v1/voice/session` only. **Does not** gate transcription. |
 | `VOICE_TRANSCRIBE_MAX_BYTES` | Clip ceiling for `POST /v1/voice/transcribe`, in bytes. Default 25 MB; an unparseable or non-positive value falls back to it, since the wrong answer here is refusing audio somebody meant to send. Read per request via `max_audio_bytes()` rather than bound at import — the backend suite purges and re-imports `app.*` in several fixtures, so the module global is not reliably the one a mounted route reads. |
 
-Browser-side keys: `homepilot_media_preferences_v1` (devices), `homepilot_voice_config` (voice,
+Browser-side keys: `homepilot_stt_preferences_v1` (the chat/Voice engine choice),
+`homepilot_media_preferences_v1` (devices), `homepilot_voice_config` (voice,
 rate, pitch, enabled), `homepilot_voice_uri` (legacy), `homepilot_stt_lang`,
 `homepilot_voice_handsfree`, `homepilot_tts_enabled`.
 

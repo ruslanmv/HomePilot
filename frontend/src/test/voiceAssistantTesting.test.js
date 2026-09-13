@@ -92,11 +92,13 @@ describe('one selected-microphone transcription path', () => {
     expect(sttService).toContain('new MediaRecorder(stream)');
   });
 
-  it('keeps Web Speech only as a fallback, and names which engine is in use', () => {
+  it('names which engine is in use, and how it was arrived at', () => {
+    // The engine is no longer "the backend whenever it reports available" — see the
+    // preference tests below — but the trace must still say which one runs and why.
     expect(sttService).toContain("export type SttEngine = 'homepilot-backend' | 'web-speech'");
     expect(sttService).toContain('SttUnavailableError');
-    expect(controller).toContain("engine: SttEngine = capability.available ? 'homepilot-backend' : 'web-speech'");
     expect(controller).toContain('stt_engine_resolved');
+    expect(controller).toContain('reason: resolution.reason');
     expect(controller).toContain('usesOsDefaultInput');
   });
 
@@ -203,8 +205,10 @@ describe('Settings voice self-test', () => {
   });
 
   it('says which engine is in use, including the fallback device caveat', () => {
-    expect(selfTest).toContain('records your operating system default input');
-    expect(selfTest).toContain('recordings leave this computer');
+    expect(selfTest).toContain('describeSttResolution(resolution');
+    expect(read('frontend/src/ui/media/sttPreferences.ts'))
+      .toContain('records your system default input');
+    expect(selfTest).toContain('Recordings leave this computer');
   });
 
   it('does not clobber the recognition callbacks hands-free voice installed', () => {
@@ -257,5 +261,59 @@ describe('microphone routing warning', () => {
     // On that path the bytes transcribed are the bytes captured, so there is no
     // split to warn about and the notice would be noise.
     expect(selfTest).toContain('if (backendStt) return { mismatch: false, message: null }');
+  });
+});
+
+describe('the speech-recognition engine is a choice, not a detection', () => {
+  const preferences = read('frontend/src/ui/media/sttPreferences.ts');
+  const settingsCard = read('frontend/src/ui/components/SpeechRecognitionSettings.tsx');
+
+  it('defaults chat and Voice to the browser, restoring the original behaviour', () => {
+    // Preferring the local engine whenever it reported itself available broke chat
+    // speech-to-text on a machine with an incomplete CUDA runtime: available, and failing
+    // every turn. A default that works everywhere beats a better one that sometimes does.
+    expect(preferences).toContain("chat: 'web-speech'");
+  });
+
+  it('lets the preference decide and the capability only constrain', () => {
+    expect(controller).toContain('resolveSttEngine(preference, {');
+    expect(app).toContain('resolveSttEngine(preference, {');
+    expect(controller).not.toContain("capability.available ? 'homepilot-backend' : 'web-speech'");
+    expect(app).not.toContain("engine: capability.available ? 'homepilot-backend' : 'web-speech'");
+  });
+
+  it('never overrides a choice silently', () => {
+    // Somebody who chose on-device transcription for privacy must not be quietly served the
+    // browser's, which sends audio to Google.
+    expect(preferences).toContain('fellBack');
+    expect(controller).toContain('fellBack: resolution.fellBack');
+    expect(app).toContain('if (resolution.fellBack)');
+    expect(settingsCard).toContain('Not the engine you chose');
+  });
+
+  it('re-resolves when the setting changes, without a reload', () => {
+    expect(controller).toContain('subscribeSttPreferences(resolve)');
+    expect(selfTest).toContain('subscribeSttPreferences((next) => setPreference(next.chat))');
+  });
+
+  it('aims the self-tests at the engine that will actually run', () => {
+    // Testing the backend merely because it is available would pass while the path the user
+    // chose stayed broken.
+    expect(selfTest).toContain("resolution.engine === 'homepilot-backend'");
+  });
+
+  it('shows each engine’s cost, not only its benefit', () => {
+    expect(settingsCard).toContain('goods');
+    expect(settingsCard).toContain('bads');
+    expect(settingsCard).toContain('system default input');
+    expect(settingsCard).toContain('Google service');
+  });
+
+  it('reports the meeting engine rather than pretending to offer it', () => {
+    // Two channels, hours of continuous audio and speaker labels: the browser recognizer can
+    // do none of it, so there is one engine and nothing to choose.
+    expect(settingsCard).toContain('This is not a setting');
+    expect(settingsCard).toContain('/v1/meetingsense/status');
+    expect(settingsCard).not.toContain('stt-engine-meetings');
   });
 });

@@ -40,6 +40,7 @@ import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './Se
 import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
 import { explainSttError, explainSttOutcome, getSpeechRecognitionCtor, type SttDiagnostics } from './media/voiceSelfTest'
 import { getSttCapability, recordAndTranscribe, SttUnavailableError } from './media/sttService'
+import { describeSttResolution, getSttPreferences, resolveSttEngine } from './media/sttPreferences'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
@@ -1826,13 +1827,36 @@ function QueryBar({
 
     // Prefer HomePilot's own transcription; the capability is cached, so this
     // costs a round trip once per session rather than once per press.
+    // The user's choice decides; the capability only constrains it. Preferring the backend
+    // purely because it reported itself available is what broke chat speech-to-text on a
+    // machine whose CUDA runtime was incomplete — available, and failing every turn.
+    const preference = getSttPreferences().chat
     void getSttCapability().then((capability) => {
+      const resolution = resolveSttEngine(preference, {
+        backendAvailable: capability.available,
+        mediaRecorderSupported: typeof MediaRecorder !== 'undefined'
+          && !!navigator.mediaDevices?.getUserMedia,
+        webSpeechSupported: !!getSpeechRecognitionCtor(),
+      })
       microphoneDebug('chat', 'composer_mic_engine', {
-        engine: capability.available ? 'homepilot-backend' : 'web-speech',
+        preference,
+        engine: resolution.engine,
+        reason: resolution.reason,
+        fellBack: resolution.fellBack,
         provider: capability.provider,
         remote: capability.remote,
       })
-      if (capability.available) {
+      if (!resolution.usable) {
+        setMicNotice(describeSttResolution(resolution, capability.provider))
+        return
+      }
+      // A choice that was overridden is said out loud: somebody who picked on-device
+      // transcription for privacy must not be quietly served the browser's, which sends
+      // audio to Google.
+      if (resolution.fellBack) {
+        setMicNotice(describeSttResolution(resolution, capability.provider))
+      }
+      if (resolution.engine === 'homepilot-backend') {
         void startBackendListening()
         return
       }

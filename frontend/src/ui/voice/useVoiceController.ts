@@ -24,6 +24,12 @@ import {
   transcribeBlob,
   type SttEngine,
 } from '../media/sttService';
+import {
+  getSttPreferences,
+  resolveSttEngine,
+  subscribeSttPreferences,
+  type SttResolution,
+} from '../media/sttPreferences';
 
 export type VoiceState = 'OFF' | 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
@@ -59,6 +65,11 @@ export interface VoiceController {
   sttEngine: SttEngine;
   /** Name of the server-side provider when one is in use. */
   sttProvider: string | null;
+  /**
+   * How that engine was arrived at, including whether the user's choice was overridden.
+   * `null` until the capability probe answers.
+   */
+  sttResolution: SttResolution | null;
 
   setHandsFree: (enabled: boolean) => void;
   setTtsEnabled: (enabled: boolean) => void;
@@ -131,6 +142,7 @@ export function useVoiceController(
   // dead while the probe is in flight.
   const [sttEngine, setSttEngine] = useState<SttEngine>('web-speech');
   const [sttProvider, setSttProvider] = useState<string | null>(null);
+  const [sttResolution, setSttResolution] = useState<SttResolution | null>(null);
   const sttEngineRef = useRef<SttEngine>('web-speech');
 
   /**
@@ -183,27 +195,54 @@ export function useVoiceController(
   useEffect(() => { onSendTextRef.current = onSendText; }, [onSendText]);
   useEffect(() => { isHandsFreeRef.current = isHandsFree; }, [isHandsFree]);
 
-  // Resolve the transcription path once. Preferring the backend removes the
-  // device split at its root: the clip posted for transcription is recorded
-  // from the VAD's own stream, which is the selected microphone.
+  /**
+   * Resolve the transcription path from the user's choice and what this machine can do.
+   *
+   * Not "use the backend whenever it reports available" — that was the previous rule and it
+   * is what broke chat speech-to-text on a machine whose CUDA runtime was incomplete: the
+   * provider reported itself available and then failed every turn, while the browser path
+   * would have worked. Availability is not suitability, so the preference decides and the
+   * capability only constrains.
+   *
+   * Re-runs when the preference changes, so switching engines in Settings takes effect
+   * without a reload.
+   */
   useEffect(() => {
     let cancelled = false;
-    void getSttCapability().then((capability) => {
-      if (cancelled) return;
-      const engine: SttEngine = capability.available ? 'homepilot-backend' : 'web-speech';
-      setSttEngine(engine);
-      setSttProvider(capability.provider);
-      microphoneDebug('voice', 'stt_engine_resolved', {
-        engine,
-        provider: capability.provider,
-        remote: capability.remote,
-        // The caveat only applies to the fallback, and saying which is in force
-        // is the difference between a working mic and a silent one.
-        usesOsDefaultInput: engine === 'web-speech',
+
+    const resolve = () => {
+      const preference = getSttPreferences().chat;
+      void getSttCapability().then((capability) => {
+        if (cancelled) return;
+        const resolution = resolveSttEngine(preference, {
+          backendAvailable: capability.available,
+          mediaRecorderSupported,
+          webSpeechSupported,
+        });
+        setSttEngine(resolution.engine);
+        setSttProvider(capability.provider);
+        setSttResolution(resolution);
+        microphoneDebug('voice', 'stt_engine_resolved', {
+          preference,
+          engine: resolution.engine,
+          reason: resolution.reason,
+          // A choice that was overridden has to be visible. Somebody who picked local
+          // transcription for privacy and is quietly served the browser's — which ships
+          // audio to Google — has been failed in a way no later message makes up for.
+          fellBack: resolution.fellBack,
+          usable: resolution.usable,
+          provider: capability.provider,
+          remote: capability.remote,
+          usesOsDefaultInput: resolution.engine === 'web-speech',
+        });
       });
-    });
-    return () => { cancelled = true; };
-  }, []);
+    };
+
+    resolve();
+    // Settings writes the preference; every surface re-resolves rather than caching a copy.
+    const unsubscribe = subscribeSttPreferences(resolve);
+    return () => { cancelled = true; unsubscribe(); };
+  }, [mediaRecorderSupported, webSpeechSupported]);
 
   useEffect(() => {
     if (state === 'THINKING' && isHandsFree) {
@@ -873,6 +912,7 @@ export function useVoiceController(
     clearError,
     sttEngine,
     sttProvider,
+    sttResolution,
     setHandsFree,
     setTtsEnabled,
     startManualListening,

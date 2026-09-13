@@ -7,6 +7,7 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   AudioLines,
+  Mic2,
   Eye,
   EyeOff,
   Users,
@@ -35,6 +36,7 @@ import ModelExecutionSelector from "./components/compute/ModelExecutionSelector"
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import TtsEngineSection from "./components/TtsEngineSection";
 import VoiceAssistantSelfTest from "./components/VoiceAssistantSelfTest";
+import SpeechRecognitionSettings from "./components/SpeechRecognitionSettings";
 // MS32. The one place an environment-variable name is allowed to reach a user:
 // they opened Settings, which is the act of asking a configuration question.
 import { MeetingTranscriptionCard } from "./meetingsense/MeetingTranscriptionCard";
@@ -1301,6 +1303,17 @@ export default function SettingsPanel({
 
   function renderVoice() {
     return (
+      <>
+      {/* Input before output: which engine hears you is a bigger decision than which voice
+          answers, and it is the one with a privacy consequence. */}
+      <SettingsCard
+        title="Speech Recognition"
+        description="Which engine turns your speech into text, and where that audio goes."
+        icon={<Mic2 size={16} />}
+      >
+        <SpeechRecognitionSettings />
+      </SettingsCard>
+
       <SettingsCard
         title="Voice Assistant"
         description="Text-to-speech output and voice selection."
@@ -1342,6 +1355,7 @@ export default function SettingsPanel({
             separator is the component's own, so an empty bordered block is impossible. */}
         <MeetingTranscriptionCard />
       </SettingsCard>
+      </>
     );
   }
 

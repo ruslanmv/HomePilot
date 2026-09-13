@@ -52,6 +52,12 @@ import {
   type SttDiagnostics,
   type SttOutcome,
 } from '../media/voiceSelfTest'
+import {
+  describeSttResolution,
+  getSttPreferences,
+  resolveSttEngine,
+  subscribeSttPreferences,
+} from '../media/sttPreferences'
 import { getActiveTtsEngineId, readTtsProviderSettings } from '../tts'
 import { describeAssistantVoice, resolveAssistantVoiceId } from '../tts/resolveAssistantVoice'
 
@@ -164,13 +170,26 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [capability, setCapability] = useState<SttCapability | null>(null)
+  const [preference, setPreference] = useState(() => getSttPreferences().chat)
 
   const webSpeechSupported = useMemo(() => Boolean(getSpeechRecognitionCtor()), [])
   const ttsSupported = useMemo(() => isRuntimeTtsAvailable(), [])
   const recorderSupported =
     typeof MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
 
-  const backendStt = Boolean(capability?.available)
+  // The engine the *preference* resolves to, so these tests exercise what chat and Voice
+  // will really use. Testing the backend merely because it is available would pass while the
+  // path the user chose stayed broken — the exact trap this whole split exists to avoid.
+  const resolution = useMemo(
+    () => resolveSttEngine(preference, {
+      backendAvailable: Boolean(capability?.available),
+      mediaRecorderSupported: typeof MediaRecorder !== 'undefined'
+        && Boolean(navigator.mediaDevices?.getUserMedia),
+      webSpeechSupported,
+    }),
+    [preference, capability, webSpeechSupported],
+  )
+  const backendStt = resolution.engine === 'homepilot-backend'
   const sttSupported = (backendStt && recorderSupported) || webSpeechSupported
 
   useEffect(() => {
@@ -196,6 +215,9 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
     void getSttCapability().then((value) => { if (!cancelled) setCapability(value) })
     return () => { cancelled = true }
   }, [])
+
+  // Changing the engine in the card above re-aims these tests immediately.
+  useEffect(() => subscribeSttPreferences((next) => setPreference(next.chat)), [])
 
   // The routing caveat applies only to the browser recognizer: the backend path
   // transcribes the very bytes captured from the selected device.
@@ -543,10 +565,9 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
   }, [clearSttTimers])
 
   const engineLine = capability === null
-    ? 'Checking which speech-to-text engine this server provides…'
-    : backendStt
-      ? `Speech-to-text: ${capability.provider || 'HomePilot'}${capability.remote ? ' (remote service — recordings leave this computer)' : ' (on this computer)'}, using the microphone selected in Audio & Video.`
-      : 'Speech-to-text: browser Web Speech API. It records your operating system default input and ignores the microphone selected in Audio & Video.'
+    ? 'Checking which speech-to-text engine is in use…'
+    : `Speech-to-text: ${describeSttResolution(resolution, capability.provider)}${
+      capability.remote && backendStt ? ' Recordings leave this computer.' : ''}`
 
   const recording = sttPhase === 'running' || loopPhase === 'running'
 
