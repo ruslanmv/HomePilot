@@ -40,7 +40,14 @@ import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './Se
 import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
 import { explainSttError, explainSttOutcome, getSpeechRecognitionCtor, type SttDiagnostics } from './media/voiceSelfTest'
 import { getSttCapability, recordAndTranscribe, SttUnavailableError } from './media/sttService'
-import { describeSttResolution, getSttPreferences, resolveSttEngine } from './media/sttPreferences'
+import {
+  describeSttResolution,
+  getSttPreferences,
+  resolveSttEngine,
+  subscribeSttPreferences,
+  type ResolvedSttEngine,
+} from './media/sttPreferences'
+import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
@@ -1628,6 +1635,12 @@ function QueryBar({
   // Set while the backend path is recording, so the same button stops it.
   const micStopRecordingRef = useRef<(() => void) | null>(null)
   const [micTranscribing, setMicTranscribing] = useState(false)
+  // Consecutive turns where the recognizer's capture opened and heard nothing while the
+  // selected microphone was working — see `media/sttTurnHealth`. Any turn with words
+  // resets it. The override is what the recovery sets, for this session only.
+  const micDeafTurnsRef = useRef(0)
+  const micBackendUsableRef = useRef(false)
+  const micEngineOverrideRef = useRef<ResolvedSttEngine | null>(null)
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const modeMenuRef = useRef<HTMLDivElement | null>(null)
   const modeButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -1721,6 +1734,35 @@ function QueryBar({
         const outcome = explainSttOutcome(diagnostics, '')
         setMicNotice(`${outcome.headline}. ${outcome.detail}`)
       }
+
+      // A recognizer that keeps opening a silent device is not something to keep
+      // explaining once per press. Advice the user has already read twice and not acted on
+      // is not advice any more, so if there is a transcription path that records the
+      // microphone they actually selected, take it.
+      const deaf = isDeafTurn({
+        hadResult: Boolean(micTranscriptRef.current.trim()),
+        sawAudioStart: diagnostics.sawAudioStart,
+        sawSpeechStart: diagnostics.sawSpeechStart,
+        sawInterim: diagnostics.sawInterim,
+        error: diagnostics.error,
+      })
+      micDeafTurnsRef.current = deaf ? micDeafTurnsRef.current + 1 : 0
+      if (!deaf) return
+
+      const recovery = planSttRecovery(micDeafTurnsRef.current, {
+        backendUsable: micBackendUsableRef.current,
+      })
+      if (recovery.action === 'none') return
+      microphoneDebug('chat', 'composer_mic_deaf_recognizer_recovery', {
+        action: recovery.action,
+        deafTurns: micDeafTurnsRef.current,
+        backendUsable: micBackendUsableRef.current,
+      })
+      micDeafTurnsRef.current = 0
+      setMicNotice(recovery.message)
+      // For this session only. The stored preference is the user's and stays theirs;
+      // Settings goes on showing what they chose, and the notice says where to change it.
+      if (recovery.action === 'switch-to-backend') micEngineOverrideRef.current = 'homepilot-backend'
     }
 
     recognition.onerror = (event: any) => {
@@ -1807,6 +1849,13 @@ function QueryBar({
     }
   }, [setInput, startWebSpeechListening])
 
+  // Choosing an engine in Settings is a deliberate act and outranks a recovery HomePilot
+  // made on its own: it clears both the override and the evidence behind it.
+  useEffect(() => subscribeSttPreferences(() => {
+    micEngineOverrideRef.current = null
+    micDeafTurnsRef.current = 0
+  }), [])
+
   const toggleListening = useCallback(() => {
     // Stop if already listening — whichever path owns the turn.
     if (isListening) {
@@ -1838,25 +1887,33 @@ function QueryBar({
           && !!navigator.mediaDevices?.getUserMedia,
         webSpeechSupported: !!getSpeechRecognitionCtor(),
       })
+      micBackendUsableRef.current = capability.available
+        && typeof MediaRecorder !== 'undefined'
+        && !!navigator.mediaDevices?.getUserMedia
+      // A recovery already made this session stands until the user changes the preference,
+      // which re-resolves from scratch — so it is honoured here rather than overwritten by
+      // a resolution that cannot know the recognizer turned out to be deaf.
+      const override = micEngineOverrideRef.current
+      const engine = override && micBackendUsableRef.current ? override : resolution.engine
       microphoneDebug('chat', 'composer_mic_engine', {
         preference,
-        engine: resolution.engine,
-        reason: resolution.reason,
+        engine,
+        reason: override && engine === override ? 'deaf-recognizer-recovery' : resolution.reason,
         fellBack: resolution.fellBack,
         provider: capability.provider,
         remote: capability.remote,
       })
-      if (!resolution.usable) {
+      if (!resolution.usable && !override) {
         setMicNotice(describeSttResolution(resolution, capability.provider))
         return
       }
       // A choice that was overridden is said out loud: somebody who picked on-device
       // transcription for privacy must not be quietly served the browser's, which sends
       // audio to Google.
-      if (resolution.fellBack) {
+      if (resolution.fellBack && !override) {
         setMicNotice(describeSttResolution(resolution, capability.provider))
       }
-      if (resolution.engine === 'homepilot-backend') {
+      if (engine === 'homepilot-backend') {
         void startBackendListening()
         return
       }

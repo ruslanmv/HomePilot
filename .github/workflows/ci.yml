@@ -77,6 +77,8 @@ jobs:
           src/test/voiceAssistantTesting.test.js
           src/test/voiceControllerStability.test.tsx
           src/test/sttPreferences.test.ts
+          src/test/sttTurnHealth.test.ts
+          src/test/voiceDeafRecognizerRecovery.test.tsx
         working-directory: frontend
       - name: MeetingSense live transcript and audio-only capture regression tests
         run: >-

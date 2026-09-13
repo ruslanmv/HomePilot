@@ -30,6 +30,7 @@ import {
   subscribeSttPreferences,
   type SttResolution,
 } from '../media/sttPreferences';
+import { isDeafTurn, planSttRecovery } from '../media/sttTurnHealth';
 
 export type VoiceState = 'OFF' | 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
@@ -70,6 +71,14 @@ export interface VoiceController {
    * `null` until the capability probe answers.
    */
   sttResolution: SttResolution | null;
+  /**
+   * A change HomePilot made to the transcription path on its own, in words for the user.
+   *
+   * Set when a run of turns proves the browser recognizer is recording a silent device —
+   * see `media/sttTurnHealth`. `null` the rest of the time.
+   */
+  sttNotice: string | null;
+  dismissSttNotice: () => void;
 
   setHandsFree: (enabled: boolean) => void;
   setTtsEnabled: (enabled: boolean) => void;
@@ -143,7 +152,19 @@ export function useVoiceController(
   const [sttEngine, setSttEngine] = useState<SttEngine>('web-speech');
   const [sttProvider, setSttProvider] = useState<string | null>(null);
   const [sttResolution, setSttResolution] = useState<SttResolution | null>(null);
+  const [sttNotice, setSttNotice] = useState<string | null>(null);
   const sttEngineRef = useRef<SttEngine>('web-speech');
+
+  /**
+   * Evidence that the browser recognizer is listening to a device that hears nothing.
+   *
+   * The count is consecutive and any turn that produces words resets it: a microphone that
+   * works once works. `backendUsableRef` is what the recovery has to spend, recorded by the
+   * capability probe so the decision does not have to wait on a round trip at the moment it
+   * is made.
+   */
+  const deafTurnsRef = useRef(0);
+  const backendUsableRef = useRef(false);
 
   /**
    * Whether *some* path can transcribe.
@@ -222,6 +243,9 @@ export function useVoiceController(
         setSttEngine(resolution.engine);
         setSttProvider(capability.provider);
         setSttResolution(resolution);
+        backendUsableRef.current = capability.available && mediaRecorderSupported;
+        // Choosing an engine deliberately clears a verdict reached about the previous one.
+        deafTurnsRef.current = 0;
         microphoneDebug('voice', 'stt_engine_resolved', {
           preference,
           engine: resolution.engine,
@@ -601,6 +625,38 @@ export function useVoiceController(
           lang: diagnostics.lang ?? null,
         });
         lastSttEndRef.current = Date.now();
+
+        // The turn that produced nothing is the one worth reading. Hands-free turns are
+        // opened by the VAD, which honours the selected microphone, so "HomePilot heard you
+        // and the recognizer did not" is a direct comparison of the two devices — and the
+        // only signal the Web Speech API gives that it is recording the wrong one.
+        const deaf = isDeafTurn({
+          hadResult: pendingResultRef.current,
+          sawAudioStart: diagnostics.sawAudioStart,
+          sawSpeechStart: diagnostics.sawSpeechStart,
+          sawInterim: diagnostics.sawInterim,
+          error: diagnostics.error,
+        });
+        deafTurnsRef.current = deaf ? deafTurnsRef.current + 1 : 0;
+        if (deaf) {
+          const recovery = planSttRecovery(deafTurnsRef.current, {
+            backendUsable: backendUsableRef.current,
+          });
+          if (recovery.action !== 'none') {
+            microphoneDebug('voice', 'stt_deaf_recognizer_recovery', {
+              action: recovery.action,
+              deafTurns: deafTurnsRef.current,
+              backendUsable: backendUsableRef.current,
+            });
+            // Counted from zero either way: after a switch the next run of deaf turns is
+            // about the new engine, and after advice the user needs room to act on it
+            // before being told again.
+            deafTurnsRef.current = 0;
+            setSttNotice(recovery.message);
+            if (recovery.action === 'switch-to-backend') setSttEngine('homepilot-backend');
+          }
+        }
+
         if (stateRef.current === 'LISTENING') {
           if (isHandsFree) {
             const nextState = pendingResultRef.current ? 'THINKING' : 'IDLE';
@@ -882,6 +938,8 @@ export function useVoiceController(
     setIsTtsEnabled(enabled);
   }, []);
 
+  const dismissSttNotice = useCallback(() => setSttNotice(null), []);
+
   const setListeningSuppressed = useCallback(
     (suppressed: boolean, reason: string = 'unspecified') => {
       listeningSuppressedRef.current = suppressed;
@@ -913,6 +971,8 @@ export function useVoiceController(
     sttEngine,
     sttProvider,
     sttResolution,
+    sttNotice,
+    dismissSttNotice,
     setHandsFree,
     setTtsEnabled,
     startManualListening,

@@ -96,6 +96,52 @@ than letting you assume otherwise. The warm-up stop guard (§5) applies here.
 
 It is also the automatic fallback whenever the local engine cannot run.
 
+### 2.3 When the browser recognizer goes deaf
+
+The device caveat has a failure mode that reports nothing at all. If the OS default input is
+silent — unplugged, muted, a disconnected headset still holding the default slot — the
+recognizer records that silence and considers the turn a success. No error, no result:
+
+```
+[HomePilot:Mic][voice] stt_onend {hadResult: false, sawAudioStart: true, sawSpeechStart: false}
+```
+
+Meanwhile HomePilot's own VAD, which *does* honour the selected microphone, heard the user
+perfectly well — it is what opened the turn. The orb reacts to the voice, the turn ends, and
+nothing comes out. This is the bug report *"it recognizes my voice however does not send"*.
+
+`frontend/src/ui/media/sttTurnHealth.ts` catches it by comparing the two captures.
+`isDeafTurn()` is true only when the recognizer's capture **opened, stayed open, and heard
+nothing** — every other shape is a different fault with a different fix and is excluded:
+
+| Turn signals | Verdict | Why |
+| --- | --- | --- |
+| `sawAudioStart: true`, `sawSpeechStart: false`, no result | **deaf** | the routing split |
+| a transcript, or `sawInterim` | fine | the device works |
+| `sawSpeechStart: true`, no result | not deaf | wrong language, or a stop that cut the turn |
+| `error` set | not deaf | `not-allowed` / `network` / `audio-capture` name themselves |
+| `sawAudioStart: false` | not deaf | the capture never opened: permission or device |
+| signals absent (`undefined`) | not deaf | not observed ≠ did not happen |
+
+After **two consecutive** deaf turns (one is a cough or a too-quiet sentence; two in a row is
+a device) `planSttRecovery()` decides:
+
+- **backend usable** → the session moves to `homepilot-backend`, which records the selected
+  microphone, and a notice says so and where to change it back;
+- **backend not usable** → a notice naming both ways out: make that microphone the system
+  default input, or install a speech model and choose *On this computer*.
+
+Two rules it keeps deliberately:
+
+- **Never silent.** The switch changes which service sees the audio — the browser recognizer
+  sends it to Google, the local engine keeps it on the machine. Voice mode renders the notice
+  above the voice bar (`data-testid="voice-stt-notice"`), the composer in `micNotice`.
+- **Never permanent.** The stored preference is the user's. The recovery holds for the
+  session and is discarded the moment the preference changes.
+
+Trace: `stt_deaf_recognizer_recovery {action, deafTurns, backendUsable}` (and
+`composer_mic_deaf_recognizer_recovery` in chat).
+
 ### Which one am I on?
 
 Settings → Voice Assistant states it in plain text, and the trace records it once per
@@ -540,6 +586,7 @@ no split to warn about.
 | `frontend/src/ui/media/mediaPreferences.ts` | Device selection, `buildAudioConstraints` |
 | `frontend/src/ui/voice/vad.ts` | Adaptive VAD; `getStream()` shares its capture |
 | `frontend/src/ui/voice/useVoiceController.ts` | State machine, engine resolution, per-turn recorder |
+| `frontend/src/ui/media/sttTurnHealth.ts` | §2.3 — spotting a recognizer that hears nothing, and what to do about it |
 | `frontend/src/ui/tts/resolveAssistantVoice.ts` | The three-key voice resolution of §4 |
 | `frontend/src/ui/tts/shimSpeechService.ts` | Routes `SpeechService.speak` through the plugin registry |
 | `frontend/src/ui/components/VoiceAssistantSelfTest.tsx` | The three self-tests |
@@ -550,6 +597,20 @@ no split to warn about.
 
 ### Tests
 
+> **Before adding one: the test runner used to import the wrong file.**
+>
+> The source tree still carries stale `.js`/`.jsx` mirrors of modules that have since become
+> `.ts`/`.tsx` — `voice/useVoiceController.js` is untouched since the first commit. Vite's
+> default extension order puts `.js` *before* `.ts`, so a bare `import './voice/useVoiceController'`
+> resolves to the mirror. `vite.config.ts` flips the order for exactly that reason;
+> `vitest.config.ts` did not, so **the app was built from the TypeScript and the tests ran
+> against the dead JavaScript.** A suite in that state passes and measures nothing.
+>
+> That is also why a jsdom harness written during the capture-loop work passed against code
+> known to be broken: it was importing the mirror, which never had the bug.
+> `vitest.config.ts` now carries the same `resolve.extensions` override. Keep the two in step
+> until the duplicate source tree is deleted, at which point both become no-ops.
+
 | Path | Covers |
 |---|---|
 | `backend/tests/test_voice_transcribe.py` | Both endpoints: formats, silence, limits, 503 fallback, 502 provider failure |
@@ -558,6 +619,8 @@ no split to warn about.
 | `frontend/src/test/speechServiceStt.test.js` | The stop guard and lifecycle diagnostics |
 | `frontend/src/test/voiceSelfTest.test.ts` | Failure explanation, routing detection, voice resolution |
 | `frontend/src/test/sttPreferences.test.ts` | The engine choice, every preference × capability combination, and the fallback wording |
+| `frontend/src/test/sttTurnHealth.test.ts` | §2.3 — what counts as a deaf turn, and what each run of them does |
+| `frontend/src/test/voiceDeafRecognizerRecovery.test.tsx` | The controller wiring: two deaf turns switch the session and say so; anything else does not |
 | `frontend/src/test/voiceControllerStability.test.tsx` | Nothing render-scoped reaches the capture effect's dependencies |
 | `frontend/src/test/voiceAssistantTesting.test.js` | Wiring contracts across all of the above |
 | `frontend/src/test/microphoneDiagnostics.test.js` | The original diagnostics contract |
@@ -613,7 +676,8 @@ pip install -r requirements/speech-cpu.txt     # or .[whisper]
 | TTS silent, no error | §4 `never_started`. Output device, volume, removed voice, or autoplay block. |
 | `network` error on every turn | Web Speech needs internet. Install local speech and use the backend path. |
 | Every turn returns **502**, `libcublas.so.12 not found` | `WHISPER_DEVICE=auto` picked a GPU whose CUDA runtime is incomplete. **CTranslate2 loads the CUDA libraries lazily**, so this surfaces at the *first inference*, not at load — the retry therefore lives in `_run_with_cpu_fallback`, not only in `_ensure_model`. `status.device_note` names the reason. `WHISPER_DEVICE=cpu` skips the wasted attempt. |
-| Browser engine: `sawAudioStart: true, sawSpeechStart: false` every time | The browser recognizer opened a capture on your **OS default input** and heard nothing. It cannot be pointed at the microphone in Audio & Video. Either make that mic the OS default, or set Speech Recognition to *On this computer*. |
+| Browser engine: `sawAudioStart: true, sawSpeechStart: false` every time | The browser recognizer opened a capture on your **OS default input** and heard nothing. It cannot be pointed at the microphone in Audio & Video. HomePilot now detects this after two consecutive turns and switches the session to on-device transcription when it can — see §2.3. Either make that mic the OS default, or set Speech Recognition to *On this computer*. |
+| Voice changed engine on its own mid-session | §2.3, and the trace says so: `stt_deaf_recognizer_recovery {action: 'switch-to-backend'}`. Your stored preference is untouched; the notice names where to change it. |
 | The trace says `routingMismatch: false` but the split is clearly real | `routingKnown: false` means it could not tell — the browser exposed no `default` alias to compare against. "No mismatch" and "cannot tell" are separate fields for exactly this reason. |
 | Voice reopens the microphone forever (`handsfree_vad_start_requested` counting up) | A render-scoped identity reached the capture effect's dependencies. See §6.1. |
 | Meeting transcript only moves every ~8 s | Partials are not getting through. Check `_partialsWanted`: a non-empty `_queue` (you are behind), a backed-up socket, or `partialsDisabled`. |

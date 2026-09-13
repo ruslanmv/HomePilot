@@ -287,8 +287,21 @@ describe('the speech-recognition engine is a choice, not a detection', () => {
     // browser's, which sends audio to Google.
     expect(preferences).toContain('fellBack');
     expect(controller).toContain('fellBack: resolution.fellBack');
-    expect(app).toContain('if (resolution.fellBack)');
+    expect(app).toContain('resolution.fellBack');
     expect(settingsCard).toContain('Not the engine you chose');
+  });
+
+  it('says so too when it changes engines after the recognizer goes deaf', () => {
+    // The recovery in `media/sttTurnHealth` moves a session onto a different engine without
+    // being asked. That is the same act as a fallback and carries the same obligation, so
+    // both surfaces must set a notice — not just switch.
+    for (const [name, source] of [['controller', controller], ['app', app]]) {
+      expect(source, `${name} should consult the detector`).toContain('isDeafTurn(');
+      expect(source, `${name} should act on a plan`).toContain('planSttRecovery(');
+      expect(source, `${name} should tell the user`).toMatch(
+        /set(Stt|Mic)Notice\(recovery\.message\)/,
+      );
+    }
   });
 
   it('re-resolves when the setting changes, without a reload', () => {
