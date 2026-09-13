@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import logging
 import os
 import shutil
 import math
 import subprocess
 import tempfile
 from typing import Any, Dict, List
+
+log = logging.getLogger(__name__)
 
 
 class TTSProvider(abc.ABC):
@@ -429,6 +432,20 @@ class OpenAICompatSTTProvider(STTProvider):
         return [{"t0": 0.0, "t1": duration_s, "text": text, "conf": None}]
 
 
+#: Compute types that only exist on a GPU. Carrying one onto a CPU fallback would fail the
+#: retry for a second, unrelated reason and hide the first.
+_GPU_ONLY_COMPUTE = ("float16", "int8_float16", "bfloat16", "int8_bfloat16")
+
+
+def _cpu_compute_type(requested: str) -> str:
+    """The compute type to retry with on CPU.
+
+    ``default`` lets CTranslate2 pick what the CPU actually supports, which is the right
+    answer whenever the configured one was chosen for a GPU that turned out to be unusable.
+    """
+    return "default" if (requested or "").strip().lower() in _GPU_ONLY_COMPUTE else requested
+
+
 class WhisperLocalSTTProvider(STTProvider):
     """Local faster-whisper STT, included in standard HomePilot installations.
 
@@ -471,6 +488,10 @@ class WhisperLocalSTTProvider(STTProvider):
         #: Resolved after the first load. ``None`` means "not loaded yet", which is a
         #: different answer from "loaded on CPU" and is reported as such.
         self.device: str | None = None
+        #: Why the requested device was not used, when it was not. ``None`` means the load
+        #: went as asked. Surfaced so "why is this suddenly slow" has an answer on screen
+        #: rather than only in the server log.
+        self.load_error: str | None = None
 
     @property
     def available(self) -> bool:
@@ -496,11 +517,39 @@ class WhisperLocalSTTProvider(STTProvider):
         if self._model is None:
             from faster_whisper import WhisperModel
 
-            self._model = WhisperModel(
-                self.model_name,
-                device=self.requested_device,
-                compute_type=self.compute_type,
-            )
+            try:
+                self._model = WhisperModel(
+                    self.model_name,
+                    device=self.requested_device,
+                    compute_type=self.compute_type,
+                )
+            except Exception as exc:  # noqa: BLE001 — see below; CPU is the floor, not a failure
+                # `auto` is a *request*, and CTranslate2 grants it whenever it can see a GPU —
+                # then raises at load time if the CUDA runtime is incomplete:
+                #
+                #     RuntimeError: Library libcublas.so.12 is not found or cannot be loaded
+                #
+                # A machine with an unusable CUDA install can still transcribe perfectly well
+                # on its CPU, so raising here turns "slower" into "speech-to-text is broken"
+                # — which is exactly what it looked like: every turn came back 502 while the
+                # status endpoint went on reporting the provider as available.
+                #
+                # Deliberately catching everything rather than matching the message. The set
+                # of ways a CUDA stack can be half-installed is not enumerable, the cost of
+                # being wrong is one wasted CPU load attempt, and the cost of being narrow is
+                # the outage above.
+                if self.requested_device == "cpu":
+                    raise
+                self.load_error = f"{type(exc).__name__}: {exc}"
+                log.warning(
+                    "faster-whisper could not load on %r (%s); falling back to CPU",
+                    self.requested_device, self.load_error,
+                )
+                self._model = WhisperModel(
+                    self.model_name,
+                    device="cpu",
+                    compute_type=_cpu_compute_type(self.compute_type),
+                )
             # Read back rather than assume: `auto` is a request, not an outcome.
             inner = getattr(self._model, "model", None)
             self.device = str(getattr(inner, "device", None) or self.requested_device)

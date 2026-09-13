@@ -190,7 +190,18 @@ export async function transcribeBlob(
       // The message is a server hint, never transcript text.
       message,
     });
-    if (response.status === 503) {
+
+    // 503 is "no provider configured"; 502 is "the provider itself failed" — a model that
+    // cannot load, a missing ffmpeg. They are different server-side facts and the same
+    // client-side one: the backend cannot transcribe this turn, so fall back rather than
+    // leave the user with a microphone button that does nothing.
+    //
+    // The cached capability is dropped either way, so the next turn re-probes instead of
+    // being stuck on the fallback for the rest of the session. A server that recovers —
+    // Whisper reloading on CPU after an unusable CUDA install, say — is picked straight
+    // back up.
+    if (response.status === 503 || response.status === 502) {
+      resetSttCapabilityCache();
       throw new SttUnavailableError(String(message), detail?.capability ?? null);
     }
     throw new Error(String(message));

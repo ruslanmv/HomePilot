@@ -430,6 +430,32 @@ Scopes: `settings`, `chat`, `voice`, `vad`, `speech-service`.
 | `sawSpeechStart`, `sawNoMatch` | Heard speech, matched no words. | Recognition language — `SpeechService.setRecognitionLang('es-ES')`, stored as `homepilot_stt_lang`. |
 | `sawSpeechStart`, no result, no `sawNoMatch` | Heard speech, returned nothing. | Cut off too early; see the guard in §5. |
 
+### 6.1 The capture must not reopen on every render
+
+`useVoiceController`'s hands-free effect opens the microphone. Anything in its dependency
+list that changes identity per render restarts that effect — and because the restart calls
+`setState`, the restart causes the next render. The result is not a slow loop but an endless
+one:
+
+```
+handsfree_vad_start_requested {generation: 76}
+handsfree_vad_cleanup         {generation: 76}
+handsfree_vad_start_requested {generation: 77}
+...
+```
+
+Callers pass `onSendText` as a plain function declared in their component body —
+`VoiceModeGrok` does exactly that — so it is a **new identity every render**. A `useCallback`
+that lists it is therefore also new every render.
+
+So `startRecordingTurn`, `finishRecordingTurn` and `discardRecording` are all
+**dependency-free**, reading the caller's handler through `onSendTextRef` and the mode through
+`isHandsFreeRef`. `src/test/voiceControllerStability.test.tsx` asserts that invariant against
+the source, because it is a property of the dependency lists rather than of any one render.
+
+> **Rule of thumb:** nothing render-scoped may reach that effect's dependencies. If a turn
+> handler needs a new value, feed it a ref.
+
 ### Recognition error codes worth knowing
 
 `explainSttError()` in `media/voiceSelfTest.ts` turns each into an instruction:
@@ -514,7 +540,7 @@ no split to warn about.
 | Variable | Effect |
 |---|---|
 | `STT_BASE_URL`, `STT_API_KEY`, `STT_MODEL` | An OpenAI-compatible transcription endpoint. **Recordings leave the machine** — reported as `remote: true`. |
-| `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE` | Local faster-whisper. `WHISPER_DEVICE=auto` falls back to CPU silently; `status.device` reports where it actually landed. |
+| `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE` | Local faster-whisper. `auto` grants a GPU whenever CTranslate2 can see one, and **raises at load time if the CUDA runtime is incomplete** — so the load is retried on CPU rather than turning "slower" into "speech-to-text is broken". `status.device` reports where it actually landed and `status.device_note` why. A GPU-only `WHISPER_COMPUTE` (`float16`) becomes `default` on the retry, since it does not exist on CPU. An explicit `WHISPER_DEVICE=cpu` still raises: there is nothing to fall back to. |
 | `VOICE_BACKEND_ENABLED` | `WS /v1/voice/session` only. **Does not** gate transcription. |
 | `VOICE_TRANSCRIBE_MAX_BYTES` | Clip ceiling for `POST /v1/voice/transcribe`, in bytes. Default 25 MB; an unparseable or non-positive value falls back to it, since the wrong answer here is refusing audio somebody meant to send. Read per request via `max_audio_bytes()` rather than bound at import — the backend suite purges and re-imports `app.*` in several fixtures, so the module global is not reliably the one a mounted route reads. |
 
@@ -553,6 +579,8 @@ pip install -r requirements/speech-cpu.txt     # or .[whisper]
 | "Test voice" sounds unlike assistant replies | Fixed. Both go through `speakThroughRuntime()`. |
 | TTS silent, no error | §4 `never_started`. Output device, volume, removed voice, or autoplay block. |
 | `network` error on every turn | Web Speech needs internet. Install local speech and use the backend path. |
+| Every turn returns **502**, `libcublas.so.12 not found` | `WHISPER_DEVICE=auto` picked a GPU whose CUDA runtime is incomplete. Whisper now retries on CPU automatically; `status.device_note` names the reason. Set `WHISPER_DEVICE=cpu` to skip the wasted attempt, or repair the CUDA install. |
+| Voice reopens the microphone forever (`handsfree_vad_start_requested` counting up) | A render-scoped identity reached the capture effect's dependencies. See §6.1. |
 | Meeting transcript only moves every ~8 s | Partials are not getting through. Check `_partialsWanted`: a non-empty `_queue` (you are behind), a backed-up socket, or `partialsDisabled`. |
 | Meeting records the wrong microphone | §3.5. Was fixed; check `ms:mic_fallback` for a selected device that was gone. |
 | Meeting hears the call's voices as you | Echo cancellation off with system audio on speakers. §3.5. |

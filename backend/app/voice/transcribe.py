@@ -126,6 +126,16 @@ def stt_capability() -> Dict[str, Any]:
         info["available"] = bool(getattr(provider, "available", False))
         info["remote"] = getattr(provider, "name", "") == "openai-compat"
         info["device"] = getattr(provider, "device", None)
+        # Why the requested device was not used, when it was not. A CUDA install that is
+        # present but incomplete loads on CPU instead, and somebody wondering why
+        # transcription got ten times slower deserves the reason on screen rather than only
+        # in the server log.
+        load_error = getattr(provider, "load_error", None)
+        if load_error:
+            info["device_note"] = (
+                f"requested {getattr(provider, 'requested_device', '?')}, "
+                f"running on {info['device'] or 'cpu'} — {load_error}"
+            )
         if info["available"]:
             info["hint"] = None
     except Exception as exc:  # noqa: BLE001 — a status route must not fail at reporting

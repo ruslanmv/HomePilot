@@ -18,7 +18,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createVAD, VADInstance, VADConfig } from './vad';
 import { microphoneDebug, microphoneDebugError } from '../media/microphoneDebug';
-import { getSttCapability, transcribeBlob, type SttEngine } from '../media/sttService';
+import {
+  getSttCapability,
+  SttUnavailableError,
+  transcribeBlob,
+  type SttEngine,
+} from '../media/sttService';
 
 export type VoiceState = 'OFF' | 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
@@ -159,6 +164,24 @@ export function useVoiceController(
   useEffect(() => {
     sttEngineRef.current = sttEngine;
   }, [sttEngine]);
+
+  /**
+   * The newest `onSendText` and hands-free flag, reachable without depending on them.
+   *
+   * Callers pass `onSendText` as a plain function declared in their component body, so its
+   * identity changes on every render — `VoiceModeGrok` does exactly that. A `useCallback`
+   * that lists it therefore also changes every render, and anything listing *that* in an
+   * effect restarts on every render. When the effect in question is the one that opens the
+   * microphone, the restart calls `setState`, which renders, which restarts it again: the
+   * capture tears down and reopens in a loop and Voice never becomes usable.
+   *
+   * Reading through a ref keeps the turn handlers stable, so the VAD effect restarts only
+   * when the capture configuration genuinely changes.
+   */
+  const onSendTextRef = useRef(onSendText);
+  const isHandsFreeRef = useRef(isHandsFree);
+  useEffect(() => { onSendTextRef.current = onSendText; }, [onSendText]);
+  useEffect(() => { isHandsFreeRef.current = isHandsFree; }, [isHandsFree]);
 
   // Resolve the transcription path once. Preferring the backend removes the
   // device split at its root: the clip posted for transcription is recorded
@@ -360,7 +383,7 @@ export function useVoiceController(
       recorderRef.current = null;
       recorderChunksRef.current = [];
       setLastError('recorder_failed');
-      setState(isHandsFree ? 'IDLE' : 'OFF');
+      setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
     };
 
     recorder.onstop = () => {
@@ -378,7 +401,7 @@ export function useVoiceController(
       if (!blob.size) {
         microphoneDebug('voice', 'recorder_empty_turn');
         setLastError('no_audio_recorded');
-        setState(isHandsFree ? 'IDLE' : 'OFF');
+        setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
         return;
       }
 
@@ -395,7 +418,7 @@ export function useVoiceController(
               provider: result.provider,
             });
             setLastError(null);
-            onSendText(result.text);
+            onSendTextRef.current(result.text);
             // `onSendText` drives the reply; SPEAKING follows from TTS.
             return;
           }
@@ -403,12 +426,22 @@ export function useVoiceController(
           // different fact from a failure. Report it as such.
           microphoneDebug('voice', 'stt_no_speech', { provider: result.provider });
           setLastError('no_speech_detected');
-          setState(isHandsFree ? 'IDLE' : 'OFF');
+          setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
         })
         .catch((error) => {
           microphoneDebugError('voice', 'stt_transcribe_failed', error);
+          if (error instanceof SttUnavailableError) {
+            // The server cannot transcribe — no provider, or one that failed to load. Drop
+            // to the browser recognizer rather than leaving hands-free voice deaf for the
+            // rest of the session. It records the OS default input instead of the selected
+            // microphone, which is worse but is not nothing, and the trace says which.
+            microphoneDebug('voice', 'stt_engine_fallback_web_speech', {
+              reason: error.message,
+            });
+            setSttEngine('web-speech');
+          }
           setLastError(error instanceof Error ? error.message : 'transcription_failed');
-          setState(isHandsFree ? 'IDLE' : 'OFF');
+          setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
         });
     };
 
@@ -429,7 +462,9 @@ export function useVoiceController(
     });
     setState('LISTENING');
     return true;
-  }, [isHandsFree, onSendText]);
+    // Deliberately no dependencies: everything render-scoped is read through a ref above, so
+    // this stays identity-stable and the VAD effect below does not restart on every render.
+  }, []);
 
   /** End the turn and let `onstop` transcribe what was captured. */
   const finishRecordingTurn = useCallback((reason: string) => {
@@ -711,8 +746,10 @@ export function useVoiceController(
     JSON.stringify(cfg.vadConfig),
     cfg.bargeInEnabled,
     startRecognition,
-    // The VAD callbacks close over these, so a stale copy would record a turn
-    // and hand the transcript to a previous `onSendText`.
+    // Listed because the VAD callbacks close over them, and safe to list because all three
+    // are identity-stable: they read the caller's handler through a ref. An unstable one
+    // here restarts the capture on every render, and since the restart sets state, that is
+    // an endless teardown/reopen loop rather than a slow one.
     startRecordingTurn,
     finishRecordingTurn,
     discardRecording,

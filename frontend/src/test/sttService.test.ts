@@ -157,6 +157,35 @@ describe('transcribeBlob', () => {
     await expect(transcribeBlob(new Blob(['a']))).rejects.toThrow(/ffmpeg missing/);
   });
 
+  it('treats a broken provider as a reason to fall back, not a dead button', async () => {
+    // 503 is "no provider configured"; 502 is "the provider itself failed" -- a model that
+    // cannot load (an unusable CUDA install), a missing ffmpeg. Different server-side facts,
+    // the same client-side one: this turn cannot be transcribed here.
+    vi.stubGlobal('fetch', vi.fn(async () => okJson({
+      detail: { error: 'transcription failed: Library libcublas.so.12 is not found' },
+    }, 502)));
+
+    await expect(transcribeBlob(new Blob(['a']))).rejects.toBeInstanceOf(SttUnavailableError);
+  });
+
+  it('re-probes after a failure instead of staying on the fallback forever', async () => {
+    // A server that recovers -- Whisper reloading on CPU after an unusable CUDA install --
+    // must be picked back up rather than written off for the session.
+    const fetchMock = vi.fn(async (url: unknown) => (
+      String(url).includes('/status')
+        ? okJson({ available: true, provider: 'whisper-local' })
+        : okJson({ detail: { error: 'provider failed' } }, 502)
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await getSttCapability();                                   // probe #1, now cached
+    await expect(transcribeBlob(new Blob(['a']))).rejects.toBeInstanceOf(SttUnavailableError);
+    await getSttCapability();                                   // cache dropped -> probe #2
+
+    const probes = fetchMock.mock.calls.filter((c) => String(c[0]).includes('/status'));
+    expect(probes).toHaveLength(2);
+  });
+
   it('does not pretend to succeed on an unexpected status', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okJson(null, 404)));
     await expect(transcribeBlob(new Blob(['a']))).rejects.toThrow(/404/);
