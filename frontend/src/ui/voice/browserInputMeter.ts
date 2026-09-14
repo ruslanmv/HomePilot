@@ -71,9 +71,10 @@ export async function startBrowserInputMeter(
         const value = (data[i] - 128) / 128;
         sum += value * value;
       }
-      // Match the sensitivity used by the local record/test meter. VoiceModeGrok applies its
-      // own attack/release smoothing on top of this raw-ish 0..1 value.
-      onLevel(Math.min(1, Math.sqrt(sum / data.length) * 4.5));
+      // Feed raw RMS-style 0..1 levels, matching the VAD controller contract. VoiceModeGrok
+      // already applies the display gain/attack/release it needs; amplifying here too makes
+      // normal speech pin the meter at 100% and destroys the visual dynamics.
+      onLevel(Math.min(1, Math.sqrt(sum / data.length)));
     };
 
     sample();
