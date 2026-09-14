@@ -1553,6 +1553,24 @@ function Sidebar({
   )
 }
 
+/**
+ * Recognizer outcomes that are not faults during dictation.
+ *
+ * A dictation session is held open until the user presses Stop, so it spends most of its life
+ * waiting. `no-speech` is Chrome saying nobody spoke — which is what a pause *is* — and
+ * `aborted` is HomePilot taking the microphone back for a hand-off. Reporting either would put
+ * a warning under the composer every few seconds of a session that is working.
+ */
+const BENIGN_DICTATION_ERRORS = new Set(['no-speech', 'aborted'])
+
+/** Errors that reopening the session would only repeat. */
+const FATAL_DICTATION_ERRORS = new Set([
+  'not-allowed',
+  'service-not-allowed',
+  'audio-capture',
+  'not-supported',
+])
+
 function QueryBar({
   centered,
   input,
@@ -1642,6 +1660,29 @@ function QueryBar({
   // instead of rediscovering the same broken device on its own.
   const micDeafTurnsRef = useRef(0)
   const micBackendUsableRef = useRef(false)
+  /*
+   * Dictation *adds to* the composer; it does not take it over.
+   *
+   * `setInput(text)` replaced whatever was there, so starting dictation on a half-typed
+   * message erased it, and in a session that produces more than one finished phrase each one
+   * replaced the last — leaving only the final sentence of everything that was said.
+   *
+   * ChatGPT, Claude and Gemini all behave the other way: the text you already have stays, and
+   * speech is appended to it. `micBaseTextRef` is the draft as it was when the microphone
+   * opened, `micFinalRef` accumulates the phrases finished since.
+   */
+  const micBaseTextRef = useRef('')
+  const micFinalRef = useRef('')
+  /**
+   * The composer's current text, reachable without re-creating the dictation session.
+   *
+   * `input` changes on every keystroke, so a callback listing it would be a new function each
+   * time — and the session holds these handlers for its whole life.
+   */
+  const inputRef = useRef(input)
+  /** Set when the user presses Stop, so an auto-restart can tell itself from a real end. */
+  const micStoppingRef = useRef(false)
+  useEffect(() => { inputRef.current = input }, [input])
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const modeMenuRef = useRef<HTMLDivElement | null>(null)
   const modeButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -1661,11 +1702,24 @@ function QueryBar({
    * records the OS default input, not the microphone chosen in Settings — so the notice text
    * says so when it hears nothing.
    */
-  const startWebSpeechListening = useCallback(async () => {
-    micTranscriptRef.current = ''
+  const startWebSpeechListening = useCallback(async (options: { resumed?: boolean } = {}) => {
+    if (!options.resumed) {
+      micTranscriptRef.current = ''
+      micFinalRef.current = ''
+      micStoppingRef.current = false
+      // Whatever is already in the composer is the user's and is kept.
+      micBaseTextRef.current = inputRef.current
+    }
     microphoneDebug('chat', 'composer_mic_start_click', {
+      resumed: Boolean(options.resumed),
       recognitionDevice: 'browser-managed-web-speech',
     })
+
+    /** base draft + phrases finished so far + the words currently being said. */
+    const compose = (interim: string) =>
+      [micBaseTextRef.current.trim(), micFinalRef.current.trim(), interim.trim()]
+        .filter(Boolean)
+        .join(' ')
 
     const started = await startWebSpeech('chat', {
       onStart: () => {
@@ -1674,10 +1728,11 @@ function QueryBar({
       },
       // Words as they are recognized, straight into the composer: the browser engine's one
       // real advantage, and what tells the user it is hearing them at all.
-      onInterim: (text) => setInput(text),
+      onInterim: (text) => setInput(compose(text)),
       onResult: (text) => {
-        micTranscriptRef.current = text
-        setInput(text)
+        micFinalRef.current = [micFinalRef.current.trim(), text.trim()].filter(Boolean).join(' ')
+        micTranscriptRef.current = micFinalRef.current
+        setInput(compose(''))
       },
       onEnd: (diagnostics: SttDiagnostics) => {
         microphoneDebug('chat', 'composer_mic_onend', {
@@ -1688,6 +1743,20 @@ function QueryBar({
           sawNoMatch: diagnostics.sawNoMatch ?? null,
           error: diagnostics.error ?? null,
         })
+        /*
+         * Chrome ends a continuous session on its own — after a long silence, and every
+         * minute or so regardless. Dictation is over when the *user* says it is, so anything
+         * else reopens it. That is what "hold the mic until I press stop" means, and it is
+         * what ChatGPT, Claude and Gemini all do.
+         */
+        if (!micStoppingRef.current && !FATAL_DICTATION_ERRORS.has(diagnostics.error || '')) {
+          microphoneDebug('chat', 'composer_mic_resumed', {
+            characters: micFinalRef.current.trim().length,
+          })
+          void startWebSpeechListening({ resumed: true })
+          return
+        }
+
         setIsListening(false)
         // Say why nothing arrived instead of resetting the button in silence.
         if (!micTranscriptRef.current.trim()) {
@@ -1737,9 +1806,18 @@ function QueryBar({
         }
       },
       onError: (code) => {
-        microphoneDebugError('chat', 'composer_mic_error', new Error(code || 'unknown'))
+        microphoneDebug('chat', 'composer_mic_error', {
+          error: code || 'unknown',
+          benign: BENIGN_DICTATION_ERRORS.has(code),
+        })
+        if (BENIGN_DICTATION_ERRORS.has(code)) {
+          // A pause in dictation, or our own hand-off. `onEnd` follows and reopens the
+          // session; a message here would be an error about nothing going wrong.
+          return
+        }
         // `onEnd` usually follows and renders the verdict; keep the state reset here so the
         // button never sticks if it does not.
+        micStoppingRef.current = true
         setIsListening(false)
         if (code === 'not-supported') {
           setMicNotice(
@@ -1751,9 +1829,10 @@ function QueryBar({
         const outcome = explainSttError(code)
         setMicNotice(`${outcome.headline}. ${outcome.detail}`)
       },
-    })
+    }, { continuous: true })
 
     if (!started) setIsListening(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setInput])
 
   /**
@@ -1765,6 +1844,8 @@ function QueryBar({
    */
   const startBackendListening = useCallback(async () => {
     setIsListening(true)
+    // Same rule as the browser path: dictation adds to the draft rather than replacing it.
+    const base = inputRef.current.trim()
     try {
       const result = await recordAndTranscribe({
         scope: 'chat',
@@ -1777,7 +1858,7 @@ function QueryBar({
       setMicTranscribing(false)
 
       if (result.text) {
-        setInput(result.text)
+        setInput([base, result.text.trim()].filter(Boolean).join(' '))
         return
       }
       // Empty text is a successful transcription of silence — a different fact
@@ -1830,7 +1911,9 @@ function QueryBar({
         micStopRecordingRef.current()
         return
       }
-      // An explicit press of Stop must stop now, not after the recognizer's warm-up guard.
+      // An explicit press of Stop must stop now, not after the recognizer's warm-up guard —
+      // and must not be reopened by the auto-resume above.
+      micStoppingRef.current = true
       stopWebSpeech('chat', { reason: 'composer_mic_stop_click', force: true })
       return
     }

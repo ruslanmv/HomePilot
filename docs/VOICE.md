@@ -173,6 +173,29 @@ back for TTS or a hand-off. Neither is a fault and neither reaches `lastError`.
 A manual press stays one-shot. It has a Stop button behind it, and a session that outlived the
 turn would hold the microphone after the user believed they had released it.
 
+### 2.2.2 Dictation in the chat composer
+
+The microphone next to the composer follows the conventions ChatGPT, Claude and Gemini share,
+because they are the ones people already expect:
+
+| Convention | What it means here |
+|---|---|
+| **It listens until you stop it** | The session is continuous and auto-resumes when Chrome ends it. Only Stop ends dictation. |
+| **It adds to the draft** | `compose()` = the text already in the box + phrases finished this session + the words being said now. |
+| **It never sends for you** | The text lands in the composer; `onSend` is reached by pressing send. |
+
+Two of the three were broken, and both are the same mistake in different clothes: `setInput(text)`
+*replaced* the composer. Pressing the microphone on a half-written message erased it, and in a
+session producing more than one phrase each result replaced the last — so only the final
+sentence of everything said survived. Both engines append now; the local path does the same
+thing with `base + transcript`.
+
+Because a held-open session spends most of its life waiting, `no-speech` and `aborted` are
+classified benign here too (`BENIGN_DICTATION_ERRORS`). A pause is what dictation is *for*;
+reporting it put a warning under the composer every few seconds of a working session.
+`FATAL_DICTATION_ERRORS` is the other end: permission, a missing device, a blocked service —
+reopening only repeats them, so the session is not resumed.
+
 Interim text is dropped while the assistant is speaking: the recognizer cannot separate
 HomePilot's own output from the user, so anything arriving then is either its voice coming
 back or a barge-in it has already mangled.
@@ -959,6 +982,9 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 | Meter moves, no text, no error | §1 device split, with both captures open. Fixed: the engines are now exclusive, so a `vad capture_opened` and an `stt_onstart` can no longer appear in the same session. If you still see both, that is a regression — `sttCaptureOwnership.test.tsx` is the guard. |
 | Browser mode: the input level meter is gone | Deliberate — §2.2. The recognizer opens its own capture and hands HomePilot no audio to measure. Opening a second microphone purely to animate a bar is the bug above. Switch to *On this computer* for a live meter on the microphone you selected. |
 | Browser mode: cannot speak over the assistant any more | Deliberate — §2.2. Barge-in needs the VAD, which does not run on this engine, and leaving the recognizer open during TTS transcribes the reply back as the next turn. `bargeInSupported` reports it. |
+| Dictation wipes a half-written message, or keeps only the last sentence | Fixed. `setInput` replaced the composer; it appends now, on both engines — see §2.2.2. |
+| Dictation stops on its own mid-thought | Fixed. The session is continuous and reopens when Chrome ends it; only Stop ends dictation. |
+| A warning under the composer every few seconds while dictating | Fixed. `no-speech` during a held-open session is a pause, not a fault. |
 | The composer mic button disappears when there is text | Fixed. It used to be the *alternative* to Submit, so any draft hid it — dictating a correction meant clearing the field first. Both buttons are shown now. |
 | `stt_onend {hadResult: false}`, nothing else | §5 warm-up stop, or the split. Check `sawAudioStart` / `sawSpeechStart`. |
 | Mic button does nothing, no logs | Fixed. Every outcome now traces under scope `chat` and shows a notice by the composer. |

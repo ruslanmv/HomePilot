@@ -247,7 +247,9 @@ describe('chat composer microphone button', () => {
     expect(app).toContain("microphoneDebug('chat', 'composer_mic_onstart'");
     expect(app).toContain("microphoneDebug('chat', 'composer_mic_onend'");
     expect(app).toContain("microphoneDebug('chat', 'composer_mic_engine'");
-    expect(app).toContain("microphoneDebugError('chat', 'composer_mic_error'");
+    expect(app).toContain("microphoneDebug('chat', 'composer_mic_error'");
+    // A session Chrome ended and dictation reopened is a distinct event from a turn ending.
+    expect(app).toContain("microphoneDebug('chat', 'composer_mic_resumed'");
     // A start the adapter refused is traced there, where the one recognizer lives.
     expect(webSpeechSession).toContain('web_speech_start_failed');
     expect(webSpeechSession).toContain('web_speech_unsupported');
