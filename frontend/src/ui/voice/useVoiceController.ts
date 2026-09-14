@@ -55,7 +55,9 @@ import {
   applySttSessionOverride,
   getMicrophoneLease,
   releaseMicrophone,
+  describeEngineHandoff,
   rememberRecognizerIsDeaf,
+  subscribeEffectiveEngine,
   systemDefaultMicrophoneLabel,
 } from '../media/sttRuntime';
 import { useSttRuntime } from '../media/useSttRuntime';
@@ -263,6 +265,29 @@ export function useVoiceController(
   const deafTurnsRef = useRef(0);
 
   /**
+   * Turns completed since this Voice session started listening.
+   *
+   * ── Why the first one is never evidence ──────────────────────────────────────────────────
+   *
+   * Opening Voice and pressing the listen button is how people *check* that Voice is there.
+   * They press it, look at the orb, and often say nothing at all — there is nothing to say
+   * yet, the session has only just opened. That turn ends exactly like a deaf one: a capture
+   * opened, stayed open, and heard no speech, because none was spoken.
+   *
+   * Since a deliberate turn recovers on the very first one, that ordinary first press was
+   * enough to move the whole session onto another engine and put a paragraph on screen
+   * explaining a fault that had not happened. "The first time we click on Voice is normal, we
+   * don't have voice" is that, exactly.
+   *
+   * So the first turn of a session is a warm-up: counted, never used as evidence. It costs one
+   * turn to reach a verdict that was never trustworthy on its own, and it removes the only
+   * case where the detector fires at somebody whose microphone is fine.
+   */
+  const turnsThisSessionRef = useRef(0);
+  /** The provider name, reachable from a subscription that must not re-run when it changes. */
+  const capabilityProviderRef = useRef<string | null>(null);
+
+  /**
    * Whether *some* path can transcribe with the engine that is actually running.
    *
    * Deliberately not "does this browser implement the Web Speech API": with backend
@@ -315,14 +340,39 @@ export function useVoiceController(
   }, [runtime.backendUsable]);
 
   /**
-   * A recovery started anywhere in the session is said out loud here too.
+   * A recovery started anywhere in the session is said out loud here too — **and taken back
+   * when it stops being true.**
    *
    * The chat composer can be the surface that discovers the recognizer is deaf. The user is
    * one person with one microphone, so the explanation belongs wherever they look next.
+   *
+   * The clearing half was missing, and it is what made this notice feel permanent. Choosing an
+   * engine in Settings drops the session override and its message — that is the whole point of
+   * a deliberate choice outranking a recovery — but Voice only ever *set* the text, so the
+   * paragraph explaining that HomePilot had switched engines stayed on screen after the user
+   * had switched them back by hand. Assigning the value, rather than assigning it when truthy,
+   * is the entire fix.
    */
   useEffect(() => {
-    if (runtime.sessionOverrideMessage) setSttNotice(runtime.sessionOverrideMessage);
+    setSttNotice(runtime.sessionOverrideMessage);
   }, [runtime.sessionOverrideMessage]);
+
+  /**
+   * The engine changed while Voice was open, so say what it changed to.
+   *
+   * Short and factual. The capture effect below already performs the hand-off — it is keyed on
+   * the engine, so it tears the old capture down and opens the new one — but a change of where
+   * the audio *goes* must never be silent, and the recovery paragraph is the wrong text for a
+   * change the user asked for.
+   */
+  useEffect(() => subscribeEffectiveEngine((next) => {
+    setSttNotice(describeEngineHandoff(next, capabilityProviderRef.current));
+    // A new engine is a new question. Evidence gathered about the old one says nothing about
+    // this one, and carrying it over is how one deaf browser turn could switch an engine the
+    // user had just chosen.
+    deafTurnsRef.current = 0;
+    turnsThisSessionRef.current = 0;
+  }), []);
 
   /**
    * The newest `onSendText` and hands-free flag, reachable without depending on them.
@@ -341,6 +391,20 @@ export function useVoiceController(
   const isHandsFreeRef = useRef(isHandsFree);
   useEffect(() => { onSendTextRef.current = onSendText; }, [onSendText]);
   useEffect(() => { isHandsFreeRef.current = isHandsFree; }, [isHandsFree]);
+  useEffect(() => { capabilityProviderRef.current = sttProvider; }, [sttProvider]);
+
+  /**
+   * A session begins when listening is switched on, and its warm-up turn comes with it.
+   *
+   * Keyed on `isHandsFree` rather than on mount: leaving Voice and coming back is a new
+   * session to the user whether or not the component was destroyed in between, and the first
+   * press after returning is the same "is this thing on?" press as the first press ever.
+   */
+  useEffect(() => {
+    if (!isHandsFree) return;
+    turnsThisSessionRef.current = 0;
+    deafTurnsRef.current = 0;
+  }, [isHandsFree]);
 
   useEffect(() => {
     if (state === 'THINKING' && isHandsFree) {
@@ -805,14 +869,26 @@ export function useVoiceController(
         // recognizer heard nothing" there is the ordinary sound of a quiet room, and
         // counting it would switch engines under a user who simply stopped speaking for
         // eight hundred milliseconds.
+        //
+        // And the *first* turn of a session is never evidence either, however deliberate it
+        // was: opening Voice and pressing listen is how people check that Voice is there, and
+        // they often say nothing into it. See `turnsThisSessionRef`.
         const deliberate = turnWasDeliberateRef.current;
-        const deaf = deliberate && isDeafTurn({
+        const warmUp = turnsThisSessionRef.current === 0;
+        turnsThisSessionRef.current += 1;
+        const deaf = deliberate && !warmUp && isDeafTurn({
           hadResult: pendingResultRef.current,
           sawAudioStart: diagnostics.sawAudioStart,
           sawSpeechStart: diagnostics.sawSpeechStart,
           sawInterim: diagnostics.sawInterim,
           error: diagnostics.error,
         });
+        if (warmUp && deliberate) {
+          microphoneDebug('voice', 'stt_first_turn_not_evidence', {
+            hadResult: pendingResultRef.current,
+            sawSpeechStart: diagnostics.sawSpeechStart ?? null,
+          });
+        }
         deafTurnsRef.current = deaf ? deafTurnsRef.current + 1 : 0;
         if (deaf) {
           const recovery = planSttRecovery(deafTurnsRef.current, {

@@ -215,8 +215,6 @@ describe('when the recognizer goes deaf with a meter running', () => {
          */
         localStorage.setItem('homepilot_voice_handsfree', 'false');
         const { result } = await mountHandsFree('web-speech');
-        await act(async () => { await result.current.startManualListening(); });
-        await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
 
         // The signature of a capture that opened, stayed open, and heard nothing.
         diagnostics = {
@@ -225,7 +223,13 @@ describe('when the recognizer goes deaf with a meter running', () => {
             sawInterim: false,
             error: null,
         };
-        act(() => { callbacks.onEnd?.(diagnostics); });
+        // Twice: the first turn of a session is a warm-up and is never evidence, because
+        // pressing listen and saying nothing is how people check that Voice is there.
+        for (let turn = 0; turn < 2; turn += 1) {
+            await act(async () => { await result.current.startManualListening(); });
+            act(() => { callbacks.onEnd?.(diagnostics); });
+        }
+        await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
 
         await waitFor(() => expect(result.current.sttNotice).toBeTruthy());
         expect(result.current.sttNotice).toContain('Two things');

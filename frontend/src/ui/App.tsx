@@ -40,11 +40,13 @@ import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './Se
 import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
 import { explainSttError, explainSttOutcome, type SttDiagnostics } from './media/voiceSelfTest'
 import { recordAndTranscribe, SttUnavailableError } from './media/sttService'
-import { describeSttResolution } from './media/sttPreferences'
+import { describeSttResolution, type ResolvedSttEngine } from './media/sttPreferences'
 import {
   acquireMicrophone,
   applySttSessionOverride,
+  describeEngineHandoff,
   ensureSttRuntimeResolved,
+  subscribeEffectiveEngine,
   getMicrophoneLease,
   releaseMicrophone,
   rememberRecognizerIsDeaf,
@@ -1661,6 +1663,8 @@ function QueryBar({
   // instead of rediscovering the same broken device on its own.
   const micDeafTurnsRef = useRef(0)
   const micBackendUsableRef = useRef(false)
+  /** The server-side provider's name, for the hand-off line. Filled in when the engine resolves. */
+  const micProviderRef = useRef<string | null>(null)
   /*
    * Dictation *adds to* the composer; it does not take it over.
    *
@@ -1900,6 +1904,76 @@ function QueryBar({
     }
   }, [setInput, startWebSpeechListening])
 
+  /**
+   * Open dictation on a named engine.
+   *
+   * Split out of the click handler because starting is no longer only something a click does:
+   * an engine changed in Settings mid-dictation has to reopen the microphone on the new engine,
+   * and it must take exactly the same path a click would rather than a second, subtly
+   * different one.
+   */
+  const startDictationOn = useCallback(async (engine: ResolvedSttEngine) => {
+    if (engine === 'homepilot-backend') {
+      // Take the microphone before opening it: if the Voice tab is holding a capture, its
+      // release runs first, so there are never two recorders on one device.
+      await acquireMicrophone('chat', 'homepilot-backend', () => {
+        micStopRecordingRef.current?.()
+        micStopRecordingRef.current = null
+      })
+      void startBackendListening()
+      return
+    }
+    await acquireMicrophone('chat', 'web-speech', () => abortWebSpeech('microphone_handoff'))
+    void startWebSpeechListening()
+  }, [startBackendListening, startWebSpeechListening])
+
+  /* ── Changing the engine while the composer is dictating ──────────────────────────────
+   *
+   * The engine was resolved once, at the moment the microphone button was pressed, and after
+   * that nothing looked again. So changing it in Settings mid-dictation left the composer
+   * recording through the engine the user had just moved away from — audio still going to the
+   * browser recognizer after they chose on-device transcription for privacy, which is the one
+   * way this can be wrong that actually matters.
+   *
+   * The hand-off is stop-then-start, never a swap underneath a live capture: the two engines
+   * are exclusive by construction, and the old one has a turn in flight that is worth
+   * finishing. Stopping the backend path transcribes what was said rather than discarding it;
+   * stopping the browser path lets its final result land. Either way the words the user has
+   * already spoken end up in the draft, and `micBaseTextRef` means the restart appends to that
+   * draft instead of replacing it.
+   *
+   * The restart is deliberately *not* done here. It waits for `isListening` to fall, below —
+   * both stops are asynchronous, and reopening the microphone from inside this callback races
+   * the teardown for the same device.
+   */
+  const pendingEngineHandoffRef = useRef<ResolvedSttEngine | null>(null)
+  const isListeningRef = useRef(isListening)
+  useEffect(() => { isListeningRef.current = isListening }, [isListening])
+
+  useEffect(() => subscribeEffectiveEngine((next) => {
+    setMicNotice(describeEngineHandoff(next, micProviderRef.current))
+    micDeafTurnsRef.current = 0
+    if (!isListeningRef.current) return
+    microphoneDebug('chat', 'composer_mic_engine_handoff', { to: next })
+    pendingEngineHandoffRef.current = next
+    if (micStopRecordingRef.current) {
+      setMicTranscribing(true)
+      micStopRecordingRef.current()
+      return
+    }
+    // Suppresses the auto-resume, which would otherwise reopen the *old* engine the moment
+    // this stop lands and leave two restarts racing for one microphone.
+    micStoppingRef.current = true
+    stopWebSpeech('chat', { reason: 'stt_engine_changed', force: true })
+  }), [])
+
+  useEffect(() => {
+    const next = pendingEngineHandoffRef.current
+    if (!next || isListening) return
+    pendingEngineHandoffRef.current = null
+    void startDictationOn(next)
+  }, [isListening, startDictationOn])
+
   /** Give the microphone back if the composer unmounts mid-turn. */
   useEffect(() => () => {
     abortWebSpeech('chat_unmount')
@@ -1931,6 +2005,7 @@ function QueryBar({
     void ensureSttRuntimeResolved().then(async (runtime) => {
       const { capability, resolution, effectiveEngine, sessionOverride } = runtime
       micBackendUsableRef.current = runtime.backendUsable
+      micProviderRef.current = capability?.provider ?? null
       microphoneDebug('chat', 'composer_mic_engine', {
         preference: runtime.preference,
         engine: effectiveEngine,
@@ -1955,20 +2030,9 @@ function QueryBar({
         setMicNotice(describeSttResolution(resolution, capability?.provider ?? null))
       }
 
-      if (effectiveEngine === 'homepilot-backend') {
-        // Take the microphone before opening it: if the Voice tab is holding a capture, its
-        // release runs first, so there are never two recorders on one device.
-        await acquireMicrophone('chat', 'homepilot-backend', () => {
-          micStopRecordingRef.current?.()
-          micStopRecordingRef.current = null
-        })
-        void startBackendListening()
-        return
-      }
-      await acquireMicrophone('chat', 'web-speech', () => abortWebSpeech('microphone_handoff'))
-      void startWebSpeechListening()
+      await startDictationOn(effectiveEngine)
     })
-  }, [isListening, startBackendListening, startWebSpeechListening])
+  }, [isListening, startDictationOn])
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {

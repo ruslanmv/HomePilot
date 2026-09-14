@@ -221,6 +221,51 @@ let preferenceSubscription: (() => void) | null = null;
  */
 let routingPreflightArmed = true;
 
+/**
+ * Watchers of the engine *changing*, as opposed to watchers of the state.
+ *
+ * ── Why this is a second subscription and not a `useEffect` on the state ─────────────────
+ *
+ * A surface that is merely *configured* by the engine can read it from the state and re-render;
+ * that is what `subscribeSttRuntime` is for, and the Voice capture effect keys on it directly.
+ * A surface that is **capturing right now** has a different problem: it is mid-turn on the old
+ * engine, holding the microphone, with the user's half-dictated sentence in a draft. For it,
+ * the change is not a new value to render — it is a hand-off to perform.
+ *
+ * Those two need different signals, because the interesting cases are exactly the ones a value
+ * comparison gets wrong: a re-resolve that lands the *same* engine must not interrupt a turn in
+ * progress, and the first resolve of a session (`null → web-speech`) is the session starting
+ * rather than a hand-off, so it must not either. Both are filtered here, once, instead of in
+ * every consumer.
+ */
+type EngineHandoffListener = (
+  next: ResolvedSttEngine,
+  previous: ResolvedSttEngine,
+) => void;
+
+let engineListeners = new Set<EngineHandoffListener>();
+
+/**
+ * The engine the hand-off listeners have already been told about.
+ *
+ * Deliberately separate from `state.effectiveEngine`: the state is replaced wholesale by every
+ * refresh, and comparing a snapshot against the one before it inside a subscriber is how each
+ * surface would end up with its own — differently wrong — idea of what counts as a change.
+ */
+let announcedEngine: ResolvedSttEngine | null = null;
+
+/**
+ * Be told when the engine actually changes under an active capture.
+ *
+ * Fires only for engine → *different* engine. Never for the first resolve of a session, and
+ * never for a refresh that lands the same engine.
+ */
+export function subscribeEffectiveEngine(listener: EngineHandoffListener): () => void {
+  engineListeners.add(listener);
+  ensurePreferenceSubscription();
+  return () => { engineListeners.delete(listener); };
+}
+
 function emit(): void {
   const snapshot = state;
   listeners.forEach((listener) => {
@@ -228,6 +273,25 @@ function emit(): void {
       listener(snapshot);
     } catch {
       // One bad subscriber must never stop the others from learning the engine changed.
+    }
+  });
+
+  if (snapshot.effectiveEngine === announcedEngine) return;
+  const previous = announcedEngine;
+  announcedEngine = snapshot.effectiveEngine;
+  if (!previous || !snapshot.effectiveEngine) return;
+
+  microphoneDebug('settings', 'stt_engine_handoff', {
+    from: previous,
+    to: snapshot.effectiveEngine,
+    reason: snapshot.sessionOverride ? 'session-override' : snapshot.resolution?.reason ?? null,
+    holder: lease?.owner ?? null,
+  });
+  engineListeners.forEach((listener) => {
+    try {
+      listener(snapshot.effectiveEngine as ResolvedSttEngine, previous);
+    } catch {
+      // A surface that fails to hand over must not strand the others on the old engine.
     }
   });
 }
@@ -454,6 +518,24 @@ export function describeSttRuntime(state: SttRuntimeState): string {
   return describeSttResolution(state.resolution, state.capability?.provider ?? null);
 }
 
+/**
+ * What to say when the engine changed under a capture that was already running.
+ *
+ * A confirmation, not a warning, and short enough to read without stopping. The engine decides
+ * **where the audio goes** — the browser recognizer sends it to Google, HomePilot's own keeps
+ * it on the machine — so a hand-off is never silent. But it is also not a fault: the user
+ * asked for it in Settings, and repeating the paragraph that explains a deaf recognizer here
+ * would put a problem report in front of somebody who has just fixed the problem.
+ */
+export function describeEngineHandoff(next: ResolvedSttEngine, provider?: string | null): string {
+  if (next === 'homepilot-backend') {
+    return `Switched to transcribing on this computer${provider ? ` (${provider})` : ''}, `
+      + 'using the microphone selected in Audio & Video.';
+  }
+  return 'Switched to the browser’s speech recognition, which records your system default '
+    + 'input rather than the microphone selected in Audio & Video.';
+}
+
 /* ────────────────────────────────────────────────────────────────────────────────────────
  * Microphone ownership
  *
@@ -527,6 +609,8 @@ export async function releaseMicrophone(owner: MicrophoneOwner): Promise<void> {
 export function resetSttRuntimeForTests(): void {
   state = { ...INITIAL };
   listeners = new Set();
+  engineListeners = new Set();
+  announcedEngine = null;
   inFlight = null;
   lease = null;
   routingPreflightArmed = true;

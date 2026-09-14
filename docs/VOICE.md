@@ -237,6 +237,52 @@ turn. `bargeInSupported` reports that rather than leaving it silently absent.
 
 It is also the automatic fallback whenever the local engine cannot run.
 
+### 2.2.0 Changing the engine while something is listening
+
+Settings is not a restart. Picking a different engine takes effect on the capture that is
+running *now*, in whichever surface is running it.
+
+The runtime already emits its whole state to every subscriber, and that is enough for a surface
+the engine merely **configures** — the Voice capture effect keys on `sttEngine`, so a change
+tears the old capture down and opens the new one on its own. It is not enough for a surface
+that is **capturing at that moment**: it is mid-turn on the old engine, holding the microphone,
+with the user's half-dictated sentence in a draft. For that one the change is not a value to
+render, it is a hand-off to perform.
+
+So there is a second subscription, `subscribeEffectiveEngine(listener)`, which fires only for
+engine → *different* engine. It filters, once, the two cases a plain value comparison gets
+wrong in every consumer:
+
+- the **first** resolve of a session (`null → web-speech`) is the session starting, not a
+  hand-off — firing there would interrupt a capture that has only just opened;
+- a refresh that lands the **same** engine must not interrupt a turn in progress at all.
+
+**The chat composer is the surface that needed it.** It resolved the engine once, at the moment
+the microphone button was pressed, and never looked again — so changing the engine mid-dictation
+left it recording through the engine the user had just moved away from. Audio still going to the
+browser recognizer after somebody chose on-device transcription for privacy is the one way this
+can be wrong that actually matters.
+
+The hand-off is **stop-then-start, never a swap underneath a live capture**. The engines are
+exclusive by construction, and the old one has a turn in flight worth finishing: stopping the
+backend path transcribes the clip rather than discarding it, and stopping the browser path lets
+its final result land. Either way the words already spoken reach the draft, and `micBaseTextRef`
+means the restart appends to that draft rather than replacing it. The restart waits on
+`isListening` falling rather than running inside the subscription, because both stops are
+asynchronous and reopening the microphone from inside the callback races the teardown for the
+same device. Traces: `stt_engine_handoff` (runtime), `composer_mic_engine_handoff` (chat).
+
+**A hand-off is announced, and announced as a confirmation.** The engine decides which service
+sees the audio, so it is never silent — but `describeEngineHandoff()` is one line saying where
+the audio goes now, not the paragraph that explains a deaf recognizer. Repeating that paragraph
+would put a problem report in front of somebody who has just fixed the problem.
+
+**And the recovery notice is now taken back when it stops being true.** Choosing an engine in
+Settings drops the session override and its message — a deliberate choice outranks a recovery —
+but Voice only ever *set* the notice text and never cleared it, so the explanation that
+HomePilot had switched engines stayed on screen after the user switched them back by hand.
+Assigning the value rather than assigning it when truthy is the whole fix.
+
 ### 2.2.1 One recognizer, one owner
 
 `media/webSpeechSession.ts` is the only place a `SpeechRecognition` session is started. A
@@ -292,13 +338,19 @@ kind of fact:
 
 | Turn | Threshold | Why |
 |---|---|---|
+| **The first turn of a session** | **never counts** | Opening Voice and pressing listen is how people check that Voice is *there*. They press it, look at the orb, and very often say nothing — there is nothing to say yet. That turn ends exactly like a deaf one, and acting on it moved the whole session onto another engine and explained a fault that had not happened. |
 | The user pressed record, spoke, pressed stop | **1** | A person is asserting they said something. A second turn only costs them another turn to learn what the first proved. |
 | Opened automatically (the hands-free loop) | **never counts** | No VAD runs on the browser engine, so nothing says anybody was talking. "The recognizer heard nothing" there is the ordinary sound of a quiet room, and counting it would switch engines under every user who paused. |
 | Opened by the VAD on the local engine | 2 | The old rule, kept: one deaf turn is a cough, two in a row is a device. |
 
-That middle row is the one that matters most. The hands-free browser loop opens a turn every
-400 ms whether or not anybody is speaking; feeding those to the detector would have moved
-every session off the browser engine within two seconds of silence.
+The hands-free row is the one that matters most for noise. The hands-free browser loop opens a
+turn every 400 ms whether or not anybody is speaking; feeding those to the detector would have
+moved every session off the browser engine within two seconds of silence.
+
+The first row is `turnsThisSessionRef` in `useVoiceController`, and a session begins each time
+listening is switched on rather than at mount — leaving Voice and coming back is a new session
+to the user whether or not the component survived, and the first press after returning is the
+same "is this thing on?" press. Trace: `stt_first_turn_not_evidence`.
 
 Once the threshold is met, `planSttRecovery()` decides:
 
