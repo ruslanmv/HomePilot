@@ -76,15 +76,17 @@ jobs:
           src/test/speechServiceStt.test.js
           src/test/voiceAssistantTesting.test.js
           src/test/voiceControllerStability.test.tsx
+          src/test/sttCaptureOwnership.test.tsx
           src/test/sttPreferences.test.ts
           src/test/sttTurnHealth.test.ts
           src/test/voiceDeafRecognizerRecovery.test.tsx
           src/test/voiceSendPath.test.tsx
         working-directory: frontend
-      - name: MeetingSense live transcript and audio-only capture regression tests
+      - name: MeetingSense live transcript, Close navigation and audio-only capture regression tests
         run: >-
           npx vitest run
           src/test/meetingsenseRealtime.test.js
+          src/test/meetingsenseCloseNavigation.test.tsx
           src/test/meetingAudioOnly.test.tsx
         working-directory: frontend
       - run: npm run build
