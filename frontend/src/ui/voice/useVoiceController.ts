@@ -8,35 +8,37 @@
  * - THINKING: Processing user input (waiting for LLM)
  * - SPEAKING: TTS playing response
  *
- * ── The engine owns the microphone ──────────────────────────────────────────────────────
+ * ── The engine owns transcription ──────────────────────────────────────────────────────
  *
- * There are two capture architectures here and they are mutually exclusive. Running both was
- * the bug:
+ * There are two transcription architectures here and they are mutually exclusive. Running
+ * both as turn owners was the bug:
  *
  *   - `homepilot-backend` — HomePilot's VAD opens the microphone selected in Audio & Video,
  *     `MediaRecorder` borrows *that exact stream*, and the clip goes to
  *     `POST /v1/voice/transcribe`. Detection and transcription cannot disagree about the
  *     device, and the level meter is reading the same audio that gets transcribed.
- *   - `web-speech` — the browser's recognizer opens its own capture, on the operating
- *     system's default input, and accepts neither a `deviceId` nor a `MediaStream`. It
- *     streams interim words, which is the one thing the local path cannot do.
+ *   - `web-speech` — the browser's recognizer opens its own opaque capture, on the operating
+ *     system's default input, and accepts neither a `deviceId` nor a `MediaStream`. It streams
+ *     interim words, which is the one thing the local path cannot do. HomePilot may also open
+ *     a read-only default-input monitor stream for the visual meter; that stream never runs
+ *     VAD, never records a turn and is never transcribed.
  *
  * Hands-free used to start the VAD *and* then ask the browser recognizer to transcribe. Two
- * captures on two different devices, one turn, no error from either:
+ * turn owners on two different devices, one turn, no error from either:
  *
  *     [vad]   capture_opened          ← the selected microphone, held open all session
  *     [voice] stt_onstart             ← a second capture, on the OS default
  *     [voice] stt_onend { hadResult: false, sawSpeechStart: false }
  *
  * So the orb tracked the speaker and nothing came out. No warm-up window or grace period can
- * fix that; the recognizer was never listening to the microphone the meter was reading. Now
- * the resolved engine decides who captures, `media/sttRuntime` guarantees there is only one
- * owner, and switching engines releases the old capture before opening the new one.
+ * fix that; the recognizer was never listening to the microphone the VAD was using. Now the
+ * resolved engine decides who owns turns and transcription. The optional Web Speech meter is
+ * deliberately observation-only, so it cannot start/stop a turn or send different audio to STT.
  *
- * Barge-in belongs to the VAD path for the same reason: on the browser engine HomePilot has
- * no stream to watch while it is speaking, and leaving the recognizer running would feed the
- * assistant's own voice back in as the next turn. There, listening stops while TTS plays and
- * resumes after — reported through `bargeInSupported` rather than silently absent.
+ * Barge-in belongs to the VAD path for the same reason: the Web Speech meter is intentionally
+ * not a second speech detector, and leaving the recognizer running while TTS plays would feed
+ * the assistant's own voice back in as the next turn. There, listening stops while TTS plays
+ * and resumes after — reported through `bargeInSupported` rather than silently absent.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -63,6 +65,11 @@ import {
   stopWebSpeech,
 } from '../media/webSpeechSession';
 import { isDeafTurn, planSttRecovery } from '../media/sttTurnHealth';
+import {
+  browserInputMeterAvailable,
+  startBrowserInputMeter,
+  type BrowserInputMeter,
+} from './browserInputMeter';
 
 export type VoiceState = 'OFF' | 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
 
@@ -111,7 +118,7 @@ export interface VoiceController {
   sttNotice: string | null;
   dismissSttNotice: () => void;
 
-  /** The level meter reads HomePilot's own capture, which only the local engine opens. */
+  /** True when Voice has a real audio source for the visual input meter. */
   micMeterSupported: boolean;
   /** Words appear while you speak only on the browser engine. */
   liveTranscriptSupported: boolean;
@@ -213,6 +220,7 @@ export function useVoiceController(
     return localStorage.getItem('homepilot_voice_uri') || '';
   });
   const [sttNotice, setSttNotice] = useState<string | null>(null);
+  const [browserMeterSupported, setBrowserMeterSupported] = useState(() => browserInputMeterAvailable());
 
   /**
    * The engine decision, shared with the chat composer rather than duplicated.
@@ -271,6 +279,10 @@ export function useVoiceController(
   const browserFailuresRef = useRef(0);
   /** Whether the open turn was started by a press rather than by the hands-free loop. */
   const turnWasDeliberateRef = useRef(false);
+  /** Read-only meter stream used only while Web Speech owns transcription. */
+  const browserMeterRef = useRef<BrowserInputMeter | null>(null);
+  const browserMeterGenerationRef = useRef(0);
+  const browserMeterStartingRef = useRef<number | null>(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -561,12 +573,77 @@ export function useVoiceController(
     }
   }, []);
 
+  /** Stop the observation-only meter used beside Web Speech. */
+  const stopBrowserInputMeter = useCallback((reason: string) => {
+    browserMeterGenerationRef.current += 1;
+    browserMeterStartingRef.current = null;
+    const meter = browserMeterRef.current;
+    browserMeterRef.current = null;
+    meter?.stop(reason);
+    if (sttEngineRef.current === 'web-speech') {
+      setAudioLevel(0);
+      setNoiseFloor(0);
+      setThreshold(0);
+    }
+  }, []);
+
+  /**
+   * Open a level-only stream on the browser/default input.
+   *
+   * This is intentionally independent of turn ownership. SpeechRecognition remains the only
+   * component that decides what was said; these samples only animate the meter. Failure is
+   * non-fatal — voice recognition continues and the UI falls back to its unavailable copy.
+   */
+  const ensureBrowserInputMeter = useCallback(async (reason: string): Promise<boolean> => {
+    if (browserMeterRef.current) return true;
+    if (browserMeterStartingRef.current !== null) return true;
+    if (!browserInputMeterAvailable()) {
+      setBrowserMeterSupported(false);
+      return false;
+    }
+
+    const generation = ++browserMeterGenerationRef.current;
+    browserMeterStartingRef.current = generation;
+    microphoneDebug('voice', 'browser_input_meter_start_requested', { reason, generation });
+    try {
+      const meter = await startBrowserInputMeter((level) => {
+        if (sttEngineRef.current !== 'web-speech') return;
+        // Keep speaker output from painting itself as microphone activity while TTS is live.
+        setAudioLevel(stateRef.current === 'SPEAKING' ? 0 : level);
+      });
+      if (
+        generation !== browserMeterGenerationRef.current
+        || sttEngineRef.current !== 'web-speech'
+      ) {
+        meter.stop('stale_start');
+        return false;
+      }
+      browserMeterRef.current = meter;
+      setBrowserMeterSupported(true);
+      setNoiseFloor(0);
+      setThreshold(0);
+      return true;
+    } catch (error) {
+      if (generation === browserMeterGenerationRef.current) {
+        setBrowserMeterSupported(false);
+        setAudioLevel(0);
+      }
+      microphoneDebugError('voice', 'browser_input_meter_failed', error, { reason, generation });
+      return false;
+    } finally {
+      if (browserMeterStartingRef.current === generation) {
+        browserMeterStartingRef.current = null;
+      }
+    }
+  }, []);
+
   /* ── The browser engine ───────────────────────────────────────────────────────────────
    *
    * No VAD here, deliberately. The recognizer opens its own capture and cannot be handed
-   * one, so a VAD running alongside would be a second microphone nobody transcribes — the
-   * exact split this rewrite removes. Hands-free is therefore a restart loop around the
-   * recognizer's own endpointing, which is what decides when a turn is over on this engine.
+   * one. The separate meter stream above is observation-only: it never gates or records a
+   * turn, so the recognizer remains the single source of truth for browser STT. Hands-free is
+   * therefore a restart loop around the recognizer's own endpointing, which is what decides
+   * when a turn is over on this engine.
    * ─────────────────────────────────────────────────────────────────────────────────── */
 
   const startBrowserTurnRef = useRef<(reason: string) => Promise<boolean>>(
@@ -757,6 +834,9 @@ export function useVoiceController(
         }
         pendingResultRef.current = false;
 
+        // A manual Web Speech turn has no ongoing hands-free session to keep visualising.
+        if (!isHandsFreeRef.current) stopBrowserInputMeter('manual_turn_end');
+
         // A session that ends the instant it starts never listened to anything. Backing off
         // keeps a refusal from turning the hands-free loop into a hot `start()` loop.
         if (elapsedMs < BROWSER_MIN_HEALTHY_TURN_MS) browserFailuresRef.current += 1;
@@ -795,19 +875,22 @@ export function useVoiceController(
           // forever and buries the one message that would let the user fix it.
           clearBrowserRestart();
           browserFailuresRef.current = BROWSER_MAX_CONSECUTIVE_FAILURES;
+          if (!isHandsFreeRef.current) stopBrowserInputMeter('manual_turn_error');
           setState('OFF');
           return;
         }
+        if (!isHandsFreeRef.current) stopBrowserInputMeter('manual_turn_error');
         setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
       },
     }, { continuous });
 
     if (!started) {
       microphoneDebug('voice', 'stt_start_rejected', { reason });
+      if (!isHandsFreeRef.current) stopBrowserInputMeter('manual_start_rejected');
       setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
     }
     return started;
-  }, [clearBrowserRestart, scheduleBrowserRestart]);
+  }, [clearBrowserRestart, scheduleBrowserRestart, stopBrowserInputMeter]);
 
   // Declared before the capture effect so the loop can recurse through this ref by the time
   // the first restart timer fires.
@@ -822,6 +905,7 @@ export function useVoiceController(
   const releaseVoiceCapture = useCallback((reason: string) => {
     clearBrowserRestart();
     abortWebSpeech(reason);
+    stopBrowserInputMeter(reason);
     // Drop the recorder before the stream it is attached to goes away; transcribing a
     // half-turn nobody is waiting for wastes a round trip.
     discardRecording(reason);
@@ -831,7 +915,7 @@ export function useVoiceController(
     }
     setAudioLevel(0);
     setInterimText('');
-  }, [clearBrowserRestart, discardRecording]);
+  }, [clearBrowserRestart, discardRecording, stopBrowserInputMeter]);
 
   useEffect(() => {
     if (!svc) return;
@@ -857,7 +941,10 @@ export function useVoiceController(
           if (sttEngineRef.current === 'web-speech') {
             // The recognizer has its own capture and no way to tell HomePilot's voice from
             // the user's, so leaving it open feeds the assistant's own words back in as the
-            // next turn. Stop, and resume when it has finished speaking.
+            // next turn. Stop, and resume when it has finished speaking. The meter stays open
+            // but its callback paints zero while SPEAKING, so speaker leakage is not visualised
+            // as user input.
+            setAudioLevel(0);
             clearBrowserRestart();
             abortWebSpeech('tts_started');
           }
@@ -909,11 +996,11 @@ export function useVoiceController(
   ]);
 
   /**
-   * Open exactly one capture, chosen by the engine — or none at all.
+   * Open exactly one transcription architecture, chosen by the engine.
    *
-   * Re-running this effect *is* the engine transition: React tears the previous run down
-   * before starting the next, so the old capture is released before the new one opens and
-   * the two architectures are never live at the same time.
+   * On Web Speech a tiny read-only meter stream may coexist with the recognizer, but it has no
+   * VAD/MediaRecorder callbacks and therefore cannot own a turn. Re-running this effect *is*
+   * the engine transition: React tears the previous run down before starting the next.
    */
   useEffect(() => {
     const generation = ++handsFreeGenerationRef.current;
@@ -950,7 +1037,17 @@ export function useVoiceController(
       browserFailuresRef.current = 0;
       setLastError(null);
       setState('IDLE');
-      scheduleBrowserRestart(0);
+      // Ask for the visual monitor first so the same permission gesture can cover both. A
+      // meter failure never blocks recognition; the `finally` always starts the recognizer.
+      void ensureBrowserInputMeter('handsfree_browser').finally(() => {
+        if (
+          generation === handsFreeGenerationRef.current
+          && isHandsFreeRef.current
+          && sttEngineRef.current === 'web-speech'
+        ) {
+          scheduleBrowserRestart(0);
+        }
+      });
       return () => {
         microphoneDebug('voice', 'handsfree_browser_cleanup', { generation });
         releaseVoiceCapture('handsfree_browser_cleanup');
@@ -1043,6 +1140,7 @@ export function useVoiceController(
     startRecordingTurn,
     finishRecordingTurn,
     releaseVoiceCapture,
+    ensureBrowserInputMeter,
     scheduleBrowserRestart,
   ]);
 
@@ -1100,6 +1198,9 @@ export function useVoiceController(
       releaseVoiceCapture('microphone_handoff'));
 
     if (sttEngine === 'homepilot-backend') return startRecordingTurn('manual_button');
+    // Manual browser turns get the same Grok-style live input meter; failure to open the
+    // monitor never blocks the recognizer itself.
+    await ensureBrowserInputMeter('manual_browser');
     return startBrowserTurn('manual_button');
   }, [
     svc,
@@ -1109,6 +1210,7 @@ export function useVoiceController(
     startBrowserTurn,
     startRecordingTurn,
     releaseVoiceCapture,
+    ensureBrowserInputMeter,
   ]);
 
   const stopManualListening = useCallback(() => {
@@ -1182,7 +1284,8 @@ export function useVoiceController(
     sttResolution,
     sttNotice,
     dismissSttNotice,
-    micMeterSupported: sttEngine === 'homepilot-backend',
+    micMeterSupported: sttEngine === 'homepilot-backend'
+      || (sttEngine === 'web-speech' && browserMeterSupported),
     liveTranscriptSupported: sttEngine === 'web-speech',
     bargeInSupported: sttEngine === 'homepilot-backend' && Boolean(cfg.bargeInEnabled),
     setHandsFree,
