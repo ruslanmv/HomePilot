@@ -529,8 +529,10 @@ export function MeetingWorkspace({
                                 placeholder={ended ? 'Ask about this meeting…' : 'Ask about this meeting…'}
                                 className="max-h-32 min-h-[38px] flex-1 resize-none bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-white/30"
                             />
-                            <button type="button" onClick={() => void sendQuestion()} disabled={!input.trim()} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-black disabled:opacity-35">
-                                <Send size={15} />
+                            {/* Icon-only, so the name has to be said out loud: a screen
+                                reader announced this as "button" with nothing after it. */}
+                            <button type="button" aria-label="Ask about this meeting" title="Ask about this meeting" onClick={() => void sendQuestion()} disabled={!input.trim()} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-black disabled:opacity-35">
+                                <Send size={15} aria-hidden="true" />
                             </button>
                         </div>
                         <div className="mx-auto mt-1.5 max-w-3xl text-[10px] text-white/25">Using current meeting context · same conversation</div>

@@ -299,6 +299,18 @@ async def _handle_audio(session, message: Dict[str, Any], channels: int) -> None
     tracks = audio_wire.tracks(message, declared_channels=channels)
     partial = bool(message.get("partial"))
     energy = message.get("energy")
+    # A mono frame carries no evidence of who is talking, but a meeting with one audio source
+    # does: the `start` frame said which sources were granted. A display share alone is every
+    # word "them"; a microphone alone is every word "me". Without this every line of such a
+    # meeting arrived unattributed — shown as "Speaker" live, and as "Them" in the detail
+    # view, which is wrong about every line of a microphone-only meeting.
+    #
+    # `getattr`, because this must hold for a session that never said its mode.
+    single_source = (
+        audio_wire.speaker_for_mode(getattr(session, "audio_mode", None))
+        if len(tracks) == 1
+        else None
+    )
     for index, track in enumerate(tracks):
         # A channel that carried no sound is half the work for none of the transcript. During
         # a shared video with nobody talking, the microphone channel is silence and
@@ -314,8 +326,11 @@ async def _handle_audio(session, message: Dict[str, Any], channels: int) -> None
             **message,
             "audio_bytes": track.wav,
             "format": "wav",
-            # A mono recording cannot say who is talking, so the frame's own claim stands.
-            "speaker": track.speaker or message.get("speaker"),
+            # In order of how much each source actually knows: the channel convention is
+            # evidence from the bytes, the frame's own claim is a client saying something the
+            # mode cannot know, and the meeting's single audio source is the fallback for a
+            # mono frame nobody else has named.
+            "speaker": track.speaker or message.get("speaker") or single_source,
         }
         if partial:
             await session.on_partial(frame)

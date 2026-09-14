@@ -439,6 +439,37 @@ of a phone-on-the-table meeting — put the call on speaker next to the micropho
 Omitting an option still means yes, so every caller written before these were read behaves
 exactly as it did.
 
+#### One source means one speaker, and the transcript now says which
+
+A meeting with a single audio source produces a **mono** WAV: the graph is one channel wide,
+so `audio.tracks()` has no channel convention to apply and refuses to name the speaker. That
+is the right call at that layer — one interleaved channel carries no evidence about who
+produced it — but the session has the evidence anyway, and has had it since the `start` frame:
+
+| `audio.mode` | Channels | Speaker |
+|---|---|---|
+| `system` | 1 | **them** — a display share alone is every word the other side's |
+| `mic` | 1 | **me** — a phone-on-the-table meeting is every word yours |
+| `system+mic` | 2 | the channel convention: channel 0 `them`, channel 1 `me` |
+| anything else, or absent | — | unattributed, which is the honest answer |
+
+`routes.py::_handle_audio` applies `audio.speaker_for_mode()` to a mono frame that nothing
+else has named, in order of how much each source knows: the channel convention (evidence from
+the bytes) beats the frame's own claim, which beats the meeting's single source.
+
+Before this, every line of such a meeting arrived unattributed — shown as *"Speaker"* live,
+and as *"Them"* in the meeting detail view, which was wrong about every line of a
+microphone-only meeting. Nothing was lost from the transcript; the words were captured,
+transcribed and stored correctly throughout. It is an attribution failure, and attribution
+matters more in notes than in a transcript: *"you said"* and *"they said"* are what a recap is
+built out of. The presenter queue, which only acts on what **them** said, also never fired in
+a display-share-only meeting — the one shape where everything *is* them.
+
+> **A worked example.** Open a tab that reads text aloud, tick **Meeting audio**, untick
+> **My microphone**, and record. `audioMode` is `system`, the WAV is mono, and every line
+> lands in the transcript labelled **Them**. No microphone is opened and no microphone
+> indicator lights.
+
 > **Known wart.** When system audio is wanted but slides are not, the display *video* track
 > stays live, so the browser keeps showing its sharing indicator. Stopping that track can tear
 > down the whole capture — including its audio — in some browsers, so it is deliberately left
@@ -841,6 +872,7 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 | Meeting transcript only moves every ~8 s | Partials are not getting through. Check `_partialsWanted`: a non-empty `_queue` (you are behind), a backed-up socket, or `partialsDisabled`. |
 | Meeting records the wrong microphone | §3.5. Was fixed; check `ms:mic_fallback` for a selected device that was gone. |
 | Meeting hears the call's voices as you | Echo cancellation off with system audio on speakers. §3.5. |
+| Every meeting line says "Speaker", or a microphone-only meeting says "Them" | Fixed. A mono frame is now attributed from the meeting's single audio source — see §3.5. A line that is still unattributed means the session never reported an `audio.mode`. |
 | Meeting transcript is blank but slides work | `get_meeting_stt_provider()` has no local model. Meetings never fall back to `STT_BASE_URL` on their own — see `meeting_stt_policy()`. |
 | Shared video is not transcribed at all | No audio track: window share, macOS screen share, or "Share tab audio" unticked. See the capture table in §3.5. |
 | Shared video transcript has gaps | `ms:audio_dropped` — the machine is behind. Turbo + GPU, or accept the lag. |

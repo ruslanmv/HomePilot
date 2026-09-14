@@ -17,6 +17,7 @@
  */
 import React, { useState } from 'react';
 import { durationLabel, isLive, meetingTitle, sourceLabel, type Meeting } from './catalog';
+import { speakerLabel } from './meetingState';
 
 export type DetailTab = 'notes' | 'slides' | 'transcript';
 
@@ -164,7 +165,13 @@ export function MeetingDetail({
                         <ul className="space-y-1.5" data-testid="ms-detail-transcript">
                             {segments.map((segment, i) => (
                                 <li key={segment.id ?? i} className="text-sm text-white/75">
-                                    <span className="text-white/35">{segment.speaker === 'me' ? 'You' : 'Them'}</span>{' '}
+                                    {/* `speakerLabel`, not a `me ? 'You' : 'Them'` ternary:
+                                        that read every unattributed line as "Them", which is
+                                        wrong about every line of a microphone-only meeting.
+                                        Unattributed lines are rarer now that a single-source
+                                        meeting names its speaker server-side, but "Speaker"
+                                        is what the rest of the app calls one. */}
+                                    <span className="text-white/35">{speakerLabel(segment.speaker)}</span>{' '}
                                     {segment.text}
                                 </li>
                             ))}
