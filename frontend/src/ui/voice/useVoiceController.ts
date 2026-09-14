@@ -996,7 +996,7 @@ export function useVoiceController(
   ]);
 
   /**
-   * Open exactly one transcription architecture, chosen by the engine.
+   * Open exactly one capture, chosen by the engine.
    *
    * On Web Speech a tiny read-only meter stream may coexist with the recognizer, but it has no
    * VAD/MediaRecorder callbacks and therefore cannot own a turn. Re-running this effect *is*
