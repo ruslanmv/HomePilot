@@ -97,7 +97,12 @@ export interface SttRuntimeState {
  * "cannot tell", and "cannot tell" changes nothing.
  */
 async function readRouting(): Promise<MicrophoneRoutingNotice> {
-  const unknown: MicrophoneRoutingNotice = { mismatch: false, known: false, message: null };
+  const unknown: MicrophoneRoutingNotice = {
+    mismatch: false,
+    known: false,
+    defaultLabel: null,
+    message: null,
+  };
   try {
     if (!navigator.mediaDevices?.enumerateDevices) return unknown;
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -235,6 +240,17 @@ function update(patch: Partial<SttRuntimeState>): SttRuntimeState {
 
 export function getSttRuntime(): SttRuntimeState {
   return state;
+}
+
+/**
+ * What the OS default input — the only device the browser recognizer can record — is called.
+ *
+ * Read from the routing preflight, which has been enumerating devices all along; this simply
+ * stops throwing the label away. `null` on a browser that exposes no `default` alias, and
+ * every caller has to read correctly without it.
+ */
+export function systemDefaultMicrophoneLabel(): string | null {
+  return state.routing?.defaultLabel ?? null;
 }
 
 /**

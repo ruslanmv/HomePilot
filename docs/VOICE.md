@@ -205,7 +205,7 @@ What that costs and what it buys:
 | | `web-speech` | `homepilot-backend` |
 |---|---|---|
 | Live words while you speak | **yes** — one continuous session, `interimText` | no — text arrives at end of turn |
-| Input level meter | **no** — HomePilot has no stream to read | yes, the transcribed one |
+| Input level meter | yes — a separate read-only capture, and it says which device | yes, and it is the transcribed one |
 | Barge-in (speak over the reply) | no — listening stops while TTS plays | yes, the VAD watches through it |
 | Microphone used | OS default | the one selected in Audio & Video |
 
@@ -221,6 +221,7 @@ each engine exactly one thing decides when a turn starts and ends and produces t
 | Device | `getUserMedia({audio: true})` — the browser/system **default**, deliberately. Measuring the HomePilot-selected device instead would recreate §1's split: a bar moving for a microphone the recognizer is not listening to. |
 | Decides turns? | No. No VAD, no endpointing, no recording. |
 | Reported | `browserMeterSupported` goes false when the capture cannot be opened, so a refused permission shows the unavailable copy rather than a bar pinned at zero. |
+| Named | `micMeterDeviceLabel` carries the track's label (browser engine only) and the meter renders it. A flat bar here is the **correct** drawing of a silent default input and is indistinguishable from a broken meter; the device name is the only thing that separates them without reading a log. Null on the local engine, where the meter reads the microphone Settings already shows. |
 
 > **It does mean HomePilot holds a microphone during browser turns**, on the same endpoint the
 > recognizer wants. Some drivers — Windows DSP-backed inputs among them — hand a second
@@ -305,6 +306,22 @@ Once the threshold is met, `planSttRecovery()` decides:
   microphone, and a notice says so and where to change it back;
 - **backend not usable** → a notice naming both ways out: make that microphone the system
   default input, or install a speech model and choose *On this computer*.
+
+**Both notices name the device.** "It records your system default input, not the microphone you
+selected" states the mechanism correctly and then abandons the user in front of an OS sound
+panel, where the entire difficulty is working out *which* of eight entries is the wrong one —
+and the entry holding the default slot is usually a virtual input nobody chose, shipped with a
+game client or a conferencing app and silent to every recorder. So `SttRecoveryContext` carries
+`systemDefaultLabel`, and the sentence becomes *"…it records your system default input — on this
+computer that is Microphone (Steam Streaming Microphone) — not the microphone you selected."*
+
+The name costs nothing to obtain: `describeMicrophoneRouting()` has been enumerating devices all
+along and simply discarded the `default` alias's label. It is now returned as
+`MicrophoneRoutingNotice.defaultLabel` on **every** outcome, including `known: false` — "cannot
+tell which input the OS prefers" is not the same as "cannot tell what it is called", and a deaf
+turn on an undetectable split still has somewhere useful to point. Chrome's `Default - ` prefix
+is stripped, since it names the slot rather than the device. Browsers that expose no alias give
+`null`, and every message reads exactly as it did before rather than trailing a dangling clause.
 
 **There used to be two possible causes; now there is one.** While hands-free held HomePilot's
 capture open during browser turns, a second explanation produced an *identical* trace: some

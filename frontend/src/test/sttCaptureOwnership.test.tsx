@@ -176,6 +176,29 @@ describe('hands-free on the browser engine', () => {
     // The level stream is display-only, so it deliberately does not enable barge-in.
     expect(result.current.bargeInSupported).toBe(false);
   });
+
+  it('reports which device the meter is reading', async () => {
+    /*
+     * On this engine the meter reads the OS default input, because that is the only device the
+     * recognizer can hear. When that default is a silent virtual device — the trace this was
+     * written from had `Microphone (Steam Streaming Microphone)` holding the slot — a bar that
+     * never moves is the *correct* rendering, and is indistinguishable from a broken meter.
+     * The name is the only thing that separates them, and the track has had it all along.
+     */
+    const { result } = await mountHandsFree('web-speech');
+
+    await waitFor(() => expect(result.current.micMeterDeviceLabel).toBe('Selected Microphone'));
+  });
+
+  it('does not label the meter on the local engine', async () => {
+    // There the meter reads the microphone chosen in Audio & Video, which Settings already
+    // shows and which cannot disagree with what gets transcribed. Nothing to disclose.
+    const { result } = await mountHandsFree('homepilot');
+
+    expect(result.current.sttEngine).toBe('homepilot-backend');
+    await waitFor(() => expect(result.current.micMeterSupported).toBe(true));
+    expect(result.current.micMeterDeviceLabel).toBeNull();
+  });
 });
 
 describe('when the recognizer goes deaf with a meter running', () => {

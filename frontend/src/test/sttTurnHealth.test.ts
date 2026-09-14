@@ -133,6 +133,58 @@ describe('planSttRecovery', () => {
   });
 });
 
+describe('naming the device the recognizer is actually recording', () => {
+  /*
+   * The message explained the mechanism perfectly and still left the user stuck. "It records
+   * your system default input, not the microphone you selected" sends somebody to an OS sound
+   * panel where the entire difficulty is working out *which* of eight entries is the wrong
+   * one — and the one holding the default slot is typically a virtual device nobody chose.
+   * The trace this was written from read `Microphone (Steam Streaming Microphone)`, a name the
+   * device list had all along and nothing ever looked at.
+   */
+
+  it('names the default input in the single-cause message', () => {
+    const plan = planSttRecovery(1, {
+      backendUsable: true,
+      turnWasDeliberate: true,
+      systemDefaultLabel: 'Microphone (Steam Streaming Microphone)',
+    });
+    if (plan.action === 'none') throw new Error('expected a recovery');
+    expect(plan.message).toContain('Microphone (Steam Streaming Microphone)');
+    expect(plan.message).toContain('your system default input');
+  });
+
+  it('names it in the two-cause message as well', () => {
+    const plan = planSttRecovery(1, {
+      backendUsable: true,
+      turnWasDeliberate: true,
+      homepilotHoldsMicrophone: true,
+      systemDefaultLabel: 'Microphone (Steam Streaming Microphone)',
+    });
+    if (plan.action === 'none') throw new Error('expected a recovery');
+    expect(plan.message).toContain('Two things');
+    expect(plan.message).toContain('Microphone (Steam Streaming Microphone)');
+  });
+
+  it('reads correctly on a browser that will not say', () => {
+    // Chrome on Windows often exposes no `default` alias, so the name is genuinely
+    // unavailable. The sentence has to survive that without a dangling clause — and must be
+    // byte-identical to what it said before the label existed.
+    const withoutField = planSttRecovery(1, { backendUsable: true, turnWasDeliberate: true });
+    for (const missing of [null, undefined, '', '   ']) {
+      const plan = planSttRecovery(1, {
+        backendUsable: true,
+        turnWasDeliberate: true,
+        systemDefaultLabel: missing,
+      });
+      expect(plan).toEqual(withoutField);
+    }
+    if (withoutField.action === 'none') throw new Error('expected a recovery');
+    expect(withoutField.message).not.toContain('on this computer that is');
+    expect(withoutField.message).toContain('system default input, not the microphone');
+  });
+});
+
 describe('how much evidence one turn is worth', () => {
   /*
    * Two turns was written for turns a voice-activity detector opened, where a deaf turn might

@@ -134,6 +134,34 @@ export interface SttRecoveryContext {
    * {@link turnsBeforeRecovery}.
    */
   turnWasDeliberate?: boolean;
+  /**
+   * What the operating system's default input — the device the recognizer is actually
+   * recording — is called, when the browser will say.
+   *
+   * Everything else in this message was already true and still left the user stuck. "It records
+   * your system default input, not the microphone you selected" states the mechanism and then
+   * abandons them in front of an OS sound panel, where the whole difficulty is working out
+   * *which* entry is the one misbehaving. The device that has taken the default slot is usually
+   * one nobody chose — a virtual input shipped with a game client or a conferencing app,
+   * installed months ago, silent and holding the default because it was last to register. The
+   * trace this was written from read `Microphone (Steam Streaming Microphone)`.
+   *
+   * The name was available the whole time, in the device list the routing check already reads.
+   * Nothing looked at it.
+   */
+  systemDefaultLabel?: string | null;
+}
+
+/**
+ * The clause that names the device, when there is a name to give.
+ *
+ * Absent on browsers that expose no `default` alias, and the sentence has to read correctly
+ * without it — so this is a clause, not a sentence, and its absence leaves the original text
+ * exactly as it was rather than a dangling "which is ".
+ */
+function nameTheDefault(context: SttRecoveryContext): string {
+  const label = (context.systemDefaultLabel || '').trim();
+  return label ? ` — on this computer that is ${label}` : '';
 }
 
 /**
@@ -169,18 +197,19 @@ function describeObservation(consecutiveDeafTurns: number, context: SttRecoveryC
  * separates them.
  */
 function describeCause(context: SttRecoveryContext): string {
+  const named = nameTheDefault(context);
   if (!context.homepilotHoldsMicrophone) {
     return (
-      ' The Web Speech API takes no device setting: it records your system default input, ' +
-      'not the microphone you selected in Audio & Video.'
+      ' The Web Speech API takes no device setting: it records your system default input' +
+      `${named}, not the microphone you selected in Audio & Video.`
     );
   }
   return (
     ' Two things can cause this and they need different fixes. Either the Web Speech API is ' +
-    'recording your system default input — it takes no device setting, so it cannot use the ' +
-    'microphone you selected in Audio & Video — or HomePilot’s own capture, which was open ' +
-    'on that microphone at the time, is preventing the browser from opening the same device. ' +
-    'To tell them apart: turn hands-free off and use the microphone button in the chat ' +
+    `recording your system default input${named} — it takes no device setting, so it cannot ` +
+    'use the microphone you selected in Audio & Video — or HomePilot’s own capture, which was ' +
+    'open on that microphone at the time, is preventing the browser from opening the same ' +
+    'device. To tell them apart: turn hands-free off and use the microphone button in the chat ' +
     'composer, which records nothing in the background. If that works, it was the second.'
   );
 }

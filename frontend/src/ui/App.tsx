@@ -48,6 +48,7 @@ import {
   getMicrophoneLease,
   releaseMicrophone,
   rememberRecognizerIsDeaf,
+  systemDefaultMicrophoneLabel,
 } from './media/sttRuntime'
 import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
@@ -1785,6 +1786,10 @@ function QueryBar({
           // said something, so one empty turn is already the answer — waiting for a second
           // only costs them another turn to learn what this one proved.
           turnWasDeliberate: true,
+          // The device the recognizer was actually recording. Naming it is what turns "make
+          // your microphone the system default" into something the user can act on without
+          // first working out which of their inputs is currently holding that slot.
+          systemDefaultLabel: systemDefaultMicrophoneLabel(),
         })
         if (recovery.action === 'none') return
         microphoneDebug('chat', 'composer_mic_deaf_recognizer_recovery', {

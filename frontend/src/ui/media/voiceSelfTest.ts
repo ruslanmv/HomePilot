@@ -194,7 +194,33 @@ export interface MicrophoneRoutingNotice {
    * recognizer was recording a silent device.
    */
   known: boolean;
+  /**
+   * What the OS default input — the device the browser recognizer actually records — is
+   * called, or `null` when the browser will not say.
+   *
+   * **This is the one fact that makes the advice actionable.** "Make your selected microphone
+   * the system default" describes a destination without naming what is currently there, and a
+   * user staring at a Windows sound panel with eight entries has no way to tell which one is
+   * wrong. Naming it converts a paragraph of theory into one instruction: the trace that
+   * prompted this read `Microphone (Steam Streaming Microphone)` — a virtual device that had
+   * quietly taken the default slot and returns silence to every recorder — and nothing in the
+   * product said so, because nothing had ever looked at the label.
+   */
+  defaultLabel: string | null;
   message: string | null;
+}
+
+/**
+ * The OS default input's name, with Chrome's alias prefix removed.
+ *
+ * Chrome labels the alias `"Default - Microphone (Realtek Audio)"`. The `Default - ` part
+ * names the *slot*, not the device, and leaving it in makes every sentence about the default
+ * input stutter: "your system default input, which is Default - Microphone (…)".
+ */
+function readableDefaultLabel(device: MediaDeviceInfo | undefined): string | null {
+  const raw = (device?.label || '').trim();
+  if (!raw) return null;
+  return raw.replace(/^default\s*[-–—]\s*/i, '').trim() || null;
 }
 
 /**
@@ -211,18 +237,26 @@ export function describeMicrophoneRouting(
   devices: readonly MediaDeviceInfo[],
   selectedDeviceId: string,
 ): MicrophoneRoutingNotice {
+  const inputs = devices.filter((device) => device.kind === 'audioinput');
+  // Read once, up front, and carried on every outcome. The name of the device the recognizer
+  // records is useful whenever the browser will say it — including the cases below that are
+  // *not* a mismatch, because a deaf turn on an undetectable split still has somewhere to send
+  // the user, and "cannot tell which device the OS prefers" is not the same as "cannot tell
+  // what it is called".
+  const defaultLabel = readableDefaultLabel(inputs.find((d) => d.deviceId === 'default'));
+
   if (!selectedDeviceId) {
     // The system default is selected, so the two cannot disagree.
-    return { mismatch: false, known: true, message: null };
+    return { mismatch: false, known: true, defaultLabel, message: null };
   }
 
-  const inputs = devices.filter((device) => device.kind === 'audioinput');
   const selected = inputs.find((device) => device.deviceId === selectedDeviceId);
 
   if (!selected) {
     return {
       mismatch: false,
       known: true,
+      defaultLabel,
       message:
         'The microphone saved in Audio & Video is not currently connected. HomePilot will fall back to the system default input.',
     };
@@ -230,23 +264,30 @@ export function describeMicrophoneRouting(
 
   // `default` is Chrome's alias for "whatever the OS default is", so selecting
   // it can never disagree with recognition.
-  if (selected.deviceId === 'default') return { mismatch: false, known: true, message: null };
+  if (selected.deviceId === 'default') {
+    return { mismatch: false, known: true, defaultLabel, message: null };
+  }
 
   const osDefault = inputs.find((device) => device.deviceId === 'default');
   // Without the alias there is no way to know which input the OS prefers. Still quiet — a
   // warning about a mismatch that may not exist is noise — but `known: false`, so a caller
   // reporting this never claims the devices agree.
-  if (!osDefault) return { mismatch: false, known: false, message: null };
+  if (!osDefault) return { mismatch: false, known: false, defaultLabel, message: null };
 
   const sameDevice = Boolean(selected.groupId) && selected.groupId === osDefault.groupId;
-  if (sameDevice) return { mismatch: false, known: true, message: null };
+  if (sameDevice) return { mismatch: false, known: true, defaultLabel, message: null };
 
   const name = selected.label || 'the selected microphone';
+  // Naming the device on the other side of the split is the difference between advice and
+  // instructions: without it the user has to guess which of their inputs currently holds the
+  // default slot, and the one holding it is often something they never chose.
+  const itIs = defaultLabel ? `, which is ${defaultLabel}` : '';
   return {
     mismatch: true,
     known: true,
+    defaultLabel,
     message:
-      `Voice detection uses ${name}, but browser speech recognition always records your operating system's default input. ` +
+      `Voice detection uses ${name}, but browser speech recognition always records your operating system's default input${itIs}. ` +
       'Until they are the same device, the level meter can move while nothing is transcribed. ' +
       `Either make ${name} the default input in your OS sound settings, or set HomePilot's microphone to System default.`,
   };

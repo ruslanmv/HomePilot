@@ -93,7 +93,7 @@ describe('explainSttError', () => {
 describe('describeMicrophoneRouting', () => {
   it('stays quiet when HomePilot uses the system default', () => {
     expect(describeMicrophoneRouting([], '')).toEqual({
-      mismatch: false, known: true, message: null,
+      mismatch: false, known: true, defaultLabel: null, message: null,
     });
   });
 
@@ -115,6 +115,34 @@ describe('describeMicrophoneRouting', () => {
     expect(routing.mismatch).toBe(true);
     expect(routing.message).toContain('Microphone Array');
     expect(routing.message).toContain("operating system's default input");
+    // The device on the *other* side of the split, named. Without this the user is told to
+    // make their microphone the default without being told what is holding that slot now.
+    expect(routing.defaultLabel).toBe('Headset');
+    expect(routing.message).toContain('which is Headset');
+  });
+
+  it('names the default input even when the split cannot be judged', () => {
+    // `known: false` means "cannot tell which input the OS prefers", which is not the same as
+    // "cannot tell what it is called". A deaf turn on this machine still has somewhere useful
+    // to point, so the label survives the outcome that reports nothing else.
+    const devices = [
+      device({ deviceId: 'default', groupId: '', label: 'Default - Steam Streaming Microphone' }),
+      device({ deviceId: 'array-id', groupId: '', label: 'Microphone Array' }),
+    ];
+    const routing = describeMicrophoneRouting(devices, 'array-id');
+    expect(routing.defaultLabel).toBe('Steam Streaming Microphone');
+  });
+
+  it('strips Chrome’s alias prefix rather than repeating it', () => {
+    // Chrome labels the alias "Default - X". Left in, every sentence reads "your system
+    // default input, which is Default - X".
+    const named = (label: string) => describeMicrophoneRouting(
+      [device({ deviceId: 'default', label })],
+      '',
+    ).defaultLabel;
+    expect(named('Default - Microphone (Realtek Audio)')).toBe('Microphone (Realtek Audio)');
+    expect(named('Microphone (Realtek Audio)')).toBe('Microphone (Realtek Audio)');
+    expect(named('')).toBeNull();
   });
 
   it('reports a saved microphone that is no longer connected', () => {
@@ -130,7 +158,7 @@ describe('describeMicrophoneRouting', () => {
     // split was real and the browser recognizer was recording a silent device.
     const devices = [device({ deviceId: 'array-id', groupId: 'g-array' })];
     expect(describeMicrophoneRouting(devices, 'array-id')).toEqual({
-      mismatch: false, known: false, message: null,
+      mismatch: false, known: false, defaultLabel: null, message: null,
     });
   });
 

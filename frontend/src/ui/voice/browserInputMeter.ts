@@ -10,6 +10,17 @@
 import { microphoneDebug } from '../media/microphoneDebug';
 
 export interface BrowserInputMeter {
+  /**
+   * What the meter is reading — the OS default input, which is also the only device the
+   * recognizer can hear.
+   *
+   * Worth surfacing rather than only logging. On the browser engine a meter that never moves
+   * is the *correct* rendering of a default input that is silent, and it is indistinguishable
+   * from a meter that is broken. Naming the device turns a bar that appears not to work into
+   * the diagnosis: the trace this was added for read `Microphone (Steam Streaming Microphone)`
+   * — a virtual device holding the default slot, which is exactly why nothing was transcribed.
+   */
+  deviceLabel: string | null;
   stop: (reason?: string) => void;
 }
 
@@ -79,12 +90,14 @@ export async function startBrowserInputMeter(
 
     sample();
     timer = window.setInterval(sample, 80);
+    const deviceLabel = track.label?.trim() || null;
     microphoneDebug('voice', 'browser_input_meter_started', {
-      label: track.label || 'browser default microphone',
+      label: deviceLabel || 'browser default microphone',
       deviceId: track.getSettings?.().deviceId || 'browser-default',
     });
 
     return {
+      deviceLabel,
       stop: (reason = 'stopped') => {
         if (stopped) return;
         stopped = true;

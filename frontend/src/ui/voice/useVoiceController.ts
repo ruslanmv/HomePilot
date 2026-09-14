@@ -56,6 +56,7 @@ import {
   getMicrophoneLease,
   releaseMicrophone,
   rememberRecognizerIsDeaf,
+  systemDefaultMicrophoneLabel,
 } from '../media/sttRuntime';
 import { useSttRuntime } from '../media/useSttRuntime';
 import {
@@ -120,6 +121,15 @@ export interface VoiceController {
 
   /** True when Voice has a real audio source for the visual input meter. */
   micMeterSupported: boolean;
+  /**
+   * Which device the meter is reading, on the browser engine only.
+   *
+   * There the meter and the recognizer both get the OS default input — not the microphone
+   * chosen in Audio & Video — so a bar that never moves is the honest rendering of a silent
+   * default rather than a broken meter. Naming the device is what lets the user tell those
+   * apart without reading a log.
+   */
+  micMeterDeviceLabel: string | null;
   /** Words appear while you speak only on the browser engine. */
   liveTranscriptSupported: boolean;
   /** Speaking over the assistant needs the VAD, so only the local engine can do it. */
@@ -221,6 +231,14 @@ export function useVoiceController(
   });
   const [sttNotice, setSttNotice] = useState<string | null>(null);
   const [browserMeterSupported, setBrowserMeterSupported] = useState(() => browserInputMeterAvailable());
+  /**
+   * The device the browser meter is reading, when it is the one open.
+   *
+   * Only ever set on the Web Speech path. On the local engine the meter reads the microphone
+   * chosen in Audio & Video, which Settings already shows and which cannot disagree with what
+   * gets transcribed — so there is nothing to disclose and a label would be clutter.
+   */
+  const [micMeterDeviceLabel, setMicMeterDeviceLabel] = useState<string | null>(null);
 
   /**
    * The engine decision, shared with the chat composer rather than duplicated.
@@ -580,6 +598,7 @@ export function useVoiceController(
     const meter = browserMeterRef.current;
     browserMeterRef.current = null;
     meter?.stop(reason);
+    setMicMeterDeviceLabel(null);
     if (sttEngineRef.current === 'web-speech') {
       setAudioLevel(0);
       setNoiseFloor(0);
@@ -620,12 +639,14 @@ export function useVoiceController(
       }
       browserMeterRef.current = meter;
       setBrowserMeterSupported(true);
+      setMicMeterDeviceLabel(meter.deviceLabel);
       setNoiseFloor(0);
       setThreshold(0);
       return true;
     } catch (error) {
       if (generation === browserMeterGenerationRef.current) {
         setBrowserMeterSupported(false);
+        setMicMeterDeviceLabel(null);
         setAudioLevel(0);
       }
       microphoneDebugError('voice', 'browser_input_meter_failed', error, { reason, generation });
@@ -813,6 +834,10 @@ export function useVoiceController(
             homepilotHoldsMicrophone:
               Boolean(browserMeterRef.current)
               || getMicrophoneLease()?.engine === 'homepilot-backend',
+            // The device the recognizer was actually recording. The routing preflight has been
+            // reading the device list all along; this stops discarding the one label that
+            // makes "change your system default input" an instruction rather than a topic.
+            systemDefaultLabel: systemDefaultMicrophoneLabel(),
           });
           if (recovery.action !== 'none') {
             microphoneDebug('voice', 'stt_deaf_recognizer_recovery', {
@@ -1300,6 +1325,7 @@ export function useVoiceController(
     dismissSttNotice,
     micMeterSupported: sttEngine === 'homepilot-backend'
       || (sttEngine === 'web-speech' && browserMeterSupported),
+    micMeterDeviceLabel: sttEngine === 'web-speech' ? micMeterDeviceLabel : null,
     liveTranscriptSupported: sttEngine === 'web-speech',
     bargeInSupported: sttEngine === 'homepilot-backend' && Boolean(cfg.bargeInEnabled),
     setHandsFree,

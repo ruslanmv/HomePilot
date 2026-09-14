@@ -1413,6 +1413,26 @@ export default function VoiceModeGrok({
                         <span>Level {voice.audioLevel.toFixed(3)}</span>
                         <span>Thresh {voice.threshold.toFixed(3)}</span>
                       </div>
+                      {/*
+                        On the browser engine the meter reads the OS default input, because
+                        that is the only device the recognizer can hear — so a bar that never
+                        moves is correct, and looks identical to a broken one. Naming the
+                        device is what separates them: a user who reads "Steam Streaming
+                        Microphone" here knows immediately why nothing is being transcribed,
+                        which is otherwise only discoverable from the console.
+                      */}
+                      {voice.micMeterDeviceLabel ? (
+                        <p
+                          className="mt-1 text-[10px] leading-relaxed text-white/35"
+                          data-testid="voice-meter-device"
+                        >
+                          Browser speech recognition records your system default input:{' '}
+                          <span className="text-white/55">{voice.micMeterDeviceLabel}</span>.
+                          If the bar stays flat while you speak, that device is not the one
+                          you are speaking into — change it in your operating system’s sound
+                          settings, or set Speech Recognition to “On this computer”.
+                        </p>
+                      ) : null}
                     </>
                   ) : (
                     /*
