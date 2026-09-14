@@ -1212,9 +1212,21 @@ export default function VoiceModeGrok({
                 style={{ height: '8px', animationDelay: '0.4s' }}
               />
             </div>
-            <p className="text-base font-medium">
-              {voice.interimText || STATE_MESSAGES[voice.state]}
-            </p>
+            {/* The words as they are being understood, given the weight of the thing the
+                user is actually watching. The state message is what shows when there is
+                nothing to say yet. */}
+            {voice.interimText ? (
+              <p
+                className="max-w-2xl px-6 text-center text-xl font-medium leading-snug text-white/90 hp-fade-in"
+                data-testid="voice-idle-transcript"
+                aria-live="polite"
+              >
+                {voice.interimText}
+                <span className="text-white/35">…</span>
+              </p>
+            ) : (
+              <p className="text-base font-medium">{STATE_MESSAGES[voice.state]}</p>
+            )}
 
             {/* Voice diagnostics - STT support and error messages */}
             {!voice.sttSupported && (

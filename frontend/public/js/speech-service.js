@@ -465,7 +465,19 @@ class SpeechService {
         this.recognitionCallbacks = { ...this.recognitionCallbacks, ...callbacks };
     }
 
-    async startSTT(callbacks = {}) {
+    /**
+     * Begin one recognition session.
+     *
+     * `options.continuous` keeps the session open across utterances instead of ending at the
+     * first pause. That is what makes a hands-free transcript read like a live caption: the
+     * recognizer streams interim words the whole time, and each finished phrase arrives as its
+     * own `onResult` without the session tearing down in between.
+     *
+     * One-shot remains the default, and is right for the chat composer and the Settings test:
+     * both are a single turn with a Stop button, and a session that outlived the turn would
+     * hold the microphone after the user thought they had released it.
+     */
+    async startSTT(callbacks = {}, options = {}) {
         if (!this.isRecognitionSupported) {
             micTrace('start_unsupported');
             if (callbacks.onError) callbacks.onError('Speech recognition not supported');
@@ -484,8 +496,15 @@ class SpeechService {
         this.lastSttDiagnostics = this.emptySttDiagnostics();
         this.lastSttDiagnostics.startedAt = Date.now();
         this.recognition.lang = this.recognitionLang;
+        // Set per session, not once at construction: the same recognizer object serves the
+        // composer's single turn and Voice's running caption.
+        this.recognition.continuous = Boolean(options.continuous);
+        this.recognition.interimResults = true;
 
-        micTrace('start_requested', { lang: this.recognition.lang });
+        micTrace('start_requested', {
+            lang: this.recognition.lang,
+            continuous: this.recognition.continuous,
+        });
 
         try {
             this.recognition.start();

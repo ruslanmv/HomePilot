@@ -42,6 +42,17 @@ import { resetWebSpeechForTests } from '../ui/media/webSpeechSession';
 const getUserMedia = vi.fn();
 const startSTT = vi.fn(() => true);
 
+type Callbacks = {
+  onStart?: () => void;
+  onEnd?: (diagnostics: Record<string, unknown>) => void;
+  onInterim?: (text: string) => void;
+  onResult?: (text: string) => void;
+  onError?: (code: string) => void;
+};
+
+/** Whatever the one adapter installed on the shared recognizer. */
+let callbacks: Callbacks = {};
+
 /** Just enough Web Audio for the VAD to reach its first frame. */
 function stubAudioContext() {
   class FakeAnalyser {
@@ -101,8 +112,9 @@ beforeEach(() => {
     value: { getUserMedia },
   });
 
+  callbacks = {};
   window.SpeechService = {
-    setRecognitionCallbacks: () => {},
+    setRecognitionCallbacks: (cb: Callbacks) => { callbacks = { ...callbacks, ...cb }; },
     getSttDiagnostics: () => ({}),
     getVoices: () => [],
     isSpeaking: false,
@@ -147,6 +159,84 @@ describe('hands-free on the browser engine', () => {
     expect(result.current.micMeterSupported).toBe(false);
     expect(result.current.liveTranscriptSupported).toBe(true);
     expect(result.current.bargeInSupported).toBe(false);
+  });
+});
+
+describe('the live caption on the browser engine', () => {
+  /*
+   * What the user asked for, in their words: "behave like Grok, displaying what I am saying
+   * in real time".
+   *
+   * A one-shot recognition session ends at the first pause, so hands-free was a series of
+   * short recognitions with a restart between each — the caption died at exactly the moment
+   * somebody was mid-sentence, and Chrome raised `no-speech` every few seconds of a quiet
+   * room, which surfaced as a red banner under the orb. One continuous session streams
+   * interim words the whole time and hands back each finished phrase as it completes.
+   */
+  it('listens continuously, so the words keep arriving', async () => {
+    await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+
+    expect(startSTT.mock.calls[0][1]).toMatchObject({ continuous: true });
+  });
+
+  it('shows the words while they are still being said', async () => {
+    const { result } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+
+    act(() => { callbacks.onInterim?.('turn on the kitchen'); });
+
+    expect(result.current.interimText).toBe('turn on the kitchen');
+    // And it reads as listening, not as idle, while they are arriving.
+    expect(result.current.state).toBe('LISTENING');
+  });
+
+  it('does not caption the assistant’s own voice', async () => {
+    // The recognizer cannot tell HomePilot's speaker output from the user, so anything
+    // arriving while it is talking is either its own voice or a barge-in it has mangled.
+    const { result } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+    act(() => { callbacks.onInterim?.('hello'); });
+
+    window.SpeechService.isSpeaking = true;
+    await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+    act(() => { callbacks.onInterim?.('I can help with that'); });
+
+    expect(result.current.interimText).not.toBe('I can help with that');
+  });
+
+  it('treats a quiet room as quiet, not as an error', async () => {
+    // `no-speech` is Chrome saying nobody said anything — the normal state of waiting. It
+    // used to put a red banner under the orb every few seconds of a working session.
+    const { result } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+
+    act(() => { callbacks.onError?.('no-speech'); });
+    expect(result.current.lastError).toBeNull();
+
+    // And our own hand-off for TTS is not a fault either.
+    act(() => { callbacks.onError?.('aborted'); });
+    expect(result.current.lastError).toBeNull();
+  });
+
+  it('still reports a fault that is one', async () => {
+    const { result } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+
+    act(() => { callbacks.onError?.('not-allowed'); });
+    expect(result.current.lastError).toBe('not-allowed');
+  });
+
+  it('keeps a manual turn one-shot', async () => {
+    // A press has a Stop button behind it; a session that outlived the turn would hold the
+    // microphone after the user thought they had released it.
+    localStorage.setItem('homepilot_voice_handsfree', 'false');
+    const { result } = await mountHandsFree('web-speech');
+    startSTT.mockClear();
+
+    await act(async () => { await result.current.startManualListening(); });
+
+    expect(startSTT.mock.calls[0][1]).toMatchObject({ continuous: false });
   });
 });
 

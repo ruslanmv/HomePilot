@@ -34,7 +34,8 @@ describe('microphone diagnostics and settings playback contract', () => {
   it('awaits browser speech recognition instead of treating a click as success', () => {
     // The recognizer lives behind one adapter now, so the await is asserted there; the
     // controller's contract is that it reports a start it did not get.
-    expect(webSpeech).toContain('await Promise.resolve(svc.startSTT({}))');
+    expect(webSpeech).toContain('await Promise.resolve(');
+    expect(webSpeech).toContain('svc.startSTT({}, { continuous: Boolean(options.continuous) })');
     expect(webSpeech).toContain('web_speech_start_rejected');
     expect(controller).toContain('stt_start_rejected');
     expect(controller).toContain('browser-managed-web-speech');

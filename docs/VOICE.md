@@ -145,20 +145,43 @@ than letting you assume otherwise. The warm-up stop guard (§5) applies here.
 
 **No VAD runs on this engine.** The recognizer opens its own capture and can be handed
 neither a `deviceId` nor a `MediaStream`, so a VAD alongside it would be a second microphone
-nobody transcribes — cause (3) in §1. Hands-free is therefore a restart loop around the
-recognizer's own endpointing:
+nobody transcribes — cause (3) in §1.
+
+**Hands-free runs one continuous session**, which is what makes the transcript read like a
+live caption:
 
 ```
-start ──► onresult (interim words stream to the UI) ──► onend ──► wait 400 ms ──► start
-             ▲                                                                      │
-             └───────────────── paused while TTS speaks ◄───────────────────────────┘
+start({continuous: true})
+   ├── onInterim … onInterim … onInterim     ← the caption, updating as you speak
+   ├── onResult  "turn on the kitchen lights" ← a finished phrase, sent; session stays open
+   ├── onInterim …                            ← the next sentence, already arriving
+   └── onEnd (Chrome ends periodically) ──► wait 400 ms ──► start
+          ▲                                                    │
+          └────────── aborted while TTS speaks ◄───────────────┘
 ```
+
+A **one-shot** session ends at the first pause, so hands-free was a series of short
+recognitions with a restart between each. Two things follow from that, and both were visible:
+the caption died at exactly the moment somebody was mid-sentence, and Chrome raised
+`no-speech` every few seconds of a quiet room — which surfaced as a red banner under the orb
+on a session that was working perfectly.
+
+So `no-speech` and `aborted` are classified as **benign**: the first is Chrome saying nobody
+spoke, which is the normal state of waiting, and the second is HomePilot taking the microphone
+back for TTS or a hand-off. Neither is a fault and neither reaches `lastError`.
+
+A manual press stays one-shot. It has a Stop button behind it, and a session that outlived the
+turn would hold the microphone after the user believed they had released it.
+
+Interim text is dropped while the assistant is speaking: the recognizer cannot separate
+HomePilot's own output from the user, so anything arriving then is either its voice coming
+back or a barge-in it has already mangled.
 
 What that costs and what it buys:
 
 | | `web-speech` | `homepilot-backend` |
 |---|---|---|
-| Live words while you speak | **yes** (`interimText`, shown as *Hearing …*) | no — text arrives at end of turn |
+| Live words while you speak | **yes** — one continuous session, `interimText` | no — text arrives at end of turn |
 | Input level meter | **no** — HomePilot has no stream to read | yes, the transcribed one |
 | Barge-in (speak over the reply) | no — listening stops while TTS plays | yes, the VAD watches through it |
 | Microphone used | OS default | the one selected in Audio & Video |

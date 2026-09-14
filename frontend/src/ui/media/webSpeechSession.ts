@@ -27,6 +27,18 @@ import { microphoneDebug, microphoneDebugError } from './microphoneDebug';
 import { getSpeechRecognitionCtor, type SttDiagnostics } from './voiceSelfTest';
 import type { MicrophoneOwner } from './sttRuntime';
 
+export interface WebSpeechOptions {
+  /**
+   * Keep the session open across utterances.
+   *
+   * A one-shot session ends at the first pause, so a hands-free transcript becomes a series
+   * of short recognitions with a restart between each — which loses the live caption exactly
+   * when somebody is mid-sentence. Continuous keeps one session streaming interim words and
+   * delivers each finished phrase as its own `onResult`.
+   */
+  continuous?: boolean;
+}
+
 export interface WebSpeechHandlers {
   onStart?: () => void;
   /** Words as they are being recognized — the live transcript surfaces show. */
@@ -130,6 +142,7 @@ function installDispatcher(svc: SpeechService): void {
 export async function startWebSpeech(
   owner: MicrophoneOwner,
   handlers: WebSpeechHandlers,
+  options: WebSpeechOptions = {},
 ): Promise<boolean> {
   if (!isWebSpeechSupported()) {
     microphoneDebug(owner === 'voice' ? 'voice' : 'chat', 'web_speech_unsupported', { owner });
@@ -149,13 +162,16 @@ export async function startWebSpeech(
   microphoneDebug(scope, 'web_speech_start_requested', {
     owner,
     via: svc ? 'speech-service' : 'native',
+    continuous: Boolean(options.continuous),
     recognitionDevice: 'browser-managed-web-speech',
   });
 
   if (svc) {
     installDispatcher(svc);
     try {
-      const started = await Promise.resolve(svc.startSTT({}));
+      const started = await Promise.resolve(
+        svc.startSTT({}, { continuous: Boolean(options.continuous) }),
+      );
       if (started || svc.isRecognizing) return true;
       microphoneDebug(scope, 'web_speech_start_rejected', { owner, started: Boolean(started) });
       session = null;
@@ -171,7 +187,7 @@ export async function startWebSpeech(
     }
   }
 
-  return startNativeRecognition(owner, gen, handlers);
+  return startNativeRecognition(owner, gen, handlers, options);
 }
 
 /**
@@ -185,6 +201,7 @@ function startNativeRecognition(
   owner: MicrophoneOwner,
   gen: number,
   handlers: WebSpeechHandlers,
+  options: WebSpeechOptions = {},
 ): boolean {
   const Ctor = getSpeechRecognitionCtor();
   if (!Ctor) {
@@ -206,7 +223,7 @@ function startNativeRecognition(
   };
 
   const recognition = new Ctor();
-  recognition.continuous = false;
+  recognition.continuous = Boolean(options.continuous);
   recognition.interimResults = true;
   recognition.lang = lang;
   nativeRecognition = recognition;

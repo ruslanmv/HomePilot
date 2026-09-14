@@ -167,6 +167,16 @@ const FATAL_RECOGNITION_ERRORS = new Set([
   'not-supported',
 ]);
 
+/**
+ * Recognizer outcomes that are not faults, and must never reach the user as one.
+ *
+ * A hands-free session is listening to a room, and a room is mostly quiet. `no-speech` is
+ * Chrome saying "nobody said anything", which is the normal state of waiting; `aborted` is
+ * HomePilot itself taking the microphone back for TTS or a hand-off. Reporting either as an
+ * error puts a red banner under the orb every few seconds of an otherwise perfect session.
+ */
+const BENIGN_RECOGNITION_ERRORS = new Set(['no-speech', 'aborted']);
+
 declare global {
   interface Window {
     SpeechService?: any;
@@ -625,6 +635,16 @@ export function useVoiceController(
     });
 
     browserTurnStartedAtRef.current = Date.now();
+    /*
+     * Hands-free listens continuously; a manual press is one turn.
+     *
+     * A one-shot session ends at the first pause, so hands-free became a series of short
+     * recognitions with a restart between each — and the live caption died at exactly the
+     * moment somebody was mid-sentence. It also meant Chrome raised `no-speech` every few
+     * seconds of a quiet room. One long session streams interim words the whole time and
+     * hands back each finished phrase as it completes, which is what reads like a caption.
+     */
+    const continuous = isHandsFreeRef.current;
     const started = await startWebSpeech('voice', {
       onStart: () => {
         microphoneDebug('voice', 'stt_onstart', {
@@ -639,7 +659,13 @@ export function useVoiceController(
       // The live transcript. This is the browser engine's one real advantage over
       // transcribing on this computer, and it is what makes a turn visibly working rather
       // than a silence the user has to guess about.
-      onInterim: (text: string) => setInterimText(text),
+      // The live caption. Suppressed while the assistant is talking: anything arriving then
+      // is either its own voice or a barge-in the recognizer cannot separate from it.
+      onInterim: (text: string) => {
+        if (stateRef.current === 'SPEAKING') return;
+        setInterimText(text);
+        if (stateRef.current === 'IDLE') setState('LISTENING');
+      },
       onResult: (finalText: string) => {
         setInterimText('');
         const trimmed = finalText?.trim();
@@ -751,9 +777,16 @@ export function useVoiceController(
       onError: (code: string) => {
         microphoneDebug('voice', 'stt_error', {
           error: code || 'stt_error',
+          benign: BENIGN_RECOGNITION_ERRORS.has(code),
           state: stateRef.current,
           handsFree: isHandsFreeRef.current,
         });
+        if (BENIGN_RECOGNITION_ERRORS.has(code)) {
+          // Silence, or our own hand-off. `onEnd` follows and restarts the loop; saying
+          // anything here would be an error message about nothing having gone wrong.
+          setInterimText('');
+          return;
+        }
         setLastError(code || 'stt_error');
         pendingResultRef.current = false;
         setInterimText('');
@@ -767,7 +800,7 @@ export function useVoiceController(
         }
         setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
       },
-    });
+    }, { continuous });
 
     if (!started) {
       microphoneDebug('voice', 'stt_start_rejected', { reason });
