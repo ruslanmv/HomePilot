@@ -1353,6 +1353,47 @@ because taking the next start first would stretch a two-second sentence across a
 silence. JSON leaves `t1_ms` null: the other formats have to put something on screen, a data
 export does not, and inventing an end hands the next tool a measurement nobody made.
 
+### Asking a live meeting — the private lane
+
+The workspace has three tabs, and the third one is not part of the meeting.
+
+| Tab | What it is | Whose |
+|---|---|---|
+| Transcript | what was said in the room, `You` / `Them` | everyone's — the record |
+| Timeline | the meeting's own events: decisions, slides, capture changes | everyone's — the record |
+| **Ask** | your questions and HomePilot's answers | **yours, private** |
+
+**Why a separate lane at all.** A transcript is worth having because everything in it was
+spoken. Merge one assistant answer into it and that property is gone: a reader six months
+later — or the recap model, or search — cannot tell a private question from a sentence
+somebody said out loud. The same argument rules out the Timeline, which is the meeting's own
+record of what happened. So the exchange sits beside both, is labelled *"private to you… not
+part of the meeting"*, and reaches the permanent record only when you press **Keep in meeting
+notes** — which writes a `suggestion` artifact *beside* the notes (`POST /{id}/notes`,
+`op: suggestion`) rather than merging it in, for exactly the same reason.
+
+**It is answered from the transcript.** `POST /v1/meetingsense/{id}/ask` assembles the last
+ninety seconds verbatim, the rolling recap, and the passages that match the question, then
+cites what it used; `cited` is the set of stamps the server vouched for, so only a real source
+is rendered as a link and following one jumps to that moment in the Transcript tab. It works on
+a **live** meeting — the verbatim tier is the reason it exists — and the vector tier is simply
+empty until the meeting is indexed on stop.
+
+Three things this replaced, all of which shipped and none of which worked:
+
+1. the composer posted to `/chat`, so a question about the meeting was answered by a model that
+   had never seen the transcript;
+2. the exchange was rendered only inside the Timeline while the workspace opens on Transcript,
+   so pressing Enter changed nothing visible anywhere;
+3. posting to `/chat` carried the meeting's `conversation_id`, which persisted every private
+   question into the thread the meeting was recorded in.
+
+**Whether your own voice is in the transcript is yours to decide, at the start.** `My
+microphone · Include what you say` in the start dialog is what puts `You` lines in the record
+at all; with it off, a meeting captures only the other side and every line reads `Them`. `You`
+and `Them` are also different colours rather than two greys, because scanning a transcript the
+question is who was talking.
+
 ### Where the meeting lands
 
 **HomePilot has no `conversations` table.** A conversation is `messages` grouped by

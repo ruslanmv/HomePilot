@@ -10,6 +10,7 @@ import {
     MonitorUp,
     RefreshCw,
     Send,
+    Sparkles,
     Square,
     Volume2,
     X,
@@ -23,9 +24,11 @@ import {
     type MeetingView,
 } from './meetingState';
 import {
+    answerParts,
     dayLabel,
     durationLabel,
     notesBody,
+    segmentAt,
     titleOf,
     type MeetingRecord,
 } from './meetingRecord';
@@ -59,6 +62,13 @@ export interface MeetingWorkspaceProps {
     view: MeetingView;
     capture: CaptureOptions;
     captureStatus: MeetingCaptureStatus;
+    /**
+     * The conversation the meeting was recorded in.
+     *
+     * Kept for the header and for callers, and deliberately **not** used by the ask lane any
+     * more: posting questions here is what wrote a private side-channel into the meeting's
+     * permanent thread.
+     */
     conversationId: string;
     screenStream: MediaStream | null;
     record: MeetingRecord | null;
@@ -72,6 +82,27 @@ export interface MeetingWorkspaceProps {
     onClose?: () => void;
 }
 
+/**
+ * One question you asked about the meeting, and what came back.
+ *
+ * ── Why these are not transcript, and not chat either ────────────────────────────────────
+ *
+ * A meeting transcript is a record of **what was said in the room**. Anything else written
+ * into it is a forgery: a reader — or the recap model, or a search six months later — cannot
+ * tell your private question to an assistant from a sentence somebody actually spoke. So these
+ * live in their own lane, are labelled as yours and private, and reach the meeting's permanent
+ * record only when you explicitly put them there.
+ *
+ * They are equally not ordinary chat. This used to POST to `/chat` with the meeting's
+ * `conversation_id`, which was wrong twice over: the model was handed no transcript at all, so
+ * "what did they say about the tax cuts" was answered by a model that had never seen the
+ * meeting; and every exchange was persisted into the meeting conversation, quietly rewriting
+ * the thread the meeting was recorded in.
+ *
+ * `POST /v1/meetingsense/{id}/ask` is the endpoint built for exactly this. It assembles the
+ * last ninety seconds verbatim, the rolling recap, and the passages that match the question,
+ * and it works on a **live** meeting — the verbatim tier is the reason it exists.
+ */
 type ChatTurn = {
     id: string;
     role: 'user' | 'assistant';
@@ -79,6 +110,10 @@ type ChatTurn = {
     pending?: boolean;
     error?: boolean;
     createdAt: number;
+    /** Stamps the server vouched for, so only a real source is rendered as a link. */
+    cited?: string[];
+    /** Whether this answer has been deliberately added to the meeting's notes. */
+    kept?: boolean;
 };
 
 type TimelineEvent = {
@@ -275,7 +310,6 @@ export function MeetingWorkspace({
     view,
     capture,
     captureStatus,
-    conversationId,
     screenStream,
     record,
     pendingNotes,
@@ -298,7 +332,7 @@ export function MeetingWorkspace({
      *
      * During a meeting the question is *is it hearing me*, and only the transcript answers it.
      */
-    const [tab, setTab] = useState<'timeline' | 'transcript'>('transcript');
+    const [tab, setTab] = useState<'timeline' | 'transcript' | 'ask'>('transcript');
     const [confirmEnd, setConfirmEnd] = useState(false);
     const [input, setInput] = useState('');
     const [chatTurns, setChatTurns] = useState<ChatTurn[]>([]);
@@ -355,52 +389,125 @@ export function MeetingWorkspace({
             });
         }
         events.push(...sourceEvents);
-        for (const turn of chatTurns) {
-            events.push({
-                id: `chat-${turn.id}`,
-                t: Math.max(0, turn.createdAt),
-                kind: turn.role === 'user' ? 'question' : 'meeting',
-                title: turn.role === 'user' ? 'Your question' : 'HomePilot',
-                text: turn.text || (turn.pending ? 'Thinking…' : ''),
-            });
-        }
+        /*
+         * Your questions are deliberately absent here.
+         *
+         * The Timeline is the meeting's own record — decisions, slides, capture changes — and
+         * interleaving a private side-channel into it by timestamp made an exchange nobody else
+         * was party to look like a moment of the meeting. They have their own tab now.
+         */
         return events.sort((a, b) => a.t - b.t);
-    }, [view.slideList, view.chips, sourceEvents, chatTurns]);
+    }, [view.slideList, view.chips, sourceEvents]);
+
+    /** Exchanges, not turns: a question and its answer are one thing to count. */
+    const askCount = chatTurns.filter((turn) => turn.role === 'user').length;
 
     const sendQuestion = async () => {
         const text = input.trim();
         if (!text) return;
-        setInput('');
+        const meetingId = view.meetingId;
         const now = view.elapsedMs;
-        const user: ChatTurn = { id: crypto.randomUUID(), role: 'user', text, createdAt: now };
         const pendingId = crypto.randomUUID();
-        setChatTurns((turns) => [...turns, user, { id: pendingId, role: 'assistant', text: '', pending: true, createdAt: now }]);
+        setInput('');
+        setChatTurns((turns) => [
+            ...turns,
+            { id: crypto.randomUUID(), role: 'user', text, createdAt: now },
+            { id: pendingId, role: 'assistant', text: '', pending: true, createdAt: now },
+        ]);
+        /*
+         * Switch to the lane the answer is arriving in.
+         *
+         * The exchange used to be rendered only inside the Timeline, while the workspace opens
+         * on Transcript — so pressing Enter produced no visible change anywhere, and the
+         * question looked like it had been swallowed. Sending is a request to see the answer.
+         */
+        setTab('ask');
+
+        const settle = (patch: Partial<ChatTurn>) => {
+            setChatTurns((turns) => turns.map((turn) => (
+                turn.id === pendingId ? { ...turn, ...patch, pending: false } : turn
+            )));
+        };
+
+        if (!meetingId) {
+            // Before the session id lands there is nothing to ask *about*, and asking the
+            // general model instead would answer from no transcript while looking authoritative.
+            settle({ text: 'This meeting is still connecting — ask again in a moment.', error: true });
+            return;
+        }
+
         try {
-            const provider = localStorage.getItem('homepilot_provider_chat') || 'ollama';
-            const model = localStorage.getItem('homepilot_model_chat') || '';
-            const providerBase = localStorage.getItem('homepilot_base_url_chat') || '';
-            const response = await fetch(`${backendBase()}/chat`, {
+            const response = await fetch(
+                `${backendBase()}/v1/meetingsense/${encodeURIComponent(meetingId)}/ask`,
+                {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: requestHeaders(),
+                    body: JSON.stringify({ text }),
+                },
+            );
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const body = await response.json();
+            const answer = String(body?.text ?? '').trim();
+            if (!answer) {
+                settle({ text: 'That question could not be answered from this meeting.', error: true });
+                return;
+            }
+            settle({ text: answer, cited: Array.isArray(body?.cited) ? body.cited : [] });
+        } catch (sendError) {
+            const message = sendError instanceof Error ? sendError.message : 'request failed';
+            settle({ text: `Could not answer from this meeting: ${message}`, error: true });
+        }
+    };
+
+    /**
+     * Put one answer into the meeting's permanent record, because you asked for it.
+     *
+     * Recorded as a `suggestion` artifact — beside the notes rather than merged into them.
+     * Merged in, an assistant's paragraph becomes indistinguishable from something a person
+     * said, which is the exact confusion this whole lane exists to prevent.
+     */
+    const keepInNotes = async (turn: ChatTurn) => {
+        const meetingId = view.meetingId;
+        if (!meetingId || turn.kept || !turn.text.trim()) return;
+        setChatTurns((turns) => turns.map((row) => (row.id === turn.id ? { ...row, kept: true } : row)));
+        try {
+            await fetch(`${backendBase()}/v1/meetingsense/${encodeURIComponent(meetingId)}/notes`, {
                 method: 'POST',
                 credentials: 'include',
                 headers: requestHeaders(),
-                body: JSON.stringify({
-                    message: text,
-                    conversation_id: conversationId,
-                    mode: 'chat',
-                    provider,
-                    provider_model: model || undefined,
-                    provider_base_url: providerBase || undefined,
-                    memoryEngine: localStorage.getItem('homepilot_memory_engine') || 'v2',
-                }),
+                body: JSON.stringify({ op: 'suggestion', kind: 'note', text: turn.text }),
             });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const body = await response.json();
-            const answer = String(body.text ?? body.content ?? 'I could not produce an answer.');
-            setChatTurns((turns) => turns.map((turn) => turn.id === pendingId ? { ...turn, text: answer, pending: false } : turn));
-        } catch (sendError) {
-            const message = sendError instanceof Error ? sendError.message : 'request failed';
-            setChatTurns((turns) => turns.map((turn) => turn.id === pendingId ? { ...turn, text: `Could not answer from this meeting: ${message}`, pending: false, error: true } : turn));
+        } catch {
+            // Reverted, so the button does not claim something was kept that was not.
+            setChatTurns((turns) => turns.map((row) => (row.id === turn.id ? { ...row, kept: false } : row)));
         }
+    };
+
+    /** Jump from a citation to the moment it names. */
+    const seekTo = (ms: number) => {
+        setTab('transcript');
+        const id = segmentAt(view.segments, ms);
+        if (!id) return;
+        window.requestAnimationFrame(() => {
+            // Every step here is optional on some runtime — `CSS.escape` is absent in older
+            // embedded webviews, `scrollIntoView` in others. Following a citation is a
+            // convenience; the tab switch above is the part that matters, and it has already
+            // happened. Throwing from inside an animation frame would take the workspace down
+            // mid-meeting for a scroll.
+            try {
+                const selector = typeof CSS?.escape === 'function'
+                    ? `[data-segment-id="${CSS.escape(id)}"]`
+                    : null;
+                if (!selector) return;
+                const node = document.querySelector(selector);
+                if (node && typeof (node as HTMLElement).scrollIntoView === 'function') {
+                    (node as HTMLElement).scrollIntoView({ block: 'center', behavior: 'smooth' });
+                }
+            } catch {
+                // A citation that does not scroll is not worth an exception.
+            }
+        });
     };
 
     if (!host) return null;
@@ -517,10 +624,91 @@ export function MeetingWorkspace({
                                         </span>
                                     ) : null}
                                 </button>
+                                {/* The private lane. Separate from both other tabs on purpose:
+                                    the Transcript is what was said in the room and the Timeline
+                                    is the meeting's own record, and your questions are neither. */}
+                                <button type="button" data-testid="ms-tab-ask" onClick={() => setTab('ask')} className={`rounded-lg px-3 py-1.5 text-xs ${tab === 'ask' ? 'bg-white/10 text-white' : 'text-white/45 hover:text-white/75'}`}>
+                                    <Sparkles size={13} className="mr-1.5 inline" /> Ask
+                                    {askCount ? (
+                                        <span className="ml-1.5 text-white/40" data-testid="ms-ask-count">{askCount}</span>
+                                    ) : null}
+                                </button>
                             </div>
                             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
                                 <div className="mx-auto max-w-3xl">
-                                    {tab === 'timeline' ? (
+                                    {tab === 'ask' ? (
+                                        <div className="space-y-3" aria-label="Your questions about this meeting" data-testid="ms-ask-lane">
+                                            {/*
+                                              Said once, at the top, and not repeated per turn.
+                                              The single most important property of this lane is
+                                              that it is *not* the meeting — a user who thinks
+                                              their question was spoken into the room, or will
+                                              appear in the recap somebody else reads, is being
+                                              misled by the interface.
+                                            */}
+                                            <p className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-3.5 py-2.5 text-[11px] leading-5 text-white/40" data-testid="ms-ask-privacy">
+                                                Private to you. These questions are answered from the live transcript,
+                                                and are not part of the meeting — they are not spoken into the call, not
+                                                recorded in the transcript, and not in the recap unless you keep one.
+                                            </p>
+                                            {chatTurns.length === 0 ? (
+                                                <div className="py-8 text-center text-sm text-white/35" data-testid="ms-ask-empty">
+                                                    Ask anything about what has been said so far — “what did they say about tax cuts?”
+                                                </div>
+                                            ) : null}
+                                            {chatTurns.map((turn) => (turn.role === 'user' ? (
+                                                <div key={turn.id} className="flex justify-end" data-testid="ms-ask-question">
+                                                    <div className="max-w-[85%] rounded-2xl rounded-br-md border border-sky-400/20 bg-sky-400/[0.08] px-3.5 py-2.5">
+                                                        <div className="text-[10px] font-semibold uppercase tracking-wide text-sky-200/70">You · private</div>
+                                                        <p className="mt-1 text-sm leading-5 text-white/90">{turn.text}</p>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div key={turn.id} className="flex justify-start" data-testid="ms-ask-answer">
+                                                    <div className={`max-w-[85%] rounded-2xl rounded-bl-md border px-3.5 py-2.5 ${turn.error ? 'border-red-400/20 bg-red-500/[0.07]' : 'border-white/[0.08] bg-white/[0.03]'}`}>
+                                                        <div className="text-[10px] font-semibold uppercase tracking-wide text-white/40">HomePilot</div>
+                                                        {turn.pending ? (
+                                                            <p className="mt-1 text-sm leading-5 text-white/45" data-testid="ms-ask-pending">Looking through the meeting…</p>
+                                                        ) : (
+                                                            <>
+                                                                <p className={`mt-1 text-sm leading-5 ${turn.error ? 'text-red-200/85' : 'text-white/85'}`}>
+                                                                    {answerParts(turn.text, turn.cited).map((part, index) => (
+                                                                        part.kind === 'cite' ? (
+                                                                            <button
+                                                                                key={`c${index}`}
+                                                                                type="button"
+                                                                                onClick={() => seekTo(part.ms)}
+                                                                                title="Show this in the transcript"
+                                                                                data-testid="ms-ask-cite"
+                                                                                className="rounded bg-white/10 px-1 font-mono text-[11px] text-sky-200 hover:bg-white/15"
+                                                                            >
+                                                                                {part.text}
+                                                                            </button>
+                                                                        ) : (
+                                                                            <React.Fragment key={`t${index}`}>{part.text}</React.Fragment>
+                                                                        )
+                                                                    ))}
+                                                                </p>
+                                                                {!turn.error ? (
+                                                                    /* The "optional" half of the ask: nothing reaches the
+                                                                       meeting's record unless it is put there on purpose. */
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void keepInNotes(turn)}
+                                                                        disabled={turn.kept}
+                                                                        data-testid="ms-ask-keep"
+                                                                        className="mt-2 text-[10px] text-white/35 hover:text-white/65 disabled:text-emerald-300/70"
+                                                                    >
+                                                                        {turn.kept ? '✓ Kept in meeting notes' : '+ Keep in meeting notes'}
+                                                                    </button>
+                                                                ) : null}
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )))}
+                                        </div>
+                                    ) : tab === 'timeline' ? (
                                         <div className="space-y-3">
                                             {semanticEvents.map((event) => (
                                                 <div key={event.id} className="grid grid-cols-[54px_1fr] gap-3">
@@ -536,9 +724,18 @@ export function MeetingWorkspace({
                                         <div className="space-y-2" aria-label="Live transcript">
                                             {view.segments.length === 0 && !view.partial ? <div className="py-10 text-center text-sm text-white/35">Transcript will appear here as people speak.</div> : null}
                                             {view.segments.map((segment, index) => (
-                                                <div key={segment.id || index} className="grid grid-cols-[64px_70px_1fr] gap-2 rounded-lg px-2 py-1.5 text-xs leading-5 hover:bg-white/[0.025]">
+                                                <div
+                                                    key={segment.id || index}
+                                                    data-segment-id={segment.id || undefined}
+                                                    className="grid grid-cols-[64px_70px_1fr] gap-2 rounded-lg px-2 py-1.5 text-xs leading-5 hover:bg-white/[0.025]"
+                                                >
                                                     <span className="font-mono text-white/30">{stampLabel(segment.t0)}</span>
-                                                    <span className="font-medium text-white/55">{speakerLabel(segment.speaker)}</span>
+                                                    {/* "You" and "Them" are different colours, not just different
+                                                        words: at a glance down a column the distinction that matters
+                                                        is who was talking, and two greys do not carry it. */}
+                                                    <span className={`font-medium ${segment.speaker === 'me' ? 'text-emerald-300/75' : 'text-white/55'}`}>
+                                                        {speakerLabel(segment.speaker)}
+                                                    </span>
                                                     <span className="text-white/80">{segment.text}</span>
                                                 </div>
                                             ))}
@@ -577,7 +774,16 @@ export function MeetingWorkspace({
                                 <Send size={15} aria-hidden="true" />
                             </button>
                         </div>
-                        <div className="mx-auto mt-1.5 max-w-3xl text-[10px] text-white/25">Using current meeting context · same conversation</div>
+                        {/*
+                          This read "Using current meeting context · same conversation", and
+                          both halves were false: the question went to the general chat model
+                          with no transcript, and it was written into the meeting's own
+                          conversation. Now both halves are true and worth saying — the answer
+                          comes from the transcript, and the exchange stays out of the record.
+                        */}
+                        <div className="mx-auto mt-1.5 max-w-3xl text-[10px] text-white/25" data-testid="ms-ask-footnote">
+                            Answered from this meeting’s transcript · private to you, not added to the transcript
+                        </div>
                     </div>
                 </section>
 

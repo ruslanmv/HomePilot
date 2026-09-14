@@ -90,6 +90,7 @@ jobs:
           src/test/meetingsenseRealtime.test.js
           src/test/meetingsenseCloseNavigation.test.tsx
           src/test/meetingAudioOnly.test.tsx
+          src/test/meetingAskLane.test.tsx
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
