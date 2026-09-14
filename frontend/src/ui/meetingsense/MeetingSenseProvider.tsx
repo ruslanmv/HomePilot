@@ -6,7 +6,7 @@
  * live workspace → recap, and restores an origin meeting conversation as that recap when it is
  * reopened from History.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { consentAcknowledged, rememberConsent } from './ConsentSheet';
 import { MeetingStartDialog } from './MeetingStartDialog';
 import MeetingWorkspace, {
@@ -187,6 +187,13 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
     const [meetingConversationId, setMeetingConversationId] = useState<string | null>(null);
     const [captureStatus, setCaptureStatus] = useState<MeetingCaptureStatus>(allSourcesOff);
     const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+    /** Chat that was open before this provider moved the app into the meeting conversation. */
+    const returnConversationIdRef = useRef<string | null>(null);
+    /**
+     * Explicitly closed recaps must not immediately hydrate themselves again while the app is
+     * still finishing navigation away from their conversation.
+     */
+    const dismissedMeetingConversationIdRef = useRef<string | null>(null);
 
     const enabled = Boolean(status?.enabled);
     const phase = meeting.view.phase;
@@ -208,6 +215,11 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
 
     const actuallyStart = useCallback(async () => {
         const nextConversation = freshMeetingConversationId();
+        // Remember where the user was before the dedicated meeting thread takes over. Close
+        // returns there instead of leaving the app parked on a meeting conversation that
+        // immediately re-opens its recap.
+        returnConversationIdRef.current = conversationId;
+        dismissedMeetingConversationIdRef.current = null;
         meeting.reset();
         setMeetingConversationId(nextConversation);
         setWorkspaceMounted(true);
@@ -236,6 +248,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                 setMeetingConversationId(null);
                 setCaptureStatus(allSourcesOff());
                 setScreenStream(null);
+                returnConversationIdRef.current = null;
                 meeting.reset();
                 return;
             }
@@ -255,7 +268,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         } finally {
             setStarting(false);
         }
-    }, [capture, meeting, onOpenConversation, persistStartMarker]);
+    }, [capture, conversationId, meeting, onOpenConversation, persistStartMarker]);
 
     const begin = useCallback(() => {
         if (live || starting) return;
@@ -381,20 +394,34 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         };
     }, [workspaceMounted, ended, phase, capture.slides]);
 
-    /**
-     * Put the workspace away and give the application back.
-     *
-     * The workspace is a full-screen portal, so "navigate somewhere else" was not a way out of
-     * it — whatever you would navigate with is underneath. A recap with no control on it is a
-     * dead end, which is what the missing close button was.
-     */
-    const closeWorkspace = useCallback(() => {
+    /** Reset only MeetingSense state. Used when normal navigation has already left the recap. */
+    const resetWorkspace = useCallback(() => {
         setWorkspaceMounted(false);
         setMeetingConversationId(null);
         setScreenStream(null);
         setCaptureStatus(allSourcesOff());
+        setError(null);
         meeting.reset();
     }, [meeting]);
+
+    /**
+     * Close from the recap means "back to chat", not merely "hide this portal".
+     *
+     * Hiding the workspace while `conversationId` still points at the meeting thread caused
+     * the restore effect below to hydrate the same recap again on the next render. Remember
+     * that id as explicitly dismissed, reset the meeting session, then navigate back to the
+     * chat that was open before the meeting started.
+     */
+    const closeWorkspace = useCallback(() => {
+        const closingMeetingId = meetingConversationId;
+        if (closingMeetingId) dismissedMeetingConversationIdRef.current = closingMeetingId;
+        const returnConversationId = returnConversationIdRef.current;
+        returnConversationIdRef.current = null;
+        resetWorkspace();
+        if (returnConversationId && returnConversationId !== closingMeetingId) {
+            onOpenConversation?.(returnConversationId);
+        }
+    }, [meetingConversationId, onOpenConversation, resetWorkspace]);
 
     // The dedicated meeting conversation is sticky while capture is live. Navigation becomes
     // ordinary again after ending, at which point leaving the recap closes this workspace.
@@ -404,13 +431,24 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
             onOpenConversation?.(meetingConversationId);
             return;
         }
-        if (ended) closeWorkspace();
-    }, [conversationId, meetingConversationId, live, starting, ended, onOpenConversation, closeWorkspace]);
+        if (ended) {
+            returnConversationIdRef.current = null;
+            resetWorkspace();
+        }
+    }, [conversationId, meetingConversationId, live, starting, ended, onOpenConversation, resetWorkspace]);
 
     // Opening an origin meeting conversation from History restores the dedicated recap. A
     // branch deliberately remains a normal chat even though it can search the same meeting.
     useEffect(() => {
         if (!conversationId || starting || live) return undefined;
+        const dismissedId = dismissedMeetingConversationIdRef.current;
+        if (dismissedId && conversationId !== dismissedId) {
+            // Once normal navigation has visibly left the dismissed meeting, reopening it from
+            // History is an intentional action again and should restore its recap as before.
+            dismissedMeetingConversationIdRef.current = null;
+        } else if (dismissedId === conversationId) {
+            return undefined;
+        }
         if (workspaceMounted && meetingConversationId === conversationId) return undefined;
         let cancelled = false;
         const hydrate = async () => {
