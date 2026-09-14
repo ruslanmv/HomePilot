@@ -283,6 +283,13 @@ class MeetingSession:
         self.assistant_names = [str(n).strip() for n in assistant if str(n).strip()] \
             if isinstance(assistant, (list, tuple)) else []
 
+        # The helper mode the wizard offered. Applied here rather than left to a second
+        # request: the mode decides whether the assistant may answer or draft at all, so a
+        # meeting that runs even briefly in the default one has already missed the questions
+        # asked in that window. An unknown name is ignored rather than refused — the mode
+        # picker must never be the reason a recording does not start.
+        self._apply_start_mode(message.get("mode"))
+
         # MS17. Scheduled, not awaited: a calendar round trip before `ready` is a dialog-free
         # start turned back into a wait, and the recording is what the user pressed the button
         # for. The name arrives moments later as a `meta` frame.
@@ -563,6 +570,30 @@ class MeetingSession:
         if frame is not None:
             await self.transport.send(frame)
         return frame
+
+    def _apply_start_mode(self, requested: Any) -> None:
+        """Record the wizard's helper mode, the same way the REST `op: "mode"` does.
+
+        One writer, one representation: a mode artifact in the store, which `mode()` then
+        reads fresh. Holding it on the session instead would be a mode set at start that
+        `set_mode` could not see, and a mode set later that start did not know about.
+
+        Silent about everything that can go wrong. A bad name, an unwritable store — neither
+        is worth refusing a recording over, and the meeting simply runs in the default mode,
+        which is the safest of them.
+        """
+        name = str(requested or "").strip().lower()
+        if not name:
+            return
+        try:
+            from .routes import MODES  # noqa: PLC0415 — avoids a circular import at module load
+
+            if name not in MODES:
+                log.warning("meetingsense: ignoring unknown start mode %r", name)
+                return
+            store.add_artifact(self.meeting_id, kind="mode", target=name)
+        except Exception:  # noqa: BLE001 — never worth the meeting
+            log.exception("meetingsense: could not apply start mode %r", name)
 
     def mode(self) -> str:
         """This meeting's mode. **Server state** (MS24), read fresh rather than cached.

@@ -605,42 +605,59 @@ describe('useMeetingSense', () => {
         expect(screen.getByTestId('ms-behind').textContent).toContain('9 s behind');
     });
 
-    it('keeps recording through the undo window', async () => {
-        // The whole point. A Stop that stopped immediately would make Undo a lie: the ten
-        // seconds somebody spends deciding are usually ten seconds somebody else was talking.
+    /*
+     * MS6's ten-second undo window is gone, and these tests describe what replaced it.
+     *
+     * The window kept capture running after Stop so that undoing left no hole — the ten
+     * seconds somebody spends deciding are usually ten seconds somebody was still talking.
+     * The Meeting Workspace removed it on purpose, and the trade it made is the right one:
+     * a room whose occupants have been told the recording stopped must not still be recorded,
+     * and no amount of seamless undo is worth ten seconds of audio nobody consented to.
+     *
+     * `undo` survives as a no-op so callers written against the old shape still compile.
+     */
+    it('stops the moment it is asked to', async () => {
         render(<Harness recorder={recorder} target={target} />);
-        await act(async () => {
-            (Harness as any).last.stop();
+        act(() => {
+            (Harness as any).last.setPhase('live');
         });
-        expect(screen.getByTestId('ms-undo')).toBeTruthy();
-        expect(recorder.stop).not.toHaveBeenCalled();
-
-        emit('ms:segment', { id: 'late', text: 'one more thing', seq: 9 });
-        expect(screen.getByTestId('ms-segment').textContent).toContain('one more thing');
+        await act(async () => {
+            await (Harness as any).last.stop();
+        });
+        expect(recorder.stop).toHaveBeenCalledTimes(1);
+        // No countdown, because there is nothing left to change your mind about.
+        expect(screen.queryByTestId('ms-undo')).toBeNull();
     });
 
-    it('undo puts it straight back to live with no gap', async () => {
+    it('offers no undo, and undoing does not restart capture', async () => {
         render(<Harness recorder={recorder} target={target} />);
+        act(() => {
+            (Harness as any).last.setPhase('live');
+        });
         await act(async () => {
-            (Harness as any).last.stop();
+            await (Harness as any).last.stop();
         });
         await act(async () => {
             (Harness as any).last.undo();
-        });
-        await act(async () => {
             await vi.advanceTimersByTimeAsync(20_000);
         });
-        expect(recorder.stop).not.toHaveBeenCalled();
-        // Back to the resting pill: the countdown is gone, so the disclosure is offered
-        // again and Stop is inside it.
-        fireEvent.click(screen.getByTestId('ms-pill-toggle'));
-        expect(screen.getByTestId('ms-stop')).toBeTruthy();
+        // Still stopped exactly once: undo is a compatibility no-op, not a resume.
+        expect(recorder.stop).toHaveBeenCalledTimes(1);
+        expect((Harness as any).last.view.phase).toBe('ended');
     });
 
-    it('stops for real once the window closes', async () => {
+    it('stops once however many times Stop is pressed', async () => {
+        // The `stopping` guard: a second press during finalization must not send a second
+        // stop to a recorder that is already closing its socket.
         render(<Harness recorder={recorder} target={target} />);
+        act(() => {
+            (Harness as any).last.setPhase('live');
+        });
         await act(async () => {
-            (Harness as any).last.stop();
+            await Promise.all([
+                (Harness as any).last.stop(),
+                (Harness as any).last.stop(),
+            ]);
         });
         await act(async () => {
             await vi.advanceTimersByTimeAsync(10_000);
@@ -648,16 +665,13 @@ describe('useMeetingSense', () => {
         expect(recorder.stop).toHaveBeenCalledTimes(1);
     });
 
-    it('counts the undo window down', async () => {
+    it('does not stop a meeting that never started', async () => {
         render(<Harness recorder={recorder} target={target} />);
         await act(async () => {
-            (Harness as any).last.stop();
+            await (Harness as any).last.stop();
         });
-        expect(screen.getByTestId('ms-undo').textContent).toBe('Undo · 10s');
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(3_000);
-        });
-        expect(screen.getByTestId('ms-undo').textContent).toBe('Undo · 7s');
+        expect(recorder.stop).not.toHaveBeenCalled();
+        expect((Harness as any).last.view.phase).toBe('idle');
     });
 
     it('a second stop does not shorten the window', async () => {

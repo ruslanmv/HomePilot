@@ -418,6 +418,27 @@ describe('MeetingDetail', () => {
         expect(screen.getByTestId('ms-detail-transcript').textContent).toContain('hello');
     });
 
+    it('names each speaker the way the rest of the app does', () => {
+        // It used to render `speaker === 'me' ? 'You' : 'Them'`, so an unattributed line
+        // claimed to be the other side — wrong about every line of a microphone-only
+        // meeting, and about anything a provider returned without a channel.
+        render(
+            <MeetingDetail
+                meeting={meeting()}
+                segments={[
+                    { id: 'g1', speaker: 'me', text: 'mine' },
+                    { id: 'g2', speaker: 'them', text: 'theirs' },
+                    { id: 'g3', speaker: null, text: 'unattributed' },
+                ]}
+            />,
+        );
+        fireEvent.click(screen.getByTestId('ms-detail-tab-transcript'));
+        const lines = screen.getByTestId('ms-detail-transcript').textContent || '';
+        expect(lines).toContain('You mine');
+        expect(lines).toContain('Them theirs');
+        expect(lines).toContain('Speaker unattributed');
+    });
+
     it('says so when a tab has nothing in it', () => {
         render(<MeetingDetail meeting={meeting()} />);
         expect(screen.getByText(/No notes were taken/)).toBeTruthy();

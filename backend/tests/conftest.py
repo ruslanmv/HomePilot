@@ -87,6 +87,58 @@ def client(app):
     return TestClient(app)
 
 
+# -------------------- No ambient vector store --------------------
+#
+# `retrieval._client()` falls back to the real Chroma client when a caller passes none, so a
+# test that indexes, searches or deletes without naming a store asserts one thing on a laptop
+# and another in CI:
+#
+#   - here, `chromadb` is usually not installed, `_client()` returns `None`, and "no vector
+#     store" is what the test observed;
+#   - in CI, `backend/requirements.txt` pins `chromadb>=0.4.0`, so a real — and *persistent* —
+#     store answers. Rows written by one test are still there for the next one, which is how
+#     "a live meeting has not been indexed yet" came back as `1 match`.
+#
+# So "no store" is this suite's deterministic default. Every test that wants a store already
+# says so, by passing `client=` or by patching `_client` itself.
+#
+# Two details this has already been got wrong on, both worth keeping:
+#
+# **The module is resolved inside the fixture, not at import.** The session-scoped `app`
+# fixture calls `_purge_modules(("app", "app."))`, so a module object bound when this file was
+# imported is not the one the tests end up using, and the patch lands on a corpse. Scope
+# ordering makes the lazy lookup safe: the session-scoped `app` is instantiated before any
+# function-scoped autouse fixture, so by the time this runs the purge has already happened.
+#
+# **It lives here rather than in `tests/meetingsense/`.** The MCP tests that reach the same
+# code sit at this level, and a fixture one directory down never applied to them.
+#
+# The stub would also happily keep a green suite over a `_client` that had stopped calling
+# `get_chroma_client` at all, so the real function is handed back through `unstubbed_client`
+# and the tests that are *about* the fallback call it directly.
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_vector_store(monkeypatch):
+    """An unnamed vector store is no vector store, on every machine.
+
+    Returns the real `_client` so `unstubbed_client` can hand it on; autouse fixtures are
+    instantiated before the non-autouse ones of the same scope, so it cannot capture the
+    original itself.
+    """
+    _ensure_project_on_syspath()
+    retrieval = importlib.import_module("app.meetingsense.retrieval")
+    real = retrieval._client
+    monkeypatch.setattr(retrieval, "_client", lambda client=None: client)
+    return real
+
+
+@pytest.fixture()
+def unstubbed_client(_no_ambient_vector_store):
+    """The real `_client`, for the tests that check the fallback still exists."""
+    return _no_ambient_vector_store
+
+
 # -------------------- Mock outbound HTTP (httpx + requests) --------------------
 
 class DummyResp:

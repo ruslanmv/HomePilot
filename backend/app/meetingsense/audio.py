@@ -44,6 +44,15 @@ DEFAULT_RATE = 16_000
 #: The two channels of a 2-channel frame, in order. Fixed, and documented at the top.
 CHANNEL_SPEAKERS = ("them", "me")
 
+#: The audio modes that describe exactly one source, and who that source is.
+#:
+#: The recorder reports ``system``, ``mic`` or ``system+mic`` in the ``start`` frame, from
+#: which sources the browser actually granted. The first two are a meeting with one channel
+#: and one speaker: a display share alone is every word "them", a microphone alone is every
+#: word "me". ``system+mic`` is deliberately absent — it is two channels, and the channel
+#: convention above names both from evidence rather than from the mode.
+SINGLE_SOURCE_SPEAKERS = {"system": "them", "mic": "me"}
+
 _FORMATS = ("wav", "pcm16")
 
 
@@ -205,6 +214,25 @@ def tracks(message, *, declared_channels: int = 1, rate: int = DEFAULT_RATE) -> 
         Track(_speaker(ch, channels), wrap_pcm16(part, rate=rate, channels=1))
         for ch, part in enumerate(deinterleave(audio, channels))
     ]
+
+
+def speaker_for_mode(mode) -> Optional[str]:
+    """Who is speaking in a meeting that has only one audio source.
+
+    :func:`tracks` refuses to name a mono channel, and is right to: one interleaved channel
+    carries no evidence about who produced it. The *session* has that evidence anyway — the
+    ``start`` frame said which sources the browser granted — so the caller can supply what
+    the bytes cannot.
+
+    Only the two single-source modes answer. Anything else — ``system+mic``, an older client
+    that sent no mode, a future one that sends a mode this version has never heard of —
+    returns ``None`` and leaves the line unattributed, which is the honest outcome and was
+    the behaviour before this existed. Guessing would put a confident ``me`` on audio nobody
+    promised was the microphone.
+    """
+    if not isinstance(mode, str):
+        return None
+    return SINGLE_SOURCE_SPEAKERS.get(mode.strip().lower())
 
 
 def _speaker(channel: int, channels: int) -> Optional[str]:
