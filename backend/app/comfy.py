@@ -31,9 +31,38 @@ def _fetch_object_info(force: bool = False) -> Dict[str, Any]:
     return raw or {}
 
 
-def get_available_node_names(*, force: bool = False) -> list[str]:
-    """Return list of node class names registered in ComfyUI."""
-    return _object_info_cache.get_available_nodes(force=force)
+def get_available_node_names(*, force: bool = False, allow_network: bool = True) -> list[str]:
+    """Return list of node class names registered in ComfyUI.
+
+    ``allow_network=False`` answers from cache only and never opens a socket — the mode the
+    image-generation path uses. See :func:`validate_workflow_nodes`.
+    """
+    return _object_info_cache.get_available_nodes(force=force, allow_network=allow_network)
+
+
+def warm_object_info_cache() -> None:
+    """Populate the node cache once, off the generation path.
+
+    Called at application startup. Failure is not an error worth reporting here: the cache
+    negative-caches it, `/prompt` validates authoritatively, and a HomePilot that starts before
+    ComfyUI is an ordinary arrangement rather than a misconfiguration.
+    """
+    try:
+        names = get_available_node_names()
+        # The cache's own base URL, not the module constant — they are the same in production
+        # and differ in any test or tool that swapped the cache, where printing the constant
+        # would name a server that was never contacted.
+        print(
+            f"[COMFY] Node metadata warmed: {len(names)} node classes "
+            f"from {_object_info_cache.base_url}"
+        )
+    except Exception as exc:  # noqa: BLE001 — a warmup must never fail a boot
+        print(f"[COMFY] Node metadata warmup skipped: {type(exc).__name__}")
+
+
+def object_info_cache_stats() -> Dict[str, Any]:
+    """Diagnostics for the node cache. Never triggers a fetch."""
+    return _object_info_cache.stats()
 
 
 def check_nodes_available(node_classes: list[str]) -> tuple[bool, list[str]]:
@@ -204,7 +233,12 @@ def _check_controlnet_architecture(workflow_name: str, prompt_graph: Dict[str, A
                 )
 
 
-def validate_workflow_nodes(workflow_name: str, prompt_graph: Dict[str, Any]) -> None:
+def validate_workflow_nodes(
+    workflow_name: str,
+    prompt_graph: Dict[str, Any],
+    *,
+    allow_network: bool = True,
+) -> None:
     """
     Pre-flight check with automatic node alias remapping and architecture guard.
 
@@ -216,13 +250,29 @@ def validate_workflow_nodes(workflow_name: str, prompt_graph: Dict[str, Any]) ->
        actionable install instructions.
     4. Checks for ControlNet/checkpoint architecture mismatches (e.g. SDXL
        ControlNet with SD1.5 checkpoint).
+
+    ── ``allow_network`` ─────────────────────────────────────────────────────────────────
+
+    ``False`` answers from cached node metadata and never opens a socket. That is what the
+    generation path passes, and the reason is that steps 1–3 are **diagnostic**: they exist to
+    turn a cryptic ``invalid_prompt`` into "install this package". ``POST /prompt`` is the
+    authoritative validator and runs microseconds later regardless.
+
+    So the cost of skipping the fetch is a worse error message on the rare occasion a node is
+    missing. The cost of *not* skipping it was up to thirty seconds on every image, because
+    ComfyUI serves ``/object_info`` from the process running the workflow and is therefore
+    slowest exactly when asked. That trade is not close.
+
+    Step 0 is unaffected: the architecture guard is local, needs no metadata, and catches the
+    one class of mismatch ``/prompt`` reports as an opaque tensor error.
     """
     # Step 0: architecture mismatch guard (always runs, even without /object_info)
     _check_controlnet_architecture(workflow_name, prompt_graph)
 
-    available = get_available_node_names()
+    available = get_available_node_names(allow_network=allow_network)
     if not available:
-        # Can't reach ComfyUI — let the workflow attempt proceed and fail naturally
+        # No metadata — either ComfyUI is unreachable or this is the cache-only path before a
+        # successful warmup. Either way the workflow proceeds and `/prompt` validates it.
         return
 
     # Step 1: try alias remapping
@@ -1040,9 +1090,54 @@ def _inject_lora_loaders(
     return workflow
 
 
+#: Phase order for the perf log. Fixed rather than derived from dict order so two runs are
+#: diffable, and so a phase that never executed is visibly absent rather than silently reordered.
+_PERF_PHASES = (
+    "image_preprocess_ms",
+    "workflow_load_ms",
+    "lora_prepare_ms",
+    "template_replace_ms",
+    "node_preflight_ms",
+    "graph_validation_ms",
+    "prompt_post_ms",
+    "queue_and_execution_ms",
+    "history_fetch_ms",
+    "media_extract_ms",
+    "total_workflow_ms",
+)
+
+
+def _log_workflow_perf(name: str, marks: Dict[str, float], outcome: str = "ok") -> None:
+    """One block per workflow, greppable as ``[COMFY PERF]``.
+
+    Deliberately `print`, matching every other line this module emits — a perf trace split
+    across two logging backends is a perf trace nobody correlates.
+    """
+    print(f"[COMFY PERF] workflow={name} outcome={outcome}")
+    for key in _PERF_PHASES:
+        if key in marks:
+            print(f"[COMFY PERF] {key}={marks[key]:.2f}")
+
+
 def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     print(f"[COMFY] Running workflow: {name}")
     print(f"[COMFY] Variables: {variables}")
+
+    # ── Phase timings ────────────────────────────────────────────────────────────────────
+    # `perf_counter`, never `time.time()`: a wall clock can step backwards mid-request and
+    # produce a negative "duration", which is how a slow phase hides itself.
+    #
+    # These exist because the old log said "Workflow completed in 2.2s" for a request that
+    # took forty-five seconds — it started its clock *after* the prompt was posted, so every
+    # setup cost was outside the number anybody looked at. A phase that is not measured is a
+    # phase that can stall indefinitely without anyone learning where.
+    t0 = time.perf_counter()
+    marks: Dict[str, float] = {}
+
+    def _mark(key: str, since: float) -> float:
+        now = time.perf_counter()
+        marks[key] = (now - since) * 1000.0
+        return now
 
     # Extract LoRA list before variable substitution (prefixed with _ to avoid template collision)
     loras = variables.pop("_loras", None) or []
@@ -1052,21 +1147,31 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     processed_vars = _preprocess_image_paths(variables)
     if processed_vars != variables:
         print(f"[COMFY] Processed variables: {processed_vars}")
+    t = _mark("image_preprocess_ms", t0)
 
     workflow = _load_workflow(name)
+    t = _mark("workflow_load_ms", t)
 
     # Inject LoRA loader nodes (before variable substitution so refs are stable)
     if loras:
         ckpt_name = processed_vars.get("ckpt_name", "")
         workflow = _inject_lora_loaders(workflow, loras, ckpt_name=ckpt_name)
+    t = _mark("lora_prepare_ms", t)
 
     prompt_graph = _deep_replace(workflow, processed_vars)
+    t = _mark("template_replace_ms", t)
 
     # ── Pre-flight node availability check ───────────────────────
-    # Query ComfyUI /object_info to verify all required node classes
-    # are registered BEFORE submitting the prompt.  This turns cryptic
-    # "invalid_prompt" errors into actionable install instructions.
-    validate_workflow_nodes(name, prompt_graph)
+    # Verifies required node classes are registered, turning a cryptic "invalid_prompt" into
+    # actionable install instructions.
+    #
+    # `allow_network=False` deliberately. This is diagnostic; `POST /prompt` below is the
+    # authoritative validator and runs microseconds later. Fetching fresh metadata here cost up
+    # to thirty seconds *per image*, because ComfyUI answers /object_info from the process
+    # running the workflow and is slowest exactly when asked. Cached metadata (warmed at
+    # startup, refreshed off this path) buys the same error message for nothing.
+    validate_workflow_nodes(name, prompt_graph, allow_network=False)
+    t = _mark("node_preflight_ms", t)
 
     # ── Unresolved variable detection ────────────────────────────
     # Scan for any remaining {{var}} placeholders that weren't substituted.
@@ -1088,15 +1193,21 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
             break
 
     _validate_prompt_graph(prompt_graph, workflow_name=name)
+    t = _mark("graph_validation_ms", t)
 
     timeout = httpx.Timeout(60.0, connect=60.0)
     with httpx.Client(timeout=timeout) as client:
         prompt_id = _post_prompt(client, prompt_graph)
         print(f"[COMFY] Prompt queued with ID: {prompt_id}")
+        t = _mark("prompt_post_ms", t)
 
-        started = time.time()
+        queue_started = t
+        history_ms = 0.0
+        started = time.perf_counter()
         while True:
+            _h0 = time.perf_counter()
             history = _get_history(client, prompt_id)
+            history_ms += (time.perf_counter() - _h0) * 1000.0
 
             entry = history.get(prompt_id)
             if isinstance(entry, dict):
@@ -1107,9 +1218,15 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
                 has_outputs = "outputs" in entry
 
                 if has_outputs or status_completed:
+                    _mark("queue_and_execution_ms", queue_started)
+                    _e0 = time.perf_counter()
                     images, videos = _extract_media(history, prompt_id)
-                    elapsed = time.time() - started
+                    _mark("media_extract_ms", _e0)
+                    marks["history_fetch_ms"] = history_ms
+                    marks["total_workflow_ms"] = (time.perf_counter() - t0) * 1000.0
+                    elapsed = time.perf_counter() - started
                     print(f"[COMFY] Workflow completed in {elapsed:.1f}s, images: {len(images)}, videos: {len(videos)}")
+                    _log_workflow_perf(name, marks)
 
                     # If no images were generated, log a warning
                     if not images and not videos:
@@ -1120,7 +1237,13 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
 
                     return {"images": images, "videos": videos, "prompt_id": prompt_id}
 
-            if (time.time() - started) > float(COMFY_POLL_MAX_S):
+            if (time.perf_counter() - started) > float(COMFY_POLL_MAX_S):
+                marks["history_fetch_ms"] = history_ms
+                marks["total_workflow_ms"] = (time.perf_counter() - t0) * 1000.0
+                # Logged on the way out too: a timeout is the case where knowing which phase
+                # consumed the budget matters most, and it is the one path that never reached
+                # the success log above.
+                _log_workflow_perf(name, marks, outcome="timeout")
                 raise TimeoutError(
                     f"ComfyUI workflow '{name}' timed out after {COMFY_POLL_MAX_S}s (prompt_id={prompt_id})"
                 )

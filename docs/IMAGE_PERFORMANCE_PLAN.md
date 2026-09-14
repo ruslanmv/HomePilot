@@ -1,7 +1,27 @@
 # Image generation performance — feasibility study and plan
 
 **Branch:** `claude/image-perf-plan`, cut from `claude/elegant-einstein-uhqda0` at `86320f7`.
-**Status:** investigation complete, no production code changed yet.
+**Status:** investigation complete. **Phases 1–4 implemented** on `claude/image-perf-phase1-4`;
+phases 5–10 still to do.
+
+> ### Implemented — measured result
+>
+> Preflight cost on the generation path, ComfyUI unreachable, batch of four:
+>
+> | | before | after |
+> |---|---|---|
+> | image 1 | ~30 s | 0.003 ms |
+> | image 2 | ~30 s | 0.001 ms |
+> | image 3 | ~30 s | 0.000 ms |
+> | image 4 | ~30 s | 0.001 ms |
+> | **batch total** | **~120 s** | **0.005 ms** |
+>
+> The one remaining network call is a 2 s startup warmup on a background thread, off the
+> request path, negative-cached on failure.
+>
+> Still outstanding and unchanged by this work: **Finding B**. Prompt refinement is now
+> *measured* (`[IMAGE PERF] prompt_refinement_ms`) but not yet bounded, so read that number
+> before quoting any end-to-end target.
 
 Every claim below was checked against this branch. Where the brief's diagnosis was right it says
 so and cites the line; where the code is *worse* than described, or where something material was
@@ -183,7 +203,7 @@ Each phase lands green and independently revertable. Phase ordering is by measur
 differs slightly from the brief: **Phase 2 is the fix**, and it should land in the same day as
 Phase 1.
 
-### Phase 1 — instrumentation (prerequisite, no behaviour change)
+### Phase 1 — instrumentation (prerequisite, no behaviour change) ✅ done
 
 `time.perf_counter()` throughout; never `time.time()` for durations.
 
@@ -199,7 +219,7 @@ elapsed. Do not proceed on assumption — Finding B in particular must be quanti
 
 Tests assert the keys exist and the return schema is unchanged; never a duration value.
 
-### Phase 2 — the actual fix: bound the timeout and negative-cache failures
+### Phase 2 — the actual fix: bound the timeout and negative-cache failures ✅ done
 
 `object_info_cache.py`, per the brief's signature:
 
@@ -218,12 +238,12 @@ def __init__(self, base_url, ttl_seconds=300.0, *,
 
 **Expected effect on its own:** worst case falls from *30 s every image* to *5 s once per 30 s*.
 
-### Phase 3 — single-flight refresh
+### Phase 3 — single-flight refresh ✅ done
 
 `threading.Lock` + double-check. Regression test: N concurrent callers against an expired cache
 produce exactly one HTTP refresh.
 
-### Phase 4 — take `/object_info` off the warm path
+### Phase 4 — take `/object_info` off the warm path ✅ done
 
 `validate_workflow_nodes(workflow_name, prompt_graph, *, allow_network=False)`; `run_workflow`
 passes `allow_network=False`. Cache-miss must **not** block or reject — `/prompt` is the

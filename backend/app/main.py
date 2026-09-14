@@ -1265,6 +1265,28 @@ def _startup() -> None:
             "Image warmup task couldn't start: %s", exc,
         )
 
+    # ComfyUI node-metadata warmup.
+    #
+    # The generation path reads this cache without ever opening a socket, so the metadata has
+    # to arrive from somewhere else — here. In a thread rather than the event loop because the
+    # cache is synchronous `httpx`, and off the critical path because a HomePilot that starts
+    # before ComfyUI is an ordinary arrangement: failure is negative-cached, `/prompt` remains
+    # the authoritative validator, and the only cost is a less specific error message until the
+    # cache next refreshes.
+    try:
+        import threading as _threading
+
+        from .comfy import warm_object_info_cache  # late import
+        _threading.Thread(
+            target=warm_object_info_cache,
+            name="comfy-object-info-warmup",
+            daemon=True,
+        ).start()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("homepilot.startup").warning(
+            "ComfyUI node metadata warmup couldn't start: %s", exc,
+        )
+
 
 async def _start_agentic_servers() -> None:
     """Background task: ensure core + installed + external MCP servers are running."""

@@ -46,6 +46,30 @@ _MEMORY_TTL_SECONDS = 2 * 60 * 60
 _last_gc_time: float = 0.0
 
 
+#: Phase order for the image perf log. Fixed so two runs are diffable.
+_IMAGE_PERF_PHASES = (
+    "prompt_refinement_ms",
+    "preset_selection_ms",
+    "comfy_generation_ms",
+    "media_persistence_ms",
+    "message_storage_ms",
+    "total_image_request_ms",
+)
+
+
+def _log_image_perf(marks: Dict[str, float]) -> None:
+    """One block per image request, greppable as ``[IMAGE PERF]``.
+
+    Pairs with ``[COMFY PERF]``: this one's ``comfy_generation_ms`` should account for the
+    workflow blocks nested inside it, and whatever is left over is HomePilot's own overhead.
+    Reading the two together is the only way to answer "ComfyUI says two seconds, why did the
+    request take forty-five" without a profiler.
+    """
+    for key in _IMAGE_PERF_PHASES:
+        if key in marks:
+            print(f"[IMAGE PERF] {key}={marks[key]:.1f}")
+
+
 async def _persist_media(
     media: Optional[Dict[str, Any]],
     user_id: Optional[str],
@@ -1419,6 +1443,22 @@ async def orchestrate(
                         text_in, _img_agent, cid,
                     )
 
+        # ── Request timings ──────────────────────────────────────────────────────────────
+        # `perf_counter`, never `time.time()`. The point of these is the gap between what
+        # ComfyUI reports ("Prompt executed in 1.96 seconds") and what the user experiences
+        # (a 45-second POST /chat): every phase outside ComfyUI was unmeasured, so the gap had
+        # nowhere to show up. Prompt refinement in particular is a blocking LLM round-trip on
+        # this path, enabled by default, and was entirely invisible.
+        _img_t0 = time.perf_counter()
+        _img_marks: Dict[str, float] = {}
+
+        def _img_mark(key: str, since: float) -> float:
+            _now = time.perf_counter()
+            _img_marks[key] = (_now - since) * 1000.0
+            return _now
+
+        _img_t = _img_t0
+
         try:
             # Optional prompt refinement (enabled by default, can be disabled)
             if prompt_refinement:
@@ -1481,6 +1521,8 @@ async def orchestrate(
                     "aspect_ratio": "1:1",
                     "style": "photorealistic",
                 }
+
+            _img_t = _img_mark("prompt_refinement_ms", _img_t)
 
             # =================================================================
             # DYNAMIC PRESET SYSTEM - Prevents "two heads" issue
@@ -1695,6 +1737,8 @@ async def orchestrate(
 
             # Run the workflow with refined prompt and parameters
             # If batch_size > 1, run multiple times and aggregate results
+            _img_t = _img_mark("preset_selection_ms", _img_t)
+
             images = []
             seeds_used = []  # Track seeds for each generated image
             for i in range(batch_size):
@@ -1722,6 +1766,7 @@ async def orchestrate(
                 if i < batch_size - 1 and batch_size > 1:
                     time.sleep(0.5)
 
+            _img_t = _img_mark("comfy_generation_ms", _img_t)
             print(f"[IMAGE] Total images generated: {len(images)}")
 
             # Short Grok-like caption
@@ -1742,7 +1787,11 @@ async def orchestrate(
             } if images else None
             # Persist generated images from ComfyUI to permanent storage
             media = await _persist_media(media, user_id, cid)
+            _img_t = _img_mark("media_persistence_ms", _img_t)
             add_message(cid, "assistant", text, media)
+            _img_mark("message_storage_ms", _img_t)
+            _img_marks["total_image_request_ms"] = (time.perf_counter() - _img_t0) * 1000.0
+            _log_image_perf(_img_marks)
             return {"conversation_id": cid, "text": text, "media": media}
 
         except FileNotFoundError as e:
