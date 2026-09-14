@@ -209,9 +209,26 @@ What that costs and what it buys:
 | Barge-in (speak over the reply) | no — listening stops while TTS plays | yes, the VAD watches through it |
 | Microphone used | OS default | the one selected in Audio & Video |
 
-A meter is not drawn on the browser engine, and the UI says why
-(`data-testid="voice-meter-unavailable"`). Opening a second microphone purely to animate a
-bar is exactly the two-capture bug, so a missing meter is the honest outcome.
+**The meter runs on both engines.** On the browser one it is a separate, read-only capture
+(`voice/browserInputMeter.ts`), because `SpeechRecognition` exposes no stream of its own.
+
+That is a second microphone, which is what §1 was about, so the difference is structural
+rather than a promise. The rule that replaced §1 is about **authority**, not stream count: on
+each engine exactly one thing decides when a turn starts and ends and produces the words.
+
+| The meter stream | |
+|---|---|
+| Device | `getUserMedia({audio: true})` — the browser/system **default**, deliberately. Measuring the HomePilot-selected device instead would recreate §1's split: a bar moving for a microphone the recognizer is not listening to. |
+| Decides turns? | No. No VAD, no endpointing, no recording. |
+| Reported | `browserMeterSupported` goes false when the capture cannot be opened, so a refused permission shows the unavailable copy rather than a bar pinned at zero. |
+
+> **It does mean HomePilot holds a microphone during browser turns**, on the same endpoint the
+> recognizer wants. Some drivers — Windows DSP-backed inputs among them — hand a second
+> recorder on one endpoint a live but silent track, so contention is now a real second
+> explanation for a deaf turn, with an identical trace and a different fix.
+> `homepilotHoldsMicrophone` is therefore read from the meter, and §2.3's advice names both
+> causes plus the test that separates them. Trace:
+> `stt_deaf_recognizer_recovery {meterHeldMicrophone}`.
 
 Listening stops while the assistant speaks because the recognizer has no way to tell
 HomePilot's voice from the user's, and leaving it open feeds the reply back in as the next
@@ -980,7 +997,7 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 | Symptom | Look at |
 |---|---|
 | Meter moves, no text, no error | §1 device split, with both captures open. Fixed: the engines are now exclusive, so a `vad capture_opened` and an `stt_onstart` can no longer appear in the same session. If you still see both, that is a regression — `sttCaptureOwnership.test.tsx` is the guard. |
-| Browser mode: the input level meter is gone | Deliberate — §2.2. The recognizer opens its own capture and hands HomePilot no audio to measure. Opening a second microphone purely to animate a bar is the bug above. Switch to *On this computer* for a live meter on the microphone you selected. |
+| Browser mode: no input level meter | It runs on both engines now — §2.2. If it still reports none, HomePilot could not open the default input to measure it (permission, or no `AudioContext`); speech recognition is unaffected. |
 | Browser mode: cannot speak over the assistant any more | Deliberate — §2.2. Barge-in needs the VAD, which does not run on this engine, and leaving the recognizer open during TTS transcribes the reply back as the next turn. `bargeInSupported` reports it. |
 | Dictation wipes a half-written message, or keeps only the last sentence | Fixed. `setInput` replaced the composer; it appends now, on both engines — see §2.2.2. |
 | Dictation stops on its own mid-thought | Fixed. The session is continuous and reopens when Chrome ends it; only Stop ends dictation. |
@@ -1011,6 +1028,7 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 | Every meeting line says "Speaker", or a microphone-only meeting says "Them" | Fixed. A mono frame is now attributed from the meeting's single audio source — see §3.5. A line that is still unattributed means the session never reported an `audio.mode`. |
 | The transcript does not update during the meeting, but appears after it ends | Fixed. The workspace opened on the Timeline tab, which shows no transcript. It opens on Transcript now, and the tab shows a live line count. |
 | No way out of the meeting recap | Fixed. A full-screen portal with no control on it is a dead end; there is a Close button once the meeting has ended. |
+| Close on the recap appears to do nothing | Fixed. The portal unmounted, but the conversation underneath was still the meeting's origin — which the workspace recognizes and restores, so it reopened at once. The dismissal is remembered, and Close returns the user to **the chat they left** rather than a blank one. Nothing is deleted; the meeting stays in History. |
 | `meetingsense: recap failed`, repeatedly, with a `ConnectError` traceback | The language model is not running. The transcript is unaffected. It is one warning per outage now, retried every 60 s, and the meeting message says why there is no recap. |
 | Meeting transcript is blank but slides work | `get_meeting_stt_provider()` has no local model. Meetings never fall back to `STT_BASE_URL` on their own — see `meeting_stt_policy()`. |
 | Shared video is not transcribed at all | No audio track: window share, macOS screen share, or "Share tab audio" unticked. See the capture table in §3.5. |

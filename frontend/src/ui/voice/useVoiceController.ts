@@ -797,16 +797,30 @@ export function useVoiceController(
           const recovery = planSttRecovery(deafTurnsRef.current, {
             backendUsable: backendUsableRef.current,
             turnWasDeliberate: true,
-            // Read from the lease rather than assumed. With the engines exclusive this is
-            // now always false during a browser turn, and stating it as evidence keeps the
-            // diagnosis honest if that ever stops being true.
-            homepilotHoldsMicrophone: getMicrophoneLease()?.engine === 'homepilot-backend',
+            /*
+             * True whenever HomePilot itself has a capture open — which, since the input
+             * meter arrived, includes browser turns.
+             *
+             * That comment used to say this was "always false during a browser turn". It
+             * stopped being true the moment the meter started opening the default input, and
+             * the distinction is the whole reason the field exists: some drivers (Windows
+             * DSP-backed inputs among them) hand a *second* recorder on the same endpoint a
+             * live but silent track. The meter and the recognizer now want the same device,
+             * so contention is a real second explanation for a deaf turn, with an identical
+             * trace and a different fix. Asserting the routing split as the sole cause would
+             * send the user to rearrange their operating system for nothing.
+             */
+            homepilotHoldsMicrophone:
+              Boolean(browserMeterRef.current)
+              || getMicrophoneLease()?.engine === 'homepilot-backend',
           });
           if (recovery.action !== 'none') {
             microphoneDebug('voice', 'stt_deaf_recognizer_recovery', {
               action: recovery.action,
               deafTurns: deafTurnsRef.current,
               backendUsable: backendUsableRef.current,
+              // Which of the two explanations the advice was written for.
+              meterHeldMicrophone: Boolean(browserMeterRef.current),
             });
             // Counted from zero either way: after a switch the next run of deaf turns is
             // about the new engine, and after advice the user needs room to act on it

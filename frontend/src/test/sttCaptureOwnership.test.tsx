@@ -54,6 +54,13 @@ type Callbacks = {
 
 /** Whatever the one adapter installed on the shared recognizer. */
 let callbacks: Callbacks = {};
+/**
+ * What the browser reports about the turn that just ended.
+ *
+ * The adapter reads this from `SpeechService`, not from the `onEnd` argument, so a test about
+ * turn *evidence* has to set it here.
+ */
+let diagnostics: Record<string, unknown> = {};
 
 /** Just enough Web Audio for the VAD and the read-only browser meter. */
 function stubAudioContext() {
@@ -117,9 +124,10 @@ beforeEach(() => {
   });
 
   callbacks = {};
+  diagnostics = {};
   window.SpeechService = {
     setRecognitionCallbacks: (cb: Callbacks) => { callbacks = { ...callbacks, ...cb }; },
-    getSttDiagnostics: () => ({}),
+    getSttDiagnostics: () => diagnostics,
     getVoices: () => [],
     isSpeaking: false,
     isRecognizing: false,
@@ -168,6 +176,38 @@ describe('hands-free on the browser engine', () => {
     // The level stream is display-only, so it deliberately does not enable barge-in.
     expect(result.current.bargeInSupported).toBe(false);
   });
+});
+
+describe('when the recognizer goes deaf with a meter running', () => {
+    it('names contention as well as the routing split', async () => {
+        /*
+         * The input meter opens the browser/default input — the same endpoint
+         * `SpeechRecognition` wants. Some drivers (Windows DSP-backed inputs among them) hand
+         * a second recorder on that endpoint a live but silent track, so from the moment the
+         * meter existed there have been *two* explanations for a deaf turn, with an identical
+         * trace and different fixes.
+         *
+         * Asserting the routing split as the only cause would send the user to rearrange
+         * their operating system for a problem HomePilot created.
+         */
+        localStorage.setItem('homepilot_voice_handsfree', 'false');
+        const { result } = await mountHandsFree('web-speech');
+        await act(async () => { await result.current.startManualListening(); });
+        await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
+
+        // The signature of a capture that opened, stayed open, and heard nothing.
+        diagnostics = {
+            sawAudioStart: true,
+            sawSpeechStart: false,
+            sawInterim: false,
+            error: null,
+        };
+        act(() => { callbacks.onEnd?.(diagnostics); });
+
+        await waitFor(() => expect(result.current.sttNotice).toBeTruthy());
+        expect(result.current.sttNotice).toContain('Two things');
+        expect(result.current.sttNotice).toContain('chat composer');
+    });
 });
 
 describe('the live caption on the browser engine', () => {
