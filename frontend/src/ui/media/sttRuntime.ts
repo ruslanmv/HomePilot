@@ -42,6 +42,7 @@ import { microphoneDebug } from './microphoneDebug';
 import { getMediaPreferences } from './mediaPreferences';
 import { describeMicrophoneRouting, type MicrophoneRoutingNotice } from './voiceSelfTest';
 import {
+  describeSttResolution,
   getSttPreferences,
   resolveSttEngine,
   subscribeSttPreferences,
@@ -112,6 +113,67 @@ const ROUTING_OVERRIDE_MESSAGE =
   + 'captured a device you are not speaking into. HomePilot is transcribing on this computer '
   + 'for this session instead, which records the microphone you chose. Change this in '
   + 'Settings → Voice Assistant → Speech Recognition.';
+
+const REMEMBERED_OVERRIDE_MESSAGE =
+  'Transcribing on this computer, because the browser’s speech recognition could not hear '
+  + 'this microphone last time. Change this in Settings → Voice Assistant → Speech Recognition.';
+
+/**
+ * Which microphone the browser recognizer has already been proven unable to hear.
+ *
+ * ── Why this is remembered across reloads ────────────────────────────────────────────────
+ *
+ * The preflight below compares the selected device against the browser's `default` alias, and
+ * on a great many machines — Chrome on Windows among them — there is no such alias to compare
+ * against. There the split is real and undetectable, so the only thing that establishes it is
+ * a turn: the user presses record, speaks, and the recognizer reports that it opened a
+ * capture and heard nothing.
+ *
+ * Paying for that discovery once is reasonable. Paying for it on every page load is not, and
+ * that is what was happening: each reload started a fresh session, offered the browser
+ * recognizer again, and burned the user's first sentence proving the same fact over again.
+ *
+ * So the verdict is kept, keyed by the device it was reached about. A different microphone is
+ * a different question and re-evaluated; and choosing an engine in Settings clears it, because
+ * a user who insists on the browser after being told twice has decided.
+ */
+const DEAF_RECOGNIZER_STORAGE_KEY = 'homepilot_stt_deaf_recognizer_v1';
+
+function selectedMicrophoneKey(): string {
+  return getMediaPreferences().microphoneDeviceId || 'system-default';
+}
+
+/** Record that the browser recognizer could not hear the microphone in use right now. */
+export function rememberRecognizerIsDeaf(): void {
+  try {
+    window.localStorage?.setItem(
+      DEAF_RECOGNIZER_STORAGE_KEY,
+      JSON.stringify({ deviceId: selectedMicrophoneKey(), at: Date.now() }),
+    );
+  } catch {
+    // A locked-down context still gets the session-scoped override; it just re-learns later.
+  }
+}
+
+export function forgetRecognizerIsDeaf(): void {
+  try {
+    window.localStorage?.removeItem(DEAF_RECOGNIZER_STORAGE_KEY);
+  } catch {
+    // Nothing to clean up that matters.
+  }
+}
+
+/** Whether *this* microphone is the one already proven inaudible to the recognizer. */
+export function recognizerKnownDeaf(): boolean {
+  try {
+    const saved = window.localStorage?.getItem(DEAF_RECOGNIZER_STORAGE_KEY);
+    if (!saved) return false;
+    const parsed = JSON.parse(saved);
+    return parsed?.deviceId === selectedMicrophoneKey();
+  } catch {
+    return false;
+  }
+}
 
 function webSpeechSupported(): boolean {
   if (typeof window === 'undefined') return false;
@@ -197,6 +259,10 @@ function ensurePreferenceSubscription(): void {
     // machine whose default input differs. Insisting has to mean something.
     state = { ...state, sessionOverride: null, sessionOverrideMessage: null };
     routingPreflightArmed = false;
+    // Across reloads too. A user who picks the browser again after being told the recognizer
+    // cannot hear their microphone has decided, and a remembered verdict that survives that
+    // is not a memory — it is the choice being refused.
+    forgetRecognizerIsDeaf();
     void refreshSttRuntime({ force: true });
   });
 }
@@ -233,17 +299,23 @@ function decide(
    * agreement, and on `backendUsable`, because there is no point moving a session to an
    * engine that cannot run. Announced, never silent — it changes which service sees the audio.
    */
+  const remembered = recognizerKnownDeaf();
   if (
     !override
     && routingPreflightArmed
     && backendUsable
     && resolution.engine === 'web-speech'
-    && routing.known
-    && routing.mismatch
+    && ((routing.known && routing.mismatch) || remembered)
   ) {
     override = 'homepilot-backend';
-    overrideMessage = ROUTING_OVERRIDE_MESSAGE;
-    overrideReason = 'routing-mismatch-preflight';
+    // A remembered verdict needs no re-explanation of the mechanism — it was explained when
+    // it was discovered, and repeating a paragraph every load is its own kind of noise.
+    overrideMessage = remembered && !(routing.known && routing.mismatch)
+      ? REMEMBERED_OVERRIDE_MESSAGE
+      : ROUTING_OVERRIDE_MESSAGE;
+    overrideReason = remembered && !(routing.known && routing.mismatch)
+      ? 'recognizer-known-deaf'
+      : 'routing-mismatch-preflight';
   }
 
   const next = update({
@@ -275,6 +347,7 @@ function decide(
     routingMismatch: routing.mismatch,
     routingKnown: routing.known,
     routingPreflightArmed,
+    recognizerKnownDeaf: remembered,
   });
   return next;
 }
@@ -337,6 +410,32 @@ export function clearSttSessionOverride(): SttRuntimeState {
     sessionOverrideMessage: null,
     effectiveEngine: state.resolution?.engine ?? null,
   });
+}
+
+/**
+ * One sentence naming the engine that is really running, override included.
+ *
+ * `describeSttResolution` describes the *resolution*, which is the engine the preference
+ * resolves to — and that is not the engine in use once a session override is in force. Every
+ * surface that reported the resolution while the runtime had already moved was telling the
+ * user something that had stopped being true, which is how Settings came to say "Using the
+ * browser's speech recognition" about a session that was transcribing on this computer.
+ */
+export function describeSttRuntime(state: SttRuntimeState): string {
+  if (state.status !== 'ready' || !state.resolution) {
+    return 'Working out which speech-to-text engine to use…';
+  }
+  if (state.sessionOverride === 'homepilot-backend') {
+    const provider = state.capability?.provider;
+    return `Transcribing on this computer${provider ? ` (${provider})` : ''}, using the `
+      + 'microphone selected in Audio & Video — not the engine chosen in Settings. '
+      + `${state.sessionOverrideMessage || ''}`.trim();
+  }
+  if (state.sessionOverride === 'web-speech') {
+    return 'Using the browser’s speech recognition, which records your system default input '
+      + `— not the engine chosen in Settings. ${state.sessionOverrideMessage || ''}`.trim();
+  }
+  return describeSttResolution(state.resolution, state.capability?.provider ?? null);
 }
 
 /* ────────────────────────────────────────────────────────────────────────────────────────

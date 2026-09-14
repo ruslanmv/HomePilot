@@ -32,6 +32,7 @@ import {
   getMicrophoneLease,
   getSttRuntime,
   releaseMicrophone,
+  rememberRecognizerIsDeaf,
   resetSttRuntimeForTests,
   subscribeSttRuntime,
 } from '../ui/media/sttRuntime';
@@ -186,6 +187,60 @@ describe('the routing preflight', () => {
     const runtime = await ensureSttRuntimeResolved();
     expect(runtime.status).toBe('ready');
     expect(runtime.effectiveEngine).toBe('web-speech');
+  });
+
+  it('remembers a verdict a turn established, where the device list cannot tell', async () => {
+    /*
+     * On Chrome for Windows there is often no `default` alias, so the split is real and
+     * undetectable from the device list. The only thing that establishes it is a turn — the
+     * user presses record, speaks, and the recognizer reports it opened a capture and heard
+     * nothing.
+     *
+     * Paying for that once is reasonable. Paying for it on every page load is what was
+     * happening: each reload offered the browser recognizer again and burned the user's first
+     * sentence proving the same fact.
+     */
+    enumerateDevices.mockResolvedValue([
+      { deviceId: 'usb-mic', kind: 'audioinput', label: 'USB', groupId: 'group-usb' },
+    ] as unknown as MediaDeviceInfo[]);
+    selectMicrophone('usb-mic');
+    expect((await ensureSttRuntimeResolved()).effectiveEngine).toBe('web-speech');
+
+    rememberRecognizerIsDeaf();
+    resetSttRuntimeForTests(); // a new page load; the memory outlives it
+
+    const runtime = await ensureSttRuntimeResolved();
+    expect(runtime.effectiveEngine).toBe('homepilot-backend');
+    // Not the paragraph explaining the mechanism — that was said when it was discovered, and
+    // repeating it on every load is its own kind of noise.
+    expect(runtime.sessionOverrideMessage).toContain('could not hear this microphone last time');
+  });
+
+  it('re-evaluates a different microphone', async () => {
+    // The verdict is about a device, not about the browser. Selecting another one is a new
+    // question, and answering it from the old memory would strand a user who fixed the fault.
+    selectMicrophone('usb-mic');
+    rememberRecognizerIsDeaf();
+
+    selectMicrophone('headset');
+    resetSttRuntimeForTests();
+
+    expect((await ensureSttRuntimeResolved()).effectiveEngine).toBe('web-speech');
+  });
+
+  it('forgets the verdict when the user picks an engine again', async () => {
+    // Otherwise a remembered verdict is not a memory — it is the choice being refused, for
+    // good, on every future load.
+    selectMicrophone('usb-mic');
+    rememberRecognizerIsDeaf();
+    await ensureSttRuntimeResolved();
+    expect(getSttRuntime().effectiveEngine).toBe('homepilot-backend');
+
+    setSttPreferences({ chat: 'web-speech' });
+    await ensureSttRuntimeResolved({ force: true });
+    resetSttRuntimeForTests();
+
+    expect((await ensureSttRuntimeResolved()).effectiveEngine).toBe('web-speech');
   });
 
   it('stands down once the user insists on an engine', async () => {

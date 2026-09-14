@@ -25,8 +25,9 @@ import { AlertTriangle, Check, Cpu, Globe, Mic2, Wand2 } from 'lucide-react';
 import { resolveBackendUrl } from '../lib/backendUrl';
 import { microphoneDebug } from '../media/microphoneDebug';
 import { getSttCapability, type SttCapability } from '../media/sttService';
+import { describeSttRuntime } from '../media/sttRuntime';
+import { useSttRuntime } from '../media/useSttRuntime';
 import {
-  describeSttResolution,
   getSttPreferences,
   resolveSttEngine,
   setSttPreferences,
@@ -141,14 +142,25 @@ export default function SpeechRecognitionSettings(): JSX.Element {
     return () => { cancelled = true; };
   }, []);
 
+  /*
+   * "In use now" reads the shared runtime, not a private re-resolution.
+   *
+   * Resolving it here meant this card described the engine the preference *resolves to*, and
+   * said nothing about a session override — so after a deaf-recognizer recovery it reported
+   * "Using the browser's speech recognition" about a session that had already moved to
+   * on-device transcription. A status panel that is wrong about the status is worse than no
+   * panel.
+   */
+  const runtime = useSttRuntime();
   const resolution = useMemo(
-    () => resolveSttEngine(preference, {
+    () => runtime.resolution ?? resolveSttEngine(preference, {
       backendAvailable: Boolean(capability?.available),
       mediaRecorderSupported,
       webSpeechSupported,
     }),
-    [preference, capability, mediaRecorderSupported, webSpeechSupported],
+    [runtime.resolution, preference, capability, mediaRecorderSupported, webSpeechSupported],
   );
+  const overridden = Boolean(runtime.sessionOverride);
 
   const choose = useCallback((next: SttEnginePreference) => {
     setSttPreferences({ ...getSttPreferences(), chat: next });
@@ -226,23 +238,24 @@ export default function SpeechRecognitionSettings(): JSX.Element {
       <div
         className={[
           CARD,
-          resolution.fellBack || !resolution.usable ? 'border-amber-500/25 bg-amber-500/[0.06]' : '',
+          resolution.fellBack || overridden || !resolution.usable
+            ? 'border-amber-500/25 bg-amber-500/[0.06]' : '',
         ].join(' ')}
         data-testid="stt-resolution"
         role="status"
       >
         <div className="flex gap-2.5">
           <span className="mt-0.5 shrink-0 text-white/45">
-            {resolution.fellBack || !resolution.usable
+            {resolution.fellBack || overridden || !resolution.usable
               ? <AlertTriangle size={14} className="text-amber-300/80" />
               : <Mic2 size={14} />}
           </span>
           <div className="min-w-0">
             <div className="text-[11px] font-medium text-white/85">
-              {resolution.fellBack ? 'Not the engine you chose' : 'In use now'}
+              {resolution.fellBack || overridden ? 'Not the engine you chose' : 'In use now'}
             </div>
             <p className="mt-0.5 text-[10px] leading-relaxed text-white/50">
-              {describeSttResolution(resolution, capability?.provider ?? null)}
+              {describeSttRuntime(runtime)}
             </p>
             {capability && !capability.available && capability.hint ? (
               <p className="mt-1 text-[10px] leading-relaxed text-white/35">{capability.hint}</p>

@@ -47,6 +47,7 @@ import {
   ensureSttRuntimeResolved,
   getMicrophoneLease,
   releaseMicrophone,
+  rememberRecognizerIsDeaf,
 } from './media/sttRuntime'
 import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
@@ -1728,6 +1729,10 @@ function QueryBar({
         // Voice tab too. The stored preference is the user's and stays theirs; Settings goes
         // on showing what they chose, and the notice says where to change it.
         if (recovery.action === 'switch-to-backend') {
+          // Remembered across reloads, keyed by this microphone. Without that, every page
+          // load offered the browser recognizer again and burned the user's first sentence
+          // re-proving the same fact.
+          rememberRecognizerIsDeaf()
           applySttSessionOverride('homepilot-backend', recovery.message, 'chat')
         }
       },

@@ -53,6 +53,7 @@ import {
   applySttSessionOverride,
   getMicrophoneLease,
   releaseMicrophone,
+  rememberRecognizerIsDeaf,
 } from '../media/sttRuntime';
 import { useSttRuntime } from '../media/useSttRuntime';
 import {
@@ -710,6 +711,9 @@ export function useVoiceController(
             deafTurnsRef.current = 0;
             setSttNotice(recovery.message);
             if (recovery.action === 'switch-to-backend') {
+              // Remembered across reloads, keyed by this microphone, so the next session
+              // starts on the working engine instead of re-proving this.
+              rememberRecognizerIsDeaf();
               // Shared, so the chat composer moves with it. The capture effect sees the new
               // engine and hands the microphone over; nothing restarts the recognizer.
               applySttSessionOverride('homepilot-backend', recovery.message, 'voice');

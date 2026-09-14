@@ -100,6 +100,18 @@ combination of preference and capability has a defined answer, and a test walks 
 > away rather than a default. Trace: `stt_runtime_resolved {reason: 'routing-mismatch-preflight',
 > routingMismatch, routingKnown}`.
 
+> **When the device list cannot tell, a turn's verdict stands in — and is remembered.**
+> Chrome on Windows often exposes no `default` alias, so on those machines the split is real
+> and undetectable up front. The only thing that establishes it is a turn: press record,
+> speak, and the recognizer reports it opened a capture and heard nothing.
+>
+> Paying for that discovery once is reasonable; paying for it on every page load is not, and
+> that is what happened — each reload started a fresh session, offered the browser recognizer
+> again, and burned the user's first sentence proving the same fact. The verdict is now kept
+> in `homepilot_stt_deaf_recognizer_v1`, **keyed by the microphone it was reached about**, so a
+> different device is re-evaluated and choosing an engine in Settings clears it. Trace:
+> `stt_runtime_resolved {reason: 'recognizer-known-deaf'}`.
+
 > **A fallback is always reported.** Somebody who chose on-device transcription for privacy
 > and is quietly served the browser's — which ships audio to Google — has been failed in a way
 > no later message makes up for. `resolution.fellBack` carries that, the chat composer shows
@@ -933,6 +945,10 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 | `network` error on every turn | Web Speech needs internet. Install local speech and use the backend path. |
 | Browser mode: turns now take ~5 s before giving up | Deliberate — §2.3. A recognizer that has heard nothing is given until `STT_NO_SPEECH_GRACE_MS` rather than being cut off on another microphone's silence. `stop_deferred_warming_up {deferredBy: 'no_speech_yet'}`. Turns that hear speech are not delayed. |
 | Every turn returns **502**, `libcublas.so.12 not found` | `WHISPER_DEVICE=auto` picked a GPU whose CUDA runtime is incomplete. **CTranslate2 loads the CUDA libraries lazily**, so this surfaces at the *first inference*, not at load — the retry therefore lives in `_run_with_cpu_fallback`, not only in `_ensure_model`. `status.device_note` names the reason. `WHISPER_DEVICE=cpu` skips the wasted attempt. |
+| Settings says "Using the browser's speech recognition" on a session that recovered onto on-device | Fixed. `VoiceAssistantSelfTest` and `SpeechRecognitionSettings` were the last two copies of the engine decision, re-resolving the *preference* and so blind to a session override. Both read the shared runtime through `describeSttRuntime()` now, which is why the card can say "Not the engine you chose". |
+| The Settings speech-to-text test keeps failing on a session that works | Same cause. It aimed at the preference's engine, so after a recovery it went on testing the one that had just been abandoned. |
+| "Recognition captured silence" shown above recognized text | Fixed. One `heard` panel was written by two tests, so the end-to-end check's transcript rendered under the speech-to-text check's verdict. The loop test has its own. |
+| The chat microphone wastes a turn on every page load | Fixed. The deaf verdict is remembered per microphone, so the next session starts on the working engine — see §2. |
 | The Settings speech-to-text test dies with a bare `aborted` | Fixed. The test used to take the recognizer with `abortSTT`, which worked in one direction only — the Voice tab's hands-free loop restarts every 400 ms and took it straight back. Both now go through the microphone lease: the test acquires it, and the loop waits (`handsfree_browser_yielded`) rather than fighting for it. |
 | "The end-to-end check needs HomePilot speech-to-text", on a server that has it | Fixed. It was gated on the engine the *preference* resolved to, so the default (Browser) refused and told the user to install a model they were already running. It is gated on `capability.available && recorderSupported` now — whether the check can run, which is a different question from what chat uses. |
 | Browser engine: `sawAudioStart: true, sawSpeechStart: false` every time | The browser recognizer opened a capture on your **OS default input** and heard nothing. It cannot be pointed at the microphone in Audio & Video. HomePilot now detects this after two consecutive turns and switches the session to on-device transcription when it can — see §2.3. Either make that mic the OS default, or set Speech Recognition to *On this computer*. |

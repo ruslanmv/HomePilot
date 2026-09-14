@@ -26,6 +26,7 @@ const audioVideo = read('frontend/src/ui/components/AudioVideoSettings.tsx');
 const sttService = read('frontend/src/ui/media/sttService.ts');
 const sttRuntime = read('frontend/src/ui/media/sttRuntime.ts');
 const webSpeechSession = read('frontend/src/ui/media/webSpeechSession.ts');
+const settingsCard = read('frontend/src/ui/components/SpeechRecognitionSettings.tsx');
 const vad = read('frontend/src/ui/voice/vad.ts');
 const transcribeRoute = read('backend/app/voice/transcribe.py');
 const mainApp = read('backend/app/main.py');
@@ -194,10 +195,19 @@ describe('one selected-microphone transcription path', () => {
     // Settings warning was written. Chat and Voice opened the capture anyway and learned it
     // from two failed turns — with the device list saying so before the first one.
     expect(sttRuntime).toContain('describeMicrophoneRouting');
-    expect(sttRuntime).toContain("overrideReason = 'routing-mismatch-preflight'");
+    expect(sttRuntime).toContain("'routing-mismatch-preflight'");
     // Gated on evidence: no `default` alias to compare against is not proof they agree.
     expect(sttRuntime).toContain('routing.known');
     expect(sttRuntime).toContain('routing.mismatch');
+    // And where the device list cannot tell — Chrome on Windows exposes no `default` alias —
+    // a verdict a turn already established stands in, so the discovery is paid for once and
+    // not on every page load.
+    expect(sttRuntime).toContain('export function rememberRecognizerIsDeaf');
+    expect(sttRuntime).toContain('export function recognizerKnownDeaf');
+    expect(app).toContain('rememberRecognizerIsDeaf()');
+    expect(controller).toContain('rememberRecognizerIsDeaf()');
+    // Clearable, or a remembered verdict becomes the choice being refused.
+    expect(sttRuntime).toContain('forgetRecognizerIsDeaf();');
     // And escapable: re-picking an engine in Settings disarms it, or "Browser" would be
     // unselectable for the session on any machine whose default input differs.
     expect(sttRuntime).toContain('routingPreflightArmed = false');
@@ -324,7 +334,14 @@ describe('Settings voice self-test', () => {
   });
 
   it('says which engine is in use, including the fallback device caveat', () => {
-    expect(selfTest).toContain('describeSttResolution(resolution');
+    // `describeSttRuntime`, not `describeSttResolution`: the resolution is what the
+    // preference resolves to, and that stops being the truth the moment a session override
+    // is in force. This card reported "Using the browser's speech recognition" about a
+    // session that had already moved to on-device transcription.
+    expect(selfTest).toContain('describeSttRuntime(runtime)');
+    expect(settingsCard).toContain('describeSttRuntime(runtime)');
+    expect(sttRuntime).toContain('export function describeSttRuntime');
+    expect(sttRuntime).toContain('not the engine chosen in Settings');
     expect(read('frontend/src/ui/media/sttPreferences.ts'))
       .toContain('records your system default input');
     expect(selfTest).toContain('Recordings leave this computer');
@@ -405,7 +422,6 @@ describe('microphone routing warning', () => {
 
 describe('the speech-recognition engine is a choice, not a detection', () => {
   const preferences = read('frontend/src/ui/media/sttPreferences.ts');
-  const settingsCard = read('frontend/src/ui/components/SpeechRecognitionSettings.tsx');
 
   it('defaults chat and Voice to the browser, restoring the original behaviour', () => {
     // Preferring the local engine whenever it reported itself available broke chat
@@ -455,8 +471,11 @@ describe('the speech-recognition engine is a choice, not a detection', () => {
 
   it('aims the self-tests at the engine that will actually run', () => {
     // Testing the backend merely because it is available would pass while the path the user
-    // chose stayed broken.
-    expect(selfTest).toContain("resolution.engine === 'homepilot-backend'");
+    // chose stayed broken — and testing the *preference* would keep failing on a session
+    // that had already recovered onto a working engine. The runtime is the only source that
+    // is right in both cases.
+    expect(selfTest).toContain("runtime.effectiveEngine === 'homepilot-backend'");
+    expect(selfTest).not.toContain('resolveSttEngine(');
   });
 
   it('shows each engine’s cost, not only its benefit', () => {

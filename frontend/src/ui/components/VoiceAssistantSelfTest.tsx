@@ -58,7 +58,13 @@ import {
   resolveSttEngine,
   subscribeSttPreferences,
 } from '../media/sttPreferences'
-import { acquireMicrophone, getMicrophoneLease, releaseMicrophone } from '../media/sttRuntime'
+import {
+  acquireMicrophone,
+  describeSttRuntime,
+  getMicrophoneLease,
+  releaseMicrophone,
+} from '../media/sttRuntime'
+import { useSttRuntime } from '../media/useSttRuntime'
 import {
   abortWebSpeech,
   isWebSpeechSupported,
@@ -171,6 +177,15 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
   const [loopPhase, setLoopPhase] = useState<Phase>('idle')
   const [loopOutcome, setLoopOutcome] = useState<SttOutcome | null>(null)
   const [loopLabel, setLoopLabel] = useState('Listening — speak now…')
+  /*
+   * The loop test's transcript, kept apart from the speech-to-text test's.
+   *
+   * One shared `heard` meant the loop test's text was rendered in the panel that sits under
+   * the speech-to-text verdict — so a page could show "Recognition captured silence" with
+   * "Ta-da! How are you?" directly beneath it. Both statements were true about different
+   * tests, which is exactly why one panel could not carry them.
+   */
+  const [loopHeard, setLoopHeard] = useState('')
 
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -182,19 +197,19 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
   const recorderSupported =
     typeof MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
 
-  // The engine the *preference* resolves to, so these tests exercise what chat and Voice
-  // will really use. Testing the backend merely because it is available would pass while the
-  // path the user chose stayed broken — the exact trap this whole split exists to avoid.
-  const resolution = useMemo(
-    () => resolveSttEngine(preference, {
-      backendAvailable: Boolean(capability?.available),
-      mediaRecorderSupported: typeof MediaRecorder !== 'undefined'
-        && Boolean(navigator.mediaDevices?.getUserMedia),
-      webSpeechSupported,
-    }),
-    [preference, capability, webSpeechSupported],
-  )
-  const backendStt = resolution.engine === 'homepilot-backend'
+  /*
+   * The engine these tests exercise is the one chat and Voice are *actually* on — the shared
+   * runtime, session override included — not a private re-resolution of the preference.
+   *
+   * Resolving it here independently was the last copy of the decision, and it made Settings
+   * lie: after a deaf-recognizer recovery moved the session to on-device transcription, this
+   * card went on reporting "Using the browser's speech recognition" and went on aiming the
+   * speech-to-text test at the engine that had just been abandoned — so it failed, every
+   * time, on a session that was working.
+   */
+  const runtime = useSttRuntime()
+  const resolution = runtime.resolution
+  const backendStt = runtime.effectiveEngine === 'homepilot-backend'
   const sttSupported = (backendStt && recorderSupported) || webSpeechSupported
 
   useEffect(() => {
@@ -509,7 +524,7 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
     setLoopOutcome(null)
     setLoopLabel('Listening — say a short sentence, then press Stop and check.')
     setLoopPhase('running')
-    setHeard('')
+    setLoopHeard('')
 
     microphoneDebug('settings', 'voice_loop_test_started', {
       // Always the local engine: this check exists to prove the selected microphone reaches
@@ -566,7 +581,7 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
       })
       stopRecordingRef.current = null
       setLevel(0)
-      setHeard(result.text)
+      setLoopHeard(result.text)
 
       if (!result.text) {
         setLoopPhase('error')
@@ -647,10 +662,8 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
     try { stopRecordingRef.current?.() } catch { /* ignore */ }
   }, [clearSttTimers])
 
-  const engineLine = capability === null
-    ? 'Checking which speech-to-text engine is in use…'
-    : `Speech-to-text: ${describeSttResolution(resolution, capability.provider)}${
-      capability.remote && backendStt ? ' Recordings leave this computer.' : ''}`
+  const engineLine = `Speech-to-text: ${describeSttRuntime(runtime)}${
+    capability?.remote && backendStt ? ' Recordings leave this computer.' : ''}`
 
   const recording = sttPhase === 'running' || loopPhase === 'running'
 
@@ -756,6 +769,16 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
           </div>
 
           <Verdict phase={loopPhase} outcome={loopOutcome} runningLabel={loopLabel} />
+
+          {/* Under its own verdict, where it belongs. */}
+          {loopHeard ? (
+            <div className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5">
+              <div className="mb-1 text-[10px] uppercase tracking-wider text-white/35">
+                Heard, and read back
+              </div>
+              <p className="text-xs leading-relaxed text-white/85 break-words">{loopHeard}</p>
+            </div>
+          ) : null}
         </div>
       </div>
 
