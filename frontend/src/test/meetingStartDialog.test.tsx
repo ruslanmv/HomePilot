@@ -64,13 +64,15 @@ describe('premium meeting start preflight', () => {
 
         await waitFor(() => expect(rec.start).toHaveBeenCalledTimes(1));
         expect(rec.start.mock.calls[0][0]).toMatchObject({
-            conversationId: 'c1',
             notes: true,
             watch: false,
             audio: true,
             mic: true,
             mode: 'participant',
         });
+        // A meeting records into a conversation of its own, not the one the button was
+        // pressed from, so the id is asserted as "a fresh one" rather than as the caller's.
+        expect(rec.start.mock.calls[0][0].conversationId).not.toBe('c1');
     });
 
     it('keeps the existing remembered-consent fast path non-destructively', async () => {

@@ -30,11 +30,30 @@ export interface CaptureOptions {
     /** Keyframe capture of a shared screen. */
     slides: boolean;
     mode: HelperMode | null;
+    /**
+     * What people call *you* in this meeting (MS26's `names`).
+     *
+     * This is what turns "somebody just asked you something" from a guess into a fact. The
+     * detector will not infer it: with no names declared it has only second person to go on,
+     * which is the narrow behaviour and the right default — the failure mode of guessing is
+     * the assistant reacting to somebody else's name in front of them.
+     */
+    myNames: string;
+    /** What the assistant answers to (MS26's `assistant_names`). Empty means it never does. */
+    assistantName: string;
 }
 
 export const DEFAULT_CAPTURE: CaptureOptions = {
-    audio: true, mic: true, slides: true, mode: null,
+    audio: true, mic: true, slides: true, mode: null, myNames: '', assistantName: '',
 };
+
+/** Split a comma-separated name field into the list the wire expects. */
+export function parseNames(value: string): string[] {
+    return String(value || '')
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean);
+}
 
 /** The advanced modes, in the order MS24 gives them, with Note-taker as the floor. */
 export const MODES: Array<{ id: HelperMode | null; label: string; note: string }> = [

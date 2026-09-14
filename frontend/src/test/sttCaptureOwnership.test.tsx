@@ -1,0 +1,353 @@
+/**
+ * Voice keeps exactly one transcription owner for each resolved STT engine.
+ *
+ * ── The bug ──────────────────────────────────────────────────────────────────────────────
+ *
+ * Hands-free used to start HomePilot's VAD unconditionally. The VAD opened — and held, for
+ * the whole session — the microphone selected in Audio & Video. On the browser engine it then
+ * asked `SpeechRecognition` to transcribe the turn, and that opens *its own* capture on the
+ * operating system's default input, because the Web Speech API takes no `deviceId` and
+ * accepts no `MediaStream`. The trace looked like this, every turn:
+ *
+ *     [vad]   capture_opened
+ *     [voice] stt_onstart
+ *     [voice] stt_onend { hadResult: false, sawSpeechStart: false }
+ *
+ * The meter moved, the orb reacted, and nothing came out — because VAD and transcription were
+ * listening to different microphones and both were trying to define a turn.
+ *
+ * Web Speech now remains the sole turn/transcription owner. HomePilot may additionally open a
+ * browser-default stream for a Grok-style RMS meter, but that stream is observation-only: no
+ * VAD, no MediaRecorder, no endpointing and no transcription. The local engine remains the
+ * inverse: its VAD/MediaRecorder own turns and no browser recognizer starts.
+ */
+
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const capability = vi.fn();
+
+vi.mock('../ui/media/sttService', () => ({
+  getSttCapability: () => capability(),
+  transcribeBlob: vi.fn(),
+  openSelectedMicrophone: vi.fn(),
+  resetSttCapabilityCache: vi.fn(),
+  recordAndTranscribe: vi.fn(),
+  SttUnavailableError: class SttUnavailableError extends Error {},
+}));
+
+import { useVoiceController } from '../ui/voice/useVoiceController';
+import { resetSttRuntimeForTests } from '../ui/media/sttRuntime';
+import { resetWebSpeechForTests } from '../ui/media/webSpeechSession';
+
+const getUserMedia = vi.fn();
+const startSTT = vi.fn(() => true);
+const mediaRecorderConstructed = vi.fn();
+
+type Callbacks = {
+  onStart?: () => void;
+  onEnd?: (diagnostics: Record<string, unknown>) => void;
+  onInterim?: (text: string) => void;
+  onResult?: (text: string) => void;
+  onError?: (code: string) => void;
+};
+
+/** Whatever the one adapter installed on the shared recognizer. */
+let callbacks: Callbacks = {};
+/**
+ * What the browser reports about the turn that just ended.
+ *
+ * The adapter reads this from `SpeechService`, not from the `onEnd` argument, so a test about
+ * turn *evidence* has to set it here.
+ */
+let diagnostics: Record<string, unknown> = {};
+
+/** Just enough Web Audio for the VAD and the read-only browser meter. */
+function stubAudioContext() {
+  class FakeAnalyser {
+    fftSize = 1024;
+    smoothingTimeConstant = 0.3;
+    frequencyBinCount = 512;
+    getByteTimeDomainData(data: Uint8Array) { data.fill(128); }
+    connect() {}
+  }
+  class FakeAudioContext {
+    state = 'running';
+    createAnalyser() { return new FakeAnalyser(); }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    close() { return Promise.resolve(); }
+  }
+  (window as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
+}
+
+function fakeStream(): MediaStream {
+  const track = {
+    label: 'Selected Microphone',
+    readyState: 'live',
+    enabled: true,
+    muted: false,
+    getSettings: () => ({ deviceId: 'selected-device' }),
+    addEventListener: () => {},
+    stop: () => {},
+  };
+  return {
+    getTracks: () => [track],
+    getAudioTracks: () => [track],
+  } as unknown as MediaStream;
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  // Hands-free on: this is about what hands-free opens.
+  localStorage.setItem('homepilot_voice_handsfree', 'true');
+  resetSttRuntimeForTests();
+  resetWebSpeechForTests();
+  getUserMedia.mockReset();
+  getUserMedia.mockResolvedValue(fakeStream());
+  startSTT.mockClear();
+  mediaRecorderConstructed.mockClear();
+  capability.mockResolvedValue({
+    available: true, provider: 'whisper-local', remote: false, hint: null,
+  });
+
+  stubAudioContext();
+  (window as unknown as { SpeechRecognition: unknown }).SpeechRecognition = class {};
+  (globalThis as unknown as { MediaRecorder: unknown }).MediaRecorder = class {
+    state = 'inactive';
+    constructor() { mediaRecorderConstructed(); }
+    start() {}
+    stop() {}
+  };
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getUserMedia },
+  });
+
+  callbacks = {};
+  diagnostics = {};
+  window.SpeechService = {
+    setRecognitionCallbacks: (cb: Callbacks) => { callbacks = { ...callbacks, ...cb }; },
+    getSttDiagnostics: () => diagnostics,
+    getVoices: () => [],
+    isSpeaking: false,
+    isRecognizing: false,
+    startSTT,
+    stopSTT: () => {},
+    abortSTT: () => {},
+    stopSpeaking: () => {},
+    setPreferredVoiceURI: () => {},
+  };
+});
+
+afterEach(() => {
+  delete (window as unknown as { SpeechService?: unknown }).SpeechService;
+  vi.clearAllMocks();
+});
+
+async function mountHandsFree(preference: 'web-speech' | 'homepilot') {
+  localStorage.setItem('homepilot_stt_preferences_v1', JSON.stringify({ chat: preference }));
+  const hook = renderHook(() => useVoiceController(vi.fn()));
+  await waitFor(() => expect(hook.result.current.sttEngine).not.toBeNull());
+  // Let the capture effect settle after the engine lands.
+  await act(async () => { await Promise.resolve(); });
+  return hook;
+}
+
+describe('hands-free on the browser engine', () => {
+  it('uses a read-only browser-default stream for the meter, not a second turn recorder', async () => {
+    const { result } = await mountHandsFree('web-speech');
+
+    expect(result.current.sttEngine).toBe('web-speech');
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
+    // No deviceId: Web Speech itself uses the OS/browser default and exposes no selectable
+    // stream. Measuring the same routing assumption is more honest than measuring the saved
+    // HomePilot device while the recognizer listens elsewhere.
+    expect(getUserMedia.mock.calls[0][0]).toEqual({ video: false, audio: true });
+    // The monitor never becomes a recorder or VAD turn owner.
+    expect(mediaRecorderConstructed).not.toHaveBeenCalled();
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+  });
+
+  it('keeps the Grok-style meter and live caption available together', async () => {
+    const { result } = await mountHandsFree('web-speech');
+
+    await waitFor(() => expect(result.current.micMeterSupported).toBe(true));
+    expect(result.current.liveTranscriptSupported).toBe(true);
+    // The level stream is display-only, so it deliberately does not enable barge-in.
+    expect(result.current.bargeInSupported).toBe(false);
+  });
+
+  it('reports which device the meter is reading', async () => {
+    /*
+     * On this engine the meter reads the OS default input, because that is the only device the
+     * recognizer can hear. When that default is a silent virtual device — the trace this was
+     * written from had `Microphone (Steam Streaming Microphone)` holding the slot — a bar that
+     * never moves is the *correct* rendering, and is indistinguishable from a broken meter.
+     * The name is the only thing that separates them, and the track has had it all along.
+     */
+    const { result } = await mountHandsFree('web-speech');
+
+    await waitFor(() => expect(result.current.micMeterDeviceLabel).toBe('Selected Microphone'));
+  });
+
+  it('does not label the meter on the local engine', async () => {
+    // There the meter reads the microphone chosen in Audio & Video, which Settings already
+    // shows and which cannot disagree with what gets transcribed. Nothing to disclose.
+    const { result } = await mountHandsFree('homepilot');
+
+    expect(result.current.sttEngine).toBe('homepilot-backend');
+    await waitFor(() => expect(result.current.micMeterSupported).toBe(true));
+    expect(result.current.micMeterDeviceLabel).toBeNull();
+  });
+});
+
+describe('when the recognizer goes deaf with a meter running', () => {
+    it('names contention as well as the routing split', async () => {
+        /*
+         * The input meter opens the browser/default input — the same endpoint
+         * `SpeechRecognition` wants. Some drivers (Windows DSP-backed inputs among them) hand
+         * a second recorder on that endpoint a live but silent track, so from the moment the
+         * meter existed there have been *two* explanations for a deaf turn, with an identical
+         * trace and different fixes.
+         *
+         * Asserting the routing split as the only cause would send the user to rearrange
+         * their operating system for a problem HomePilot created.
+         */
+        localStorage.setItem('homepilot_voice_handsfree', 'false');
+        const { result } = await mountHandsFree('web-speech');
+        await act(async () => { await result.current.startManualListening(); });
+        await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
+
+        // The signature of a capture that opened, stayed open, and heard nothing.
+        diagnostics = {
+            sawAudioStart: true,
+            sawSpeechStart: false,
+            sawInterim: false,
+            error: null,
+        };
+        act(() => { callbacks.onEnd?.(diagnostics); });
+
+        await waitFor(() => expect(result.current.sttNotice).toBeTruthy());
+        expect(result.current.sttNotice).toContain('Two things');
+        expect(result.current.sttNotice).toContain('chat composer');
+    });
+});
+
+describe('the live caption on the browser engine', () => {
+  /*
+   * What the user asked for, in their words: "behave like Grok, displaying what I am saying
+   * in real time".
+   *
+   * A one-shot recognition session ends at the first pause, so hands-free was a series of
+   * short recognitions with a restart between each — the caption died at exactly the moment
+   * somebody was mid-sentence, and Chrome raised `no-speech` every few seconds of a quiet
+   * room, which surfaced as a red banner under the orb. One continuous session streams
+   * interim words the whole time and hands back each finished phrase as it completes.
+   */
+  it('listens continuously, so the words keep arriving', async () => {
+    await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+
+    expect(startSTT.mock.calls[0][1]).toMatchObject({ continuous: true });
+  });
+
+  it('shows the words while they are still being said', async () => {
+    const { result } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+
+    act(() => { callbacks.onInterim?.('turn on the kitchen'); });
+
+    expect(result.current.interimText).toBe('turn on the kitchen');
+    // And it reads as listening, not as idle, while they are arriving.
+    expect(result.current.state).toBe('LISTENING');
+  });
+
+  it('does not caption the assistant’s own voice', async () => {
+    // The recognizer cannot tell HomePilot's speaker output from the user, so anything
+    // arriving while it is talking is either its own voice or a barge-in it has mangled.
+    const { result } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+    act(() => { callbacks.onInterim?.('hello'); });
+
+    window.SpeechService.isSpeaking = true;
+    await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+    act(() => { callbacks.onInterim?.('I can help with that'); });
+
+    expect(result.current.interimText).not.toBe('I can help with that');
+  });
+
+  it('treats a quiet room as quiet, not as an error', async () => {
+    // `no-speech` is Chrome saying nobody said anything — the normal state of waiting. It
+    // used to put a red banner under the orb every few seconds of a working session.
+    const { result } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+
+    act(() => { callbacks.onError?.('no-speech'); });
+    expect(result.current.lastError).toBeNull();
+
+    // And our own hand-off for TTS is not a fault either.
+    act(() => { callbacks.onError?.('aborted'); });
+    expect(result.current.lastError).toBeNull();
+  });
+
+  it('still reports a fault that is one', async () => {
+    const { result } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+
+    act(() => { callbacks.onError?.('not-allowed'); });
+    expect(result.current.lastError).toBe('not-allowed');
+  });
+
+  it('keeps a manual turn one-shot', async () => {
+    // A press has a Stop button behind it; a session that outlived the turn would hold the
+    // microphone after the user thought they had released it.
+    localStorage.setItem('homepilot_voice_handsfree', 'false');
+    const { result } = await mountHandsFree('web-speech');
+    startSTT.mockClear();
+
+    await act(async () => { await result.current.startManualListening(); });
+
+    expect(startSTT.mock.calls[0][1]).toMatchObject({ continuous: false });
+  });
+});
+
+describe('hands-free on the local engine', () => {
+  it('starts no browser recognizer', async () => {
+    const { result } = await mountHandsFree('homepilot');
+
+    expect(result.current.sttEngine).toBe('homepilot-backend');
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
+    expect(startSTT).not.toHaveBeenCalled();
+  });
+
+  it('reads the same microphone it transcribes, so a meter is honest', async () => {
+    const { result } = await mountHandsFree('homepilot');
+
+    await waitFor(() => expect(result.current.micMeterSupported).toBe(true));
+    // No interim words exist on this engine: the text arrives when the turn ends.
+    expect(result.current.liveTranscriptSupported).toBe(false);
+  });
+});
+
+describe('switching engines mid-session', () => {
+  it('releases the browser recognizer before local STT takes over', async () => {
+    const abortSTT = vi.fn();
+    window.SpeechService.abortSTT = abortSTT;
+    const { result, rerender } = await mountHandsFree('web-speech');
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+    // Web Speech may have a read-only level stream, but it has not started a recorder.
+    expect(mediaRecorderConstructed).not.toHaveBeenCalled();
+
+    const { applySttSessionOverride } = await import('../ui/media/sttRuntime');
+    await act(async () => {
+      applySttSessionOverride('homepilot-backend', 'switched', 'voice');
+      rerender();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(result.current.sttEngine).toBe('homepilot-backend'));
+    // The recognizer is dropped before the local architecture is allowed to own turns.
+    expect(abortSTT).toHaveBeenCalled();
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
+  });
+});
