@@ -1,9 +1,9 @@
 /**
- * Hands-free Voice opens one capture, and it is the one the engine says.
+ * Voice keeps exactly one transcription owner for each resolved STT engine.
  *
  * ── The bug ──────────────────────────────────────────────────────────────────────────────
  *
- * Hands-free used to start HomePilot's VAD unconditionally. The VAD opens — and holds, for
+ * Hands-free used to start HomePilot's VAD unconditionally. The VAD opened — and held, for
  * the whole session — the microphone selected in Audio & Video. On the browser engine it then
  * asked `SpeechRecognition` to transcribe the turn, and that opens *its own* capture on the
  * operating system's default input, because the Web Speech API takes no `deviceId` and
@@ -13,12 +13,13 @@
  *     [voice] stt_onstart
  *     [voice] stt_onend { hadResult: false, sawSpeechStart: false }
  *
- * The meter moved, the orb reacted, and nothing came out — because the recognizer was never
- * listening to the microphone the meter was reading. No warm-up window or stop-deferral could
- * have fixed it.
+ * The meter moved, the orb reacted, and nothing came out — because VAD and transcription were
+ * listening to different microphones and both were trying to define a turn.
  *
- * These two tests are the fix stated as a property: on the browser engine HomePilot opens no
- * microphone at all, and on the local engine it starts no recognizer.
+ * Web Speech now remains the sole turn/transcription owner. HomePilot may additionally open a
+ * browser-default stream for a Grok-style RMS meter, but that stream is observation-only: no
+ * VAD, no MediaRecorder, no endpointing and no transcription. The local engine remains the
+ * inverse: its VAD/MediaRecorder own turns and no browser recognizer starts.
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -41,6 +42,7 @@ import { resetWebSpeechForTests } from '../ui/media/webSpeechSession';
 
 const getUserMedia = vi.fn();
 const startSTT = vi.fn(() => true);
+const mediaRecorderConstructed = vi.fn();
 
 type Callbacks = {
   onStart?: () => void;
@@ -53,7 +55,7 @@ type Callbacks = {
 /** Whatever the one adapter installed on the shared recognizer. */
 let callbacks: Callbacks = {};
 
-/** Just enough Web Audio for the VAD to reach its first frame. */
+/** Just enough Web Audio for the VAD and the read-only browser meter. */
 function stubAudioContext() {
   class FakeAnalyser {
     fftSize = 1024;
@@ -65,7 +67,7 @@ function stubAudioContext() {
   class FakeAudioContext {
     state = 'running';
     createAnalyser() { return new FakeAnalyser(); }
-    createMediaStreamSource() { return { connect() {} }; }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
     close() { return Promise.resolve(); }
   }
   (window as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
@@ -96,6 +98,7 @@ beforeEach(() => {
   getUserMedia.mockReset();
   getUserMedia.mockResolvedValue(fakeStream());
   startSTT.mockClear();
+  mediaRecorderConstructed.mockClear();
   capability.mockResolvedValue({
     available: true, provider: 'whisper-local', remote: false, hint: null,
   });
@@ -104,6 +107,7 @@ beforeEach(() => {
   (window as unknown as { SpeechRecognition: unknown }).SpeechRecognition = class {};
   (globalThis as unknown as { MediaRecorder: unknown }).MediaRecorder = class {
     state = 'inactive';
+    constructor() { mediaRecorderConstructed(); }
     start() {}
     stop() {}
   };
@@ -142,22 +146,26 @@ async function mountHandsFree(preference: 'web-speech' | 'homepilot') {
 }
 
 describe('hands-free on the browser engine', () => {
-  it('opens no HomePilot capture at all', async () => {
+  it('uses a read-only browser-default stream for the meter, not a second turn recorder', async () => {
     const { result } = await mountHandsFree('web-speech');
 
     expect(result.current.sttEngine).toBe('web-speech');
-    // The recognizer owns the microphone alone. A `getUserMedia` here is the second capture.
-    expect(getUserMedia).not.toHaveBeenCalled();
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
+    // No deviceId: Web Speech itself uses the OS/browser default and exposes no selectable
+    // stream. Measuring the same routing assumption is more honest than measuring the saved
+    // HomePilot device while the recognizer listens elsewhere.
+    expect(getUserMedia.mock.calls[0][0]).toEqual({ video: false, audio: true });
+    // The monitor never becomes a recorder or VAD turn owner.
+    expect(mediaRecorderConstructed).not.toHaveBeenCalled();
     await waitFor(() => expect(startSTT).toHaveBeenCalled());
   });
 
-  it('says the level meter is unavailable rather than animating a lie', async () => {
-    // There is no stream to measure, and opening one purely to draw a bar is precisely the
-    // second capture that caused the bug.
+  it('keeps the Grok-style meter and live caption available together', async () => {
     const { result } = await mountHandsFree('web-speech');
 
-    expect(result.current.micMeterSupported).toBe(false);
+    await waitFor(() => expect(result.current.micMeterSupported).toBe(true));
     expect(result.current.liveTranscriptSupported).toBe(true);
+    // The level stream is display-only, so it deliberately does not enable barge-in.
     expect(result.current.bargeInSupported).toBe(false);
   });
 });
@@ -259,11 +267,13 @@ describe('hands-free on the local engine', () => {
 });
 
 describe('switching engines mid-session', () => {
-  it('releases the browser recognizer before opening HomePilot’s capture', async () => {
+  it('releases the browser recognizer before local STT takes over', async () => {
     const abortSTT = vi.fn();
     window.SpeechService.abortSTT = abortSTT;
     const { result, rerender } = await mountHandsFree('web-speech');
-    expect(getUserMedia).not.toHaveBeenCalled();
+    await waitFor(() => expect(startSTT).toHaveBeenCalled());
+    // Web Speech may have a read-only level stream, but it has not started a recorder.
+    expect(mediaRecorderConstructed).not.toHaveBeenCalled();
 
     const { applySttSessionOverride } = await import('../ui/media/sttRuntime');
     await act(async () => {
@@ -273,7 +283,7 @@ describe('switching engines mid-session', () => {
     });
 
     await waitFor(() => expect(result.current.sttEngine).toBe('homepilot-backend'));
-    // The recognizer is dropped, and only then does a microphone open. Never both.
+    // The recognizer is dropped before the local architecture is allowed to own turns.
     expect(abortSTT).toHaveBeenCalled();
     await waitFor(() => expect(getUserMedia).toHaveBeenCalled());
   });
