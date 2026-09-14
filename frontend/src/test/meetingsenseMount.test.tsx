@@ -237,6 +237,81 @@ describe('the record button', () => {
     });
 });
 
+describe('the live meeting workspace', () => {
+    /** Dispatch a transcribed line the way `homepilot-meetingsense.js` does. */
+    const emitSegment = (text, seq) => act(() => {
+        window.dispatchEvent(new CustomEvent('ms:segment', {
+            detail: { id: `s${seq}`, seq, t0: seq * 1000, speaker: 'them', text },
+        }));
+    });
+
+    async function startMeeting() {
+        render(
+            <MeetingSenseProvider
+                conversationId="c1" status={ON}
+                storage={memoryStorage({ [CONSENT_STORAGE_KEY]: 'true' })}
+            >
+                <MeetingButton />
+            </MeetingSenseProvider>,
+        );
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+        return screen.findByTestId('meeting-workspace');
+    }
+
+    it('shows the transcript as it arrives, without changing tabs', async () => {
+        /*
+         * The workspace opened on Timeline, which renders decisions, slides and capture-source
+         * changes and *no transcript*. So a live meeting showed "Meeting started" and nothing
+         * else while the words were arriving one tab away, and the only way to learn it had
+         * been working was to end the meeting and read the recap.
+         *
+         * During a meeting the question is "is it hearing me", and only the transcript
+         * answers it.
+         */
+        const workspace = await startMeeting();
+        emitSegment('the launch moves to October', 1);
+
+        expect(workspace.textContent).toContain('the launch moves to October');
+    });
+
+    it('counts the lines where both tabs can see it', async () => {
+        const workspace = await startMeeting();
+        emitSegment('the launch moves', 1);
+        emitSegment('pricing is agreed', 2);
+
+        expect(screen.getByTestId('ms-transcript-count').textContent).toBe('2');
+
+        // Still counted after switching away. The Timeline is a semantic view and shows no
+        // transcript, so without the count it reads as "nothing is happening" — which is the
+        // whole bug this replaced.
+        fireEvent.click(screen.getByText(/Timeline/));
+        expect(screen.getByTestId('ms-transcript-count').textContent).toBe('2');
+        expect(workspace.textContent).not.toContain('the launch moves');
+    });
+
+    it('offers no way to close while it is still recording', async () => {
+        // Closing a live meeting would be a Stop that does not say it is stopping, and
+        // capture would outlive the window that said it was recording.
+        await startMeeting();
+
+        expect(screen.getByTestId('ms-workspace-end')).toBeTruthy();
+        expect(screen.queryByTestId('ms-workspace-close')).toBeNull();
+    });
+
+    it('gives a way out once the meeting has ended', async () => {
+        // The workspace is a full-screen portal, so "navigate somewhere else" was not an exit
+        // — whatever you would navigate with is underneath it. A recap with no control on it
+        // is a dead end, and that is the missing close button.
+        await startMeeting();
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+
+        const close = await screen.findByTestId('ms-workspace-close');
+        fireEvent.click(close);
+
+        await waitFor(() => expect(screen.queryByTestId('meeting-workspace')).toBeNull());
+    });
+});
+
 describe('a blocked button says why', () => {
     it('names each cause in the user\'s terms', () => {
         // The one thing a disabled control must never do is stay silent about why.

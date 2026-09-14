@@ -448,6 +448,48 @@ hint is an optimisation and must never become the reason something went untransc
 
 `ms:capture_mode` announces each switch, so shorter segments don't look like a glitch.
 
+#### Notes when no language model is running
+
+Transcription and note-taking are different subsystems with different dependencies, and an
+install where Ollama is not up exercises exactly that seam. The transcript is unaffected — it
+comes from the speech provider — but every notes window calls the model twice, so a stopped
+model used to raise `httpx.ConnectError` twice a minute and answer each one with
+`log.exception`. A half-hour meeting wrote sixty stack traces, and each buried whatever real
+failure came next.
+
+`classify_model_failure()` separates the two cases that were being conflated:
+
+| | Nothing answered | Something answered badly |
+|---|---|---|
+| Example | `ConnectError`, `ConnectTimeout` | malformed JSON, a wrong-typed key |
+| Is it a bug? | No — an ordinary state of a self-hosted install | Yes |
+| Logging | one `WARNING` per outage, no traceback | `log.exception`, as before |
+| Retried | after `MODEL_RETRY_AFTER_S` (60 s) | next window |
+
+While a model is unreachable the engine reports `model_unavailable` on the `notes` frame and
+stores it with the notes, so the meeting message can say *"No notes or recap: no language
+model was reachable while this meeting ran. The transcript below was recorded and kept."*
+rather than showing a header, a count, and nothing. It clears itself — and says so — on the
+window where the model answers again.
+
+> **An empty notes record is not a notes record.** `finalize` used to treat one as "there are
+> notes", print the header and stop, and suppress the transcript preview that is the whole
+> point of the fallback. `_has_note_content()` decides on content now.
+
+#### The live workspace
+
+Two things made a working meeting look broken:
+
+- **The workspace opened on Timeline**, which renders decisions, slides and capture-source
+  changes and *no transcript*. The words were arriving one tab away, so a live meeting showed
+  "Meeting started" and nothing else, and the only way to learn it had been working was to end
+  it and read the recap. It opens on **Transcript** now, and the tab carries a live line count
+  so the Timeline no longer reads as silence.
+- **The ended recap had no control on it.** The workspace is a full-screen portal, so
+  "navigate somewhere else" was not an exit — whatever you would navigate with is underneath
+  it. There is a **Close** button once a meeting has ended, and deliberately none while one is
+  live: closing a live meeting would be a Stop that does not say it is stopping.
+
 #### A meeting does not require a screen
 
 The wizard has three independent capture toggles — **Meeting audio**, **My microphone**,
@@ -902,6 +944,9 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 | Meeting records the wrong microphone | §3.5. Was fixed; check `ms:mic_fallback` for a selected device that was gone. |
 | Meeting hears the call's voices as you | Echo cancellation off with system audio on speakers. §3.5. |
 | Every meeting line says "Speaker", or a microphone-only meeting says "Them" | Fixed. A mono frame is now attributed from the meeting's single audio source — see §3.5. A line that is still unattributed means the session never reported an `audio.mode`. |
+| The transcript does not update during the meeting, but appears after it ends | Fixed. The workspace opened on the Timeline tab, which shows no transcript. It opens on Transcript now, and the tab shows a live line count. |
+| No way out of the meeting recap | Fixed. A full-screen portal with no control on it is a dead end; there is a Close button once the meeting has ended. |
+| `meetingsense: recap failed`, repeatedly, with a `ConnectError` traceback | The language model is not running. The transcript is unaffected. It is one warning per outage now, retried every 60 s, and the meeting message says why there is no recap. |
 | Meeting transcript is blank but slides work | `get_meeting_stt_provider()` has no local model. Meetings never fall back to `STT_BASE_URL` on their own — see `meeting_stt_policy()`. |
 | Shared video is not transcribed at all | No audio track: window share, macOS screen share, or "Share tab audio" unticked. See the capture table in §3.5. |
 | Shared video transcript has gaps | `ms:audio_dropped` — the machine is behind. Turbo + GPU, or accept the lag. |

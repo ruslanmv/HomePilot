@@ -12,6 +12,7 @@ import {
     Send,
     Square,
     Volume2,
+    X,
 } from 'lucide-react';
 import MeetingSummary from './MeetingSummary';
 import {
@@ -67,6 +68,8 @@ export interface MeetingWorkspaceProps {
     onEnd: () => void;
     onMute: (muted: boolean) => void;
     onResumeScreen?: () => void;
+    /** Dismiss the recap and go back to the application. Absent while a meeting is live. */
+    onClose?: () => void;
 }
 
 type ChatTurn = {
@@ -281,9 +284,21 @@ export function MeetingWorkspace({
     onEnd,
     onMute,
     onResumeScreen,
+    onClose,
 }: MeetingWorkspaceProps) {
     const host = useMainHost();
-    const [tab, setTab] = useState<'timeline' | 'transcript'>('timeline');
+    /*
+     * Transcript first, deliberately.
+     *
+     * This opened on Timeline, which renders decisions, slides and capture-source changes —
+     * and no transcript at all. So a live meeting showed "Meeting started" and nothing else
+     * while the words were arriving one tab away, and the only way to find out it had been
+     * working the whole time was to end the meeting and read the recap. "It does not update
+     * while transcribing, but after the session ends it recognised it" is that, exactly.
+     *
+     * During a meeting the question is *is it hearing me*, and only the transcript answers it.
+     */
+    const [tab, setTab] = useState<'timeline' | 'transcript'>('transcript');
     const [confirmEnd, setConfirmEnd] = useState(false);
     const [input, setInput] = useState('');
     const [chatTurns, setChatTurns] = useState<ChatTurn[]>([]);
@@ -420,10 +435,29 @@ export function MeetingWorkspace({
                     {active ? (
                         <button
                             type="button"
+                            data-testid="ms-workspace-end"
                             onClick={() => setConfirmEnd(true)}
                             className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3.5 text-xs font-semibold text-red-200 hover:bg-red-500/15"
                         >
                             <Square size={13} /> End meeting
+                        </button>
+                    ) : onClose ? (
+                        /*
+                         * The way out.
+                         *
+                         * The workspace is a full-screen portal over the application, and once
+                         * a meeting ended it offered no control at all: the only exit was to
+                         * navigate to a different conversation somewhere underneath it, which
+                         * is not reachable from on top of it. That is a dead end, and it is
+                         * the missing "close" button.
+                         */
+                        <button
+                            type="button"
+                            data-testid="ms-workspace-close"
+                            onClick={onClose}
+                            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 text-xs font-semibold text-white/75 hover:bg-white/10"
+                        >
+                            <X size={13} /> Close
                         </button>
                     ) : null}
                 </div>
@@ -474,6 +508,14 @@ export function MeetingWorkspace({
                                 </button>
                                 <button type="button" onClick={() => setTab('transcript')} className={`rounded-lg px-3 py-1.5 text-xs ${tab === 'transcript' ? 'bg-white/10 text-white' : 'text-white/45 hover:text-white/75'}`}>
                                     <FileText size={13} className="mr-1.5 inline" /> Transcript
+                                    {/* The count is the live proof that transcription is
+                                        working, visible from either tab — so the Timeline no
+                                        longer reads as "nothing is happening". */}
+                                    {view.segments.length ? (
+                                        <span className="ml-1.5 text-white/40" data-testid="ms-transcript-count">
+                                            {view.segments.length}
+                                        </span>
+                                    ) : null}
                                 </button>
                             </div>
                             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">

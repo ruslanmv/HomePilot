@@ -381,6 +381,21 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         };
     }, [workspaceMounted, ended, phase, capture.slides]);
 
+    /**
+     * Put the workspace away and give the application back.
+     *
+     * The workspace is a full-screen portal, so "navigate somewhere else" was not a way out of
+     * it — whatever you would navigate with is underneath. A recap with no control on it is a
+     * dead end, which is what the missing close button was.
+     */
+    const closeWorkspace = useCallback(() => {
+        setWorkspaceMounted(false);
+        setMeetingConversationId(null);
+        setScreenStream(null);
+        setCaptureStatus(allSourcesOff());
+        meeting.reset();
+    }, [meeting]);
+
     // The dedicated meeting conversation is sticky while capture is live. Navigation becomes
     // ordinary again after ending, at which point leaving the recap closes this workspace.
     useEffect(() => {
@@ -389,14 +404,8 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
             onOpenConversation?.(meetingConversationId);
             return;
         }
-        if (ended) {
-            setWorkspaceMounted(false);
-            setMeetingConversationId(null);
-            setScreenStream(null);
-            setCaptureStatus(allSourcesOff());
-            meeting.reset();
-        }
-    }, [conversationId, meetingConversationId, live, starting, ended, onOpenConversation, meeting]);
+        if (ended) closeWorkspace();
+    }, [conversationId, meetingConversationId, live, starting, ended, onOpenConversation, closeWorkspace]);
 
     // Opening an origin meeting conversation from History restores the dedicated recap. A
     // branch deliberately remains a normal chat even though it can search the same meeting.
@@ -491,6 +500,10 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                     onEnd={end}
                     onMute={meeting.muteMic}
                     onResumeScreen={() => void resumeScreen()}
+                    // Only once it has ended: closing a live meeting would be a Stop that
+                    // does not say it is stopping, and capture would outlive the window that
+                    // said it was recording.
+                    onClose={ended ? closeWorkspace : undefined}
                 />
             ) : null}
         </MeetingSenseContext.Provider>
