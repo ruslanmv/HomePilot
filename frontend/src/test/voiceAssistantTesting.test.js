@@ -24,6 +24,8 @@ const settingsPanel = read('frontend/src/ui/SettingsPanel.tsx');
 const ttsSection = read('frontend/src/ui/components/TtsEngineSection.tsx');
 const audioVideo = read('frontend/src/ui/components/AudioVideoSettings.tsx');
 const sttService = read('frontend/src/ui/media/sttService.ts');
+const sttRuntime = read('frontend/src/ui/media/sttRuntime.ts');
+const webSpeechSession = read('frontend/src/ui/media/webSpeechSession.ts');
 const vad = read('frontend/src/ui/voice/vad.ts');
 const transcribeRoute = read('backend/app/voice/transcribe.py');
 const mainApp = read('backend/app/main.py');
@@ -58,17 +60,98 @@ describe('SpeechService recognition instrumentation', () => {
 });
 
 describe('voice controller stop reasons', () => {
-  it('lets a VAD silence stop be deferred but forces a user-driven one', () => {
-    expect(controller).toContain("svc.stopSTT?.({ reason: 'vad_silence' })");
-    expect(controller).toContain("svc.stopSTT?.({ reason: 'manual_button', force: true })");
-    expect(controller).toContain("svc?.stopSTT?.({ reason: 'turn_lock', force: true })");
+  it('lets a deferred stop stand but forces a user-driven one', () => {
+    // The deferral itself lives in SpeechService. What the adapter must not do is force
+    // every stop — that is what cut short utterances off mid-warm-up.
+    expect(webSpeechSession).toContain('force: Boolean(options.force)');
+    expect(controller).toContain("stopWebSpeech('voice', { reason: 'manual_button', force: true })");
+    // A turn lock wants the microphone back now, transcript or not.
+    expect(controller).toContain("abortWebSpeech('turn_lock')");
   });
 
   it('logs why a turn produced no transcript, not just that it did not', () => {
-    expect(controller).toContain('svc.getSttDiagnostics?.()');
+    expect(webSpeechSession).toContain('svc.getSttDiagnostics?.()');
     expect(controller).toContain('sawAudioStart: diagnostics.sawAudioStart');
     expect(controller).toContain('sawSpeechStart: diagnostics.sawSpeechStart');
     expect(controller).toContain('stoppedBy: diagnostics.stoppedBy');
+  });
+});
+
+describe('the engine owns the microphone', () => {
+  /*
+   * The reported failure: hands-free Voice started HomePilot's VAD, which opens and holds
+   * the microphone selected in Audio & Video, and then asked the browser recognizer — which
+   * takes no deviceId and opens the OS default input — to transcribe the turn. Two captures,
+   * two devices, no error from either, and a turn that produced nothing.
+   *
+   * These assertions are what make that unrepresentable, so they are worth more than the
+   * timeout tuning they replace.
+   */
+  it('resolves the engine once, in one place, shared by chat and Voice', () => {
+    expect(sttRuntime).toContain('export function ensureSttRuntimeResolved');
+    expect(sttRuntime).toContain('stt_runtime_resolved');
+    expect(sttRuntime).toContain('usesOsDefaultInput');
+    // Both surfaces read that one object rather than resolving privately.
+    expect(controller).toContain('const runtime = useSttRuntime()');
+    expect(app).toContain('ensureSttRuntimeResolved().then');
+    // …and the old private copies are gone.
+    expect(app).not.toContain('micEngineOverrideRef');
+    expect(controller).not.toContain('const [sttEngine, setSttEngine]');
+  });
+
+  it('never starts HomePilot’s VAD on the browser engine', () => {
+    // `createVAD` must be unreachable unless the resolved engine is the local one.
+    const captureEffect = controller.slice(
+      controller.indexOf('Open exactly one capture, chosen by the engine'),
+      controller.indexOf('Give the microphone back when Voice unmounts'),
+    );
+    expect(captureEffect.length).toBeGreaterThan(0);
+    const browserBranch = captureEffect.indexOf("if (sttEngine === 'web-speech')");
+    expect(browserBranch).toBeGreaterThan(-1);
+    // The browser branch returns before `createVAD` is ever reached.
+    expect(captureEffect.indexOf('createVAD(')).toBeGreaterThan(browserBranch);
+    expect(captureEffect.slice(browserBranch, captureEffect.indexOf('createVAD(')))
+      .toContain('return () => {');
+  });
+
+  it('never starts the browser recognizer on the local engine', () => {
+    // The VAD callbacks record the VAD's own stream; nothing in them reaches Web Speech.
+    const vadCallbacks = controller.slice(
+      controller.indexOf('const vad = createVAD('),
+      controller.indexOf('vadRef.current = vad;'),
+    );
+    expect(vadCallbacks.length).toBeGreaterThan(0);
+    expect(vadCallbacks).toContain("startRecordingTurn('vad_speech_start')");
+    expect(vadCallbacks).not.toContain('startWebSpeech');
+    expect(vadCallbacks).not.toContain('startBrowserTurn');
+  });
+
+  it('hands the microphone over rather than opening a second capture', () => {
+    expect(sttRuntime).toContain('export async function acquireMicrophone');
+    expect(sttRuntime).toContain('await previous.release();');
+    expect(sttRuntime).toContain('microphone_handoff');
+    expect(controller).toContain("acquireMicrophone('voice', sttEngine");
+    expect(app).toContain("acquireMicrophone('chat', 'homepilot-backend'");
+    expect(app).toContain("acquireMicrophone('chat', 'web-speech'");
+  });
+
+  it('opens nothing at all until the engine is known', () => {
+    // `pending`, not "assume the browser and correct later": that default sent the first
+    // sentence of a session through an engine the user did not choose.
+    expect(sttRuntime).toContain("status: 'pending'");
+    expect(sttRuntime).toContain('effectiveEngine: null');
+    expect(controller).toContain('handsfree_waiting_for_engine');
+    expect(controller).toContain('stt_engine_pending');
+  });
+
+  it('keeps one browser recognizer with one owner', () => {
+    expect(webSpeechSession).toContain('export async function startWebSpeech');
+    expect(webSpeechSession).toContain("abortWebSpeech('handoff')");
+    // Events reach the surface that owns the turn *now*, never the previous one.
+    expect(webSpeechSession).toContain('current.generation !== gen');
+    // The chat composer no longer builds a recognizer of its own.
+    expect(app).not.toContain('new SR()');
+    expect(app).not.toContain('recognitionRef.current');
   });
 });
 
@@ -97,9 +180,9 @@ describe('one selected-microphone transcription path', () => {
     // preference tests below — but the trace must still say which one runs and why.
     expect(sttService).toContain("export type SttEngine = 'homepilot-backend' | 'web-speech'");
     expect(sttService).toContain('SttUnavailableError');
-    expect(controller).toContain('stt_engine_resolved');
-    expect(controller).toContain('reason: resolution.reason');
-    expect(controller).toContain('usesOsDefaultInput');
+    expect(sttRuntime).toContain('stt_runtime_resolved');
+    expect(sttRuntime).toContain('reason: override ? \'session-override\' : resolution.reason');
+    expect(sttRuntime).toContain('usesOsDefaultInput');
   });
 
   it('transcribes the VAD’s own capture, so detection and text cannot disagree', () => {
@@ -112,12 +195,15 @@ describe('one selected-microphone transcription path', () => {
     // Otherwise a perfectly working setup (Firefox, or a Chromium build with no
     // recognizer) is refused for a capability it no longer needs.
     expect(controller).toContain('mediaRecorderSupported');
-    expect(controller).toContain("(sttEngine === 'homepilot-backend' && mediaRecorderSupported) || webSpeechSupported");
+    expect(controller).toContain("sttEngine === 'homepilot-backend'\n      ? mediaRecorderSupported");
   });
 
   it('discards a turn nobody is waiting for instead of paying to transcribe it', () => {
     expect(controller).toContain("discardRecording('turn_lock')");
-    expect(controller).toContain("discardRecording('handsfree_cleanup')");
+    // Teardown goes through one release, which discards the recorder before the stream it
+    // is attached to goes away.
+    expect(controller).toContain("releaseVoiceCapture('handsfree_vad_cleanup')");
+    expect(controller).toContain('discardRecording(reason);');
   });
 
   it('reports silence as silence, not as a failure', () => {
@@ -132,22 +218,37 @@ describe('chat composer microphone button', () => {
     expect(app).toContain("microphoneDebug('chat', 'composer_mic_stop_click'");
     expect(app).toContain("microphoneDebug('chat', 'composer_mic_onstart'");
     expect(app).toContain("microphoneDebug('chat', 'composer_mic_onend'");
-    expect(app).toContain("microphoneDebug('chat', 'composer_mic_unsupported'");
+    expect(app).toContain("microphoneDebug('chat', 'composer_mic_engine'");
     expect(app).toContain("microphoneDebugError('chat', 'composer_mic_error'");
-    expect(app).toContain("microphoneDebugError('chat', 'composer_mic_start_failed'");
+    // A start the adapter refused is traced there, where the one recognizer lives.
+    expect(webSpeechSession).toContain('web_speech_start_failed');
+    expect(webSpeechSession).toContain('web_speech_unsupported');
   });
 
   it('releases the shared recognition session instead of colliding with it', () => {
-    // A page can hold only one SpeechRecognition. Starting a second one used to
-    // abort silently, which is what made the button look dead.
-    expect(app).toContain("shared.abortSTT?.('chat_composer_mic')");
+    // A page can hold only one SpeechRecognition. Starting a second one used to abort
+    // silently, which is what made the button look dead — and the composer coordinating
+    // that itself only covered one direction. One adapter does both now.
+    expect(webSpeechSession).toContain("abortWebSpeech('handoff')");
+    expect(app).toContain("abortWebSpeech('microphone_handoff')");
+    expect(app).toContain("abortWebSpeech('chat_unmount')");
   });
 
-  it('prefers HomePilot transcription and falls back only when it is absent', () => {
-    expect(app).toContain('getSttCapability().then');
+  it('is always reachable, even when there is text to send', () => {
+    // It used to be the *alternative* to Submit, so any text at all hid it: dictating a
+    // correction onto a draft meant clearing the field first.
+    expect(app).toContain('The microphone is always here.');
+    expect(app).toContain("data-testid=\"composer-mic\"");
+    expect(app).not.toContain(') : canSend ? (');
+  });
+
+  it('prefers the engine the session resolved, and falls back only when it breaks', () => {
+    expect(app).toContain('ensureSttRuntimeResolved().then');
     expect(app).toContain('startBackendListening');
     expect(app).toContain('composer_mic_fallback_web_speech');
     expect(app).toContain('recordAndTranscribe({');
+    // A mid-session fallback moves the whole session, not just this button.
+    expect(app).toContain("applySttSessionOverride(\n          'web-speech',");
   });
 
   it('shows a transcribing state rather than a still-pulsing record button', () => {
@@ -159,7 +260,7 @@ describe('chat composer microphone button', () => {
     expect(app).toContain('composer-mic-notice');
     expect(app).toContain('setMicNotice');
     expect(app).toContain('explainSttOutcome(diagnostics');
-    expect(app).toContain('explainSttError(name)');
+    expect(app).toContain('explainSttError(code)');
   });
 
   it('no longer swallows an unsupported browser or a failed start', () => {
@@ -276,18 +377,20 @@ describe('the speech-recognition engine is a choice, not a detection', () => {
   });
 
   it('lets the preference decide and the capability only constrain', () => {
-    expect(controller).toContain('resolveSttEngine(preference, {');
-    expect(app).toContain('resolveSttEngine(preference, {');
-    expect(controller).not.toContain("capability.available ? 'homepilot-backend' : 'web-speech'");
-    expect(app).not.toContain("engine: capability.available ? 'homepilot-backend' : 'web-speech'");
+    // Resolved once, in the shared runtime, rather than once per surface — two copies of
+    // this decision is how chat and Voice came to disagree about which engine was running.
+    expect(sttRuntime).toContain('resolveSttEngine(preference, {');
+    expect(controller).not.toContain('resolveSttEngine(');
+    expect(app).not.toContain('resolveSttEngine(');
+    expect(sttRuntime).not.toContain("capability.available ? 'homepilot-backend' : 'web-speech'");
   });
 
   it('never overrides a choice silently', () => {
     // Somebody who chose on-device transcription for privacy must not be quietly served the
     // browser's, which sends audio to Google.
     expect(preferences).toContain('fellBack');
-    expect(controller).toContain('fellBack: resolution.fellBack');
-    expect(app).toContain('resolution.fellBack');
+    expect(sttRuntime).toContain('fellBack: resolution.fellBack');
+    expect(app).toContain('resolution?.fellBack');
     expect(settingsCard).toContain('Not the engine you chose');
   });
 
@@ -305,7 +408,10 @@ describe('the speech-recognition engine is a choice, not a detection', () => {
   });
 
   it('re-resolves when the setting changes, without a reload', () => {
-    expect(controller).toContain('subscribeSttPreferences(resolve)');
+    // One subscription, in the shared runtime, so both surfaces move together — and a
+    // deliberate choice in Settings clears a recovery HomePilot made on its own.
+    expect(sttRuntime).toContain('preferenceSubscription = subscribeSttPreferences');
+    expect(sttRuntime).toContain('sessionOverride: null');
     expect(selfTest).toContain('subscribeSttPreferences((next) => setPreference(next.chat))');
   });
 

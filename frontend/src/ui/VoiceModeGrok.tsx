@@ -1352,24 +1352,75 @@ export default function VoiceModeGrok({
             </div>
 
             <div className="relative p-4 pb-16">
+              {/*
+                Live transcript.
+
+                On the browser engine the recognizer streams words as they are understood,
+                and showing them is what turns a silent turn into a visible one — the
+                difference between "it is hearing me" and "nothing is happening", which is
+                the whole complaint the empty turns produced. On the local engine there are
+                no interim words to show: the text arrives when the turn ends, so the state
+                line below carries the turn instead of a transcript that cannot exist yet.
+              */}
+              {voice.interimText ? (
+                <div
+                  className="mb-3 px-1"
+                  role="status"
+                  aria-live="polite"
+                  data-testid="voice-live-transcript"
+                >
+                  <div className="rounded-2xl border border-[#97C4FF]/25 bg-[#97C4FF]/[0.07] px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wider text-[#97C4FF]/70 font-semibold">
+                      Hearing
+                    </div>
+                    <p className="mt-0.5 text-[15px] leading-snug text-white/90">
+                      {voice.interimText}
+                      <span className="text-white/40">…</span>
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
               {/* Audio Level Monitor - Visible when hands-free mode is ON */}
               {voice.isHandsFree && voice.state !== 'OFF' && showAudioMeter && (
                 <div className="mb-3 px-1">
-                  <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-100 ${
-                        isListening
-                          ? 'bg-gradient-to-r from-green-400 to-green-300'
-                          : 'bg-white/50'
-                      }`}
-                      style={{ width: `${Math.min(voice.audioLevel * 500, 100)}%` }}
-                    />
-                  </div>
-                  <div className="mt-1 flex justify-between text-[10px] text-white/35 font-mono">
-                    <span>Noise {voice.noiseFloor.toFixed(3)}</span>
-                    <span>Level {voice.audioLevel.toFixed(3)}</span>
-                    <span>Thresh {voice.threshold.toFixed(3)}</span>
-                  </div>
+                  {voice.micMeterSupported ? (
+                    <>
+                      <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-100 ${
+                            isListening
+                              ? 'bg-gradient-to-r from-green-400 to-green-300'
+                              : 'bg-white/50'
+                          }`}
+                          style={{ width: `${Math.min(voice.audioLevel * 500, 100)}%` }}
+                        />
+                      </div>
+                      <div className="mt-1 flex justify-between text-[10px] text-white/35 font-mono">
+                        <span>Noise {voice.noiseFloor.toFixed(3)}</span>
+                        <span>Level {voice.audioLevel.toFixed(3)}</span>
+                        <span>Thresh {voice.threshold.toFixed(3)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    /*
+                      A meter needs a stream to read, and on the browser engine HomePilot has
+                      none: the recognizer opens its own capture and hands nothing back.
+                      Opening a second microphone purely to animate a bar is what made the
+                      meter and the transcript come from two different devices in the first
+                      place — so this says the meter is unavailable instead of drawing one
+                      that would be a lie.
+                    */
+                    <p
+                      className="text-[10px] leading-relaxed text-white/40"
+                      data-testid="voice-meter-unavailable"
+                    >
+                      The input meter is not available with browser speech recognition — it
+                      records your system default input and gives HomePilot no audio to
+                      measure. Switch Settings → Voice Assistant → Speech Recognition to “On
+                      this computer” for a live meter on the microphone you selected.
+                    </p>
+                  )}
                 </div>
               )}
 

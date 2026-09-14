@@ -38,15 +38,17 @@ import {
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
-import { explainSttError, explainSttOutcome, getSpeechRecognitionCtor, type SttDiagnostics } from './media/voiceSelfTest'
-import { getSttCapability, recordAndTranscribe, SttUnavailableError } from './media/sttService'
+import { explainSttError, explainSttOutcome, type SttDiagnostics } from './media/voiceSelfTest'
+import { recordAndTranscribe, SttUnavailableError } from './media/sttService'
+import { describeSttResolution } from './media/sttPreferences'
 import {
-  describeSttResolution,
-  getSttPreferences,
-  resolveSttEngine,
-  subscribeSttPreferences,
-  type ResolvedSttEngine,
-} from './media/sttPreferences'
+  acquireMicrophone,
+  applySttSessionOverride,
+  ensureSttRuntimeResolved,
+  getMicrophoneLease,
+  releaseMicrophone,
+} from './media/sttRuntime'
+import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
@@ -1629,18 +1631,16 @@ function QueryBar({
   // so a blocked permission, an unsupported browser and a recognizer that
   // heard nothing were all indistinguishable from a dead button.
   const [micNotice, setMicNotice] = useState<string | null>(null)
-  const recognitionRef = useRef<any>(null)
-  const micDiagnosticsRef = useRef<SttDiagnostics>({})
   const micTranscriptRef = useRef('')
   // Set while the backend path is recording, so the same button stops it.
   const micStopRecordingRef = useRef<(() => void) | null>(null)
   const [micTranscribing, setMicTranscribing] = useState(false)
   // Consecutive turns where the recognizer's capture opened and heard nothing while the
   // selected microphone was working — see `media/sttTurnHealth`. Any turn with words
-  // resets it. The override is what the recovery sets, for this session only.
+  // resets it. A recovery goes to the shared runtime, so the Voice tab moves with it
+  // instead of rediscovering the same broken device on its own.
   const micDeafTurnsRef = useRef(0)
   const micBackendUsableRef = useRef(false)
-  const micEngineOverrideRef = useRef<ResolvedSttEngine | null>(null)
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const modeMenuRef = useRef<HTMLDivElement | null>(null)
   const modeButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -1648,158 +1648,103 @@ function QueryBar({
   const [modeMenuPos, setModeMenuPos] = useState<{ top: number; right: number } | null>(null)
 
   /**
-   * Web Speech fallback for the composer microphone.
+   * The browser recognizer, through the one adapter the Voice tab also uses.
    *
-   * Used only when HomePilot's own speech-to-text is unavailable. It carries
-   * the browser's device caveat — `SpeechRecognition` takes no `deviceId` and
-   * records the OS default input, not the microphone chosen in Settings — so
-   * the notice text says so when it hears nothing.
+   * The composer used to construct `new SpeechRecognition()` itself. A page can run only one
+   * recognition session at a time, so it had to abort the Voice tab's session before taking
+   * a turn — and nothing did the reverse, which left a recognizer started here able to
+   * outlive the composer and break the next Voice turn. `media/webSpeechSession` owns that
+   * hand-off now: one recognizer, one lifecycle, one place to abort.
+   *
+   * The device caveat comes with the engine — `SpeechRecognition` takes no `deviceId` and
+   * records the OS default input, not the microphone chosen in Settings — so the notice text
+   * says so when it hears nothing.
    */
-  const startWebSpeechListening = useCallback(() => {
-    const SR = getSpeechRecognitionCtor()
-    if (!SR) {
-      microphoneDebug('chat', 'composer_mic_unsupported')
-      setMicNotice('Voice input needs the Web Speech API. Use Chrome or Edge, or type your message.')
-      return
-    }
-
-    // A page can run only one recognition session at a time. Hands-free Voice
-    // mode and the Voice panel both drive `window.SpeechService`, so starting a
-    // second recognizer here used to abort silently and leave the button dead.
-    // Release the shared session first and take the turn deliberately.
-    const shared = (window as any).SpeechService
-    const sharedWasRecognizing = Boolean(shared?.isRecognizing)
-    if (sharedWasRecognizing) {
-      try { shared.abortSTT?.('chat_composer_mic') } catch { /* best effort */ }
-    }
-
-    const lang = shared?.recognitionLang || navigator.language || 'en-US'
-    micDiagnosticsRef.current = {
-      sawAudioStart: false,
-      sawSpeechStart: false,
-      sawInterim: false,
-      sawResult: false,
-      sawNoMatch: false,
-      error: null,
-      lang,
-    }
+  const startWebSpeechListening = useCallback(async () => {
     micTranscriptRef.current = ''
-
     microphoneDebug('chat', 'composer_mic_start_click', {
-      lang,
-      releasedSharedSession: sharedWasRecognizing,
       recognitionDevice: 'browser-managed-web-speech',
     })
 
-    const recognition = new SR()
-    recognition.continuous = false
-    recognition.interimResults = true
-    recognition.lang = lang
-    recognitionRef.current = recognition
+    const started = await startWebSpeech('chat', {
+      onStart: () => {
+        microphoneDebug('chat', 'composer_mic_onstart')
+        setIsListening(true)
+      },
+      // Words as they are recognized, straight into the composer: the browser engine's one
+      // real advantage, and what tells the user it is hearing them at all.
+      onInterim: (text) => setInput(text),
+      onResult: (text) => {
+        micTranscriptRef.current = text
+        setInput(text)
+      },
+      onEnd: (diagnostics: SttDiagnostics) => {
+        microphoneDebug('chat', 'composer_mic_onend', {
+          characters: micTranscriptRef.current.trim().length,
+          sawAudioStart: diagnostics.sawAudioStart ?? null,
+          sawSpeechStart: diagnostics.sawSpeechStart ?? null,
+          sawInterim: diagnostics.sawInterim ?? null,
+          sawNoMatch: diagnostics.sawNoMatch ?? null,
+          error: diagnostics.error ?? null,
+        })
+        setIsListening(false)
+        // Say why nothing arrived instead of resetting the button in silence.
+        if (!micTranscriptRef.current.trim()) {
+          const outcome = explainSttOutcome(diagnostics, '')
+          setMicNotice(`${outcome.headline}. ${outcome.detail}`)
+        }
 
-    recognition.onstart = () => {
-      microphoneDebug('chat', 'composer_mic_onstart', { lang })
-      setIsListening(true)
-    }
+        // A recognizer that keeps opening a silent device is not something to keep
+        // explaining once per press. Advice the user has already read twice and not acted on
+        // is not advice any more, so if there is a transcription path that records the
+        // microphone they actually selected, take it.
+        const deaf = isDeafTurn({
+          hadResult: Boolean(micTranscriptRef.current.trim()),
+          sawAudioStart: diagnostics.sawAudioStart,
+          sawSpeechStart: diagnostics.sawSpeechStart,
+          sawInterim: diagnostics.sawInterim,
+          error: diagnostics.error,
+        })
+        micDeafTurnsRef.current = deaf ? micDeafTurnsRef.current + 1 : 0
+        if (!deaf) return
 
-    // Without these, "it recorded nothing" cannot be told apart from "it never
-    // opened the microphone" — the same blind spot Voice mode had.
-    recognition.onaudiostart = () => {
-      micDiagnosticsRef.current.sawAudioStart = true
-      microphoneDebug('chat', 'composer_mic_audiostart')
-    }
-    recognition.onspeechstart = () => {
-      micDiagnosticsRef.current.sawSpeechStart = true
-      microphoneDebug('chat', 'composer_mic_speechstart')
-    }
-    recognition.onnomatch = () => {
-      micDiagnosticsRef.current.sawNoMatch = true
-      microphoneDebug('chat', 'composer_mic_nomatch')
-    }
-
-    recognition.onend = () => {
-      const diagnostics = micDiagnosticsRef.current
-      microphoneDebug('chat', 'composer_mic_onend', {
-        characters: micTranscriptRef.current.trim().length,
-        sawAudioStart: diagnostics.sawAudioStart ?? null,
-        sawSpeechStart: diagnostics.sawSpeechStart ?? null,
-        sawInterim: diagnostics.sawInterim ?? null,
-        sawNoMatch: diagnostics.sawNoMatch ?? null,
-        error: diagnostics.error ?? null,
-      })
-      setIsListening(false)
-      recognitionRef.current = null
-      // Say why nothing arrived instead of resetting the button in silence.
-      if (!micTranscriptRef.current.trim()) {
-        const outcome = explainSttOutcome(diagnostics, '')
+        const recovery = planSttRecovery(micDeafTurnsRef.current, {
+          backendUsable: micBackendUsableRef.current,
+          homepilotHoldsMicrophone: getMicrophoneLease()?.engine === 'homepilot-backend',
+        })
+        if (recovery.action === 'none') return
+        microphoneDebug('chat', 'composer_mic_deaf_recognizer_recovery', {
+          action: recovery.action,
+          deafTurns: micDeafTurnsRef.current,
+          backendUsable: micBackendUsableRef.current,
+        })
+        micDeafTurnsRef.current = 0
+        setMicNotice(recovery.message)
+        // For this session only, and for both surfaces: the same microphone is deaf in the
+        // Voice tab too. The stored preference is the user's and stays theirs; Settings goes
+        // on showing what they chose, and the notice says where to change it.
+        if (recovery.action === 'switch-to-backend') {
+          applySttSessionOverride('homepilot-backend', recovery.message, 'chat')
+        }
+      },
+      onError: (code) => {
+        microphoneDebugError('chat', 'composer_mic_error', new Error(code || 'unknown'))
+        // `onEnd` usually follows and renders the verdict; keep the state reset here so the
+        // button never sticks if it does not.
+        setIsListening(false)
+        if (code === 'not-supported') {
+          setMicNotice(
+            'Voice input needs the Web Speech API. Use Chrome or Edge, or set Settings → '
+            + 'Voice Assistant → Speech Recognition to “On this computer”.',
+          )
+          return
+        }
+        const outcome = explainSttError(code)
         setMicNotice(`${outcome.headline}. ${outcome.detail}`)
-      }
+      },
+    })
 
-      // A recognizer that keeps opening a silent device is not something to keep
-      // explaining once per press. Advice the user has already read twice and not acted on
-      // is not advice any more, so if there is a transcription path that records the
-      // microphone they actually selected, take it.
-      const deaf = isDeafTurn({
-        hadResult: Boolean(micTranscriptRef.current.trim()),
-        sawAudioStart: diagnostics.sawAudioStart,
-        sawSpeechStart: diagnostics.sawSpeechStart,
-        sawInterim: diagnostics.sawInterim,
-        error: diagnostics.error,
-      })
-      micDeafTurnsRef.current = deaf ? micDeafTurnsRef.current + 1 : 0
-      if (!deaf) return
-
-      const recovery = planSttRecovery(micDeafTurnsRef.current, {
-        backendUsable: micBackendUsableRef.current,
-      })
-      if (recovery.action === 'none') return
-      microphoneDebug('chat', 'composer_mic_deaf_recognizer_recovery', {
-        action: recovery.action,
-        deafTurns: micDeafTurnsRef.current,
-        backendUsable: micBackendUsableRef.current,
-      })
-      micDeafTurnsRef.current = 0
-      setMicNotice(recovery.message)
-      // For this session only. The stored preference is the user's and stays theirs;
-      // Settings goes on showing what they chose, and the notice says where to change it.
-      if (recovery.action === 'switch-to-backend') micEngineOverrideRef.current = 'homepilot-backend'
-    }
-
-    recognition.onerror = (event: any) => {
-      micDiagnosticsRef.current.error = event?.error || 'unknown'
-      microphoneDebugError('chat', 'composer_mic_error', new Error(event?.error || 'unknown'))
-      // `onend` always follows and renders the verdict; keep the state reset
-      // here so the button never sticks if it does not.
-      setIsListening(false)
-    }
-
-    recognition.onresult = (event: any) => {
-      let finalTranscript = ''
-      let interimTranscript = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript
-        if (event.results[i].isFinal) finalTranscript += t + ' '
-        else interimTranscript += t
-      }
-      if (interimTranscript) micDiagnosticsRef.current.sawInterim = true
-      if (finalTranscript) {
-        micDiagnosticsRef.current.sawResult = true
-        micTranscriptRef.current = finalTranscript
-      }
-      // Show interim text while speaking, final text when done
-      setInput(finalTranscript.trim() || interimTranscript)
-    }
-
-    try {
-      recognition.start()
-    } catch (error) {
-      recognitionRef.current = null
-      setIsListening(false)
-      const name = (error as { name?: string })?.name || 'start_failed'
-      microphoneDebugError('chat', 'composer_mic_start_failed', error)
-      const outcome = explainSttError(name)
-      setMicNotice(`${outcome.headline}. ${outcome.detail}`)
-    }
+    if (!started) setIsListening(false)
   }, [setInput])
 
   /**
@@ -1818,6 +1763,7 @@ function QueryBar({
         onRecording: ({ stop }) => { micStopRecordingRef.current = stop },
       })
       micStopRecordingRef.current = null
+      void releaseMicrophone('chat')
       setIsListening(false)
       setMicTranscribing(false)
 
@@ -1833,15 +1779,25 @@ function QueryBar({
       )
     } catch (error) {
       micStopRecordingRef.current = null
+      void releaseMicrophone('chat')
       setIsListening(false)
       setMicTranscribing(false)
       microphoneDebugError('chat', 'composer_mic_backend_failed', error)
 
       if (error instanceof SttUnavailableError) {
-        // The server lost its provider mid-session. Fall back rather than
-        // leaving the user with a dead button.
+        // The server lost its provider mid-session. Fall back rather than leaving the user
+        // with a dead button — and move the whole session, so the Voice tab does not go on
+        // posting clips to a transcriber that is gone.
         microphoneDebug('chat', 'composer_mic_fallback_web_speech')
-        startWebSpeechListening()
+        applySttSessionOverride(
+          'web-speech',
+          'HomePilot could not transcribe on this computer, so this session has moved to the '
+          + 'browser’s speech recognition. It records your system default input, not the '
+          + 'microphone selected in Audio & Video.',
+          'chat',
+        )
+        await acquireMicrophone('chat', 'web-speech', () => abortWebSpeech('microphone_handoff'))
+        void startWebSpeechListening()
         return
       }
       const message = error instanceof Error ? error.message : 'Voice input failed.'
@@ -1849,12 +1805,11 @@ function QueryBar({
     }
   }, [setInput, startWebSpeechListening])
 
-  // Choosing an engine in Settings is a deliberate act and outranks a recovery HomePilot
-  // made on its own: it clears both the override and the evidence behind it.
-  useEffect(() => subscribeSttPreferences(() => {
-    micEngineOverrideRef.current = null
-    micDeafTurnsRef.current = 0
-  }), [])
+  /** Give the microphone back if the composer unmounts mid-turn. */
+  useEffect(() => () => {
+    abortWebSpeech('chat_unmount')
+    void releaseMicrophone('chat')
+  }, [])
 
   const toggleListening = useCallback(() => {
     // Stop if already listening — whichever path owns the turn.
@@ -1866,58 +1821,55 @@ function QueryBar({
         micStopRecordingRef.current()
         return
       }
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop() } catch { /* already ending */ }
-      }
+      // An explicit press of Stop must stop now, not after the recognizer's warm-up guard.
+      stopWebSpeech('chat', { reason: 'composer_mic_stop_click', force: true })
       return
     }
 
     setMicNotice(null)
 
-    // Prefer HomePilot's own transcription; the capability is cached, so this
-    // costs a round trip once per session rather than once per press.
-    // The user's choice decides; the capability only constrains it. Preferring the backend
-    // purely because it reported itself available is what broke chat speech-to-text on a
-    // machine whose CUDA runtime was incomplete — available, and failing every turn.
-    const preference = getSttPreferences().chat
-    void getSttCapability().then((capability) => {
-      const resolution = resolveSttEngine(preference, {
-        backendAvailable: capability.available,
-        mediaRecorderSupported: typeof MediaRecorder !== 'undefined'
-          && !!navigator.mediaDevices?.getUserMedia,
-        webSpeechSupported: !!getSpeechRecognitionCtor(),
-      })
-      micBackendUsableRef.current = capability.available
-        && typeof MediaRecorder !== 'undefined'
-        && !!navigator.mediaDevices?.getUserMedia
-      // A recovery already made this session stands until the user changes the preference,
-      // which re-resolves from scratch — so it is honoured here rather than overwritten by
-      // a resolution that cannot know the recognizer turned out to be deaf.
-      const override = micEngineOverrideRef.current
-      const engine = override && micBackendUsableRef.current ? override : resolution.engine
+    // One shared decision, not a private one. The Voice tab reads the same runtime, so an
+    // engine chosen — or recovered onto — in either surface is the engine in both, and the
+    // user's Settings choice means what it says.
+    void ensureSttRuntimeResolved().then(async (runtime) => {
+      const { capability, resolution, effectiveEngine, sessionOverride } = runtime
+      micBackendUsableRef.current = runtime.backendUsable
       microphoneDebug('chat', 'composer_mic_engine', {
-        preference,
-        engine,
-        reason: override && engine === override ? 'deaf-recognizer-recovery' : resolution.reason,
-        fellBack: resolution.fellBack,
-        provider: capability.provider,
-        remote: capability.remote,
+        preference: runtime.preference,
+        engine: effectiveEngine,
+        reason: sessionOverride ? 'session-override' : resolution?.reason ?? null,
+        fellBack: Boolean(resolution?.fellBack),
+        provider: capability?.provider ?? null,
+        remote: Boolean(capability?.remote),
       })
-      if (!resolution.usable && !override) {
-        setMicNotice(describeSttResolution(resolution, capability.provider))
+
+      if (!effectiveEngine) {
+        setMicNotice('HomePilot is still working out which speech engine to use. Try again in a moment.')
+        return
+      }
+      if (resolution && !resolution.usable && !sessionOverride) {
+        setMicNotice(describeSttResolution(resolution, capability?.provider ?? null))
         return
       }
       // A choice that was overridden is said out loud: somebody who picked on-device
       // transcription for privacy must not be quietly served the browser's, which sends
       // audio to Google.
-      if (resolution.fellBack && !override) {
-        setMicNotice(describeSttResolution(resolution, capability.provider))
+      if (resolution?.fellBack && !sessionOverride) {
+        setMicNotice(describeSttResolution(resolution, capability?.provider ?? null))
       }
-      if (engine === 'homepilot-backend') {
+
+      if (effectiveEngine === 'homepilot-backend') {
+        // Take the microphone before opening it: if the Voice tab is holding a capture, its
+        // release runs first, so there are never two recorders on one device.
+        await acquireMicrophone('chat', 'homepilot-backend', () => {
+          micStopRecordingRef.current?.()
+          micStopRecordingRef.current = null
+        })
         void startBackendListening()
         return
       }
-      startWebSpeechListening()
+      await acquireMicrophone('chat', 'web-speech', () => abortWebSpeech('microphone_handoff'))
+      void startWebSpeechListening()
     })
   }, [isListening, startBackendListening, startWebSpeechListening])
 
@@ -2081,6 +2033,14 @@ function QueryBar({
               : null}
             </div>
           ) : null}
+          {/* The microphone is always here.
+              It used to be the *alternative* to Submit, so the moment there was anything to
+              send — a typed word, a dictated sentence, a pasted line — the button vanished.
+              That is the report "the mic button is hidden in the browser": dictating a
+              correction onto an existing draft, or simply starting to type and changing your
+              mind, meant there was no way back to voice without clearing the field first.
+              Voice input is not the absence of text, so it no longer disappears when text
+              exists. */}
           {micTranscribing ? (
             /* Transcription is a round trip. Showing it as a distinct state
                beats a still-pulsing record button that implies it is
@@ -2088,23 +2048,30 @@ function QueryBar({
             <button
               type="button"
               disabled
+              data-testid="composer-mic"
               className="h-10 w-10 rounded-full grid place-items-center bg-white/10 text-white/60 cursor-wait"
               aria-label="Transcribing"
               title="Transcribing…"
             >
               <Loader2 size={18} className="animate-spin" />
             </button>
-          ) : isListening ? (
+          ) : (
             <button
               type="button"
-              className="h-10 w-10 rounded-full grid place-items-center bg-red-500/20 text-red-400 ring-2 ring-red-500/60 animate-pulse transition-colors"
-              aria-label="Stop recording"
-              title="Stop recording"
+              data-testid="composer-mic"
+              className={
+                isListening
+                  ? 'h-10 w-10 rounded-full grid place-items-center bg-red-500/20 text-red-400 ring-2 ring-red-500/60 animate-pulse transition-colors'
+                  : 'h-10 w-10 rounded-full bg-white/5 text-white/60 grid place-items-center hover:bg-white/10 hover:text-white transition-colors'
+              }
+              aria-label={isListening ? 'Stop recording' : 'Voice input'}
+              title={isListening ? 'Stop recording' : 'Voice input'}
               onClick={toggleListening}
             >
               <Mic size={18} />
             </button>
-          ) : canSend ? (
+          )}
+          {canSend && !isListening && !micTranscribing ? (
             <button
               type="button"
               onClick={onSend}
@@ -2114,17 +2081,7 @@ function QueryBar({
             >
               <Send size={18} strokeWidth={2.25} />
             </button>
-          ) : (
-            <button
-              type="button"
-              className="h-10 w-10 rounded-full bg-white/5 text-white/60 grid place-items-center hover:bg-white/10 hover:text-white transition-colors"
-              aria-label="Voice input"
-              title="Voice input"
-              onClick={toggleListening}
-            >
-              <Mic size={18} />
-            </button>
-          )}
+          ) : null}
         </div>
 
         {/* Why voice input produced nothing. Silently resetting the button is

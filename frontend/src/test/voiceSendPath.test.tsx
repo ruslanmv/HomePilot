@@ -27,6 +27,8 @@ vi.mock('../ui/media/sttService', () => ({
 }));
 
 import { useVoiceController } from '../ui/voice/useVoiceController';
+import { resetSttRuntimeForTests } from '../ui/media/sttRuntime';
+import { resetWebSpeechForTests } from '../ui/media/webSpeechSession';
 
 type Callbacks = {
   onStart?: () => void;
@@ -69,6 +71,10 @@ const fakeStream = () => ({
 beforeEach(() => {
   localStorage.clear();
   localStorage.setItem('homepilot_voice_handsfree', 'false');
+  // The engine decision and the page's one recognizer are session-scoped singletons, which
+  // is the point of them. A test file is a new session.
+  resetSttRuntimeForTests();
+  resetWebSpeechForTests();
   callbacks = {};
   FakeMediaRecorder.last = null;
   stopTrack.mockClear();
@@ -113,16 +119,40 @@ describe('the browser engine', () => {
     const { onSendText, result } = await mountVoice('web-speech');
     expect(result.current.sttEngine).toBe('web-speech');
 
+    // The recognizer only speaks to whoever owns the turn, so there has to be one.
+    await act(async () => { await result.current.startManualListening(); });
     act(() => { callbacks.onResult?.('  turn on the kitchen lights  '); });
 
     // Trimmed, and nothing else changed: this text is what the model is asked.
     expect(onSendText).toHaveBeenCalledWith('turn on the kitchen lights');
   });
 
+  it('shows words as they are recognized, before the turn ends', async () => {
+    // The live transcript is the browser engine's one real advantage over transcribing on
+    // this computer, and what tells the user a turn is working rather than silent.
+    const { result } = await mountVoice('web-speech');
+    await act(async () => { await result.current.startManualListening(); });
+
+    act(() => { callbacks.onInterim?.('turn on the'); });
+    expect(result.current.interimText).toBe('turn on the');
+    expect(result.current.liveTranscriptSupported).toBe(true);
+  });
+
   it('sends nothing when the recognizer returns an empty string', async () => {
-    const { onSendText } = await mountVoice('web-speech');
+    const { onSendText, result } = await mountVoice('web-speech');
+    await act(async () => { await result.current.startManualListening(); });
     act(() => { callbacks.onResult?.('   '); });
     expect(onSendText).not.toHaveBeenCalled();
+  });
+
+  it('opens no recorder and no VAD capture', async () => {
+    // The whole bug: a second capture, on a device nobody transcribes.
+    const { result } = await mountVoice('web-speech');
+    await act(async () => { await result.current.startManualListening(); });
+
+    expect(openSelectedMicrophone).not.toHaveBeenCalled();
+    expect(FakeMediaRecorder.last).toBeNull();
+    expect(result.current.micMeterSupported).toBe(false);
   });
 });
 

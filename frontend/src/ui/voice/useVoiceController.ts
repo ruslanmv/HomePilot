@@ -3,34 +3,64 @@
  *
  * Industry-standard state machine for voice interaction:
  * - OFF: Voice features disabled
- * - IDLE: Waiting for speech (VAD running)
- * - LISTENING: User is speaking (STT active)
+ * - IDLE: Waiting for speech
+ * - LISTENING: The user is speaking (a turn is being captured)
  * - THINKING: Processing user input (waiting for LLM)
  * - SPEAKING: TTS playing response
  *
- * Key features:
- * - VAD never stops during TTS (true barge-in)
- * - Event-driven TTS monitoring
- * - Proper state transitions
- * - Browser AEC/NS/AGC enabled
+ * ── The engine owns the microphone ──────────────────────────────────────────────────────
+ *
+ * There are two capture architectures here and they are mutually exclusive. Running both was
+ * the bug:
+ *
+ *   - `homepilot-backend` — HomePilot's VAD opens the microphone selected in Audio & Video,
+ *     `MediaRecorder` borrows *that exact stream*, and the clip goes to
+ *     `POST /v1/voice/transcribe`. Detection and transcription cannot disagree about the
+ *     device, and the level meter is reading the same audio that gets transcribed.
+ *   - `web-speech` — the browser's recognizer opens its own capture, on the operating
+ *     system's default input, and accepts neither a `deviceId` nor a `MediaStream`. It
+ *     streams interim words, which is the one thing the local path cannot do.
+ *
+ * Hands-free used to start the VAD *and* then ask the browser recognizer to transcribe. Two
+ * captures on two different devices, one turn, no error from either:
+ *
+ *     [vad]   capture_opened          ← the selected microphone, held open all session
+ *     [voice] stt_onstart             ← a second capture, on the OS default
+ *     [voice] stt_onend { hadResult: false, sawSpeechStart: false }
+ *
+ * So the orb tracked the speaker and nothing came out. No warm-up window or grace period can
+ * fix that; the recognizer was never listening to the microphone the meter was reading. Now
+ * the resolved engine decides who captures, `media/sttRuntime` guarantees there is only one
+ * owner, and switching engines releases the old capture before opening the new one.
+ *
+ * Barge-in belongs to the VAD path for the same reason: on the browser engine HomePilot has
+ * no stream to watch while it is speaking, and leaving the recognizer running would feed the
+ * assistant's own voice back in as the next turn. There, listening stops while TTS plays and
+ * resumes after — reported through `bargeInSupported` rather than silently absent.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createVAD, VADInstance, VADConfig } from './vad';
 import { microphoneDebug, microphoneDebugError } from '../media/microphoneDebug';
 import {
-  getSttCapability,
   openSelectedMicrophone,
   SttUnavailableError,
   transcribeBlob,
-  type SttEngine,
 } from '../media/sttService';
+import type { ResolvedSttEngine, SttResolution } from '../media/sttPreferences';
 import {
-  getSttPreferences,
-  resolveSttEngine,
-  subscribeSttPreferences,
-  type SttResolution,
-} from '../media/sttPreferences';
+  acquireMicrophone,
+  applySttSessionOverride,
+  getMicrophoneLease,
+  releaseMicrophone,
+} from '../media/sttRuntime';
+import { useSttRuntime } from '../media/useSttRuntime';
+import {
+  abortWebSpeech,
+  isWebSpeechSupported,
+  startWebSpeech,
+  stopWebSpeech,
+} from '../media/webSpeechSession';
 import { isDeafTurn, planSttRecovery } from '../media/sttTurnHealth';
 
 export type VoiceState = 'OFF' | 'IDLE' | 'LISTENING' | 'THINKING' | 'SPEAKING';
@@ -57,20 +87,19 @@ export interface VoiceController {
   clearError: () => void;
 
   /**
-   * Which transcription path this session resolved to.
+   * Which transcription path owns the microphone this session, or `null` while the
+   * capability probe is still in flight.
    *
-   * `homepilot-backend` records the microphone selected in Audio & Video and
-   * transcribes it server-side. `web-speech` is the fallback for servers with
-   * no speech provider configured, and carries the browser's device caveat:
-   * it records the OS default input regardless of that selection.
+   * `null` is deliberate and must be respected by callers: nothing may open a capture before
+   * it resolves. Defaulting to the browser during the probe is what sent the first sentence
+   * of a session — the one that matters most — through an engine the user did not choose.
    */
-  sttEngine: SttEngine;
+  sttEngine: ResolvedSttEngine | null;
+  /** False while the engine is still being decided. */
+  sttReady: boolean;
   /** Name of the server-side provider when one is in use. */
   sttProvider: string | null;
-  /**
-   * How that engine was arrived at, including whether the user's choice was overridden.
-   * `null` until the capability probe answers.
-   */
+  /** How the engine was arrived at, including whether the user's choice was overridden. */
   sttResolution: SttResolution | null;
   /**
    * A change HomePilot made to the transcription path on its own, in words for the user.
@@ -80,6 +109,13 @@ export interface VoiceController {
    */
   sttNotice: string | null;
   dismissSttNotice: () => void;
+
+  /** The level meter reads HomePilot's own capture, which only the local engine opens. */
+  micMeterSupported: boolean;
+  /** Words appear while you speak only on the browser engine. */
+  liveTranscriptSupported: boolean;
+  /** Speaking over the assistant needs the VAD, so only the local engine can do it. */
+  bargeInSupported: boolean;
 
   setHandsFree: (enabled: boolean) => void;
   setTtsEnabled: (enabled: boolean) => void;
@@ -106,6 +142,23 @@ const DEFAULT_CONFIG: VoiceControllerConfig = {
   },
 };
 
+/** Gap between a hands-free browser turn ending and the next one opening. */
+const BROWSER_RESTART_MS = 400;
+/**
+ * A turn shorter than this never listened to anything — the recognizer refused and ended
+ * immediately. Backing off stops a refusal from becoming a hot loop of `start()` calls.
+ */
+const BROWSER_MIN_HEALTHY_TURN_MS = 300;
+const BROWSER_MAX_CONSECUTIVE_FAILURES = 5;
+
+/** Recognizer errors that will not fix themselves; restarting only repeats them. */
+const FATAL_RECOGNITION_ERRORS = new Set([
+  'not-allowed',
+  'service-not-allowed',
+  'audio-capture',
+  'not-supported',
+]);
+
 declare global {
   interface Window {
     SpeechService?: any;
@@ -118,11 +171,6 @@ export function useVoiceController(
 ): VoiceController {
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const svc = window.SpeechService;
-
-  const webSpeechSupported =
-    typeof window !== 'undefined' &&
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (!!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition);
 
   const mediaRecorderSupported =
     typeof window !== 'undefined' &&
@@ -146,37 +194,45 @@ export function useVoiceController(
   const [selectedVoice, setSelectedVoiceState] = useState<string>(() => {
     return localStorage.getItem('homepilot_voice_uri') || '';
   });
-
-  // Backend transcription is preferred and resolved once per session. Until the
-  // capability answers, the Web Speech fallback stands in, so voice is never
-  // dead while the probe is in flight.
-  const [sttEngine, setSttEngine] = useState<SttEngine>('web-speech');
-  const [sttProvider, setSttProvider] = useState<string | null>(null);
-  const [sttResolution, setSttResolution] = useState<SttResolution | null>(null);
   const [sttNotice, setSttNotice] = useState<string | null>(null);
-  const sttEngineRef = useRef<SttEngine>('web-speech');
+
+  /**
+   * The engine decision, shared with the chat composer rather than duplicated.
+   *
+   * Both surfaces read one object, so a recovery made here is the engine there too — the
+   * inconsistency that made "Settings says one choice for Chat and Voice" only half true.
+   */
+  const runtime = useSttRuntime();
+  const sttEngine = runtime.effectiveEngine;
+  const sttProvider = runtime.capability?.provider ?? null;
+  const sttResolution = runtime.resolution;
+
+  const sttEngineRef = useRef<ResolvedSttEngine | null>(null);
+  const backendUsableRef = useRef(false);
 
   /**
    * Evidence that the browser recognizer is listening to a device that hears nothing.
    *
    * The count is consecutive and any turn that produces words resets it: a microphone that
-   * works once works. `backendUsableRef` is what the recovery has to spend, recorded by the
-   * capability probe so the decision does not have to wait on a round trip at the moment it
-   * is made.
+   * works once works.
    */
   const deafTurnsRef = useRef(0);
-  const backendUsableRef = useRef(false);
 
   /**
-   * Whether *some* path can transcribe.
+   * Whether *some* path can transcribe with the engine that is actually running.
    *
-   * Deliberately not "does this browser implement the Web Speech API": with
-   * backend transcription the browser only has to be able to record, so gating
-   * voice on Web Speech would refuse a perfectly working setup (Firefox, or a
-   * Chromium build without the recognizer).
+   * Deliberately not "does this browser implement the Web Speech API": with backend
+   * transcription the browser only has to be able to record, so gating voice on Web Speech
+   * would refuse a perfectly working setup (Firefox, or a Chromium build without the
+   * recognizer).
    */
+  const webSpeechSupported = isWebSpeechSupported();
   const sttSupported =
-    (sttEngine === 'homepilot-backend' && mediaRecorderSupported) || webSpeechSupported;
+    sttEngine === 'homepilot-backend'
+      ? mediaRecorderSupported
+      : sttEngine === 'web-speech'
+        ? webSpeechSupported
+        : mediaRecorderSupported || webSpeechSupported;
 
   const vadRef = useRef<VADInstance | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -192,6 +248,9 @@ export function useVoiceController(
   const postTtsMicGuardUntilRef = useRef<number>(0);
   const handsFreeGenerationRef = useRef<number>(0);
   const listeningSuppressedRef = useRef<boolean>(false);
+  const browserRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const browserTurnStartedAtRef = useRef<number>(0);
+  const browserFailuresRef = useRef(0);
 
   useEffect(() => {
     stateRef.current = state;
@@ -200,6 +259,20 @@ export function useVoiceController(
   useEffect(() => {
     sttEngineRef.current = sttEngine;
   }, [sttEngine]);
+
+  useEffect(() => {
+    backendUsableRef.current = runtime.backendUsable;
+  }, [runtime.backendUsable]);
+
+  /**
+   * A recovery started anywhere in the session is said out loud here too.
+   *
+   * The chat composer can be the surface that discovers the recognizer is deaf. The user is
+   * one person with one microphone, so the explanation belongs wherever they look next.
+   */
+  useEffect(() => {
+    if (runtime.sessionOverrideMessage) setSttNotice(runtime.sessionOverrideMessage);
+  }, [runtime.sessionOverrideMessage]);
 
   /**
    * The newest `onSendText` and hands-free flag, reachable without depending on them.
@@ -211,65 +284,13 @@ export function useVoiceController(
    * microphone, the restart calls `setState`, which renders, which restarts it again: the
    * capture tears down and reopens in a loop and Voice never becomes usable.
    *
-   * Reading through a ref keeps the turn handlers stable, so the VAD effect restarts only
+   * Reading through a ref keeps the turn handlers stable, so the capture effect restarts only
    * when the capture configuration genuinely changes.
    */
   const onSendTextRef = useRef(onSendText);
   const isHandsFreeRef = useRef(isHandsFree);
   useEffect(() => { onSendTextRef.current = onSendText; }, [onSendText]);
   useEffect(() => { isHandsFreeRef.current = isHandsFree; }, [isHandsFree]);
-
-  /**
-   * Resolve the transcription path from the user's choice and what this machine can do.
-   *
-   * Not "use the backend whenever it reports available" — that was the previous rule and it
-   * is what broke chat speech-to-text on a machine whose CUDA runtime was incomplete: the
-   * provider reported itself available and then failed every turn, while the browser path
-   * would have worked. Availability is not suitability, so the preference decides and the
-   * capability only constrains.
-   *
-   * Re-runs when the preference changes, so switching engines in Settings takes effect
-   * without a reload.
-   */
-  useEffect(() => {
-    let cancelled = false;
-
-    const resolve = () => {
-      const preference = getSttPreferences().chat;
-      void getSttCapability().then((capability) => {
-        if (cancelled) return;
-        const resolution = resolveSttEngine(preference, {
-          backendAvailable: capability.available,
-          mediaRecorderSupported,
-          webSpeechSupported,
-        });
-        setSttEngine(resolution.engine);
-        setSttProvider(capability.provider);
-        setSttResolution(resolution);
-        backendUsableRef.current = capability.available && mediaRecorderSupported;
-        // Choosing an engine deliberately clears a verdict reached about the previous one.
-        deafTurnsRef.current = 0;
-        microphoneDebug('voice', 'stt_engine_resolved', {
-          preference,
-          engine: resolution.engine,
-          reason: resolution.reason,
-          // A choice that was overridden has to be visible. Somebody who picked local
-          // transcription for privacy and is quietly served the browser's — which ships
-          // audio to Google — has been failed in a way no later message makes up for.
-          fellBack: resolution.fellBack,
-          usable: resolution.usable,
-          provider: capability.provider,
-          remote: capability.remote,
-          usesOsDefaultInput: resolution.engine === 'web-speech',
-        });
-      });
-    };
-
-    resolve();
-    // Settings writes the preference; every surface re-resolves rather than caching a copy.
-    const unsubscribe = subscribeSttPreferences(resolve);
-    return () => { cancelled = true; unsubscribe(); };
-  }, [mediaRecorderSupported, webSpeechSupported]);
 
   useEffect(() => {
     if (state === 'THINKING' && isHandsFree) {
@@ -330,64 +351,6 @@ export function useVoiceController(
     setSelectedVoiceState(voiceURI);
     localStorage.setItem('homepilot_voice_uri', voiceURI);
   }, []);
-
-  useEffect(() => {
-    if (!svc) return;
-
-    let lastTTSState = false;
-
-    const checkTTSState = () => {
-      const isSpeaking = svc.isSpeaking || false;
-
-      if (isSpeaking !== lastTTSState) {
-        lastTTSState = isSpeaking;
-
-        if (isSpeaking) {
-          console.log('[VoiceController] TTS started - state: SPEAKING');
-          setState('SPEAKING');
-
-          if (vadRef.current?.isRunning() && !vadRef.current.isPaused()) {
-            vadRef.current.pause();
-            setAudioLevel(0);
-            console.log('[VoiceController] VAD paused during TTS');
-          }
-
-          if (ttsEndTimeoutRef.current) {
-            clearTimeout(ttsEndTimeoutRef.current);
-            ttsEndTimeoutRef.current = null;
-          }
-        } else {
-          console.log('[VoiceController] TTS ended - waiting before state transition');
-          ttsEndTimeoutRef.current = setTimeout(() => {
-            postTtsMicGuardUntilRef.current = Date.now() + (cfg.postTtsMicGuardMs ?? 0);
-
-            if (vadRef.current?.isRunning() && vadRef.current.isPaused()) {
-              vadRef.current.resume();
-              setAudioLevel(0);
-              console.log('[VoiceController] VAD resumed after TTS');
-            }
-
-            if (stateRef.current === 'SPEAKING') {
-              const nextState = isHandsFree ? 'IDLE' : 'OFF';
-              setState(nextState);
-              console.log(`[VoiceController] Transitioned to ${nextState} after TTS`);
-            }
-            ttsEndTimeoutRef.current = null;
-          }, cfg.ttsEndDelay);
-        }
-      }
-    };
-
-    const interval = setInterval(checkTTSState, 50);
-
-    return () => {
-      clearInterval(interval);
-      if (ttsEndTimeoutRef.current) {
-        clearTimeout(ttsEndTimeoutRef.current);
-        ttsEndTimeoutRef.current = null;
-      }
-    };
-  }, [svc, isHandsFree, cfg.ttsEndDelay, cfg.postTtsMicGuardMs]);
 
   /**
    * Stop and discard any in-flight recorder without transcribing it.
@@ -530,12 +493,15 @@ export function useVoiceController(
           if (error instanceof SttUnavailableError) {
             // The server cannot transcribe — no provider, or one that failed to load. Drop
             // to the browser recognizer rather than leaving hands-free voice deaf for the
-            // rest of the session. It records the OS default input instead of the selected
-            // microphone, which is worse but is not nothing, and the trace says which.
-            microphoneDebug('voice', 'stt_engine_fallback_web_speech', {
-              reason: error.message,
-            });
-            setSttEngine('web-speech');
+            // rest of the session, and say so: it records the OS default input instead of
+            // the selected microphone, which is worse but is not nothing.
+            applySttSessionOverride(
+              'web-speech',
+              'HomePilot could not transcribe on this computer, so this session has moved to '
+              + 'the browser’s speech recognition. It records your system default input, not '
+              + 'the microphone selected in Audio & Video.',
+              'voice',
+            );
           }
           setLastError(error instanceof Error ? error.message : 'transcription_failed');
           setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
@@ -560,7 +526,7 @@ export function useVoiceController(
     setState('LISTENING');
     return true;
     // Deliberately no dependencies: everything render-scoped is read through a ref above, so
-    // this stays identity-stable and the VAD effect below does not restart on every render.
+    // this stays identity-stable and the capture effect below does not restart on every render.
   }, []);
 
   /** End the turn and let `onstop` transcribe what was captured. */
@@ -575,95 +541,108 @@ export function useVoiceController(
     }
   }, []);
 
-  /**
-   * Start browser SpeechRecognition and await its actual boolean result.
+  /* ── The browser engine ───────────────────────────────────────────────────────────────
    *
-   * Web Speech does not expose a deviceId constraint. The selected microphone is used by
-   * HomePilot's VAD stream, while recognition itself is browser-managed. Logging that fact is
-   * critical when the VAD meter moves but recognition is listening to a different OS default.
-   */
-  const startRecognition = useCallback(async (reason: string): Promise<boolean> => {
-    if (!svc?.startSTT) {
-      microphoneDebug('voice', 'stt_start_unavailable', { reason, state: stateRef.current });
-      setLastError('stt_start_unavailable');
-      setState(isHandsFree ? 'IDLE' : 'OFF');
-      return false;
-    }
+   * No VAD here, deliberately. The recognizer opens its own capture and cannot be handed
+   * one, so a VAD running alongside would be a second microphone nobody transcribes — the
+   * exact split this rewrite removes. Hands-free is therefore a restart loop around the
+   * recognizer's own endpointing, which is what decides when a turn is over on this engine.
+   * ─────────────────────────────────────────────────────────────────────────────────── */
 
+  const startBrowserTurnRef = useRef<(reason: string) => Promise<boolean>>(
+    async () => false,
+  );
+
+  const clearBrowserRestart = useCallback(() => {
+    if (browserRestartTimerRef.current) {
+      clearTimeout(browserRestartTimerRef.current);
+      browserRestartTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleBrowserRestart = useCallback((delayMs: number) => {
+    if (!isHandsFreeRef.current || sttEngineRef.current !== 'web-speech') return;
+    if (browserRestartTimerRef.current) return;
+    browserRestartTimerRef.current = setTimeout(() => {
+      browserRestartTimerRef.current = null;
+      if (!isHandsFreeRef.current || sttEngineRef.current !== 'web-speech') return;
+      // A turn lock, the assistant still talking, or the guard right after it: all mean
+      // "not yet", never "give up". Re-arm rather than dropping the loop on the floor.
+      if (listeningSuppressedRef.current || stateRef.current === 'SPEAKING') {
+        scheduleBrowserRestart(BROWSER_RESTART_MS);
+        return;
+      }
+      const guardMs = postTtsMicGuardUntilRef.current - Date.now();
+      if (guardMs > 0) {
+        scheduleBrowserRestart(guardMs);
+        return;
+      }
+      void startBrowserTurnRef.current('handsfree_restart');
+    }, Math.max(0, delayMs));
+    // `scheduleBrowserRestart` recurses through its own identity, which empty deps keep
+    // stable; everything else is read from a ref for the same reason as the turn handlers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startBrowserTurn = useCallback(async (reason: string): Promise<boolean> => {
+    clearBrowserRestart();
     microphoneDebug('voice', 'stt_start_requested', {
       reason,
       state: stateRef.current,
-      handsFree: isHandsFree,
-      alreadyRecognizing: Boolean(svc.isRecognizing),
+      handsFree: isHandsFreeRef.current,
       recognitionDevice: 'browser-managed-web-speech',
     });
 
-    try {
-      const started = await Promise.resolve(svc.startSTT({}));
-      const recognizing = Boolean(svc.isRecognizing);
-      if (started || recognizing) {
-        microphoneDebug('voice', started ? 'stt_start_accepted' : 'stt_already_active', {
-          reason,
-          started: Boolean(started),
-          recognizing,
-        });
-        setLastError(null);
-        return true;
-      }
-
-      microphoneDebug('voice', 'stt_start_rejected', {
-        reason,
-        started: Boolean(started),
-        recognizing,
-      });
-      setLastError('stt_start_failed');
-      setState(isHandsFree ? 'IDLE' : 'OFF');
-      return false;
-    } catch (error) {
-      microphoneDebugError('voice', 'stt_start_failed', error, { reason });
-      const msg = error instanceof Error ? error.message : 'stt_start_failed';
-      setLastError(msg);
-      setState(isHandsFree ? 'IDLE' : 'OFF');
-      return false;
-    }
-  }, [svc, isHandsFree]);
-
-  useEffect(() => {
-    if (!svc) return;
-
-    svc.setRecognitionCallbacks({
+    browserTurnStartedAtRef.current = Date.now();
+    const started = await startWebSpeech('voice', {
       onStart: () => {
         microphoneDebug('voice', 'stt_onstart', {
-          handsFree: isHandsFree,
+          handsFree: isHandsFreeRef.current,
           recognitionDevice: 'browser-managed-web-speech',
         });
+        browserFailuresRef.current = 0;
         setLastError(null);
         pendingResultRef.current = false;
         setState('LISTENING');
       },
-      onEnd: () => {
-        // The SpeechService diagnostics distinguish "never captured audio" from
-        // "captured silence" from "heard speech but produced no transcript".
-        // Without them a bare `hadResult: false` cannot be acted on.
-        const diagnostics = svc.getSttDiagnostics?.() || {};
+      // The live transcript. This is the browser engine's one real advantage over
+      // transcribing on this computer, and it is what makes a turn visibly working rather
+      // than a silence the user has to guess about.
+      onInterim: (text: string) => setInterimText(text),
+      onResult: (finalText: string) => {
+        setInterimText('');
+        const trimmed = finalText?.trim();
+        if (!trimmed) return;
+        // Do not put recognized speech in diagnostics. Length is enough to prove a result.
+        microphoneDebug('voice', 'stt_result', {
+          characters: trimmed.length,
+          engine: 'web-speech',
+        });
+        pendingResultRef.current = true;
+        deafTurnsRef.current = 0;
+        onSendTextRef.current(trimmed);
+        if (isHandsFreeRef.current) setState('THINKING');
+      },
+      onEnd: (diagnostics) => {
+        const elapsedMs = Date.now() - browserTurnStartedAtRef.current;
         microphoneDebug('voice', 'stt_onend', {
           hadResult: pendingResultRef.current,
           state: stateRef.current,
-          handsFree: isHandsFree,
+          handsFree: isHandsFreeRef.current,
           sawAudioStart: diagnostics.sawAudioStart ?? null,
           sawSpeechStart: diagnostics.sawSpeechStart ?? null,
           sawInterim: diagnostics.sawInterim ?? null,
           sawNoMatch: diagnostics.sawNoMatch ?? null,
           stoppedBy: diagnostics.stoppedBy ?? null,
-          elapsedMs: diagnostics.elapsedMs ?? null,
+          elapsedMs: diagnostics.elapsedMs ?? elapsedMs,
           lang: diagnostics.lang ?? null,
         });
         lastSttEndRef.current = Date.now();
+        setInterimText('');
 
-        // The turn that produced nothing is the one worth reading. Hands-free turns are
-        // opened by the VAD, which honours the selected microphone, so "HomePilot heard you
-        // and the recognizer did not" is a direct comparison of the two devices — and the
-        // only signal the Web Speech API gives that it is recording the wrong one.
+        // The turn that produced nothing is the one worth reading: the capture opened,
+        // stayed open and heard not one syllable. Nothing in the Web Speech API reports
+        // that, because from the recognizer's point of view it recorded a silent room.
         const deaf = isDeafTurn({
           hadResult: pendingResultRef.current,
           sawAudioStart: diagnostics.sawAudioStart,
@@ -675,72 +654,205 @@ export function useVoiceController(
         if (deaf) {
           const recovery = planSttRecovery(deafTurnsRef.current, {
             backendUsable: backendUsableRef.current,
-            // Hands-free holds the selected microphone open for the whole session, so the
-            // browser recognizer was competing with us for the device. That is a second
-            // explanation for an identical trace, and it has a different fix.
-            homepilotHoldsMicrophone: Boolean(vadRef.current?.isRunning?.()),
+            // Read from the lease rather than assumed. With the engines exclusive this is
+            // now always false during a browser turn, and stating it as evidence keeps the
+            // diagnosis honest if that ever stops being true.
+            homepilotHoldsMicrophone: getMicrophoneLease()?.engine === 'homepilot-backend',
           });
           if (recovery.action !== 'none') {
             microphoneDebug('voice', 'stt_deaf_recognizer_recovery', {
               action: recovery.action,
               deafTurns: deafTurnsRef.current,
               backendUsable: backendUsableRef.current,
-              homepilotHeldMicrophone: Boolean(vadRef.current?.isRunning?.()),
             });
             // Counted from zero either way: after a switch the next run of deaf turns is
             // about the new engine, and after advice the user needs room to act on it
             // before being told again.
             deafTurnsRef.current = 0;
             setSttNotice(recovery.message);
-            if (recovery.action === 'switch-to-backend') setSttEngine('homepilot-backend');
+            if (recovery.action === 'switch-to-backend') {
+              // Shared, so the chat composer moves with it. The capture effect sees the new
+              // engine and hands the microphone over; nothing restarts the recognizer.
+              applySttSessionOverride('homepilot-backend', recovery.message, 'voice');
+              pendingResultRef.current = false;
+              setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
+              return;
+            }
           }
         }
 
         if (stateRef.current === 'LISTENING') {
-          if (isHandsFree) {
-            const nextState = pendingResultRef.current ? 'THINKING' : 'IDLE';
-            setState(nextState);
-          } else {
-            setState('OFF');
-          }
+          setState(isHandsFreeRef.current
+            ? (pendingResultRef.current ? 'THINKING' : 'IDLE')
+            : 'OFF');
         }
         pendingResultRef.current = false;
-      },
-      onInterim: (text: string) => {
-        setInterimText(text);
-      },
-      onResult: (finalText: string) => {
-        setInterimText('');
-        if (finalText?.trim()) {
-          // Do not put recognized speech in diagnostics. Length is enough to prove a result.
-          microphoneDebug('voice', 'stt_result', { characters: finalText.trim().length });
-          pendingResultRef.current = true;
-          onSendText(finalText.trim());
-          if (isHandsFree) setState('THINKING');
+
+        // A session that ends the instant it starts never listened to anything. Backing off
+        // keeps a refusal from turning the hands-free loop into a hot `start()` loop.
+        if (elapsedMs < BROWSER_MIN_HEALTHY_TURN_MS) browserFailuresRef.current += 1;
+        else browserFailuresRef.current = 0;
+
+        if (browserFailuresRef.current >= BROWSER_MAX_CONSECUTIVE_FAILURES) {
+          microphoneDebug('voice', 'handsfree_browser_loop_stopped', {
+            failures: browserFailuresRef.current,
+          });
+          setLastError('stt_start_failed');
+          setState('OFF');
+          return;
         }
+        scheduleBrowserRestart(
+          BROWSER_RESTART_MS * (browserFailuresRef.current ? 2 ** browserFailuresRef.current : 1),
+        );
       },
-      onError: (msg: string) => {
+      onError: (code: string) => {
         microphoneDebug('voice', 'stt_error', {
-          error: msg || 'stt_error',
+          error: code || 'stt_error',
           state: stateRef.current,
-          handsFree: isHandsFree,
+          handsFree: isHandsFreeRef.current,
         });
-        setLastError(msg || 'stt_error');
+        setLastError(code || 'stt_error');
         pendingResultRef.current = false;
-        setState(isHandsFree ? 'IDLE' : 'OFF');
+        setInterimText('');
+        if (FATAL_RECOGNITION_ERRORS.has(code)) {
+          // Permission, a missing device, a blocked service: restarting repeats the error
+          // forever and buries the one message that would let the user fix it.
+          clearBrowserRestart();
+          browserFailuresRef.current = BROWSER_MAX_CONSECUTIVE_FAILURES;
+          setState('OFF');
+          return;
+        }
+        setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
       },
     });
-  }, [svc, onSendText, isHandsFree]);
 
+    if (!started) {
+      microphoneDebug('voice', 'stt_start_rejected', { reason });
+      setState(isHandsFreeRef.current ? 'IDLE' : 'OFF');
+    }
+    return started;
+  }, [clearBrowserRestart, scheduleBrowserRestart]);
+
+  // Declared before the capture effect so the loop can recurse through this ref by the time
+  // the first restart timer fires.
+  useEffect(() => {
+    startBrowserTurnRef.current = startBrowserTurn;
+  }, [startBrowserTurn]);
+
+  /**
+   * Everything this surface might be holding, dropped. Idempotent, because it is called by
+   * the effect's own cleanup, by a hand-off to another surface, and by an engine change.
+   */
+  const releaseVoiceCapture = useCallback((reason: string) => {
+    clearBrowserRestart();
+    abortWebSpeech(reason);
+    // Drop the recorder before the stream it is attached to goes away; transcribing a
+    // half-turn nobody is waiting for wastes a round trip.
+    discardRecording(reason);
+    if (vadRef.current) {
+      vadRef.current.stop();
+      vadRef.current = null;
+    }
+    setAudioLevel(0);
+    setInterimText('');
+  }, [clearBrowserRestart, discardRecording]);
+
+  useEffect(() => {
+    if (!svc) return;
+
+    let lastTTSState = false;
+
+    const checkTTSState = () => {
+      const isSpeaking = svc.isSpeaking || false;
+
+      if (isSpeaking !== lastTTSState) {
+        lastTTSState = isSpeaking;
+
+        if (isSpeaking) {
+          console.log('[VoiceController] TTS started - state: SPEAKING');
+          setState('SPEAKING');
+
+          if (vadRef.current?.isRunning() && !vadRef.current.isPaused()) {
+            vadRef.current.pause();
+            setAudioLevel(0);
+            console.log('[VoiceController] VAD paused during TTS');
+          }
+
+          if (sttEngineRef.current === 'web-speech') {
+            // The recognizer has its own capture and no way to tell HomePilot's voice from
+            // the user's, so leaving it open feeds the assistant's own words back in as the
+            // next turn. Stop, and resume when it has finished speaking.
+            clearBrowserRestart();
+            abortWebSpeech('tts_started');
+          }
+
+          if (ttsEndTimeoutRef.current) {
+            clearTimeout(ttsEndTimeoutRef.current);
+            ttsEndTimeoutRef.current = null;
+          }
+        } else {
+          console.log('[VoiceController] TTS ended - waiting before state transition');
+          ttsEndTimeoutRef.current = setTimeout(() => {
+            postTtsMicGuardUntilRef.current = Date.now() + (cfg.postTtsMicGuardMs ?? 0);
+
+            if (vadRef.current?.isRunning() && vadRef.current.isPaused()) {
+              vadRef.current.resume();
+              setAudioLevel(0);
+              console.log('[VoiceController] VAD resumed after TTS');
+            }
+
+            if (stateRef.current === 'SPEAKING') {
+              const nextState = isHandsFreeRef.current ? 'IDLE' : 'OFF';
+              setState(nextState);
+              console.log(`[VoiceController] Transitioned to ${nextState} after TTS`);
+            }
+            if (sttEngineRef.current === 'web-speech' && isHandsFreeRef.current) {
+              scheduleBrowserRestart(cfg.postTtsMicGuardMs ?? 0);
+            }
+            ttsEndTimeoutRef.current = null;
+          }, cfg.ttsEndDelay);
+        }
+      }
+    };
+
+    const interval = setInterval(checkTTSState, 50);
+
+    return () => {
+      clearInterval(interval);
+      if (ttsEndTimeoutRef.current) {
+        clearTimeout(ttsEndTimeoutRef.current);
+        ttsEndTimeoutRef.current = null;
+      }
+    };
+  }, [
+    svc,
+    cfg.ttsEndDelay,
+    cfg.postTtsMicGuardMs,
+    clearBrowserRestart,
+    scheduleBrowserRestart,
+  ]);
+
+  /**
+   * Open exactly one capture, chosen by the engine — or none at all.
+   *
+   * Re-running this effect *is* the engine transition: React tears the previous run down
+   * before starting the next, so the old capture is released before the new one opens and
+   * the two architectures are never live at the same time.
+   */
   useEffect(() => {
     const generation = ++handsFreeGenerationRef.current;
 
-    if (!isHandsFree || !svc) {
-      if (vadRef.current) {
-        vadRef.current.stop();
-        vadRef.current = null;
-      }
-      if (!isHandsFree) setState('OFF');
+    if (!isHandsFree) {
+      releaseVoiceCapture('handsfree_off');
+      void releaseMicrophone('voice');
+      setState('OFF');
+      return;
+    }
+
+    // Nothing may open a capture before the engine is known. A "temporary" default here is
+    // what sent the first sentence of a session through an engine the user did not pick.
+    if (!sttEngine) {
+      microphoneDebug('voice', 'handsfree_waiting_for_engine', { generation });
       return;
     }
 
@@ -755,9 +867,23 @@ export function useVoiceController(
       return;
     }
 
+    void acquireMicrophone('voice', sttEngine, () => releaseVoiceCapture('microphone_handoff'));
+
+    if (sttEngine === 'web-speech') {
+      microphoneDebug('voice', 'handsfree_browser_start_requested', { generation });
+      browserFailuresRef.current = 0;
+      setLastError(null);
+      setState('IDLE');
+      scheduleBrowserRestart(0);
+      return () => {
+        microphoneDebug('voice', 'handsfree_browser_cleanup', { generation });
+        releaseVoiceCapture('handsfree_browser_cleanup');
+      };
+    }
+
     const vad = createVAD(
       () => {
-        if (!isHandsFree || generation !== handsFreeGenerationRef.current) return;
+        if (!isHandsFreeRef.current || generation !== handsFreeGenerationRef.current) return;
         const currentState = stateRef.current;
         microphoneDebug('voice', 'vad_speech_start', {
           state: currentState,
@@ -776,69 +902,29 @@ export function useVoiceController(
 
         if (currentState === 'SPEAKING' && cfg.bargeInEnabled) {
           microphoneDebug('voice', 'barge_in_stop_tts');
-          svc.stopSpeaking?.();
+          svc?.stopSpeaking?.();
         }
 
         // Backend transcription records the VAD's own stream, so there is no
         // recognizer to warm up and no cooldown to respect.
-        if (sttEngineRef.current === 'homepilot-backend') {
-          if (currentState === 'IDLE' || currentState === 'SPEAKING') {
-            void startRecordingTurn('vad_speech_start');
-          }
-          return;
-        }
-
-        const timeSinceLastEnd = Date.now() - lastSttEndRef.current;
-        const cooldownMs = 300;
-        if (timeSinceLastEnd < cooldownMs) {
-          const waitMs = cooldownMs - timeSinceLastEnd;
-          microphoneDebug('voice', 'stt_cooldown', { waitMs });
-          setTimeout(() => {
-            if (stateRef.current === 'IDLE') void startRecognition('vad_after_cooldown');
-          }, waitMs);
-          return;
-        }
-
         if (currentState === 'IDLE' || currentState === 'SPEAKING') {
-          void startRecognition('vad_speech_start');
+          void startRecordingTurn('vad_speech_start');
         }
       },
       () => {
-        if (!isHandsFree || generation !== handsFreeGenerationRef.current) return;
-        const currentState = stateRef.current;
+        if (!isHandsFreeRef.current || generation !== handsFreeGenerationRef.current) return;
         microphoneDebug('voice', 'vad_speech_end', {
-          state: currentState,
+          state: stateRef.current,
           suppressed: listeningSuppressedRef.current,
         });
 
         if (listeningSuppressedRef.current) return;
 
-        if (sttEngineRef.current === 'homepilot-backend') {
-          // A short trailing pad keeps the last word out of the cut, which the
-          // recognizer-based path got from Chrome's own endpointer.
-          setTimeout(() => {
-            if (stateRef.current === 'LISTENING') finishRecordingTurn('vad_silence');
-          }, 250);
-          return;
-        }
-
-        if (currentState === 'LISTENING') {
-          setTimeout(() => {
-            if (stateRef.current === 'LISTENING') {
-              try {
-                microphoneDebug('voice', 'stt_stop_requested', { reason: 'vad_silence' });
-                // Not forced: SpeechService defers a stop that would cut the
-                // recognizer off during warm-up, which is what silently
-                // produced empty turns for short utterances.
-                svc.stopSTT?.({ reason: 'vad_silence' });
-              } catch (error) {
-                microphoneDebugError('voice', 'stt_stop_failed', error, { reason: 'vad_silence' });
-                const msg = error instanceof Error ? error.message : 'stt_stop_failed';
-                setLastError(msg);
-              }
-            }
-          }, 400);
-        }
+        // A short trailing pad keeps the last word out of the cut, which the
+        // recognizer-based path got from Chrome's own endpointer.
+        setTimeout(() => {
+          if (stateRef.current === 'LISTENING') finishRecordingTurn('vad_silence');
+        }, 250);
       },
       cfg.vadConfig
     );
@@ -847,7 +933,7 @@ export function useVoiceController(
     microphoneDebug('voice', 'handsfree_vad_start_requested', { generation });
     vad.start()
       .then(() => {
-        if (!isHandsFree || generation !== handsFreeGenerationRef.current) {
+        if (!isHandsFreeRef.current || generation !== handsFreeGenerationRef.current) {
           vad.stop();
           return;
         }
@@ -863,31 +949,32 @@ export function useVoiceController(
       });
 
     return () => {
-      if (vadRef.current) {
-        microphoneDebug('voice', 'handsfree_vad_cleanup', { generation });
-        // Drop the recorder before the stream it is attached to goes away;
-        // transcribing a half-turn nobody is waiting for wastes a round trip.
-        discardRecording('handsfree_cleanup');
-        vadRef.current.stop();
-        vadRef.current = null;
-      }
+      microphoneDebug('voice', 'handsfree_vad_cleanup', { generation });
+      releaseVoiceCapture('handsfree_vad_cleanup');
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isHandsFree,
+    sttEngine,
     svc,
     sttSupported,
     JSON.stringify(cfg.vadConfig),
     cfg.bargeInEnabled,
-    startRecognition,
-    // Listed because the VAD callbacks close over them, and safe to list because all three
-    // are identity-stable: they read the caller's handler through a ref. An unstable one
-    // here restarts the capture on every render, and since the restart sets state, that is
-    // an endless teardown/reopen loop rather than a slow one.
+    // Listed because the callbacks close over them, and safe to list because all of them are
+    // identity-stable: they read the caller's handler through a ref. An unstable one here
+    // restarts the capture on every render, and since the restart sets state, that is an
+    // endless teardown/reopen loop rather than a slow one.
     startRecordingTurn,
     finishRecordingTurn,
-    discardRecording,
+    releaseVoiceCapture,
+    scheduleBrowserRestart,
   ]);
+
+  /** Give the microphone back when Voice unmounts, whatever it was holding. */
+  useEffect(() => () => {
+    releaseVoiceCapture('voice_unmount');
+    void releaseMicrophone('voice');
+  }, [releaseVoiceCapture]);
 
   useEffect(() => {
     if (!vadRef.current || !isHandsFree) return;
@@ -902,7 +989,7 @@ export function useVoiceController(
 
     const interval = setInterval(updateLevels, 100);
     return () => clearInterval(interval);
-  }, [isHandsFree]);
+  }, [isHandsFree, sttEngine]);
 
   const clearError = useCallback(() => {
     setLastError(null);
@@ -912,11 +999,15 @@ export function useVoiceController(
     microphoneDebug('voice', 'manual_listen_button', {
       state: stateRef.current,
       handsFree: isHandsFree,
+      engine: sttEngine,
       sttSupported,
     });
-    if (!svc) {
-      microphoneDebug('voice', 'manual_listen_no_speech_service');
-      setLastError('speech_service_unavailable');
+
+    if (!sttEngine) {
+      // The probe is still in flight. Saying so beats opening the wrong engine's capture and
+      // hoping, which is what the old "assume the browser until it answers" did.
+      microphoneDebug('voice', 'manual_listen_engine_pending');
+      setLastError('stt_engine_pending');
       return false;
     }
 
@@ -927,39 +1018,37 @@ export function useVoiceController(
       return false;
     }
 
-    svc.stopSpeaking?.();
+    svc?.stopSpeaking?.();
 
-    if (sttEngineRef.current === 'homepilot-backend') {
-      return startRecordingTurn('manual_button');
-    }
-    return startRecognition('manual_button');
-  }, [svc, sttSupported, isHandsFree, startRecognition, startRecordingTurn]);
+    await acquireMicrophone('voice', sttEngine, () =>
+      releaseVoiceCapture('microphone_handoff'));
+
+    if (sttEngine === 'homepilot-backend') return startRecordingTurn('manual_button');
+    return startBrowserTurn('manual_button');
+  }, [
+    svc,
+    sttEngine,
+    sttSupported,
+    isHandsFree,
+    startBrowserTurn,
+    startRecordingTurn,
+    releaseVoiceCapture,
+  ]);
 
   const stopManualListening = useCallback(() => {
-    microphoneDebug('voice', 'manual_stop_button', {
-      state: stateRef.current,
-      recognizing: Boolean(svc?.isRecognizing),
-    });
-    // An explicit Stop on the backend path means "transcribe what I said", not
-    // "throw it away" — the user finished their sentence.
+    microphoneDebug('voice', 'manual_stop_button', { state: stateRef.current });
+    // An explicit Stop means "transcribe what I said", not "throw it away" — the user
+    // finished their sentence.
     if (recorderRef.current) {
       finishRecordingTurn('manual_button');
       return;
     }
-    if (!svc) return;
-    try {
-      // An explicit press of Stop must stop now, not after the warm-up guard.
-      svc.stopSTT?.({ reason: 'manual_button', force: true });
-    } catch (error) {
-      microphoneDebugError('voice', 'manual_stop_failed', error);
-      const msg = error instanceof Error ? error.message : 'stt_stop_failed';
-      setLastError(msg);
-    }
-  }, [svc, finishRecordingTurn]);
+    // An explicit press of Stop must stop now, not after the warm-up guard.
+    stopWebSpeech('voice', { reason: 'manual_button', force: true });
+  }, [finishRecordingTurn]);
 
   const stopSpeaking = useCallback(() => {
-    if (!svc) return;
-    svc.stopSpeaking?.();
+    svc?.stopSpeaking?.();
     if (vadRef.current?.isRunning() && vadRef.current.isPaused()) {
       vadRef.current.resume();
     }
@@ -989,11 +1078,15 @@ export function useVoiceController(
         // A turn lock releases the microphone immediately; waiting on a
         // transcript here would let the locked turn keep recording.
         discardRecording('turn_lock');
-        try { svc?.stopSTT?.({ reason: 'turn_lock', force: true }); } catch { /* no-op */ }
+        clearBrowserRestart();
+        abortWebSpeech('turn_lock');
         setState(isHandsFree ? 'IDLE' : 'OFF');
       }
+      if (!suppressed && isHandsFreeRef.current && sttEngineRef.current === 'web-speech') {
+        scheduleBrowserRestart(BROWSER_RESTART_MS);
+      }
     },
-    [svc, isHandsFree, discardRecording],
+    [isHandsFree, discardRecording, clearBrowserRestart, scheduleBrowserRestart],
   );
 
   return {
@@ -1008,10 +1101,14 @@ export function useVoiceController(
     lastError,
     clearError,
     sttEngine,
+    sttReady: runtime.status === 'ready',
     sttProvider,
     sttResolution,
     sttNotice,
     dismissSttNotice,
+    micMeterSupported: sttEngine === 'homepilot-backend',
+    liveTranscriptSupported: sttEngine === 'web-speech',
+    bargeInSupported: sttEngine === 'homepilot-backend' && Boolean(cfg.bargeInEnabled),
     setHandsFree,
     setTtsEnabled,
     startManualListening,

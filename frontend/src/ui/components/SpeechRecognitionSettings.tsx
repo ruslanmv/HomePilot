@@ -60,6 +60,10 @@ const OPTIONS: readonly Option[] = [
       'Records your system default input, not the microphone selected in Audio & Video',
       'Chrome sends audio to a Google service, so it needs the internet',
       'Not available in Firefox or Safari',
+      // Both follow from the same fact: the recognizer opens its own capture and hands
+      // HomePilot no audio. Opening a second microphone to get around that is what made the
+      // meter and the transcript come from two different devices, so it is not done.
+      'No input level meter, and no speaking over the assistant mid-reply',
     ],
   },
   {
@@ -71,6 +75,7 @@ const OPTIONS: readonly Option[] = [
       'Records the microphone you selected in Audio & Video',
       'Audio never leaves this computer; works offline',
       'Works in any browser that can record',
+      'Live input meter, and you can speak over the assistant',
     ],
     bads: [
       'Needs a speech model installed on the server',

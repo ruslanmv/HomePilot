@@ -31,6 +31,8 @@ vi.mock('../ui/media/sttService', () => ({
 
 import { useVoiceController } from '../ui/voice/useVoiceController';
 import { DEAF_TURNS_BEFORE_RECOVERY } from '../ui/media/sttTurnHealth';
+import { getSttRuntime, resetSttRuntimeForTests } from '../ui/media/sttRuntime';
+import { resetWebSpeechForTests } from '../ui/media/webSpeechSession';
 
 type Callbacks = {
   onStart?: () => void;
@@ -50,6 +52,9 @@ beforeEach(() => {
   // Hands-free off: this is about the turn verdict, and leaving it on would open a real VAD
   // capture that jsdom cannot provide.
   localStorage.setItem('homepilot_voice_handsfree', 'false');
+  // Session-scoped singletons by design — see `media/sttRuntime`. A test file is a session.
+  resetSttRuntimeForTests();
+  resetWebSpeechForTests();
   callbacks = {};
   diagnostics = { ...DEAF };
   capability.mockResolvedValue({ available: true, provider: 'whisper-local', remote: false });
@@ -89,7 +94,15 @@ async function mountVoice() {
   return { ...hook, onSend };
 }
 
-function endTurn() {
+/**
+ * One complete browser turn: take the recognizer, then let it end.
+ *
+ * The recognizer only speaks to the surface that owns the turn now, so a verdict cannot be
+ * reached on an `onEnd` nobody asked for — which is exactly the protection that stops a
+ * stale event from a handed-off session ending somebody else's turn.
+ */
+async function endTurn(result: { current: { startManualListening: () => Promise<boolean> } }) {
+  await act(async () => { await result.current.startManualListening(); });
   act(() => { callbacks.onEnd?.(); });
 }
 
@@ -98,7 +111,7 @@ describe('a recognizer that opens a silent device', () => {
     // One empty turn is a cough or a false trigger. Reacting to it would change where a
     // healthy user's audio goes on the strength of no evidence.
     const { result } = await mountVoice();
-    endTurn();
+    await endTurn(result);
 
     expect(result.current.sttNotice).toBeNull();
     expect(result.current.sttEngine).toBe('web-speech');
@@ -106,31 +119,57 @@ describe('a recognizer that opens a silent device', () => {
 
   it('moves the session onto HomePilot transcription once the pattern is established', async () => {
     const { result } = await mountVoice();
-    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY; i++) endTurn();
+    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY; i++) await endTurn(result);
 
     expect(result.current.sttEngine).toBe('homepilot-backend');
     expect(result.current.sttNotice).toContain('Speech Recognition');
+  });
+
+  it('moves the whole session, so the chat composer goes with it', async () => {
+    // The recovery used to be per-surface: Voice switched, the composer did not, and the
+    // same deaf microphone had to be rediscovered from scratch on the other tab. It is one
+    // person with one microphone, so it is one decision.
+    const { result } = await mountVoice();
+    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY; i++) await endTurn(result);
+
+    expect(getSttRuntime().effectiveEngine).toBe('homepilot-backend');
+    expect(getSttRuntime().sessionOverride).toBe('homepilot-backend');
+    // The stored preference is the user's and stays theirs; Settings goes on showing it.
+    expect(getSttRuntime().preference).toBe('web-speech');
   });
 
   it('never makes that switch silently', async () => {
     // Changing which service sees the user's audio without telling them is the failure the
     // engine split exists to prevent; a recovery is not exempt from it.
     const { result } = await mountVoice();
-    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY; i++) endTurn();
+    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY; i++) await endTurn(result);
 
     expect(result.current.sttNotice).toBeTruthy();
     act(() => result.current.dismissSttNotice());
     expect(result.current.sttNotice).toBeNull();
   });
 
+  it('blames the device rather than a second capture, because there is not one', async () => {
+    // While the engines ran together, "HomePilot's own capture is blocking the browser's"
+    // was an equally good explanation for an identical trace, so the message had to name
+    // both. Exclusive ownership settles it: nothing else held the microphone.
+    const { result } = await mountVoice();
+    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY; i++) await endTurn(result);
+
+    expect(result.current.sttNotice).toContain('system default input');
+    expect(result.current.sttNotice).not.toContain('preventing the browser from opening');
+  });
+
   it('forgets the run as soon as one turn produces words', async () => {
     // A microphone that works once works. Counting non-consecutive empty turns would
     // eventually switch engines under everybody.
     const { result } = await mountVoice();
-    endTurn();
+    await endTurn(result);
+    await act(async () => { await result.current.startManualListening(); });
     act(() => { callbacks.onResult?.('hello there'); });
-    endTurn();
-    endTurn();
+    act(() => { callbacks.onEnd?.(); });
+    // One deaf turn on either side of a working one is not a run, so nothing changes.
+    await endTurn(result);
 
     expect(result.current.sttEngine).toBe('web-speech');
     expect(result.current.sttNotice).toBeNull();
@@ -139,7 +178,7 @@ describe('a recognizer that opens a silent device', () => {
   it('advises rather than switching when there is no other engine', async () => {
     capability.mockResolvedValue({ available: false, provider: null, remote: false } as never);
     const { result } = await mountVoice();
-    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY; i++) endTurn();
+    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY; i++) await endTurn(result);
 
     expect(result.current.sttEngine).toBe('web-speech');
     expect(result.current.sttNotice).toContain('system default input');
@@ -150,7 +189,7 @@ describe('a recognizer that opens a silent device', () => {
     // engines fixes neither, and would bury both.
     diagnostics = { sawAudioStart: true, sawSpeechStart: true, sawInterim: false, error: null };
     const { result } = await mountVoice();
-    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY + 2; i++) endTurn();
+    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY + 2; i++) await endTurn(result);
 
     expect(result.current.sttEngine).toBe('web-speech');
     expect(result.current.sttNotice).toBeNull();
@@ -159,7 +198,7 @@ describe('a recognizer that opens a silent device', () => {
   it('leaves a reported error alone', async () => {
     diagnostics = { sawAudioStart: true, sawSpeechStart: false, error: 'not-allowed' };
     const { result } = await mountVoice();
-    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY + 2; i++) endTurn();
+    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY + 2; i++) await endTurn(result);
 
     expect(result.current.sttNotice).toBeNull();
   });

@@ -32,15 +32,29 @@ ends with no text. The reported trace looked like:
 [HomePilot:Mic][voice] stt_onend        {hadResult: false}
 ```
 
-No interim, no result, **no error**. There were two compounding causes:
+No interim, no result, **no error**. There were three compounding causes:
 
 1. **The device split above.**
 2. **Recognition was killed during warm-up.** Chrome needs a few hundred milliseconds to open
    its own capture and stream before it emits anything. Starting it on `vad_speech_start` and
    stopping it ~400 ms after the VAD's silence window finalized an empty session — cleanly,
    which is why not even `no-speech` was raised.
+3. **Both captures were open at once.** Hands-free Voice started the VAD *and* the browser
+   recognizer, whatever the resolved engine was. The VAD holds the selected microphone for
+   the whole session; the recognizer opens the OS default on its own. So the split in (1) was
+   not an edge case on the browser engine — it was the normal path, every turn.
 
-Both are fixed, and the fix for (1) is architectural: **transcribe the bytes we captured.**
+All three are fixed, and the fix for (1) and (3) is architectural:
+
+> **The resolved engine owns the microphone, alone.**
+>
+> `web-speech` → the browser recognizer is the only capture. No VAD, no recorder, no meter.
+> `homepilot-backend` → HomePilot's VAD and recorder are the only capture, sharing one
+> stream. No recognizer.
+>
+> `media/sttRuntime.ts` holds that one decision and the single microphone lease, so the chat
+> composer and the Voice tab cannot disagree about either, and switching engines is a release
+> followed by an acquire rather than two live captures.
 
 ---
 
@@ -63,6 +77,13 @@ against latency against setup. So the preference decides and the capability only
 
 `resolveSttEngine()` in `media/sttPreferences.ts` is the whole rule, and it is pure: every
 combination of preference and capability has a defined answer, and a test walks all of them.
+`media/sttRuntime.ts` applies it **once per session** and both surfaces subscribe, so the
+"one choice for chat and Voice" the Settings card promises is one object, not two copies.
+
+> **Nothing opens a capture before it resolves.** Until the probe answers, `effectiveEngine`
+> is `null` and every surface waits (`handsfree_waiting_for_engine`, `stt_engine_pending`).
+> Standing in with the browser "for now" is what sent the first sentence of a session — the
+> one that matters most — through an engine the user did not choose.
 
 > **A fallback is always reported.** Somebody who chose on-device transcription for privacy
 > and is quietly served the browser's — which ships audio to Google — has been failed in a way
@@ -86,7 +107,8 @@ split cannot happen.
 
 In hands-free Voice mode the recorder attaches to **the VAD's own stream**
 (`vad.getStream()`), so detection and transcription are literally the same capture — not two
-captures that happen to agree.
+captures that happen to agree. The level meter reads that same stream, which is why it is
+honest here and unavailable on the other engine.
 
 ### 2.2 `web-speech` — the default
 
@@ -94,7 +116,48 @@ What HomePilot behaved like before local transcription existed, and what needs n
 device caveat from §1 applies — it records the OS default input — and the UI says so rather
 than letting you assume otherwise. The warm-up stop guard (§5) applies here.
 
+**No VAD runs on this engine.** The recognizer opens its own capture and can be handed
+neither a `deviceId` nor a `MediaStream`, so a VAD alongside it would be a second microphone
+nobody transcribes — cause (3) in §1. Hands-free is therefore a restart loop around the
+recognizer's own endpointing:
+
+```
+start ──► onresult (interim words stream to the UI) ──► onend ──► wait 400 ms ──► start
+             ▲                                                                      │
+             └───────────────── paused while TTS speaks ◄───────────────────────────┘
+```
+
+What that costs and what it buys:
+
+| | `web-speech` | `homepilot-backend` |
+|---|---|---|
+| Live words while you speak | **yes** (`interimText`, shown as *Hearing …*) | no — text arrives at end of turn |
+| Input level meter | **no** — HomePilot has no stream to read | yes, the transcribed one |
+| Barge-in (speak over the reply) | no — listening stops while TTS plays | yes, the VAD watches through it |
+| Microphone used | OS default | the one selected in Audio & Video |
+
+A meter is not drawn on the browser engine, and the UI says why
+(`data-testid="voice-meter-unavailable"`). Opening a second microphone purely to animate a
+bar is exactly the two-capture bug, so a missing meter is the honest outcome.
+
+Listening stops while the assistant speaks because the recognizer has no way to tell
+HomePilot's voice from the user's, and leaving it open feeds the reply back in as the next
+turn. `bargeInSupported` reports that rather than leaving it silently absent.
+
 It is also the automatic fallback whenever the local engine cannot run.
+
+### 2.2.1 One recognizer, one owner
+
+`media/webSpeechSession.ts` is the only place a `SpeechRecognition` session is started. A
+page can run exactly one at a time, and HomePilot used to have two: the Voice tab drove
+`window.SpeechService` while the chat composer constructed its own. The composer knew and
+aborted the shared session before taking a turn — but nothing did the reverse, so a
+recognizer started in chat could outlive the composer and fail the next Voice turn with a
+bare `InvalidStateError`.
+
+Now `startWebSpeech(owner, handlers)` drops the previous session first and events are
+delivered only to the owner current *when they arrive* (a generation check), so a stale
+`onend` from a handed-off session cannot end somebody else's turn.
 
 ### 2.3 When the browser recognizer goes deaf
 
@@ -141,23 +204,28 @@ a device) `planSttRecovery()` decides:
 - **backend not usable** → a notice naming both ways out: make that microphone the system
   default input, or install a speech model and choose *On this computer*.
 
-**Two causes, not one.** The usual reason is the device split above. But when HomePilot's own
-capture is open on the selected microphone at the same time — which hands-free always is —
-there is a second explanation that produces an *identical* trace: some drivers (Windows
-DSP-backed inputs among them) hand a second recorder on the same endpoint a live but silent
-track. Those need different fixes, so when both are possible the notice names both, plus the
-test that separates them: turn hands-free off and use the composer microphone, which records
-nothing in the background. If that works, it was contention, not routing.
-`stt_deaf_recognizer_recovery` carries `homepilotHeldMicrophone` so the trace says which case
-the advice was written for.
+**There used to be two possible causes; now there is one.** While hands-free held HomePilot's
+capture open during browser turns, a second explanation produced an *identical* trace: some
+drivers (Windows DSP-backed inputs among them) hand a second recorder on the same endpoint a
+live but silent track. The notice had to name both, plus a test to separate them. Exclusive
+ownership settles it — nothing else holds the microphone during a browser turn — so the
+notice names the routing split and stops there. `planSttRecovery()` still takes
+`homepilotHoldsMicrophone`, read from the lease rather than assumed, so the diagnosis stays
+honest if that ever stops being true.
 
-Two rules it keeps deliberately:
+Three rules it keeps deliberately:
 
 - **Never silent.** The switch changes which service sees the audio — the browser recognizer
   sends it to Google, the local engine keeps it on the machine. Voice mode renders the notice
   above the voice bar (`data-testid="voice-stt-notice"`), the composer in `micNotice`.
 - **Never permanent.** The stored preference is the user's. The recovery holds for the
   session and is discarded the moment the preference changes.
+- **Never one-sided.** It is applied to the shared runtime, so a deaf recognizer discovered
+  in chat moves the Voice tab too. The same person with the same microphone should not have
+  to rediscover the same broken device on the other tab.
+
+It is an emergency fallback, not the mechanism that makes Voice usable. With the engines
+exclusive, a correctly configured session should never reach it.
 
 Trace: `stt_deaf_recognizer_recovery {action, deafTurns, backendUsable}` (and
 `composer_mic_deaf_recognizer_recovery` in chat).
@@ -168,11 +236,28 @@ Settings → Voice Assistant states it in plain text, and the trace records it o
 session:
 
 ```
-[HomePilot:Mic][voice] stt_engine_resolved {engine: 'homepilot-backend',
-                                            provider: 'whisper-local',
-                                            remote: false,
-                                            usesOsDefaultInput: false}
+[HomePilot:Mic][settings] stt_runtime_resolved {engine: 'homepilot-backend',
+                                                provider: 'whisper-local',
+                                                remote: false,
+                                                usesOsDefaultInput: false}
 ```
+
+And the shape of a healthy session says which engine owns the microphone, because only one
+family of events appears:
+
+```
+Browser + Voice          Local + Voice
+──────────────────       ────────────────────────────
+stt_runtime_resolved     stt_runtime_resolved
+microphone_acquired      microphone_acquired
+web_speech_start_…       vad capture_request / capture_opened
+stt_onstart              recorder_started {engine: 'homepilot-backend'}
+stt_result               stt_transcribe_result
+(no vad capture_request) (no web_speech_start_requested)
+```
+
+Seeing `vad capture_opened` and `stt_onstart` in the same session is the old bug, and the
+capture-ownership tests exist to keep it out.
 
 ---
 
@@ -605,7 +690,10 @@ no split to warn about.
 | `frontend/src/ui/media/microphoneDebug.ts` | The `HomePilot:Mic` ring buffer |
 | `frontend/src/ui/media/mediaPreferences.ts` | Device selection, `buildAudioConstraints` |
 | `frontend/src/ui/voice/vad.ts` | Adaptive VAD; `getStream()` shares its capture |
-| `frontend/src/ui/voice/useVoiceController.ts` | State machine, engine resolution, per-turn recorder |
+| `frontend/src/ui/voice/useVoiceController.ts` | State machine, one capture per engine, per-turn recorder |
+| `frontend/src/ui/media/sttRuntime.ts` | §2 — the one engine decision and the one microphone lease, shared by chat and Voice |
+| `frontend/src/ui/media/useSttRuntime.ts` | That runtime as React state |
+| `frontend/src/ui/media/webSpeechSession.ts` | §2.2.1 — the only `SpeechRecognition` session, with an owner |
 | `frontend/src/ui/media/sttTurnHealth.ts` | §2.3 — spotting a recognizer that hears nothing, and what to do about it |
 | `frontend/src/ui/tts/resolveAssistantVoice.ts` | The three-key voice resolution of §4 |
 | `frontend/src/ui/tts/shimSpeechService.ts` | Routes `SpeechService.speak` through the plugin registry |
@@ -643,6 +731,8 @@ no split to warn about.
 | `frontend/src/test/sttTurnHealth.test.ts` | §2.3 — what counts as a deaf turn, and what each run of them does |
 | `frontend/src/test/voiceDeafRecognizerRecovery.test.tsx` | The controller wiring: two deaf turns switch the session and say so; anything else does not |
 | `frontend/src/test/voiceControllerStability.test.tsx` | Nothing render-scoped reaches the capture effect's dependencies |
+| `frontend/src/test/sttRuntime.test.ts` | One engine for both surfaces; a session override; the microphone lease releases before it grants |
+| `frontend/src/test/sttCaptureOwnership.test.tsx` | §1 cause (3): the browser engine opens no `getUserMedia`, the local engine starts no recognizer, and switching releases before it acquires |
 | `frontend/src/test/voiceAssistantTesting.test.js` | Wiring contracts across all of the above |
 | `frontend/src/test/microphoneDiagnostics.test.js` | The original diagnostics contract |
 | `frontend/src/test/meetingsenseRealtime.test.js` | `takePartial` cadence and snapshot isolation, `micConstraints`, the three partial rules, media-capture mode |
@@ -687,7 +777,10 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 - The manual listen button opens its own capture when the VAD is not running, and closes it
   afterwards. Before this it failed with `microphone_not_open` — a dead press-to-talk for
   everyone on the local engine.
-- A deaf recognizer is detected and recovered from, and never silently (§2.3).
+- A deaf recognizer is detected and recovered from, never silently, and across both surfaces
+  at once (§2.3).
+- Hands-free on the browser engine opens **no** `getUserMedia`, and hands-free on the local
+  engine starts **no** recognizer — cause (3) of §1, as a property rather than a timeout.
 - Whisper falls back to CPU when CUDA is unusable, at load *and* at first inference.
 - `POST /v1/voice/transcribe` on every format, on silence, over the size ceiling, and with a
   provider that fails.
@@ -703,7 +796,9 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 4. Voice tab, hands-free: speak, confirm the text appears as your message **and** a reply
    comes back. This is the only check that exercises transcript → `sendTextOrIntent` → model.
 5. Repeat 3–4 with Speech Recognition set to **On this computer**, then to **Browser**. They
-   are different code paths and both ship.
+   are different code paths and both ship. On **Browser**, watch the words appear as you
+   speak (the *Hearing …* strip); on **On this computer**, watch the level meter move. Each
+   engine has exactly one of those, and seeing the other would mean two captures again.
 6. `curl -s localhost:8000/v1/voice/stt/status` — confirm `available: true` and read
    `device_note`. A note saying it landed on CPU means transcription works but is slow;
    budget for that before calling it production-ready.
@@ -712,7 +807,7 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 
 ## 10. Debugging checklist
 
-1. **Which engine?** Settings → Voice Assistant says so; or look for `stt_engine_resolved`.
+1. **Which engine?** Settings → Voice Assistant says so; or look for `stt_runtime_resolved`.
 2. **Is the server able to transcribe?** `curl -s localhost:8000/v1/voice/stt/status`.
 3. **Does the device work at all?** Settings → Audio & Video → Test microphone, then play it
    back. If you cannot hear yourself, nothing downstream can help.
@@ -726,7 +821,10 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 
 | Symptom | Look at |
 |---|---|
-| Meter moves, no text, no error | §1 device split. Are you on `web-speech`? |
+| Meter moves, no text, no error | §1 device split, with both captures open. Fixed: the engines are now exclusive, so a `vad capture_opened` and an `stt_onstart` can no longer appear in the same session. If you still see both, that is a regression — `sttCaptureOwnership.test.tsx` is the guard. |
+| Browser mode: the input level meter is gone | Deliberate — §2.2. The recognizer opens its own capture and hands HomePilot no audio to measure. Opening a second microphone purely to animate a bar is the bug above. Switch to *On this computer* for a live meter on the microphone you selected. |
+| Browser mode: cannot speak over the assistant any more | Deliberate — §2.2. Barge-in needs the VAD, which does not run on this engine, and leaving the recognizer open during TTS transcribes the reply back as the next turn. `bargeInSupported` reports it. |
+| The composer mic button disappears when there is text | Fixed. It used to be the *alternative* to Submit, so any draft hid it — dictating a correction meant clearing the field first. Both buttons are shown now. |
 | `stt_onend {hadResult: false}`, nothing else | §5 warm-up stop, or the split. Check `sawAudioStart` / `sawSpeechStart`. |
 | Mic button does nothing, no logs | Fixed. Every outcome now traces under scope `chat` and shows a notice by the composer. |
 | Text appears in the wrong language | `homepilot_stt_lang` — `SpeechService.setRecognitionLang(...)`. |
