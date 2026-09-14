@@ -58,6 +58,13 @@ import {
   resolveSttEngine,
   subscribeSttPreferences,
 } from '../media/sttPreferences'
+import { acquireMicrophone, getMicrophoneLease, releaseMicrophone } from '../media/sttRuntime'
+import {
+  abortWebSpeech,
+  isWebSpeechSupported,
+  startWebSpeech,
+  stopWebSpeech,
+} from '../media/webSpeechSession'
 import { getActiveTtsEngineId, readTtsProviderSettings } from '../tts'
 import { describeAssistantVoice, resolveAssistantVoiceId } from '../tts/resolveAssistantVoice'
 
@@ -152,8 +159,6 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
 
   const stopRecordingRef = useRef<(() => void) | null>(null)
 
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-  const recognitionRef = useRef<any>(null)
   const diagnosticsRef = useRef<SttDiagnostics>({})
   const transcriptRef = useRef('')
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -257,14 +262,17 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
       sawAudioStart: diagnosticsRef.current.sawAudioStart ?? null,
       sawSpeechStart: diagnosticsRef.current.sawSpeechStart ?? null,
       sawNoMatch: diagnosticsRef.current.sawNoMatch ?? null,
+      sawInterim: diagnosticsRef.current.sawInterim ?? null,
+      sawResult: diagnosticsRef.current.sawResult ?? null,
+      stoppedBy: diagnosticsRef.current.stoppedBy ?? null,
+      elapsedMs: diagnosticsRef.current.elapsedMs ?? null,
+      lang: diagnosticsRef.current.lang ?? null,
       error: diagnosticsRef.current.error ?? null,
     })
-    recognitionRef.current = null
   }, [clearSttTimers])
 
-  const startFallbackTest = useCallback(() => {
-    const Ctor = getSpeechRecognitionCtor()
-    if (!Ctor) {
+  const startFallbackTest = useCallback(async () => {
+    if (!isWebSpeechSupported()) {
       setSttPhase('error')
       setSttOutcome({
         ok: false,
@@ -276,11 +284,24 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
       return
     }
 
-    // A page can hold only one recognition session; release whatever
-    // hands-free voice or the chat microphone is holding first.
+    /*
+     * Take the microphone properly rather than aborting whoever has it.
+     *
+     * A page holds one recognition session, and this test used to grab it with a bare
+     * `abortSTT`. That worked in one direction only: the Voice tab's hands-free loop restarts
+     * itself every 400 ms, so it took the recognizer straight back and this test died with a
+     * bare `aborted` before the user had finished the word they were saying —
+     *
+     *     [settings]       start_requested
+     *     [settings]       stt_test_error {errorMessage: 'aborted'}
+     *     [voice]          stt_onstart
+     *
+     * Acquiring the lease is what makes that impossible: the Voice loop checks the lease
+     * before restarting and waits, and picks up again when this test releases.
+     */
     /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
     const shared = (window as any).SpeechService
-    try { shared?.abortSTT?.('settings_stt_test') } catch { /* best effort */ }
+    await acquireMicrophone('settings', 'web-speech', () => abortWebSpeech('microphone_handoff'))
 
     diagnosticsRef.current = {
       sawAudioStart: false,
@@ -298,69 +319,84 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
     setSttRunningLabel('Listening via browser recognizer — speak now…')
     setSttPhase('running')
 
-    const recognition = new Ctor()
-    recognition.continuous = false
-    recognition.interimResults = true
-    recognition.lang = diagnosticsRef.current.lang
-    recognitionRef.current = recognition
-
-    recognition.onaudiostart = () => { diagnosticsRef.current.sawAudioStart = true }
-    recognition.onspeechstart = () => { diagnosticsRef.current.sawSpeechStart = true }
-    recognition.onnomatch = () => { diagnosticsRef.current.sawNoMatch = true }
-
-    recognition.onresult = (event: RecognitionResultEvent) => {
-      let final = ''
-      let partial = ''
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const text = event.results[i][0].transcript
-        if (event.results[i].isFinal) final += `${text} `
-        else partial += text
-      }
-      if (partial) {
-        diagnosticsRef.current.sawInterim = true
-        setInterim(partial)
-      }
-      if (final) {
-        diagnosticsRef.current.sawResult = true
-        transcriptRef.current = `${transcriptRef.current} ${final}`.trim()
-        // Shown to the user who just spoke it; the mic trace records only length.
-        setHeard(transcriptRef.current)
-      }
-    }
-
-    recognition.onerror = (event: RecognitionErrorEvent) => {
-      diagnosticsRef.current.error = event.error || 'unknown'
-      microphoneDebugError('settings', 'stt_test_error', new Error(event.error || 'unknown'))
-    }
-
-    recognition.onend = () => finishFallbackTest()
-
     timeoutRef.current = setTimeout(() => {
       timeoutRef.current = null
       microphoneDebug('settings', 'stt_test_timeout', { timeoutMs: RECORD_MAX_MS })
-      try { recognition.stop() } catch { /* already ending */ }
+      stopWebSpeech('settings', { reason: 'stt_test_timeout', force: true })
     }, RECORD_MAX_MS)
 
+    // Everything known before the capture opens, so a turn that produces nothing can be read
+    // against what was expected of it rather than guessed at afterwards.
     microphoneDebug('settings', 'stt_test_started', {
       engine: 'web-speech',
-      lang: recognition.lang,
+      lang: diagnosticsRef.current.lang,
       selectedDeviceId: getMediaPreferences().microphoneDeviceId || 'system-default',
+      selectedDeviceLabel:
+        devices.find((d) => d.deviceId === getMediaPreferences().microphoneDeviceId)?.label
+        || 'system default',
       recognitionDevice: 'browser-managed-web-speech',
+      // The prediction. When this is `true` the turn is expected to hear nothing, and a turn
+      // that then hears nothing has confirmed the routing split rather than discovered a
+      // new fault.
       routingMismatch: routing.mismatch,
       routingKnown: routing.known,
+      sessionEngine: backendStt ? 'homepilot-backend' : 'web-speech',
+      preference,
+      backendAvailable: Boolean(capability?.available),
+      timeoutMs: RECORD_MAX_MS,
     })
 
-    try {
-      recognition.start()
-    } catch (error) {
+    const started = await startWebSpeech('settings', {
+      onStart: () => microphoneDebug('settings', 'stt_test_recognition_started', {
+        lang: diagnosticsRef.current.lang,
+      }),
+      onInterim: (text) => {
+        diagnosticsRef.current.sawInterim = true
+        setInterim(text)
+      },
+      onResult: (text) => {
+        diagnosticsRef.current.sawResult = true
+        transcriptRef.current = `${transcriptRef.current} ${text}`.trim()
+        // Shown to the user who just spoke it; the mic trace records only length.
+        setHeard(transcriptRef.current)
+      },
+      onEnd: (diagnostics) => {
+        // The adapter's record is the browser's own; merge it over the local copy so the
+        // verdict is built from what the recognizer reported, not from what reached a
+        // handler this component happened to subscribe to.
+        diagnosticsRef.current = { ...diagnosticsRef.current, ...diagnostics }
+        void releaseMicrophone('settings')
+        finishFallbackTest()
+      },
+      onError: (code) => {
+        diagnosticsRef.current.error = code || 'unknown'
+        microphoneDebugError('settings', 'stt_test_error', new Error(code || 'unknown'), {
+          // `aborted` used to mean "the Voice tab took the microphone back". It should now
+          // only appear when the user navigated away mid-test, so record who held it.
+          microphoneOwner: getMicrophoneLease()?.owner ?? 'none',
+        })
+      },
+    })
+
+    if (!started) {
       clearSttTimers()
-      recognitionRef.current = null
-      const name = (error as { name?: string })?.name || 'start_failed'
-      microphoneDebugError('settings', 'stt_test_start_failed', error)
+      void releaseMicrophone('settings')
+      microphoneDebug('settings', 'stt_test_start_failed', {
+        microphoneOwner: getMicrophoneLease()?.owner ?? 'none',
+      })
       setSttPhase('error')
-      setSttOutcome(explainSttError(name))
+      setSttOutcome(explainSttError('start_failed'))
     }
-  }, [clearSttTimers, finishFallbackTest, routing.mismatch])
+  }, [
+    clearSttTimers,
+    finishFallbackTest,
+    routing.mismatch,
+    routing.known,
+    devices,
+    backendStt,
+    preference,
+    capability?.available,
+  ])
 
   /* ── Backend path: record the selected device, transcribe server-side ── */
 
@@ -446,7 +482,8 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
       stopRecordingRef.current()
       return
     }
-    try { recognitionRef.current?.stop() } catch { /* already ending */ }
+    // An explicit press of Stop must stop now, not after the recognizer's warm-up guard.
+    stopWebSpeech('settings', { reason: 'stt_test_stop_requested', force: true })
   }, [])
 
   /* ── Text-to-speech through the runtime path ─────────────────────────── */
@@ -475,18 +512,47 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
     setHeard('')
 
     microphoneDebug('settings', 'voice_loop_test_started', {
-      engine: backendStt ? 'homepilot-backend' : 'web-speech',
+      // Always the local engine: this check exists to prove the selected microphone reaches
+      // a transcriber and comes back as speech, and only that path records the selected
+      // device. The session's own engine is recorded alongside so the trace says when the
+      // two differ rather than leaving it to be inferred.
+      engine: 'homepilot-backend',
+      sessionEngine: backendStt ? 'homepilot-backend' : 'web-speech',
+      preference,
+      provider: capability?.provider ?? null,
+      remote: Boolean(capability?.remote),
+      selectedDeviceId: getMediaPreferences().microphoneDeviceId || 'system-default',
       voiceId: resolvedVoiceId || 'system-default',
+      ttsEngine: activeEngineId,
     })
 
-    if (!backendStt || !recorderSupported) {
+    /*
+     * Gated on whether this check *can run*, not on which engine the preference resolved to.
+     *
+     * It used to refuse whenever the session was on the browser recognizer — which is the
+     * default — and then tell the user to install a speech model. On a server that already
+     * had one, that instruction was simply false, and it sent people to install software
+     * they were already running. The end-to-end check needs a recorder and a server that can
+     * transcribe; the preference decides what *chat and Voice* use, which is a different
+     * question and not this one.
+     */
+    const loopCanRun = Boolean(capability?.available) && recorderSupported
+    if (!loopCanRun) {
       setLoopPhase('error')
       setLoopOutcome({
         ok: false,
-        headline: 'The end-to-end check needs HomePilot speech-to-text',
-        detail:
-          capability?.hint ||
-          'This check records the selected microphone and transcribes it on the server. Install local speech on the server (pip install -r requirements/speech-cpu.txt) or configure STT_BASE_URL, then try again.',
+        headline: recorderSupported
+          ? 'The end-to-end check needs HomePilot speech-to-text'
+          : 'This browser cannot record audio',
+        detail: recorderSupported
+          ? (capability?.hint
+            || 'This check records the selected microphone and transcribes it on the server, so it needs a speech model there. Install local speech (pip install -r requirements/speech-cpu.txt) or configure STT_BASE_URL, then try again.')
+          : 'MediaRecorder is unavailable here, so the selected microphone cannot be recorded. Use a Chromium or Firefox build that supports it.',
+      })
+      microphoneDebug('settings', 'voice_loop_test_unavailable', {
+        backendAvailable: Boolean(capability?.available),
+        recorderSupported,
+        provider: capability?.provider ?? null,
       })
       return
     }
@@ -529,11 +595,24 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
       setLoopOutcome({
         ok: true,
         headline: 'The whole voice loop is working',
-        detail: `Recorded ${result.deviceLabel}, transcribed it with ${result.provider || 'HomePilot speech-to-text'}, and read it back with ${voiceLabel}.`,
+        detail: `Recorded ${result.deviceLabel}, transcribed it with ${result.provider || 'HomePilot speech-to-text'}, and read it back with ${voiceLabel}.`
+          // Said out loud rather than left to be discovered: this check passing does not mean
+          // the engine chat and Voice are using works, and on a machine where the browser
+          // recognizer is deaf that difference is the whole problem.
+          + (backendStt
+            ? ''
+            : ' Note that chat and Voice are set to the browser’s speech recognition, which'
+              + ' records your system default input rather than this microphone — this check'
+              + ' does not exercise that path.'),
       })
       microphoneDebug('settings', 'voice_loop_test_completed', {
         characters: result.text.length,
         provider: result.provider,
+        remote: result.remote,
+        deviceLabel: result.deviceLabel,
+        bytes: result.bytes,
+        elapsedMs: result.elapsedMs,
+        sessionEngine: backendStt ? 'homepilot-backend' : 'web-speech',
       })
     } catch (error) {
       stopRecordingRef.current = null
@@ -561,7 +640,10 @@ export default function VoiceAssistantSelfTest(): JSX.Element {
   useEffect(() => () => {
     clearSttTimers()
     stopRuntimeTts()
-    try { recognitionRef.current?.abort?.() } catch { /* ignore */ }
+    // Leaving Settings gives the microphone back, so the Voice tab's hands-free loop — which
+    // has been waiting on the lease rather than fighting for it — resumes on its next tick.
+    abortWebSpeech('settings_unmount')
+    void releaseMicrophone('settings')
     try { stopRecordingRef.current?.() } catch { /* ignore */ }
   }, [clearSttTimers])
 

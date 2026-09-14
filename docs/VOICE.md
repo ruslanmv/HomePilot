@@ -85,6 +85,21 @@ combination of preference and capability has a defined answer, and a test walks 
 > Standing in with the browser "for now" is what sent the first sentence of a session — the
 > one that matters most — through an engine the user did not choose.
 
+> **And nothing opens a capture it can already tell will be deaf.** `SpeechRecognition`
+> records the OS default input. When the microphone chosen in Audio & Video is a *different*
+> device, a browser turn records a microphone nobody is speaking into and reports no error —
+> it faithfully transcribed a silent room. `describeMicrophoneRouting` could see that from
+> the device list all along, and Settings has been *warning* about it for several batches
+> while chat and Voice opened the capture anyway and learned it from two failed turns.
+>
+> The preflight in `sttRuntime.decide()` now moves such a session to the local engine before
+> the first turn, gated on `routing.known` (no `default` alias to compare against is not
+> evidence of agreement) and on `backendUsable`. It is announced, never silent, and
+> **re-picking an engine in Settings disarms it** — otherwise "Browser" would be unselectable
+> for the session on any machine whose default input differs, which is the choice being taken
+> away rather than a default. Trace: `stt_runtime_resolved {reason: 'routing-mismatch-preflight',
+> routingMismatch, routingKnown}`.
+
 > **A fallback is always reported.** Somebody who chose on-device transcription for privacy
 > and is quietly served the browser's — which ships audio to Google — has been failed in a way
 > no later message makes up for. `resolution.fellBack` carries that, the chat composer shows
@@ -196,8 +211,20 @@ on the VAD's silence as before, so a working recognizer is never slowed down. A 
 (turn lock, teardown, the user pressing stop) always wins, and `STT_MAX_LISTEN_MS` still caps
 everything. The trace says which guard held it: `stop_deferred_warming_up {deferredBy}`.
 
-After **two consecutive** deaf turns (one is a cough or a too-quiet sentence; two in a row is
-a device) `planSttRecovery()` decides:
+**How many deaf turns it takes depends on who opened them**, because they are not the same
+kind of fact:
+
+| Turn | Threshold | Why |
+|---|---|---|
+| The user pressed record, spoke, pressed stop | **1** | A person is asserting they said something. A second turn only costs them another turn to learn what the first proved. |
+| Opened automatically (the hands-free loop) | **never counts** | No VAD runs on the browser engine, so nothing says anybody was talking. "The recognizer heard nothing" there is the ordinary sound of a quiet room, and counting it would switch engines under every user who paused. |
+| Opened by the VAD on the local engine | 2 | The old rule, kept: one deaf turn is a cough, two in a row is a device. |
+
+That middle row is the one that matters most. The hands-free browser loop opens a turn every
+400 ms whether or not anybody is speaking; feeding those to the detector would have moved
+every session off the browser engine within two seconds of silence.
+
+Once the threshold is met, `planSttRecovery()` decides:
 
 - **backend usable** → the session moves to `homepilot-backend`, which records the selected
   microphone, and a notice says so and where to change it back;
@@ -864,6 +891,8 @@ or a GPU — no CI runner has any of them — so the list below separates the tw
 | `network` error on every turn | Web Speech needs internet. Install local speech and use the backend path. |
 | Browser mode: turns now take ~5 s before giving up | Deliberate — §2.3. A recognizer that has heard nothing is given until `STT_NO_SPEECH_GRACE_MS` rather than being cut off on another microphone's silence. `stop_deferred_warming_up {deferredBy: 'no_speech_yet'}`. Turns that hear speech are not delayed. |
 | Every turn returns **502**, `libcublas.so.12 not found` | `WHISPER_DEVICE=auto` picked a GPU whose CUDA runtime is incomplete. **CTranslate2 loads the CUDA libraries lazily**, so this surfaces at the *first inference*, not at load — the retry therefore lives in `_run_with_cpu_fallback`, not only in `_ensure_model`. `status.device_note` names the reason. `WHISPER_DEVICE=cpu` skips the wasted attempt. |
+| The Settings speech-to-text test dies with a bare `aborted` | Fixed. The test used to take the recognizer with `abortSTT`, which worked in one direction only — the Voice tab's hands-free loop restarts every 400 ms and took it straight back. Both now go through the microphone lease: the test acquires it, and the loop waits (`handsfree_browser_yielded`) rather than fighting for it. |
+| "The end-to-end check needs HomePilot speech-to-text", on a server that has it | Fixed. It was gated on the engine the *preference* resolved to, so the default (Browser) refused and told the user to install a model they were already running. It is gated on `capability.available && recorderSupported` now — whether the check can run, which is a different question from what chat uses. |
 | Browser engine: `sawAudioStart: true, sawSpeechStart: false` every time | The browser recognizer opened a capture on your **OS default input** and heard nothing. It cannot be pointed at the microphone in Audio & Video. HomePilot now detects this after two consecutive turns and switches the session to on-device transcription when it can — see §2.3. Either make that mic the OS default, or set Speech Recognition to *On this computer*. |
 | Manual "press to talk" does nothing, `recorder_start_no_stream` | Fixed. The VAD runs only in hands-free mode, so a manual turn on the local engine had no capture to borrow. It now opens the selected microphone itself (`recorder_opening_own_capture`) and releases it on stop. |
 | Voice changed engine on its own mid-session | §2.3, and the trace says so: `stt_deaf_recognizer_recovery {action: 'switch-to-backend'}`. Your stored preference is untouched; the notice names where to change it. |

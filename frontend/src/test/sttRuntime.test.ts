@@ -36,21 +36,43 @@ import {
   subscribeSttRuntime,
 } from '../ui/media/sttRuntime';
 import { setSttPreferences, STT_PREFERENCES_STORAGE_KEY } from '../ui/media/sttPreferences';
+import { MEDIA_PREFERENCES_STORAGE_KEY } from '../ui/media/mediaPreferences';
 
 const LOCAL = { available: true, provider: 'whisper-local', remote: false, hint: null };
 const NO_MODEL = { available: false, provider: null, remote: false, hint: null };
+
+const enumerateDevices = vi.fn(async () => [] as MediaDeviceInfo[]);
+
+/** An input list shaped like Chrome's: a `default` alias plus the real devices. */
+function devices(defaultGroup: string, others: Array<[string, string]> = []) {
+  return [
+    { deviceId: 'default', kind: 'audioinput', label: 'Default', groupId: defaultGroup },
+    ...others.map(([deviceId, groupId]) => ({
+      deviceId, kind: 'audioinput', label: deviceId, groupId,
+    })),
+  ] as unknown as MediaDeviceInfo[];
+}
+
+function selectMicrophone(deviceId: string) {
+  localStorage.setItem(
+    MEDIA_PREFERENCES_STORAGE_KEY,
+    JSON.stringify({ microphoneDeviceId: deviceId }),
+  );
+}
 
 beforeEach(() => {
   localStorage.clear();
   resetSttRuntimeForTests();
   capability.mockClear();
   capability.mockResolvedValue(LOCAL);
+  enumerateDevices.mockReset();
+  enumerateDevices.mockResolvedValue([]);
 
   (window as unknown as { SpeechRecognition: unknown }).SpeechRecognition = class {};
   (globalThis as unknown as { MediaRecorder: unknown }).MediaRecorder = class {};
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
-    value: { getUserMedia: vi.fn() },
+    value: { getUserMedia: vi.fn(), enumerateDevices },
   });
 });
 
@@ -88,6 +110,97 @@ describe('resolving the engine', () => {
     const [a, b] = await Promise.all([ensureSttRuntimeResolved(), ensureSttRuntimeResolved()]);
     expect(capability).toHaveBeenCalledTimes(1);
     expect(a.effectiveEngine).toBe(b.effectiveEngine);
+  });
+});
+
+describe('the routing preflight', () => {
+  /*
+   * `SpeechRecognition` records the operating system's default input and accepts no
+   * `deviceId`. When the microphone chosen in Audio & Video is a different device, a browser
+   * turn records a microphone nobody is speaking into — and reports no error, because it
+   * faithfully transcribed a silent room.
+   *
+   * The device list says so before the first turn. Learning it from two failed turns instead
+   * is the difference between a product that works and one that has to be debugged.
+   */
+  it('does not open a capture it can already tell will be deaf', async () => {
+    enumerateDevices.mockResolvedValue(devices('group-builtin', [['usb-mic', 'group-usb']]));
+    selectMicrophone('usb-mic');
+
+    const runtime = await ensureSttRuntimeResolved();
+
+    expect(runtime.resolution?.engine).toBe('web-speech');
+    expect(runtime.effectiveEngine).toBe('homepilot-backend');
+    expect(runtime.sessionOverrideMessage).toContain('system default');
+  });
+
+  it('says so, because it changes which service sees the audio', async () => {
+    enumerateDevices.mockResolvedValue(devices('group-builtin', [['usb-mic', 'group-usb']]));
+    selectMicrophone('usb-mic');
+
+    const runtime = await ensureSttRuntimeResolved();
+
+    expect(runtime.sessionOverrideMessage).toContain('Speech Recognition');
+  });
+
+  it('leaves a matching device alone', async () => {
+    // Same physical device as the OS default, so the recognizer hears exactly what the user
+    // selected and there is nothing to fix.
+    enumerateDevices.mockResolvedValue(devices('group-builtin', [['builtin', 'group-builtin']]));
+    selectMicrophone('builtin');
+
+    expect((await ensureSttRuntimeResolved()).effectiveEngine).toBe('web-speech');
+  });
+
+  it('leaves the system default alone', async () => {
+    enumerateDevices.mockResolvedValue(devices('group-builtin', [['usb-mic', 'group-usb']]));
+    // No explicit selection: the recognizer and HomePilot both follow the OS.
+    expect((await ensureSttRuntimeResolved()).effectiveEngine).toBe('web-speech');
+  });
+
+  it('does nothing when the browser cannot say what the default is', async () => {
+    // No `default` alias to compare against — Chrome on Windows often exposes none. That is
+    // "cannot tell", not "they agree", and acting on it would move sessions on no evidence.
+    enumerateDevices.mockResolvedValue([
+      { deviceId: 'usb-mic', kind: 'audioinput', label: 'USB', groupId: 'group-usb' },
+    ] as unknown as MediaDeviceInfo[]);
+    selectMicrophone('usb-mic');
+
+    const runtime = await ensureSttRuntimeResolved();
+    expect(runtime.effectiveEngine).toBe('web-speech');
+    expect(runtime.routing?.known).toBe(false);
+  });
+
+  it('does nothing when there is no engine to move to', async () => {
+    capability.mockResolvedValue(NO_MODEL);
+    enumerateDevices.mockResolvedValue(devices('group-builtin', [['usb-mic', 'group-usb']]));
+    selectMicrophone('usb-mic');
+
+    expect((await ensureSttRuntimeResolved()).effectiveEngine).toBe('web-speech');
+  });
+
+  it('survives a browser that refuses to enumerate devices', async () => {
+    enumerateDevices.mockRejectedValue(new Error('NotAllowedError'));
+    selectMicrophone('usb-mic');
+
+    const runtime = await ensureSttRuntimeResolved();
+    expect(runtime.status).toBe('ready');
+    expect(runtime.effectiveEngine).toBe('web-speech');
+  });
+
+  it('stands down once the user insists on an engine', async () => {
+    // Otherwise "Browser" would be unselectable for the session on any machine whose default
+    // input differs — the preflight would re-apply on every resolve, and a default you cannot
+    // override is the choice being taken away rather than a default.
+    enumerateDevices.mockResolvedValue(devices('group-builtin', [['usb-mic', 'group-usb']]));
+    selectMicrophone('usb-mic');
+    expect((await ensureSttRuntimeResolved()).effectiveEngine).toBe('homepilot-backend');
+
+    setSttPreferences({ chat: 'web-speech' });
+    await ensureSttRuntimeResolved({ force: true });
+
+    expect(getSttRuntime().effectiveEngine).toBe('web-speech');
+    expect(getSttRuntime().sessionOverride).toBeNull();
   });
 });
 

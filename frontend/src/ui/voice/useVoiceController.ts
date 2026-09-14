@@ -145,6 +145,13 @@ const DEFAULT_CONFIG: VoiceControllerConfig = {
 /** Gap between a hands-free browser turn ending and the next one opening. */
 const BROWSER_RESTART_MS = 400;
 /**
+ * How often the hands-free loop re-checks a microphone another surface is holding.
+ *
+ * Slow on purpose: while the chat composer or the Settings test has the recognizer, this loop
+ * has nothing to do, and polling it faster would only make the moment of release a race.
+ */
+const BROWSER_YIELD_POLL_MS = 1000;
+/**
  * A turn shorter than this never listened to anything — the recognizer refused and ended
  * immediately. Backing off stops a refusal from becoming a hot loop of `start()` calls.
  */
@@ -251,6 +258,8 @@ export function useVoiceController(
   const browserRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const browserTurnStartedAtRef = useRef<number>(0);
   const browserFailuresRef = useRef(0);
+  /** Whether the open turn was started by a press rather than by the hands-free loop. */
+  const turnWasDeliberateRef = useRef(false);
 
   useEffect(() => {
     stateRef.current = state;
@@ -566,6 +575,23 @@ export function useVoiceController(
     browserRestartTimerRef.current = setTimeout(() => {
       browserRestartTimerRef.current = null;
       if (!isHandsFreeRef.current || sttEngineRef.current !== 'web-speech') return;
+      // Somebody else is using the microphone — the chat composer, or the Settings
+      // speech-to-text test. There is one recognizer on the page, so restarting here would
+      // abort theirs mid-turn: the Settings test failed with a bare `aborted` for exactly
+      // this reason, because this loop woke up 400 ms after the test pressed start.
+      //
+      // Wait rather than give up. Hands-free is supposed to still be listening when they are
+      // done, and polling the lease is what lets it resume without the capture effect
+      // re-running.
+      const holder = getMicrophoneLease();
+      if (holder && holder.owner !== 'voice') {
+        microphoneDebug('voice', 'handsfree_browser_yielded', {
+          to: holder.owner,
+          engine: holder.engine,
+        });
+        scheduleBrowserRestart(BROWSER_YIELD_POLL_MS);
+        return;
+      }
       // A turn lock, the assistant still talking, or the guard right after it: all mean
       // "not yet", never "give up". Re-arm rather than dropping the loop on the floor.
       if (listeningSuppressedRef.current || stateRef.current === 'SPEAKING') {
@@ -586,10 +612,14 @@ export function useVoiceController(
 
   const startBrowserTurn = useCallback(async (reason: string): Promise<boolean> => {
     clearBrowserRestart();
+    // Only a press carries the assertion "I just said something", which is what makes an
+    // empty turn evidence of a fault rather than of a pause.
+    turnWasDeliberateRef.current = reason === 'manual_button';
     microphoneDebug('voice', 'stt_start_requested', {
       reason,
       state: stateRef.current,
       handsFree: isHandsFreeRef.current,
+      deliberate: turnWasDeliberateRef.current,
       recognitionDevice: 'browser-managed-web-speech',
     });
 
@@ -643,7 +673,15 @@ export function useVoiceController(
         // The turn that produced nothing is the one worth reading: the capture opened,
         // stayed open and heard not one syllable. Nothing in the Web Speech API reports
         // that, because from the recognizer's point of view it recorded a silent room.
-        const deaf = isDeafTurn({
+        //
+        // But only a turn somebody deliberately started is evidence of a *fault*. A
+        // hands-free browser turn is opened by the restart loop whether or not anybody is
+        // talking, and no VAD runs on this engine to say that somebody was — so "the
+        // recognizer heard nothing" there is the ordinary sound of a quiet room, and
+        // counting it would switch engines under a user who simply stopped speaking for
+        // eight hundred milliseconds.
+        const deliberate = turnWasDeliberateRef.current;
+        const deaf = deliberate && isDeafTurn({
           hadResult: pendingResultRef.current,
           sawAudioStart: diagnostics.sawAudioStart,
           sawSpeechStart: diagnostics.sawSpeechStart,
@@ -654,6 +692,7 @@ export function useVoiceController(
         if (deaf) {
           const recovery = planSttRecovery(deafTurnsRef.current, {
             backendUsable: backendUsableRef.current,
+            turnWasDeliberate: true,
             // Read from the lease rather than assumed. With the engines exclusive this is
             // now always false during a browser turn, and stating it as evidence keeps the
             // diagnosis honest if that ever stops being true.

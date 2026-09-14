@@ -19,6 +19,7 @@ import {
   DEAF_TURNS_BEFORE_RECOVERY,
   isDeafTurn,
   planSttRecovery,
+  turnsBeforeRecovery,
 } from '../ui/media/sttTurnHealth';
 
 describe('isDeafTurn', () => {
@@ -129,5 +130,42 @@ describe('planSttRecovery', () => {
 
   it('keeps recovering past the threshold rather than giving up', () => {
     expect(planSttRecovery(9, { backendUsable: true }).action).toBe('switch-to-backend');
+  });
+});
+
+describe('how much evidence one turn is worth', () => {
+  /*
+   * Two turns was written for turns a voice-activity detector opened, where a deaf turn might
+   * be a cough, a door, or a sentence too quiet to reach the recognizer.
+   *
+   * A turn the user started and stopped themselves is a different kind of fact: they pressed
+   * record, spoke, and pressed stop. Waiting for a second one only costs them another turn to
+   * learn what the first already proved.
+   */
+  it('acts on the first turn a person deliberately recorded', () => {
+    expect(turnsBeforeRecovery({ backendUsable: true, turnWasDeliberate: true })).toBe(1);
+    expect(planSttRecovery(1, { backendUsable: true, turnWasDeliberate: true }).action)
+      .toBe('switch-to-backend');
+  });
+
+  it('still wants two from a turn nobody asked for', () => {
+    expect(turnsBeforeRecovery({ backendUsable: true })).toBe(DEAF_TURNS_BEFORE_RECOVERY);
+    expect(planSttRecovery(1, { backendUsable: true }).action).toBe('none');
+  });
+
+  it('describes what it actually saw, not a fixed sentence', () => {
+    // The old text claimed the recognizer failed "twice" while "HomePilot's own microphone
+    // meter heard you clearly". Neither half survives: a deliberate turn recovers on the
+    // first, and on the browser engine HomePilot holds no capture, so there is no meter to
+    // have heard anything. Describing evidence nobody gathered is worse than saying less.
+    const deliberate = planSttRecovery(1, { backendUsable: true, turnWasDeliberate: true });
+    if (deliberate.action === 'none') throw new Error('expected a recovery');
+    expect(deliberate.message).toContain('You recorded a turn');
+    expect(deliberate.message).not.toContain('twice');
+    expect(deliberate.message).not.toContain('microphone meter heard you clearly');
+
+    const automatic = planSttRecovery(3, { backendUsable: true });
+    if (automatic.action === 'none') throw new Error('expected a recovery');
+    expect(automatic.message).toContain('3 times in a row');
   });
 });

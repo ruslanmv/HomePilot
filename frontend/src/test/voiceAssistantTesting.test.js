@@ -181,8 +181,26 @@ describe('one selected-microphone transcription path', () => {
     expect(sttService).toContain("export type SttEngine = 'homepilot-backend' | 'web-speech'");
     expect(sttService).toContain('SttUnavailableError');
     expect(sttRuntime).toContain('stt_runtime_resolved');
-    expect(sttRuntime).toContain('reason: override ? \'session-override\' : resolution.reason');
+    expect(sttRuntime).toContain('reason: overrideReason ?? resolution.reason');
     expect(sttRuntime).toContain('usesOsDefaultInput');
+    // …and the evidence behind a preflight switch, so "why am I not on the engine I picked"
+    // is answerable from the trace alone.
+    expect(sttRuntime).toContain('routingMismatch');
+    expect(sttRuntime).toContain('routingKnown');
+  });
+
+  it('refuses to open a capture it can already tell will be deaf', () => {
+    // `describeMicrophoneRouting` has been able to spot the OS-default split since the
+    // Settings warning was written. Chat and Voice opened the capture anyway and learned it
+    // from two failed turns — with the device list saying so before the first one.
+    expect(sttRuntime).toContain('describeMicrophoneRouting');
+    expect(sttRuntime).toContain("overrideReason = 'routing-mismatch-preflight'");
+    // Gated on evidence: no `default` alias to compare against is not proof they agree.
+    expect(sttRuntime).toContain('routing.known');
+    expect(sttRuntime).toContain('routing.mismatch');
+    // And escapable: re-picking an engine in Settings disarms it, or "Browser" would be
+    // unselectable for the session on any machine whose default input differs.
+    expect(sttRuntime).toContain('routingPreflightArmed = false');
   });
 
   it('transcribes the VAD’s own capture, so detection and text cannot disagree', () => {
@@ -312,9 +330,29 @@ describe('Settings voice self-test', () => {
     expect(selfTest).toContain('Recordings leave this computer');
   });
 
-  it('does not clobber the recognition callbacks hands-free voice installed', () => {
-    expect(selfTest).toContain("shared?.abortSTT?.('settings_stt_test')");
+  it('takes the microphone rather than snatching it back and forth', () => {
+    // The test used to abort whoever held the recognizer, which worked in one direction
+    // only: the Voice tab's hands-free loop restarts every 400 ms, so it took the recognizer
+    // straight back and the test died with a bare `aborted` before the user finished
+    // speaking. Owning a lease is what makes the other surface wait instead.
+    expect(selfTest).toContain("acquireMicrophone('settings', 'web-speech'");
+    expect(selfTest).toContain("releaseMicrophone('settings')");
+    expect(selfTest).toContain("startWebSpeech('settings'");
+    expect(selfTest).not.toContain("shared?.abortSTT?.('settings_stt_test')");
+    // Still no direct callback installation: the adapter owns that, for everybody.
     expect(selfTest).not.toContain('setRecognitionCallbacks');
+    // And the loop yields to a lease it does not hold.
+    expect(controller).toContain('handsfree_browser_yielded');
+  });
+
+  it('offers the end-to-end check whenever it can actually run', () => {
+    // It was gated on the *resolved engine*, so on the default (Browser) it refused and told
+    // the user to install a speech model — on a server that already had one. Which engine
+    // chat uses is a different question from whether this check can run.
+    expect(selfTest).toContain('const loopCanRun = Boolean(capability?.available) && recorderSupported');
+    expect(selfTest).not.toContain('if (!backendStt || !recorderSupported) {');
+    // Passing it must not be read as "the engine chat uses works".
+    expect(selfTest).toContain('does not exercise that path');
   });
 
   it('treats Stop as "transcribe what I said", not "discard it"', () => {

@@ -39,6 +39,8 @@
 
 import { getSttCapability, type SttCapability } from './sttService';
 import { microphoneDebug } from './microphoneDebug';
+import { getMediaPreferences } from './mediaPreferences';
+import { describeMicrophoneRouting, type MicrophoneRoutingNotice } from './voiceSelfTest';
 import {
   getSttPreferences,
   resolveSttEngine,
@@ -77,7 +79,39 @@ export interface SttRuntimeState {
   sessionOverrideMessage: string | null;
   /** HomePilot's own transcription can run here, so a recovery has somewhere to go. */
   backendUsable: boolean;
+  /**
+   * Whether the selected microphone and the OS default input are the same device.
+   *
+   * `null` until it has been looked at. `known: false` means the browser exposed no
+   * `default` alias to compare against, which is not the same as "they agree".
+   */
+  routing: MicrophoneRoutingNotice | null;
 }
+
+/**
+ * Read the device list and decide whether the browser recognizer can hear the selected
+ * microphone at all.
+ *
+ * Never throws and never blocks a decision: a machine that refuses to enumerate devices gets
+ * "cannot tell", and "cannot tell" changes nothing.
+ */
+async function readRouting(): Promise<MicrophoneRoutingNotice> {
+  const unknown: MicrophoneRoutingNotice = { mismatch: false, known: false, message: null };
+  try {
+    if (!navigator.mediaDevices?.enumerateDevices) return unknown;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return describeMicrophoneRouting(devices, getMediaPreferences().microphoneDeviceId);
+  } catch {
+    return unknown;
+  }
+}
+
+const ROUTING_OVERRIDE_MESSAGE =
+  'The microphone you selected in Audio & Video is not your system default input, and the '
+  + 'browser’s speech recognition can only record the system default — so it would have '
+  + 'captured a device you are not speaking into. HomePilot is transcribing on this computer '
+  + 'for this session instead, which records the microphone you chose. Change this in '
+  + 'Settings → Voice Assistant → Speech Recognition.';
 
 function webSpeechSupported(): boolean {
   if (typeof window === 'undefined') return false;
@@ -103,12 +137,22 @@ const INITIAL: SttRuntimeState = {
   sessionOverride: null,
   sessionOverrideMessage: null,
   backendUsable: false,
+  routing: null,
 };
 
 let state: SttRuntimeState = { ...INITIAL };
 let listeners = new Set<(next: SttRuntimeState) => void>();
 let inFlight: Promise<SttRuntimeState> | null = null;
 let preferenceSubscription: (() => void) | null = null;
+/**
+ * Whether the routing preflight may still move this session off the browser recognizer.
+ *
+ * It applies once, unasked, because the alternative is knowingly recording a device the user
+ * is not speaking into. But re-picking an engine in Settings is the user insisting, and an
+ * override that cannot be overridden is not a session default — it is the choice being taken
+ * away. So a preference change disarms it for the rest of the session.
+ */
+let routingPreflightArmed = true;
 
 function emit(): void {
   const snapshot = state;
@@ -148,20 +192,59 @@ function ensurePreferenceSubscription(): void {
   if (preferenceSubscription || typeof window === 'undefined') return;
   preferenceSubscription = subscribeSttPreferences(() => {
     // Choosing an engine in Settings is a deliberate act and outranks a recovery HomePilot
-    // made on its own, in both surfaces at once.
+    // made on its own, in both surfaces at once — including the routing preflight, which
+    // would otherwise re-apply on the next resolve and make "Browser" unselectable on a
+    // machine whose default input differs. Insisting has to mean something.
     state = { ...state, sessionOverride: null, sessionOverrideMessage: null };
+    routingPreflightArmed = false;
     void refreshSttRuntime({ force: true });
   });
 }
 
-function decide(capability: SttCapability, preference: SttEnginePreference): SttRuntimeState {
+function decide(
+  capability: SttCapability,
+  preference: SttEnginePreference,
+  routing: MicrophoneRoutingNotice,
+): SttRuntimeState {
   const resolution = resolveSttEngine(preference, {
     backendAvailable: capability.available,
     mediaRecorderSupported: mediaRecorderSupported(),
     webSpeechSupported: webSpeechSupported(),
   });
   const backendUsable = capability.available && mediaRecorderSupported();
-  const override = state.sessionOverride && backendUsable ? state.sessionOverride : null;
+  let override = state.sessionOverride && backendUsable ? state.sessionOverride : null;
+  let overrideMessage = override ? state.sessionOverrideMessage : null;
+  let overrideReason = override ? 'session-override' : null;
+
+  /*
+   * The preflight. `SpeechRecognition` records the operating system's default input and
+   * accepts no `deviceId`, so when the microphone chosen in Audio & Video is a *different*
+   * device, a browser turn is recording a microphone nobody is speaking into. That produces
+   * no error — the recognizer faithfully transcribes a silent room — and the only trace of it
+   * is `sawAudioStart: true, sawSpeechStart: false` after the turn is already lost.
+   *
+   * This was detectable the whole time: `describeMicrophoneRouting` compares the selected
+   * device against the browser's `default` alias, and Settings has been *warning* about it
+   * for several batches while chat and Voice went on opening the capture anyway. Learning it
+   * from two failed turns, when the device list said so before the first one, is a worse
+   * product than simply not starting a capture we can already tell will be deaf.
+   *
+   * Gated on `known`, because "the browser exposes no default alias" is not evidence of
+   * agreement, and on `backendUsable`, because there is no point moving a session to an
+   * engine that cannot run. Announced, never silent — it changes which service sees the audio.
+   */
+  if (
+    !override
+    && routingPreflightArmed
+    && backendUsable
+    && resolution.engine === 'web-speech'
+    && routing.known
+    && routing.mismatch
+  ) {
+    override = 'homepilot-backend';
+    overrideMessage = ROUTING_OVERRIDE_MESSAGE;
+    overrideReason = 'routing-mismatch-preflight';
+  }
 
   const next = update({
     status: 'ready',
@@ -169,15 +252,16 @@ function decide(capability: SttCapability, preference: SttEnginePreference): Stt
     capability,
     resolution,
     backendUsable,
+    routing,
     sessionOverride: override,
-    sessionOverrideMessage: override ? state.sessionOverrideMessage : null,
+    sessionOverrideMessage: overrideMessage,
     effectiveEngine: override ?? resolution.engine,
   });
 
   microphoneDebug('settings', 'stt_runtime_resolved', {
     preference,
     engine: next.effectiveEngine,
-    reason: override ? 'session-override' : resolution.reason,
+    reason: overrideReason ?? resolution.reason,
     // A choice that was overridden has to be visible. Somebody who picked on-device
     // transcription for privacy and is quietly served the browser's — which ships audio to
     // Google — has been failed in a way no later message makes up for.
@@ -186,6 +270,11 @@ function decide(capability: SttCapability, preference: SttEnginePreference): Stt
     provider: capability.provider,
     remote: capability.remote,
     usesOsDefaultInput: next.effectiveEngine === 'web-speech',
+    // The evidence behind a preflight switch, and the reason one did not happen.
+    selectedDeviceId: getMediaPreferences().microphoneDeviceId || 'system-default',
+    routingMismatch: routing.mismatch,
+    routingKnown: routing.known,
+    routingPreflightArmed,
   });
   return next;
 }
@@ -205,8 +294,8 @@ export function ensureSttRuntimeResolved(
   if (inFlight) return inFlight;
 
   const preference = getSttPreferences().chat;
-  inFlight = getSttCapability({ force: options.force })
-    .then((capability) => decide(capability, preference))
+  inFlight = Promise.all([getSttCapability({ force: options.force }), readRouting()])
+    .then(([capability, routing]) => decide(capability, preference, routing))
     .finally(() => { inFlight = null; });
   return inFlight;
 }
@@ -325,6 +414,7 @@ export function resetSttRuntimeForTests(): void {
   listeners = new Set();
   inFlight = null;
   lease = null;
+  routingPreflightArmed = true;
   preferenceSubscription?.();
   preferenceSubscription = null;
 }

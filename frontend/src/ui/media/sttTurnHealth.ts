@@ -90,6 +90,22 @@ export function isDeafTurn(signals: SttTurnSignals): boolean {
  */
 export const DEAF_TURNS_BEFORE_RECOVERY = 2;
 
+/**
+ * One deliberate turn is worth two automatic ones.
+ *
+ * The two-turn rule above was written for turns a voice-activity detector opened: there, a
+ * deaf turn might be a cough, a door, or a sentence too quiet to reach the recognizer, and
+ * reacting to one would change engines under people whose setup is fine.
+ *
+ * A turn the user *started and stopped themselves* is a different kind of fact. They pressed
+ * record, spoke, and pressed stop; there is a person asserting they said something. When that
+ * turn reports that a capture opened and heard not one syllable, waiting for a second one
+ * only costs them a second turn to learn what the first already proved.
+ */
+export function turnsBeforeRecovery(context: SttRecoveryContext): number {
+  return context.turnWasDeliberate ? 1 : DEAF_TURNS_BEFORE_RECOVERY;
+}
+
 export type SttRecovery =
   /** Keep going: not enough evidence yet. */
   | { action: 'none' }
@@ -107,11 +123,36 @@ export interface SttRecoveryContext {
    * This changes the diagnosis, so it must not be assumed either way. See {@link describeCause}.
    */
   homepilotHoldsMicrophone?: boolean;
+  /**
+   * The user opened and closed this turn themselves — a press of the composer microphone, or
+   * of the manual listen button.
+   *
+   * This is the difference between evidence and noise, and it decides how many turns are
+   * needed. A turn somebody deliberately started, spoke into and stopped has a person behind
+   * it asserting they said something; a turn opened automatically has nothing behind it, and
+   * "the recognizer heard nothing" may simply mean nobody was talking. See
+   * {@link turnsBeforeRecovery}.
+   */
+  turnWasDeliberate?: boolean;
 }
 
-const OBSERVED =
-  'Your browser’s speech recognition opened a microphone and heard nothing, twice, while ' +
-  'HomePilot’s own microphone meter heard you clearly.';
+/**
+ * What was actually observed, stated without embellishment.
+ *
+ * This used to be one fixed sentence claiming the recognizer failed "twice" while "HomePilot's
+ * own microphone meter heard you clearly". Neither half survives the engines being exclusive:
+ * a deliberate turn recovers on the first one, and on the browser engine HomePilot holds no
+ * capture, so there is no meter to have heard anything. A message that describes evidence
+ * nobody gathered is worse than a shorter one that describes what happened.
+ */
+function describeObservation(consecutiveDeafTurns: number, context: SttRecoveryContext): string {
+  if (context.turnWasDeliberate) {
+    return 'You recorded a turn and the browser’s speech recognition found no speech in it, '
+      + 'even though its microphone opened normally.';
+  }
+  const times = consecutiveDeafTurns === 2 ? 'twice' : `${consecutiveDeafTurns} times in a row`;
+  return `Your browser’s speech recognition opened a microphone and heard nothing, ${times}.`;
+}
 
 /**
  * Name the cause with the confidence the evidence actually supports.
@@ -155,9 +196,9 @@ export function planSttRecovery(
   consecutiveDeafTurns: number,
   context: SttRecoveryContext,
 ): SttRecovery {
-  if (consecutiveDeafTurns < DEAF_TURNS_BEFORE_RECOVERY) return { action: 'none' };
+  if (consecutiveDeafTurns < turnsBeforeRecovery(context)) return { action: 'none' };
 
-  const observed = OBSERVED + describeCause(context);
+  const observed = describeObservation(consecutiveDeafTurns, context) + describeCause(context);
 
   if (context.backendUsable) {
     return {

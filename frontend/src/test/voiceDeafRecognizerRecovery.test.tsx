@@ -107,14 +107,15 @@ async function endTurn(result: { current: { startManualListening: () => Promise<
 }
 
 describe('a recognizer that opens a silent device', () => {
-  it('says nothing after a single empty turn', async () => {
-    // One empty turn is a cough or a false trigger. Reacting to it would change where a
-    // healthy user's audio goes on the strength of no evidence.
+  it('acts on the first turn the user started themselves', async () => {
+    // `endTurn` presses the listen button, so these are deliberate turns. The user pressed
+    // record, spoke and pressed stop; there is a person asserting they said something, and a
+    // second empty turn would only cost them another turn to learn what this one proved.
     const { result } = await mountVoice();
     await endTurn(result);
 
-    expect(result.current.sttNotice).toBeNull();
-    expect(result.current.sttEngine).toBe('web-speech');
+    expect(result.current.sttEngine).toBe('homepilot-backend');
+    expect(result.current.sttNotice).toContain('Speech Recognition');
   });
 
   it('moves the session onto HomePilot transcription once the pattern is established', async () => {
@@ -161,15 +162,33 @@ describe('a recognizer that opens a silent device', () => {
   });
 
   it('forgets the run as soon as one turn produces words', async () => {
-    // A microphone that works once works. Counting non-consecutive empty turns would
-    // eventually switch engines under everybody.
+    // A microphone that works once works. A turn with words clears the count, so a later
+    // empty one starts from zero instead of adding to a stale run.
     const { result } = await mountVoice();
-    await endTurn(result);
     await act(async () => { await result.current.startManualListening(); });
     act(() => { callbacks.onResult?.('hello there'); });
     act(() => { callbacks.onEnd?.(); });
-    // One deaf turn on either side of a working one is not a run, so nothing changes.
-    await endTurn(result);
+
+    expect(result.current.sttEngine).toBe('web-speech');
+    expect(result.current.sttNotice).toBeNull();
+  });
+
+  it('never counts a turn the user did not start', async () => {
+    /*
+     * The hands-free browser loop opens a turn every 400 ms whether or not anybody is
+     * talking, and no VAD runs on this engine to say that somebody was. So "the recognizer
+     * heard nothing" there is the ordinary sound of a quiet room — counting it would switch
+     * engines under a user who simply stopped speaking, which is every user, constantly.
+     *
+     * This is the guarantee that makes the hands-free restart loop safe to run at all.
+     */
+    localStorage.setItem('homepilot_voice_handsfree', 'true');
+    const { result } = await mountVoice();
+    await waitFor(() => expect(window.SpeechService.startSTT).toBeDefined());
+
+    for (let i = 0; i < DEAF_TURNS_BEFORE_RECOVERY + 4; i++) {
+      act(() => { callbacks.onEnd?.(); });
+    }
 
     expect(result.current.sttEngine).toBe('web-speech');
     expect(result.current.sttNotice).toBeNull();

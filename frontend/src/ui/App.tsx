@@ -1711,6 +1711,10 @@ function QueryBar({
         const recovery = planSttRecovery(micDeafTurnsRef.current, {
           backendUsable: micBackendUsableRef.current,
           homepilotHoldsMicrophone: getMicrophoneLease()?.engine === 'homepilot-backend',
+          // The user pressed record, spoke, and pressed stop. That is a person asserting they
+          // said something, so one empty turn is already the answer — waiting for a second
+          // only costs them another turn to learn what this one proved.
+          turnWasDeliberate: true,
         })
         if (recovery.action === 'none') return
         microphoneDebug('chat', 'composer_mic_deaf_recognizer_recovery', {
