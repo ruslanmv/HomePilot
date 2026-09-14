@@ -14,7 +14,6 @@ import {
   Clock,
   Settings,
   Lock,
-  Paperclip,
   Server,
   PlugZap,
   Trash2,
@@ -40,6 +39,7 @@ import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './Se
 import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
 import { explainSttError, explainSttOutcome, type SttDiagnostics } from './media/voiceSelfTest'
 import { describeBrowserMicCheck } from './media/browserMicHelp'
+import { ComposerPlusMenu, ScreenShareStatus } from './components/ComposerPlusMenu'
 import { recordAndTranscribe, SttUnavailableError } from './media/sttService'
 import { describeSttResolution, type ResolvedSttEngine } from './media/sttPreferences'
 import {
@@ -132,7 +132,6 @@ import {
 import { useMeetingCatalog } from './meetingsense/useMeetingCatalog'
 import { MeetingLibrary } from './meetingsense/MeetingLibrary'
 import { MeetingSenseProvider } from './meetingsense/MeetingSenseProvider'
-import { MeetingAction } from './meetingsense/MeetingAction'
 import type { MeetingSenseStatus } from './meetingsense/entryPoint'
 
 /** Shared so History does not allocate a Set per render on an install with no meetings. */
@@ -2090,6 +2089,8 @@ function QueryBar({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      {/* The privacy indicator the floating button used to be. Nothing while idle. */}
+      <ScreenShareStatus />
       <div
         className={[
           'relative w-full overflow-hidden',
@@ -2106,17 +2107,15 @@ function QueryBar({
             <span className="text-purple-300 text-sm font-semibold">Drop image to attach</span>
           </div>
         )}
-        {/* Left: attach */}
+        {/* Left: everything HomePilot can be given to look at.
+            This was a bare paperclip. It is now the one place that collects a file, a
+            screenshot, a live screen and a meeting — three of which used to live somewhere
+            else entirely (the header, and a floating button the page mounted for itself).
+            `+` replaces the paperclip rather than joining it: two buttons for one intent make
+            the reader work out which is the superset. The file input below is untouched, and
+            the menu's first item fires the same click the paperclip did. */}
         <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="h-10 w-10 rounded-full grid place-items-center text-white/50 hover:text-white hover:bg-white/5 transition-colors"
-            aria-label="Upload image"
-            title="Upload image"
-          >
-            <Paperclip size={18} />
-          </button>
+          <ComposerPlusMenu onAddFile={() => fileInputRef.current?.click()} />
           <input
             type="file"
             ref={fileInputRef}
@@ -2563,10 +2562,11 @@ function ChatState({
               </button>
             )
           })()}
-          {/* MS32. Meeting is Call's closest sibling — both start a session that runs
-              alongside the chat rather than inside it — so it sits beside Call and not
-              under the composer. Renders nothing when the server has the feature off. */}
-          <MeetingAction />
+          {/* Meeting used to sit here, beside Call. It now lives in the composer's `+` menu
+              with the other things you can give HomePilot to look at — see
+              `meetingsense/MeetingMenuItem`. The header is Call, Settings and New Chat: what
+              you do *with* the app, not what you feed it. `RecordingPill` still carries §2a's
+              promise that an active meeting is unmissable, so nothing was hidden by this. */}
           <button
             type="button"
             onClick={() => setChatSettingsOpen((v) => !v)}

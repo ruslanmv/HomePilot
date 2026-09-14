@@ -1191,6 +1191,41 @@ one people learn to dismiss without reading, which is the opposite of consent.
 **"Stop" is still a countdown, and the button says so.** Pressing it a second time starts MS6's
 ten-second window with capture still running, so undoing leaves no hole in the transcript.
 
+#### Where the button lives now
+
+Not in the header. Meeting spent a batch under the composer (MS29) and a batch beside Call
+(MS32); it is now a row in the composer's **`+` menu**, with the other things you can give
+HomePilot to look at.
+
+The axis is what changed, not the feature. The header is Call, Settings and New Chat — what you
+*do with* the application. `+` is a file, a screenshot, a shared screen and a meeting — what you
+*give it to look at*. Those had been in three different places, none findable from the others,
+and screen sharing was a floating button the page mounted for itself over the conversation.
+
+| | |
+|---|---|
+| `meetingsense/MeetingMenuItem.tsx` | the menu presentation — **new** |
+| `meetingsense/MeetingAction.tsx` | the button presentation — kept, mounted nowhere in the chat shell |
+| `MeetingSenseProvider` | the state both read, unchanged |
+
+Neither presentation owns anything: both call the same `useMeetingControls()` and reuse the
+same `meetingBlock` / `SetupPanel` / `LivePanel`, so a meeting started from either is the same
+meeting and a refusal gives the same reason. The menu row is not a `begin()` call with an icon
+— it keeps the three states a naive row gets wrong: **blocked** explains itself instead of
+starting something that cannot work, **starting** stays visible because the wait is the
+feedback, and **live** shows `● Meeting in progress · 08:42` rather than offering to start a
+second one.
+
+One thing the move exposed: `SetupPanel` has no dismiss control of its own. In the header it
+sat in a popover an outside click closed, and its only button is the optional *Open Settings* —
+so inside a menu it stranded the reader with an explanation and, on `settings: false` blocks
+like "open a conversation first", no controls whatsoever. `MeetingMenuItem` adds the way back
+rather than changing the shared panel.
+
+**§2a is untouched.** `RecordingPill` still carries the promise that an active meeting is
+unmissable, at the top of the viewport, exactly as before. Removing Meeting from the header
+removed an entry point, not the recording indicator.
+
 #### What this makes work, that already existed
 
 The part everybody asks for — *"the AI can see what's going on in the meeting"* — needed no new
@@ -1235,6 +1270,33 @@ exists only *while* a screen is actively being shared — a deliberate act, with
 operating-system indicator on it, taken in order to be seen. It appears when you share and is
 gone the moment you stop. Every other flag here gates something that would otherwise run in the
 background, which is why they all default off.
+
+#### Starting a share: the floating button is gone
+
+`index.html` now sets `window.HOMEPILOT_SCREENSENSE_NO_AUTOBUTTON = true` before loading
+`homepilot-screensense.js`, so the script stops mounting its own floating 👁 control. Sharing is
+reached from the composer's `+` menu instead, which calls the same `hpScreenSense.enable()` and
+`hpScreenSense.stop()` the floating button always did.
+
+This suppresses one `mountButton()` call at load and nothing else: the script still loads,
+`window.hpScreenSense` and every capability on it are unchanged, and `MeetingSenseProvider`'s
+hide-the-legacy-button effect was already null-safe, so it degrades to a no-op for the button
+while still stopping a browser share when a meeting takes over capture.
+
+Two rules the menu keeps:
+
+- **It reads the engine, never its own memory.** A share ends in ways no React tree observes —
+  the browser's own "Stop sharing" bar, a shared window closing, a stream going inactive — and
+  the one state that must never be wrong is claiming a share is live after it stopped. The menu
+  re-reads `enabled` every time it opens; the status line polls it.
+- **Screenshot and share stay separate rows.** Close technically, different in meaning: a
+  screenshot is one image attached to one message, a share is an ongoing permission. Collapsing
+  them would hide the privacy half, which is the half that matters.
+
+**The floating button was also the only sign a share was running**, so removing it without
+replacing that would have taken away a privacy indicator rather than tidying up. `● Screen
+sharing — Stop` now sits above the composer while a share is live, and nothing at all when it
+is not.
 
 ### What the automated tests cover, and what they cannot
 

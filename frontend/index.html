@@ -12,6 +12,15 @@
     <div id="root" data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false"></div>
     <script src="/js/speech-service.js"></script>
     <!-- ScreenSense: additive screen-awareness addon (desktop native / cloud share-or-upload). Defines window.hpScreenSense; inert until invoked. -->
+    <!-- Screen sharing is reached from the composer's `+` menu, so ScreenSense must not also
+         mount its own floating button: two entry points for one feature, one of them a blue
+         circle permanently over the chat. This only suppresses `mountButton()` at load — the
+         script, `window.hpScreenSense` and every capability on it are unchanged, and the menu
+         drives the same `enable()` / `stop()` the floating button always did. Must run BEFORE
+         the script, which reads the flag as it initialises. -->
+    <script>
+      window.HOMEPILOT_SCREENSENSE_NO_AUTOBUTTON = true;
+    </script>
     <script src="/js/homepilot-screensense.js"></script>
     <!-- RS1: answers a remote "take a screenshot" only while a share is already granted. -->
     <script src="/js/homepilot-screen-agent.js"></script>

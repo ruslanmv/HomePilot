@@ -1,17 +1,27 @@
 /**
- * The Meeting control in the header (batch MS32, wave W12).
+ * The Meeting control as a standalone button (batch MS32, wave W12).
  *
- * ── Why it moved ─────────────────────────────────────────────────────────────────────────
+ * ── NOT MOUNTED IN THE HEADER ANY MORE. Read this before restoring it there. ──────────────
  *
- * MS29 mounted the record button under the composer, reasoning that a control people have to
- * go looking for is pressed after the first two minutes are gone. That was right about
- * discoverability and wrong about where it costs. Under the composer, one optional feature sat
- * directly beneath the primary input on every chat screen — with its own setup sentence — and
- * competed with the thing the product is for. Chat first. Features on demand.
+ * The header is Call, Settings and New Chat: what you *do with* the application. Meeting is
+ * one of the things you *give it to look at* — alongside a file, a screenshot and a shared
+ * screen — and all four now live together in the composer's `+` menu. The presentation for
+ * that is `MeetingMenuItem`, which reads the same `useMeetingControls()` this does and reuses
+ * the same `meetingBlock` / `SetupPanel` / `LivePanel`. Neither owns any state; a meeting
+ * started from either is the same meeting.
  *
- * The header already holds exactly this class of control: Call is there, and Call is the
- * closest sibling a meeting has. So Meeting joins it, and the composer goes back to being a
- * composer.
+ * The earlier reasoning here said Meeting belonged beside Call because both start a session
+ * running alongside the chat. That is true and it is not the axis the menu is organised on,
+ * and this comment claiming otherwise is exactly what would send the next reader to put the
+ * button back.
+ *
+ * This component is kept because it is the complete, tested presentation of every meeting
+ * state as a *button* — useful for any surface that wants one, and the reference the menu
+ * item was derived from. It is currently mounted nowhere in the chat shell.
+ *
+ * An active meeting is still unmissable without it: `RecordingPill` carries §2a's promise at
+ * the top of the viewport, and the `+` menu shows `● Meeting in progress · 08:42` in place of
+ * "Start a meeting" rather than offering to start a second one.
  *
  * ── The three states ─────────────────────────────────────────────────────────────────────
  *
@@ -50,7 +60,7 @@ export interface MeetingActionProps {
     onOpenSettings?: () => void;
 }
 
-/** The shared geometry of the header cluster. Meeting is a peer of Call, not a CTA. */
+/** The geometry of a header-cluster icon: a peer of Call and Settings, not a CTA. */
 const BASE = [
     'h-9 flex items-center justify-center rounded-full border',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-0',
