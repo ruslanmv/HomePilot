@@ -47,8 +47,12 @@ describe('explainSttOutcome', () => {
   it('names the OS-default routing split when audio was captured but silent', () => {
     const outcome = explainSttOutcome({ sawAudioStart: true, sawSpeechStart: false }, '');
     expect(outcome.ok).toBe(false);
-    expect(outcome.headline).toBe('Recognition captured silence');
-    expect(outcome.detail).toContain('default input');
+    // Headlined as the user's symptom rather than the API's event. "Recognition captured
+    // silence" describes what `SpeechRecognition` reported; "Microphone not hearing you" is
+    // the thing the reader came to find out.
+    expect(outcome.headline).toBe('Microphone not hearing you');
+    expect(outcome.detail).toContain('no speech was found');
+    expect(outcome.detail).toContain('allowed for this site');
   });
 
   it('points at the language when speech was heard but not matched', () => {

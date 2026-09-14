@@ -68,6 +68,7 @@ import {
   stopWebSpeech,
 } from '../media/webSpeechSession';
 import { isDeafTurn, planSttRecovery } from '../media/sttTurnHealth';
+import { describeBrowserMicCheck } from '../media/browserMicHelp';
 import {
   browserInputMeterAvailable,
   startBrowserInputMeter,
@@ -914,6 +915,9 @@ export function useVoiceController(
             // reading the device list all along; this stops discarding the one label that
             // makes "change your system default input" an instruction rather than a topic.
             systemDefaultLabel: systemDefaultMicrophoneLabel(),
+            // Where the browser keeps its own microphone selection, which is a different setting
+            // from the OS default and is the likelier culprit on a Chromium browser.
+            browserMicCheck: describeBrowserMicCheck(),
           });
           if (recovery.action !== 'none') {
             microphoneDebug('voice', 'stt_deaf_recognizer_recovery', {

@@ -79,6 +79,8 @@ jobs:
           src/test/sttCaptureOwnership.test.tsx
           src/test/sttRuntime.test.ts
           src/test/sttEngineHandoff.test.ts
+          src/test/browserMicHelp.test.ts
+          src/test/voiceLiveTranscriptToggle.test.ts
           src/test/sttPreferences.test.ts
           src/test/sttTurnHealth.test.ts
           src/test/chatDictation.test.ts

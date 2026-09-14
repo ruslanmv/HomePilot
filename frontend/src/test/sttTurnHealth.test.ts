@@ -133,6 +133,66 @@ describe('planSttRecovery', () => {
   });
 });
 
+describe('sending the user to the browser’s own microphone setting', () => {
+  /*
+   * The setting that turned out to explain it. `chrome://settings/content/microphone` is
+   * separate from the OS default: it starts out following it and can be pinned to a device
+   * independently, and once pinned that is what every recording on the page hears. A user sent
+   * only to their sound panel fixes it correctly and sees no change.
+   */
+  const CHECK = 'In Chrome, check which microphone is selected at chrome://settings/content/microphone';
+
+  it('names it in the message that switches engines', () => {
+    const plan = planSttRecovery(1, {
+      backendUsable: true,
+      turnWasDeliberate: true,
+      browserMicCheck: CHECK,
+    });
+    if (plan.action === 'none') throw new Error('expected a recovery');
+    expect(plan.message).toContain('chrome://settings/content/microphone');
+  });
+
+  it('names it in the message that only advises', () => {
+    // The install with no local model is the one that most needs it: there is no engine to
+    // switch to, so the browser's device selection is the only thing left to fix.
+    const plan = planSttRecovery(1, {
+      backendUsable: false,
+      turnWasDeliberate: true,
+      browserMicCheck: CHECK,
+    });
+    if (plan.action === 'none') throw new Error('expected a recovery');
+    expect(plan.action).toBe('advise');
+    expect(plan.message).toContain('chrome://settings/content/microphone');
+  });
+
+  it('puts the check before the fix', () => {
+    // It decides *which* fix is right, so advice that arrives after it reads as the answer to
+    // a question the user has not been asked yet.
+    const plan = planSttRecovery(1, {
+      backendUsable: true,
+      turnWasDeliberate: true,
+      browserMicCheck: CHECK,
+    });
+    if (plan.action === 'none') throw new Error('expected a recovery');
+    expect(plan.message.indexOf('chrome://'))
+      .toBeLessThan(plan.message.indexOf('HomePilot has switched'));
+  });
+
+  it('reads correctly on a browser that has no such page', () => {
+    const withoutField = planSttRecovery(1, { backendUsable: true, turnWasDeliberate: true });
+    for (const missing of [null, undefined, '', '   ']) {
+      expect(planSttRecovery(1, {
+        backendUsable: true,
+        turnWasDeliberate: true,
+        browserMicCheck: missing,
+      })).toEqual(withoutField);
+    }
+    if (withoutField.action === 'none') throw new Error('expected a recovery');
+    expect(withoutField.message).not.toContain('chrome://');
+    expect(withoutField.message).not.toContain('  ');
+  });
+});
+
 describe('naming the device the recognizer is actually recording', () => {
   /*
    * The message explained the mechanism perfectly and still left the user stuck. "It records

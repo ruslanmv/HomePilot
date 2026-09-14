@@ -71,6 +71,16 @@ const LS_SPEED = 'homepilot_speech_speed';
 const LS_MUTED = 'homepilot_voice_muted';
 const LS_HANDSFREE = 'homepilot_voice_handsfree';
 const LS_SHOW_METER = 'homepilot_voice_show_meter';
+/**
+ * Whether to show the live "Hearing …" panel while the browser recognizer streams words.
+ *
+ * Off by default, and `=== 'true'` rather than `!== 'false'` is what makes that true on a
+ * machine that has never seen the setting. The words it shows are a *guess in progress* —
+ * Chrome revises interim text repeatedly before the phrase settles — so a panel rewriting
+ * itself above the composer is motion the reader has to keep re-parsing while trying to
+ * speak. Anybody who wants the reassurance turns it on once.
+ */
+const LS_SHOW_LIVE_TRANSCRIPT = 'homepilot_voice_show_live_transcript';
 
 // ---------------------------------------------------------------------------
 // Markdown-aware helpers for Voice mode
@@ -877,6 +887,14 @@ export default function VoiceModeGrok({
     return false;
   });
 
+  // Live "Hearing …" panel — OFF by default. See LS_SHOW_LIVE_TRANSCRIPT.
+  const [showLiveTranscript, setShowLiveTranscript] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(LS_SHOW_LIVE_TRANSCRIPT) === 'true';
+    }
+    return false;
+  });
+
   // Refs
   const menuRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -913,6 +931,11 @@ export default function VoiceModeGrok({
     if (typeof window === 'undefined') return;
     localStorage.setItem(LS_SHOW_METER, String(showAudioMeter));
   }, [showAudioMeter]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(LS_SHOW_LIVE_TRANSCRIPT, String(showLiveTranscript));
+  }, [showLiveTranscript]);
 
   // Handle voice input
   const isControlled = controlledMessages !== undefined;
@@ -1154,6 +1177,8 @@ export default function VoiceModeGrok({
         onClose={() => setShowSystemSettings(false)}
         showAudioMeter={showAudioMeter}
         setShowAudioMeter={setShowAudioMeter}
+        showLiveTranscript={showLiveTranscript}
+        setShowLiveTranscript={setShowLiveTranscript}
         browserVoices={voice.voices}
         selectedBrowserVoice={voice.selectedVoice}
         setSelectedBrowserVoice={voice.setSelectedVoice}
@@ -1374,7 +1399,8 @@ export default function VoiceModeGrok({
                 no interim words to show: the text arrives when the turn ends, so the state
                 line below carries the turn instead of a transcript that cannot exist yet.
               */}
-              {voice.interimText ? (
+              {/* Off unless asked for — Settings → Audio Settings → Show live transcript. */}
+              {showLiveTranscript && voice.interimText ? (
                 <div
                   className="mb-3 px-1"
                   role="status"

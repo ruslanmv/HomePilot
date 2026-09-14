@@ -8,6 +8,8 @@
  * `components/VoiceAssistantSelfTest.tsx` supplies the live inputs.
  */
 
+import { describeBrowserMicCheck } from './browserMicHelp';
+
 /** What `SpeechService.getSttDiagnostics()` reports for one recognition turn. */
 export interface SttDiagnostics {
   sawAudioStart?: boolean;
@@ -159,9 +161,17 @@ export function explainSttOutcome(
   if (!diagnostics.sawSpeechStart) {
     return {
       ok: false,
-      headline: 'Recognition captured silence',
+      headline: 'Microphone not hearing you',
+      // The browser's own microphone selection comes first, because it is the setting most
+      // reports turn out to be about and the one people do not know exists. Sending somebody
+      // to their OS sound panel when the browser is pinned to a different device means they
+      // fix it correctly and observe no change at all. See `media/browserMicHelp`.
       detail:
-        'Audio was captured but no speech was found in it. The browser\'s recognizer always records your operating system\'s default input and cannot be pointed at the microphone chosen in Audio & Video. Either make that microphone the OS default, or — quicker — set Speech Recognition to "On this computer", which records the microphone you selected.',
+        'Audio was captured but no speech was found in it.'
+        + describeBrowserMicCheck()
+        + ' Then confirm microphone access is allowed for this site. The recognizer cannot be '
+        + 'pointed at the microphone chosen in Audio & Video — or, quicker, set Speech '
+        + 'Recognition to "On this computer", which records the microphone you selected.',
     };
   }
 

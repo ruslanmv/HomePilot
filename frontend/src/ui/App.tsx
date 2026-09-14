@@ -39,6 +39,7 @@ import {
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
 import { explainSttError, explainSttOutcome, type SttDiagnostics } from './media/voiceSelfTest'
+import { describeBrowserMicCheck } from './media/browserMicHelp'
 import { recordAndTranscribe, SttUnavailableError } from './media/sttService'
 import { describeSttResolution, type ResolvedSttEngine } from './media/sttPreferences'
 import {
@@ -1794,6 +1795,9 @@ function QueryBar({
           // your microphone the system default" into something the user can act on without
           // first working out which of their inputs is currently holding that slot.
           systemDefaultLabel: systemDefaultMicrophoneLabel(),
+          // Where the browser keeps its own microphone selection, which is a different setting
+          // from the OS default and is the likelier culprit on a Chromium browser.
+          browserMicCheck: describeBrowserMicCheck(),
         })
         if (recovery.action === 'none') return
         microphoneDebug('chat', 'composer_mic_deaf_recognizer_recovery', {

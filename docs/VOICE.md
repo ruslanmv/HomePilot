@@ -17,7 +17,62 @@ Two microphone consumers could not agree on a device.
 | Consumer | Which microphone it opens |
 |---|---|
 | HomePilot's VAD, the Settings recording test, `MediaRecorder` | the `deviceId` selected in **Settings → Audio & Video** |
-| The browser's `SpeechRecognition` (Web Speech API) | **the operating system's default input** — the API accepts no `deviceId` |
+| The browser's `SpeechRecognition` (Web Speech API) | **whatever the browser gives it** — the API accepts no `deviceId`, so the choice is the browser's (see §0 below) |
+
+> ### 0. Check the browser's microphone before you change any code
+>
+> **This is the first thing to check and it is outside HomePilot.** Chrome keeps its *own*
+> microphone selection, at `chrome://settings/content/microphone`. It starts out following the
+> operating system's default and can be pinned to a device independently — and once pinned,
+> that is what every `getUserMedia()` and every `SpeechRecognition` session on the page
+> records, whatever the OS thinks the default is.
+>
+> So a user who is told "make your microphone the system default", does exactly that, and sees
+> no change at all has hit this: the browser was never using the OS default. The device pinned
+> there is usually one nobody chose — an Oculus or Steam Streaming virtual input, a headset
+> suite's capture device, a laptop array — selected because it was present when the permission
+> was first granted.
+>
+> ```
+> Voice does not hear the user
+>         │
+>         ▼
+> 1. Is microphone permission allowed for the site at all?
+>         │
+>         ▼
+> 2. chrome://settings/content/microphone
+>    Is the correct PHYSICAL microphone selected?
+>    (e.g. "Microphone (Razer Seiren X)", not an Oculus/Steam virtual input)
+>         │
+>         ▼
+> 3. Site permissions for this origin → Microphone = Allow
+>         │
+>         ▼
+> 4. Does Chrome show "Microphone — In use" while a turn is open?
+>    If it does, the browser HAS handed HomePilot the device it selected.
+>         │
+>         ▼
+> 5. Only now is it HomePilot's code:
+>    vad.ts · useVoiceController.ts · speech-service.js · thresholds
+> ```
+>
+> Steps 1–4 are the browser's, not HomePilot's. JavaScript can request permission and can
+> enumerate devices, but which device the browser hands over is the browser's decision unless
+> the application passes an explicit `deviceId` — and `SpeechRecognition` accepts none. That is
+> precisely why the browser engine cannot opt out of this and the local engine can: the local
+> path opens the selected device itself.
+>
+> **A page cannot open `chrome://` for you.** It is an internal scheme: a website may not link
+> to one, navigate to one, or open one in a new tab — the navigation is refused silently. So
+> every message that names the address gives it as text to copy and says so, which is why
+> `media/browserMicHelp.ts` produces a sentence rather than an `href`. Reload HomePilot after
+> changing the selection; the permission and device are bound when the page acquires them.
+>
+> `browserMicSettings()` checks Edge before Chrome, because Edge's user agent also contains
+> "Chrome" and sending an Edge user to a `chrome://` address gives them advice that looks
+> precise and cannot be followed. Firefox and Safari get nothing: they have microphone
+> preferences too, but not at an address that can be written down, and inventing one is worse
+> than staying quiet.
 
 When those are two different microphones, the level meter moves while a device nobody is
 speaking into gets transcribed. The browser reports **no error** for this, so the turn simply
@@ -204,7 +259,7 @@ What that costs and what it buys:
 
 | | `web-speech` | `homepilot-backend` |
 |---|---|---|
-| Live words while you speak | **yes** — one continuous session, `interimText` | no — text arrives at end of turn |
+| Live words while you speak | **yes** — one continuous session, `interimText`; shown only if switched on (below) | no — text arrives at end of turn |
 | Input level meter | yes — a separate read-only capture, and it says which device | yes, and it is the transcribed one |
 | Barge-in (speak over the reply) | no — listening stops while TTS plays | yes, the VAD watches through it |
 | Microphone used | OS default | the one selected in Audio & Video |
@@ -222,6 +277,16 @@ each engine exactly one thing decides when a turn starts and ends and produces t
 | Decides turns? | No. No VAD, no endpointing, no recording. |
 | Reported | `browserMeterSupported` goes false when the capture cannot be opened, so a refused permission shows the unavailable copy rather than a bar pinned at zero. |
 | Named | `micMeterDeviceLabel` carries the track's label (browser engine only) and the meter renders it. A flat bar here is the **correct** drawing of a silent default input and is indistinguishable from a broken meter; the device name is the only thing that separates them without reading a log. Null on the local engine, where the meter reads the microphone Settings already shows. |
+
+**The live "Hearing …" panel is opt-in, and off by default.** Settings → Audio Settings →
+*Show live transcript* (`homepilot_voice_show_live_transcript`, read as `=== 'true'` so an
+absent key means off). Showing interim words proves the microphone is working, and they are
+also a *guess in progress*: the recognizer revises interim text repeatedly before a phrase
+settles, so the panel rewrites itself above the composer while the user is still speaking —
+motion they have to keep re-parsing to check whether it caught the last word. Useful as
+reassurance, distracting as a permanent fixture, so it is offered rather than imposed. The
+guard is on the render, not the opacity: a hidden-but-rendered panel still takes layout and
+still reaches a screen reader's live region, which was most of what made it intrusive.
 
 > **It does mean HomePilot holds a microphone during browser turns**, on the same endpoint the
 > recognizer wants. Some drivers — Windows DSP-backed inputs among them — hand a second

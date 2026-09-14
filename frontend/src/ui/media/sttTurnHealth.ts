@@ -150,6 +150,18 @@ export interface SttRecoveryContext {
    * Nothing looked at it.
    */
   systemDefaultLabel?: string | null;
+  /**
+   * Where this browser keeps its *own* microphone selection, when it has one.
+   *
+   * The missing half of every message here. `chrome://settings/content/microphone` is a
+   * setting separate from the operating system's: it starts out following the OS default and
+   * can be pinned to a device independently, and once pinned it is what every `getUserMedia()`
+   * and every `SpeechRecognition` session records — whatever the OS thinks the default is.
+   *
+   * So a user sent only to their sound panel can fix it correctly and observe no change at
+   * all, because the browser was never using the OS default. See `media/browserMicHelp`.
+   */
+  browserMicCheck?: string | null;
 }
 
 /**
@@ -228,13 +240,18 @@ export function planSttRecovery(
   if (consecutiveDeafTurns < turnsBeforeRecovery(context)) return { action: 'none' };
 
   const observed = describeObservation(consecutiveDeafTurns, context) + describeCause(context);
+  // Named after the cause and before the fix, because it is the check that decides which fix
+  // is the right one — and on a Chromium browser it is the likelier of the two by a wide
+  // margin. Empty on browsers that have no such page, leaving the text as it was.
+  const browserCheck = (context.browserMicCheck || '').trim();
+  const check = browserCheck ? ` ${browserCheck}` : '';
 
   if (context.backendUsable) {
     return {
       action: 'switch-to-backend',
       message:
-        `${observed} HomePilot has switched this session to transcribing on this computer, ` +
-        'which records the microphone you selected. Change this in Settings → Voice ' +
+        `${observed}${check} HomePilot has switched this session to transcribing on this ` +
+        'computer, which records the microphone you selected. Change this in Settings → Voice ' +
         'Assistant → Speech Recognition.',
     };
   }
@@ -242,8 +259,8 @@ export function planSttRecovery(
   return {
     action: 'advise',
     message:
-      `${observed} Either make that microphone your system default input, or install a ` +
-      'speech model and set Settings → Voice Assistant → Speech Recognition to “On this ' +
-      'computer”.',
+      `${observed}${check} Either point the browser and your system default at that ` +
+      'microphone, or install a speech model and set Settings → Voice Assistant → Speech ' +
+      'Recognition to “On this computer”.',
   };
 }
