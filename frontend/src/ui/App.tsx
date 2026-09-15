@@ -2093,7 +2093,7 @@ function QueryBar({
       <ScreenShareStatus />
       <div
         className={[
-          'relative w-full overflow-hidden',
+          'relative w-full overflow-visible',
           'bg-[#101010] shadow-sm shadow-black/20',
           isDragging
             ? 'ring-2 ring-inset ring-purple-500/60 bg-purple-500/5'
@@ -3416,10 +3416,9 @@ export default function App() {
     // Prompt refinement: default to true (enabled by default for better results)
     const promptRefinement = localStorage.getItem('homepilot_prompt_refinement') !== 'false'
 
-    // ComfyUI VRAM mode — default "high" (keep model resident).
-    // Low-VRAM users can flip to "normal" or "low" in Settings.
+    // ComfyUI VRAM mode — normal is safe for mixed image/video model stacks.
     const comfyVramMode = (
-      localStorage.getItem('homepilot_comfy_vram_mode') || 'high'
+      localStorage.getItem('homepilot_comfy_vram_mode') || 'normal'
     ) as 'high' | 'normal' | 'low' | 'gpu-only'
 
     // Multimodal (Vision) settings
@@ -3784,7 +3783,7 @@ export default function App() {
     localStorage.setItem('homepilot_experimental_civitai', String(!!settingsDraft.experimentalCivitai))
     localStorage.setItem('homepilot_civitai_api_key', settingsDraft.civitaiApiKey || '')
     localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
-    localStorage.setItem('homepilot_comfy_vram_mode', settingsDraft.comfyVramMode || 'high')
+    localStorage.setItem('homepilot_comfy_vram_mode', settingsDraft.comfyVramMode || 'normal')
 
     // Persist launcher-only flags to the backend so
     // scripts/start-comfyui.sh sources them on next boot. Without
@@ -3793,7 +3792,7 @@ export default function App() {
     // Fire-and-forget: if the backend is down, localStorage still
     // updated above so the UI stays consistent.
     try {
-      const comfyMode = settingsDraft.comfyVramMode || 'high'
+      const comfyMode = settingsDraft.comfyVramMode || 'normal'
       const comfyBaseUrl = (
         settingsDraft.baseUrlImages ||
         settingsDraft.baseUrlVideo ||
@@ -3920,7 +3919,7 @@ export default function App() {
         experimentalCivitai: localStorage.getItem('homepilot_experimental_civitai') === 'true',
         civitaiApiKey: localStorage.getItem('homepilot_civitai_api_key') || '',
         promptRefinement: localStorage.getItem('homepilot_prompt_refinement') !== 'false',
-        comfyVramMode: (localStorage.getItem('homepilot_comfy_vram_mode') || 'high') as
+        comfyVramMode: (localStorage.getItem('homepilot_comfy_vram_mode') || 'normal') as
           'high' | 'normal' | 'low' | 'gpu-only',
         textTemperature: parseFloat(localStorage.getItem('homepilot_text_temp') || '0.7'),
         textMaxTokens: parseInt(localStorage.getItem('homepilot_text_maxtokens') || '2048'),

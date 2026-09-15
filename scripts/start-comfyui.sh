@@ -78,6 +78,7 @@ if [[ "$CUDA_AVAILABLE" == "1" ]]; then
   # swallowed on any error so a flaky torch build never breaks
   # startup.
   GPU_NAME="$("$PYTHON" -c "import torch; print(torch.cuda.get_device_name(0))" 2>/dev/null || echo "GPU")"
+  GPU_VRAM_MB="$("$PYTHON" -c "import torch; print(torch.cuda.get_device_properties(0).total_memory // 1048576)" 2>/dev/null || echo "0")"
   echo "🚀 ComfyUI: GPU mode — $GPU_NAME"
 else
   EXTRA_ARGS+=("--cpu")
@@ -105,17 +106,25 @@ if [[ "${COMFY_FORCE_CPU:-0}" == "1" ]]; then
   echo "ℹ️  ComfyUI: CPU mode forced by COMFY_FORCE_CPU=1"
 fi
 
-# VRAM mode — by default ComfyUI runs in NORMAL_VRAM with async
-# weight offloading, which pushes checkpoints to CPU between
-# calls. On machines with ≥ 8 GB free VRAM that just costs time
-# without saving anything useful (the model has to be re-pulled
-# onto the GPU before every render). Setting --highvram keeps
-# everything resident between runs so the second Imagine call
-# stays in the 1-2 s range instead of re-paying the weight
-# transfer. Opt out with COMFY_VRAM_MODE=normal (or any other
-# value; default is "high" in GPU mode only).
+# VRAM mode. NORMAL_VRAM is the safe default for mixed image/video
+# workloads. --highvram is useful for a single small image model, but a
+# consumer GPU cannot simultaneously retain LTX + T5-XXL + VideoVAE; forcing
+# it causes the partial unload/reload cycle visible in ComfyUI's logs.
 if [[ "$CUDA_AVAILABLE" == "1" && "${COMFY_FORCE_CPU:-0}" != "1" ]]; then
-  VRAM_MODE="${COMFY_VRAM_MODE:-high}"
+  VRAM_MODE="${COMFY_VRAM_MODE:-normal}"
+
+  # Protect <=16 GB GPUs from an unsafe persisted high-VRAM setting when a
+  # large video family is selected. An operator can deliberately override
+  # this guard after measuring their particular workflow.
+  VIDEO_MODEL_VALUE="${VIDEO_MODEL:-}"
+  VIDEO_MODEL_LOWER="${VIDEO_MODEL_VALUE,,}"
+  if [[ "$VRAM_MODE" == "high" && "${GPU_VRAM_MB:-0}" -gt 0 && "${GPU_VRAM_MB:-0}" -le 16384 \
+        && "$VIDEO_MODEL_LOWER" =~ (ltx|hunyuan|mochi|wan) \
+        && "${COMFY_ALLOW_HIGHVRAM_VIDEO:-0}" != "1" ]]; then
+    echo "⚠️  ComfyUI: forcing normal VRAM mode for $VIDEO_MODEL_VALUE on ${GPU_VRAM_MB} MB GPU"
+    echo "   Set COMFY_ALLOW_HIGHVRAM_VIDEO=1 only after confirming the full model stack fits."
+    VRAM_MODE="normal"
+  fi
   case "$VRAM_MODE" in
     high)     EXTRA_ARGS+=("--highvram") ;;
     gpu|gpuonly|gpu-only)  EXTRA_ARGS+=("--gpu-only") ;;

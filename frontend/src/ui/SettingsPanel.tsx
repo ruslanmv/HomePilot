@@ -122,8 +122,8 @@ export type SettingsModelV2 = {
   promptRefinement?: boolean;
 
   // ComfyUI VRAM mode — controls how aggressively ComfyUI offloads
-  // model weights between calls. "high" keeps them resident (best
-  // for 8+ GB GPUs); "normal" is ComfyUI's default smart-offload;
+  // model weights between calls. "high" keeps them resident when the
+  // complete model stack fits; "normal" is ComfyUI's safe smart-offload;
   // "low" minimises VRAM at the cost of speed. Undefined = keep
   // current shell env (COMFY_VRAM_MODE) value. Takes effect on
   // the next ComfyUI restart.
@@ -1162,15 +1162,15 @@ export default function SettingsPanel({
 
         {/* Keep model in GPU (ComfyUI VRAM mode) */}
         {(value.providerImages === 'comfyui' || value.providerVideo === 'comfyui') && (
-          <Row label="Keep model in GPU memory" description="Recommended for faster repeated responses. Applies on next ComfyUI restart.">
+          <Row label="ComfyUI memory mode" description="Normal is recommended for video and mixed model workloads. Applies on next ComfyUI restart.">
             <select
               aria-label="ComfyUI VRAM mode"
-              value={value.comfyVramMode ?? 'high'}
-              onChange={(e) => commit({ ...value, comfyVramMode: (e.target.value || 'high') as 'high' | 'normal' | 'low' | 'gpu-only' })}
+              value={value.comfyVramMode ?? 'normal'}
+              onChange={(e) => commit({ ...value, comfyVramMode: (e.target.value || 'normal') as 'high' | 'normal' | 'low' | 'gpu-only' })}
               className={SELECT_CLS}
             >
-              <option value="high">High (recommended)</option>
-              <option value="normal">Normal (ComfyUI default)</option>
+              <option value="normal">Normal (recommended for video)</option>
+              <option value="high">High (small models only)</option>
               <option value="gpu-only">GPU-only (maximum)</option>
               <option value="low">Low (save VRAM)</option>
             </select>

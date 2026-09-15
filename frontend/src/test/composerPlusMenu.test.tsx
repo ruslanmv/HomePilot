@@ -114,6 +114,11 @@ describe('the paperclip became +', () => {
         expect(screen.getByTestId('composer-plus-menu').className).toContain('bottom-full');
     });
 
+    it('can extend beyond the composer pill without being clipped', () => {
+        expect(app).toContain("'relative w-full overflow-visible'");
+        expect(app).not.toContain("'relative w-full overflow-hidden'");
+    });
+
     it('closes on Escape and on an outside click', () => {
         // A menu only one of them closes is a menu somebody clicks twice to dismiss.
         render(<ComposerPlusMenu onAddFile={vi.fn()} />);

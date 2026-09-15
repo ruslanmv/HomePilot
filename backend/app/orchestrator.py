@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional, Literal
 
-from .comfy import check_nodes_available, run_workflow
+from .comfy import check_nodes_available, proxy_comfy_view_url, run_workflow
 from .llm import is_thinking_model, strip_think_tags, _is_reasoning_text, recover_from_reasoning
 from .compute import route_chat
 from .compute.router import build_diagnostics as _compute_diag
@@ -34,7 +34,7 @@ from . import sessions as persona_sessions_mod
 from . import ltm as persona_ltm_mod
 
 # Chat media persistence (download ComfyUI images → permanent file_assets)
-from .files import persist_chat_images
+from .files import persist_chat_images, persist_chat_video
 from . import jobs as persona_jobs_mod
 from .memory_v2 import get_memory_v2
 
@@ -81,18 +81,30 @@ async def _persist_media(
     file_assets. Returns the updated media dict with /files/ URLs, or
     the original if nothing to persist.
     """
-    if not media or not media.get("images") or not user_id:
+    if not media:
+        return media
+    media = dict(media)
+
+    if not user_id:
+        # Never expose a ComfyUI localhost URL to the browser. Without a user
+        # asset to persist against, route it through HomePilot's Comfy proxy.
+        video_url = media.get("video_url")
+        if isinstance(video_url, str):
+            media["video_url"] = proxy_comfy_view_url(video_url)
         return media
     try:
-        persisted_urls = await persist_chat_images(
-            image_urls=media["images"],
-            user_id=user_id,
-            conversation_id=conversation_id,
-            project_id=project_id,
-        )
-        media = {**media, "images": persisted_urls}
+        if media.get("images"):
+            media["images"] = await persist_chat_images(
+                image_urls=media["images"], user_id=user_id,
+                conversation_id=conversation_id, project_id=project_id,
+            )
+        if media.get("video_url"):
+            media["video_url"] = await persist_chat_video(
+                video_url=media["video_url"], user_id=user_id,
+                conversation_id=conversation_id, project_id=project_id,
+            )
     except Exception as e:
-        print(f"[PERSIST] Error persisting chat images: {e}")
+        print(f"[PERSIST] Error persisting chat media: {e}")
     return media
 
 
@@ -1134,45 +1146,20 @@ async def orchestrate(
             else:
                 print(f"[ANIMATE] Prompt refinement disabled, using original prompt")
 
-            # Select T5 encoder based on preset with fallback
-            # FP16: ~10GB VRAM, used ONLY for ultra (24GB+ VRAM)
-            # FP8: ~5GB VRAM, used for low/medium/high (12GB RTX 4080 compatibility)
-            # Fallback: If preferred encoder not installed, use the other one
-            from .providers import get_comfy_models_path
+            # Avoid silently loading the much larger FP16 encoder on constrained
+            # LTX presets. Other video workflow families do not use this value.
+            t5_encoder = None
+            if detected_model_type == "ltx":
+                from .providers import get_comfy_models_path
 
-            clip_path = get_comfy_models_path() / "clip"
-            fp16_available = (clip_path / "t5xxl_fp16.safetensors").exists()
-            fp8_available = (clip_path / "t5xxl_fp8_e4m3fn.safetensors").exists()
-
-            # Determine preferred encoder based on preset
-            # Only ultra gets FP16 — everything else must fit 12GB
-            if vid_preset == "ultra":
-                preferred_encoder = "t5xxl_fp16.safetensors"
-                fallback_encoder = "t5xxl_fp8_e4m3fn.safetensors"
-                preferred_available = fp16_available
-                fallback_available = fp8_available
-            else:
-                preferred_encoder = "t5xxl_fp8_e4m3fn.safetensors"
-                fallback_encoder = "t5xxl_fp16.safetensors"
-                preferred_available = fp8_available
-                fallback_available = fp16_available
-
-            # Select encoder with fallback logic
-            if preferred_available:
-                t5_encoder = preferred_encoder
-                print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset or 'default->medium'})")
-            elif fallback_available:
-                t5_encoder = fallback_encoder
-                print(f"[ANIMATE] ⚠️ WARNING: {preferred_encoder} not installed")
-                if t5_encoder == "t5xxl_fp16.safetensors":
-                    print(f"[ANIMATE] Using FP16 T5 as fallback — works fine but uses ~10GB VRAM "
-                          f"(install FP8 to save ~5GB)")
-                else:
-                    print(f"[ANIMATE] Using FP8 T5 as fallback: {t5_encoder}")
-            else:
-                # Neither available - use preferred and let ComfyUI error with helpful message
-                t5_encoder = preferred_encoder
-                print(f"[ANIMATE] ⚠️ No T5 encoder found! Please install from Models > Add-ons")
+                t5_encoder = video_presets.select_ltx_t5_encoder(
+                    get_comfy_models_path() / "clip",
+                    vid_preset,
+                )
+                print(
+                    f"[ANIMATE] Using T5 encoder: {t5_encoder} "
+                    f"(preset: {vid_preset or 'default->medium'})"
+                )
 
             # Build final workflow variables
             target_width = preset_vars.get("width", 768)
@@ -1196,9 +1183,9 @@ async def orchestrate(
                 # Resolution — drives both the conditioning image crop and the latent space
                 "width": target_width,
                 "height": target_height,
-                # T5 text encoder selection (FP8 for <=16GB, FP16 for 24GB+)
-                "t5_encoder": t5_encoder,
             }
+            if t5_encoder:
+                workflow_vars["t5_encoder"] = t5_encoder
 
             # Aspect-ratio sanity log: conditioning image + latent must agree
             vid_frames = workflow_vars.get("frames", 33)

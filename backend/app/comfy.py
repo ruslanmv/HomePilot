@@ -8,7 +8,7 @@ import uuid
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -369,6 +369,87 @@ def _is_local_backend_url(url: str) -> bool:
         return False
 
 
+def _get_comfyui_output_dir() -> Path | None:
+    """Return a locally accessible ComfyUI output directory, if available."""
+    env_dir = os.getenv("COMFY_OUTPUT_DIR", "").strip()
+    if env_dir:
+        candidate = Path(env_dir)
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    candidates = [
+        repo_root / "ComfyUI" / "output",
+        repo_root / "comfyui" / "output",
+        repo_root / "comfyui" / "ComfyUI" / "output",
+        Path("/comfyui/output"),
+    ]
+    return next(
+        (candidate for candidate in candidates if candidate.exists() and candidate.is_dir()),
+        None,
+    )
+
+
+def _local_comfy_view_file(url: str) -> Path | None:
+    """Resolve a safe local ComfyUI output URL, retaining HTTP as fallback."""
+    try:
+        parsed = urlparse(url)
+        if parsed.path != "/view":
+            return None
+
+        base = urlparse(COMFY_BASE_URL)
+        allowed_hosts = {
+            host
+            for host in (base.hostname, "localhost", "127.0.0.1", "0.0.0.0")
+            if host
+        }
+        if parsed.hostname not in allowed_hosts:
+            return None
+        if base.port and parsed.port and parsed.port != base.port:
+            return None
+
+        query = parse_qs(parsed.query)
+        if (query.get("type") or ["output"])[0] != "output":
+            return None
+        filename = (query.get("filename") or [""])[0]
+        subfolder = (query.get("subfolder") or [""])[0]
+        if not filename:
+            return None
+
+        output_dir = _get_comfyui_output_dir()
+        if output_dir is None:
+            return None
+        output_root = output_dir.resolve()
+        candidate = (output_root / subfolder / filename).resolve()
+        try:
+            candidate.relative_to(output_root)
+        except ValueError:
+            return None
+        return candidate if candidate.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
+def proxy_comfy_view_url(url: str) -> str:
+    """Convert a browser-inaccessible local Comfy URL to HomePilot's proxy."""
+    parsed = urlparse(url)
+    if parsed.path != "/view" or parsed.hostname not in {
+        "localhost", "127.0.0.1", "0.0.0.0"
+    }:
+        return url
+    query = parse_qs(parsed.query)
+    filename = (query.get("filename") or [""])[0]
+    if not filename:
+        return url
+    from urllib.parse import quote, urlencode
+
+    proxy_query = urlencode({
+        "subfolder": (query.get("subfolder") or [""])[0],
+        "type": (query.get("type") or ["output"])[0],
+    })
+    return f"/comfy/view/{quote(filename)}?{proxy_query}"
+
+
 def _get_local_file_path(url: str) -> Path | None:
     """
     Extract the local file path from a backend /files/ URL.
@@ -427,6 +508,10 @@ def _download_image_for_comfyui(image_url: str) -> str:
     # Extract original filename or generate a unique one
     parsed = urlparse(image_url)
     original_filename = os.path.basename(parsed.path)
+    if parsed.path == "/view":
+        view_filename = (parse_qs(parsed.query).get("filename") or [""])[0]
+        if view_filename:
+            original_filename = os.path.basename(view_filename)
 
     # Ensure we have a valid extension
     if not original_filename or '.' not in original_filename:
@@ -437,6 +522,15 @@ def _download_image_for_comfyui(image_url: str) -> str:
     base, ext = os.path.splitext(original_filename)
     filename = f"{base}_{unique_id}{ext}"
     dest_path = input_dir / filename
+
+    # A starter image produced by this local ComfyUI is already on disk. Copy
+    # it directly instead of downloading it from ComfyUI over localhost.
+    local_comfy_output = _local_comfy_view_file(image_url)
+    if local_comfy_output is not None:
+        print(f"[COMFY] Copying local Comfy output from {local_comfy_output} to {dest_path}")
+        shutil.copy2(local_comfy_output, dest_path)
+        print(f"[COMFY] Local Comfy output copied successfully: {filename}")
+        return filename
 
     # Check if this is a local backend URL - read directly from filesystem
     if _is_local_backend_url(image_url):
