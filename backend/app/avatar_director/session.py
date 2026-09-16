@@ -24,6 +24,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from .protocol import EMOTE_WHITELIST, HEARTBEAT_SECONDS, ProtocolHandler
 from .rtc import VoiceUplink, webrtc_terminus
+from .verification import Session as AdultVerificationSession, build_provider
 from .vision import VisionService
 
 log = logging.getLogger("avatar_director.session")
@@ -37,15 +38,40 @@ def sessions() -> dict[str, ProtocolHandler]:
     return _SESSIONS
 
 
-def build_router(config, *, authenticate: Optional[Callable[[Any], bool]] = None) -> APIRouter:
-    """The router mounted when ``avatar.enabled`` is true, and only then."""
+def build_router(
+    config,
+    *,
+    authenticate: Optional[Callable[[Any], bool]] = None,
+    adult_provider=None,
+) -> APIRouter:
+    """The router mounted when ``avatar.enabled`` is true, and only then.
+
+    Adult verification is server-owned and session-scoped. Build the configured provider once
+    for this router, then give every WebSocket its own :class:`verification.Session`. The old
+    wiring constructed ``ProtocolHandler`` without the ``adult`` dependency, which meant every
+    real ``adult_verify_request`` was answered ``adult_unavailable`` even when
+    ``AVATAR_ADULT_ENABLED=true``. Protocol unit tests passed because they injected an adult
+    session directly; the transport never did.
+
+    ``adult_provider`` is injectable for tests. It is ignored while the independent adult gate
+    is disabled, so a caller cannot use the injection to bypass ``config.adult.enabled``.
+    """
     router = APIRouter(tags=["avatar-director"])
+    adult_cfg = getattr(config, "adult", None)
+    adult_enabled = bool(adult_cfg and getattr(adult_cfg, "enabled", False))
+    provider = adult_provider if adult_enabled and adult_provider is not None else None
+    if adult_enabled and provider is None:
+        provider = build_provider(config)
 
     @router.websocket("/avatar/session")
     async def avatar_session(websocket: WebSocket) -> None:  # pragma: no cover - transport
         await websocket.accept()
+        adult = AdultVerificationSession(provider) if provider is not None else None
         handler = ProtocolHandler(
-            authenticate=authenticate, voice=_uplink_for(config), vision=vision_service(config)
+            authenticate=authenticate,
+            voice=_uplink_for(config),
+            vision=vision_service(config),
+            adult=adult,
         )
         key = f"{id(websocket):x}"
         _SESSIONS[key] = handler
