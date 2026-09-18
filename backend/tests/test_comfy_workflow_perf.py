@@ -23,6 +23,7 @@ fails on a loaded CI runner.
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -166,9 +167,25 @@ class TestInstrumentation:
         assert "outcome=timeout" in out
         assert "[COMFY PERF] total_workflow_ms=" in out
 
-    def test_total_is_not_a_sum_of_nothing(self, wired, capsys):
+    def test_total_is_not_a_sum_of_nothing(self, wired, capsys, monkeypatch):
         # Guards against the previous log's actual defect: a reported total that started its
         # clock after the expensive part had already happened.
+        #
+        # With every phase stubbed they all run in microseconds, and a total that excluded
+        # one would still look right next to a log printed to 2dp. So give an *early* phase —
+        # workflow load, well before the prompt is posted — a cost worth measuring, and
+        # require the reported total to contain it. This asserts a duration, which the module
+        # docstring warns against, but only in the safe direction: `sleep` guarantees a lower
+        # bound, so a loaded runner makes the elapsed time longer and can never fail this.
+        slow_phase_ms = 25.0
+        stubbed_load = comfy._load_workflow
+
+        def slow_load(name):
+            time.sleep(slow_phase_ms / 1000.0)
+            return stubbed_load(name)
+
+        monkeypatch.setattr(comfy, "_load_workflow", slow_load)
+
         with patch.object(comfy, "get_available_node_names", return_value=[]):
             comfy.run_workflow("txt2img", {"seed": 1})
         lines = dict(
@@ -177,13 +194,26 @@ class TestInstrumentation:
             if line.startswith("[COMFY PERF] ") and "=" in line and "workflow=" not in line
         )
         total = float(lines["total_workflow_ms"])
-        parts = sum(
+        phases = [
             float(v) for k, v in lines.items()
             # `history_fetch_ms` is nested inside `queue_and_execution_ms`, so counting both
             # would double-count the polling.
             if k not in ("total_workflow_ms", "history_fetch_ms")
-        )
-        assert total >= parts
+        ]
+        parts = sum(phases)
+
+        # The expensive phase was measured where it happened...
+        assert float(lines["workflow_load_ms"]) >= slow_phase_ms
+        # ...and the total contains it, rather than starting its clock afterwards.
+        assert total >= slow_phase_ms
+
+        # The total also brackets every phase. The log prints milliseconds to 2dp, so each
+        # value read back carries up to half an ulp of rounding error; summing ~8 of them
+        # against one total can invert the comparison by a hundredth of a millisecond with
+        # no defect present (0.12 > 0.11, which is exactly how this test failed in CI).
+        # Allow the precision the format loses and not a microsecond more.
+        rounding_slack = 0.005 * (len(phases) + 1)
+        assert total >= parts - rounding_slack
 
 
 class TestWarmup:
