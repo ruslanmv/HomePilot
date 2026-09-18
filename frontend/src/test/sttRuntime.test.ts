@@ -257,6 +257,20 @@ describe('the routing preflight', () => {
     expect(getSttRuntime().effectiveEngine).toBe('web-speech');
     expect(getSttRuntime().sessionOverride).toBeNull();
   });
+
+  it('keeps an explicit browser choice after a reload despite a routing mismatch', async () => {
+    enumerateDevices.mockResolvedValue(devices('group-builtin', [['usb-mic', 'group-usb']]));
+    selectMicrophone('usb-mic');
+
+    setSttPreferences({ chat: 'web-speech' });
+    await ensureSttRuntimeResolved({ force: true });
+    resetSttRuntimeForTests(); // simulate a page reload while localStorage survives
+
+    const runtime = await ensureSttRuntimeResolved();
+    expect(runtime.preference).toBe('web-speech');
+    expect(runtime.effectiveEngine).toBe('web-speech');
+    expect(runtime.sessionOverrideMessage).toBeNull();
+  });
 });
 
 describe('a session override', () => {

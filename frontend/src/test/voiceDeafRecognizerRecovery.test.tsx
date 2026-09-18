@@ -138,6 +138,30 @@ describe('a recognizer that opens a silent device', () => {
     expect(result.current.sttNotice).toContain('Speech Recognition');
   });
 
+  it('does not show the routing preflight diagnostic over voice chat', async () => {
+    localStorage.setItem(
+      'homepilot_media_preferences_v1',
+      JSON.stringify({ microphoneDeviceId: 'usb-mic' }),
+    );
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(),
+        enumerateDevices: vi.fn(async () => [
+          { deviceId: 'default', kind: 'audioinput', label: 'Built in', groupId: 'builtin' },
+          { deviceId: 'usb-mic', kind: 'audioinput', label: 'USB', groupId: 'usb' },
+        ]),
+      },
+    });
+
+    const onSend = vi.fn();
+    const { result } = renderHook(() => useVoiceController(onSend));
+    await waitFor(() => expect(result.current.sttEngine).toBe('homepilot-backend'));
+
+    expect(getSttRuntime().sessionOverrideReason).toBe('routing-mismatch');
+    expect(result.current.sttNotice).toBeNull();
+  });
+
   it('starts a fresh warm-up each time listening is switched on', async () => {
     // Leaving Voice and coming back is a new session to the user whether or not the component
     // survived, and the first press after returning is the same "is this thing on?" press.

@@ -44,6 +44,7 @@ import { describeMicrophoneRouting, type MicrophoneRoutingNotice } from './voice
 import {
   describeSttResolution,
   getSttPreferences,
+  hasStoredSttPreferences,
   resolveSttEngine,
   subscribeSttPreferences,
   type ResolvedSttEngine,
@@ -78,6 +79,8 @@ export interface SttRuntimeState {
   sessionOverride: ResolvedSttEngine | null;
   /** Why the override exists, in words, for whichever surface wants to show it. */
   sessionOverrideMessage: string | null;
+  /** Identifies automatic routing overrides so surfaces can choose how prominently to show them. */
+  sessionOverrideReason: 'routing-mismatch' | 'recognizer-deaf' | 'recovery' | null;
   /** HomePilot's own transcription can run here, so a recovery has somewhere to go. */
   backendUsable: boolean;
   /**
@@ -203,6 +206,7 @@ const INITIAL: SttRuntimeState = {
   effectiveEngine: null,
   sessionOverride: null,
   sessionOverrideMessage: null,
+  sessionOverrideReason: null,
   backendUsable: false,
   routing: null,
 };
@@ -337,7 +341,12 @@ function ensurePreferenceSubscription(): void {
     // made on its own, in both surfaces at once — including the routing preflight, which
     // would otherwise re-apply on the next resolve and make "Browser" unselectable on a
     // machine whose default input differs. Insisting has to mean something.
-    state = { ...state, sessionOverride: null, sessionOverrideMessage: null };
+    state = {
+      ...state,
+      sessionOverride: null,
+      sessionOverrideMessage: null,
+      sessionOverrideReason: null,
+    };
     routingPreflightArmed = false;
     // Across reloads too. A user who picks the browser again after being told the recognizer
     // cannot hear their microphone has decided, and a remembered verdict that survives that
@@ -360,6 +369,7 @@ function decide(
   const backendUsable = capability.available && mediaRecorderSupported();
   let override = state.sessionOverride && backendUsable ? state.sessionOverride : null;
   let overrideMessage = override ? state.sessionOverrideMessage : null;
+  let sessionOverrideReason = override ? state.sessionOverrideReason : null;
   let overrideReason = override ? 'session-override' : null;
 
   /*
@@ -383,6 +393,9 @@ function decide(
   if (
     !override
     && routingPreflightArmed
+    // A stored selection is an instruction, not a default for HomePilot to improve. Keeping
+    // this distinction across reloads is what makes all three Settings choices persistent.
+    && !hasStoredSttPreferences()
     && backendUsable
     && resolution.engine === 'web-speech'
     && ((routing.known && routing.mismatch) || remembered)
@@ -396,6 +409,9 @@ function decide(
     overrideReason = remembered && !(routing.known && routing.mismatch)
       ? 'recognizer-known-deaf'
       : 'routing-mismatch-preflight';
+    sessionOverrideReason = remembered && !(routing.known && routing.mismatch)
+      ? 'recognizer-deaf'
+      : 'routing-mismatch';
   }
 
   const next = update({
@@ -407,6 +423,7 @@ function decide(
     routing,
     sessionOverride: override,
     sessionOverrideMessage: overrideMessage,
+    sessionOverrideReason,
     effectiveEngine: override ?? resolution.engine,
   });
 
@@ -479,6 +496,7 @@ export function applySttSessionOverride(
   return update({
     sessionOverride: engine,
     sessionOverrideMessage: message,
+    sessionOverrideReason: 'recovery',
     effectiveEngine: engine,
   });
 }
@@ -488,6 +506,7 @@ export function clearSttSessionOverride(): SttRuntimeState {
   return update({
     sessionOverride: null,
     sessionOverrideMessage: null,
+    sessionOverrideReason: null,
     effectiveEngine: state.resolution?.engine ?? null,
   });
 }

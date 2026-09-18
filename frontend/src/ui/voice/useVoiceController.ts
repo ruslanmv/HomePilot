@@ -355,8 +355,15 @@ export function useVoiceController(
    * is the entire fix.
    */
   useEffect(() => {
-    setSttNotice(runtime.sessionOverrideMessage);
-  }, [runtime.sessionOverrideMessage]);
+    // The routing preflight is already explained in Speech Recognition settings. Do not put
+    // its long diagnostic paragraph over the voice chat; the automatic engine hand-off is
+    // enough to keep the selected microphone working. Other recovery notices remain useful.
+    setSttNotice(
+      runtime.sessionOverrideReason === 'routing-mismatch'
+        ? null
+        : runtime.sessionOverrideMessage,
+    );
+  }, [runtime.sessionOverrideMessage, runtime.sessionOverrideReason]);
 
   /**
    * The engine changed while Voice was open, so say what it changed to.

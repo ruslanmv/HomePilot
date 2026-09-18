@@ -98,6 +98,21 @@ export function getSttPreferences(): SttPreferences {
   }
 }
 
+/**
+ * Whether the user has made and saved an explicit engine choice.
+ *
+ * This is deliberately different from {@link getSttPreferences}: that function also returns
+ * the browser default when nothing has been saved. Runtime safety heuristics may improve that
+ * untouched default, but must not replace a choice the user already made on a later reload.
+ */
+export function hasStoredSttPreferences(): boolean {
+  try {
+    return safeStorage()?.getItem(STT_PREFERENCES_STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
 export function setSttPreferences(next: SttPreferences): SttPreferences {
   const sanitized = sanitize(next);
   try {
