@@ -76,6 +76,27 @@ class TestBuild:
         r3 = nm.build_manifest()["manifest_revision"]
         assert r3 == r2 + 1
 
+    def test_live_telemetry_does_not_bump_revision(self, nm, monkeypatch):
+        """Free disk / free VRAM drift on their own. They stay in the manifest
+        but must not look like a content change, or an idle node bumps its
+        revision on every poll and the cloud re-syncs for nothing."""
+        import collections
+        import itertools
+        usage = collections.namedtuple("usage", "total used free")
+        free_bytes = itertools.count(20 * 1024**3, -512 * 1024**2)  # shrinking disk
+        monkeypatch.setattr(nm.shutil, "disk_usage",
+                            lambda _p: usage(40 * 1024**3, 0, next(free_bytes)))
+
+        first = nm.build_manifest()
+        second = nm.build_manifest()
+
+        # the reported number is live...
+        assert (first["hardware"]["disk_free_mb"]
+                != second["hardware"]["disk_free_mb"])
+        # ...but the node did not change
+        assert second["manifest_revision"] == first["manifest_revision"]
+        assert second["manifest_hash"] == first["manifest_hash"]
+
     def test_services_fail_closed_without_backends(self, nm):
         man = nm.build_manifest()
         # no ollama/comfyui reachable in the test env -> offline, never crash

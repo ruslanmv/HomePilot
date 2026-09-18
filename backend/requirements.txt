@@ -6,6 +6,10 @@ httpx==0.27.0
 python-multipart==0.0.9
 starlette==0.37.2
 pytest==8.2.2
+# pytest.ini runs in asyncio_mode=auto; without the plugin every `async def`
+# test is collected, skipped with a warning and counted as a pass. CI installs
+# this file, so the plugin belongs here or ~240 tests only look like they ran.
+pytest-asyncio>=0.23
 chromadb>=0.4.0
 PyPDF2>=3.0.0
 Pillow>=10.0.0

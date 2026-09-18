@@ -44,6 +44,12 @@ MANIFEST_SCHEMA = "homepilot.node.manifest/v1"
 # and detect continuity loss. Persisted best-effort across restarts.
 _REVISION_STATE: Dict[str, Any] = {"hash": "", "revision": 0}
 
+# Live telemetry that drifts on its own - free disk, free VRAM - is reported
+# in the manifest but kept out of the content hash. Otherwise an idle node
+# bumps its revision on every poll (any background write moves disk_free_mb)
+# and the cloud re-syncs the whole manifest for a number it does not key on.
+_VOLATILE_HARDWARE_KEYS = ("disk_free_mb", "vram_free_mb")
+
 
 def _flag_enabled() -> bool:
     return os.getenv("OLLABRIDGE_NODE_MANIFEST_ENABLED", "false").strip().lower() in (
@@ -275,12 +281,28 @@ def _video_models() -> List[Dict[str, Any]]:
 
 # ── Manifest assembly + revisioning ──────────────────────────────────────────
 
+def _content_hash(manifest: Dict[str, Any]) -> str:
+    """Hash the parts of the manifest the cloud actually mirrors.
+
+    Volatile hardware telemetry is dropped first (see _VOLATILE_HARDWARE_KEYS)
+    so the digest describes the node's content, not its instantaneous metrics.
+    """
+    stable = dict(manifest)
+    hardware = dict(stable.get("hardware") or {})
+    for key in _VOLATILE_HARDWARE_KEYS:
+        hardware.pop(key, None)
+    stable["hardware"] = hardware
+    return hashlib.sha256(
+        json.dumps(stable, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def build_manifest() -> Dict[str, Any]:
     """Assemble the full manifest from live sources and stamp a revision.
 
     The revision advances only when the content (everything except the
-    volatile timestamp/revision fields) changes, so repeated polls of an
-    idle node keep the same revision - cheap delta sync for the cloud.
+    volatile timestamp/revision fields and the live hardware telemetry)
+    changes, so repeated polls of an idle node keep the same revision -
+    cheap delta sync for the cloud.
     """
     services = _services()
     manifest: Dict[str, Any] = {
@@ -300,8 +322,7 @@ def build_manifest() -> Dict[str, Any]:
         },
     }
 
-    content_hash = hashlib.sha256(
-        json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
+    content_hash = _content_hash(manifest)
     if not _REVISION_STATE["revision"]:
         _load_revision_state()
     if content_hash != _REVISION_STATE["hash"]:
