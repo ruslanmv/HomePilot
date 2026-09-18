@@ -21,6 +21,15 @@
 const STT_MIN_LISTEN_MS = 1600;
 
 /**
+ * How long to wait for an aborted recognizer to reach `onend` before starting the next turn.
+ *
+ * Chrome tears a session down in a few milliseconds, so this is a ceiling, not a delay: the
+ * wait ends the moment `onend` arrives. It exists only so a browser that never delivers the
+ * event cannot strand voice input forever.
+ */
+const RECOGNITION_END_TIMEOUT_MS = 1500;
+
+/**
  * How long to keep a recognizer open that has captured audio but heard no speech at all.
  *
  * HomePilot's VAD decides the turn is over from *its* microphone, which is not the one the
@@ -76,6 +85,18 @@ class SpeechService {
         this.recognition = null;
         this.isRecognitionSupported = false;
         this.isRecognizing = false;
+        /**
+         * A session that has been aborted or stopped but has not yet reached `onend`.
+         *
+         * `abort()` and `stop()` return immediately; the browser keeps the session alive
+         * until it has torn its capture down, and `start()` before that throws
+         * `InvalidStateError` on the very same recognizer object. Clearing `isRecognizing`
+         * at the call site made the window invisible, so a hand-off — the assistant stops
+         * talking, listening restarts — aborted a live turn and then failed to start the
+         * next one. The microphone stayed open and nothing was ever transcribed again.
+         */
+        this.recognitionEnding = false;
+        this.recognitionEndWaiters = [];
         this.micPermissionGranted = false;
         this.micStream = null;
         this.recognitionCallbacks = {
@@ -359,6 +380,7 @@ class SpeechService {
 
             this.recognition.onend = () => {
                 this.isRecognizing = false;
+                this.settleRecognitionEnd();
                 this.clearPendingStop();
                 this.lastSttDiagnostics.elapsedMs = this.sttElapsedMs();
                 micTrace('recognition_onend', {
@@ -374,6 +396,48 @@ class SpeechService {
                 if (this.recognitionCallbacks.onEnd) this.recognitionCallbacks.onEnd();
             };
         }
+    }
+
+    /**
+     * The recognizer has reached `onend` — release anyone waiting to start the next turn.
+     *
+     * Called from `onend` only. `onerror` is not enough: Chrome raises `aborted` and *then*
+     * ends, and a start issued between the two hits the same `InvalidStateError` this exists
+     * to prevent.
+     */
+    settleRecognitionEnd() {
+        this.recognitionEnding = false;
+        const waiters = this.recognitionEndWaiters;
+        this.recognitionEndWaiters = [];
+        waiters.forEach((resolve) => {
+            try { resolve(true); } catch (e) { /* a waiter that throws is not our problem */ }
+        });
+    }
+
+    /**
+     * Resolve once no session is winding down, so `start()` can be called safely.
+     *
+     * Bounded: a browser that never delivers `onend` must not strand voice input forever.
+     * Falling through after the timeout is deliberate — `start()` then either works or
+     * reports a real error, which is better evidence than a promise that never settles.
+     */
+    whenRecognitionIdle(timeoutMs = RECOGNITION_END_TIMEOUT_MS) {
+        if (!this.recognitionEnding) return Promise.resolve(true);
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (ended) => {
+                if (settled) return;
+                settled = true;
+                this.recognitionEndWaiters = this.recognitionEndWaiters.filter((w) => w !== finish);
+                resolve(ended);
+            };
+            this.recognitionEndWaiters.push(finish);
+            setTimeout(() => {
+                if (settled) return;
+                micTrace('recognition_end_wait_timeout', { timeoutMs });
+                finish(false);
+            }, timeoutMs);
+        });
     }
 
     sttElapsedMs() {
@@ -489,6 +553,17 @@ class SpeechService {
             return false;
         }
 
+        // The previous turn was aborted or stopped microseconds ago and the browser has not
+        // finished with it. Starting now throws `InvalidStateError` and the turn is lost, so
+        // wait for `onend` — normally a few milliseconds — instead of racing it.
+        if (this.recognitionEnding) {
+            micTrace('start_waiting_for_previous_end', {
+                elapsedMs: this.sttElapsedMs(),
+            });
+            const ended = await this.whenRecognitionIdle();
+            micTrace('start_previous_end_settled', { ended });
+        }
+
         this.recognitionCallbacks = { ...this.recognitionCallbacks, ...callbacks };
 
         this.clearPendingStop();
@@ -513,7 +588,35 @@ class SpeechService {
             // `start()` throws InvalidStateError when a session is already live
             // on this page — including one owned by a *different* recognizer
             // object. Reporting the real reason beats the old generic message.
-            this.lastSttDiagnostics.error = error && error.name ? error.name : 'start_failed';
+            const errorName = (error && error.name) || 'start_failed';
+            // One retry, and only when a session we know about is still winding down: the
+            // wait above timed out, but the recognizer is ending and will be usable in a
+            // moment. Giving up here is what left the microphone open with nothing
+            // transcribing it. An `InvalidStateError` with nothing ending is a different
+            // fault and is reported as one, and no other error is retried at all — a retry
+            // loop on a permission denial helps nobody.
+            if (errorName === 'InvalidStateError' && this.recognitionEnding) {
+                micTrace('start_retry_after_invalid_state', {
+                    elapsedMs: this.sttElapsedMs(),
+                });
+                await this.whenRecognitionIdle();
+                try {
+                    this.recognition.start();
+                    micTrace('start_recovered_after_invalid_state');
+                    return true;
+                } catch (retryError) {
+                    this.lastSttDiagnostics.error =
+                        (retryError && retryError.name) || 'start_failed';
+                    micTrace('start_failed', {
+                        errorName: this.lastSttDiagnostics.error,
+                        errorMessage: (retryError && retryError.message) || String(retryError),
+                        afterRetry: true,
+                    });
+                    if (callbacks.onError) callbacks.onError(this.lastSttDiagnostics.error);
+                    return false;
+                }
+            }
+            this.lastSttDiagnostics.error = errorName;
             micTrace('start_failed', {
                 errorName: (error && error.name) || 'Error',
                 errorMessage: (error && error.message) || String(error),
@@ -596,7 +699,10 @@ class SpeechService {
                     reason,
                     elapsedMs: this.sttElapsedMs(),
                 });
-                try { this.recognition.stop(); } catch (e) { /* already ending */ }
+                try {
+                    this.recognition.stop();
+                    this.recognitionEnding = true;
+                } catch (e) { /* already ending */ }
             }, waitMs);
             return false;
         }
@@ -609,6 +715,8 @@ class SpeechService {
             micTrace('stop_failed', { reason, errorName: (e && e.name) || 'Error' });
             return false;
         }
+        // Same as abort: stopped is not ended, and the next turn has to wait for `onend`.
+        this.recognitionEnding = true;
         return true;
     }
 
@@ -621,12 +729,17 @@ class SpeechService {
         if (!this.recognition) return false;
         this.lastSttDiagnostics.stoppedBy = `${reason}:aborted`;
         micTrace('abort_requested', { reason, elapsedMs: this.sttElapsedMs() });
+        const wasRecognizing = this.isRecognizing;
         try {
             this.recognition.abort();
         } catch (e) {
             return false;
         }
+        // `isRecognizing` goes false now because no *result* can arrive any more, but the
+        // recognizer itself is not finished until `onend`. Anyone about to call `start()`
+        // waits on `recognitionEnding`, not on this flag.
         this.isRecognizing = false;
+        if (wasRecognizing) this.recognitionEnding = true;
         return true;
     }
 
@@ -1031,4 +1144,5 @@ const speechService = new SpeechService();
 speechService.STT_MIN_LISTEN_MS = STT_MIN_LISTEN_MS;
 speechService.STT_NO_SPEECH_GRACE_MS = STT_NO_SPEECH_GRACE_MS;
 speechService.STT_MAX_LISTEN_MS = STT_MAX_LISTEN_MS;
+speechService.RECOGNITION_END_TIMEOUT_MS = RECOGNITION_END_TIMEOUT_MS;
 window.SpeechService = speechService;

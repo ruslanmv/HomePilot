@@ -76,8 +76,8 @@ class FakeRecognition {
   }
 }
 
-function loadSpeechService() {
-  window.SpeechRecognition = FakeRecognition;
+function loadSpeechService(Recognition = FakeRecognition) {
+  window.SpeechRecognition = Recognition;
   delete window.SpeechService;
   window.__HOMEPILOT_MIC_DEBUG__ = [];
   // eslint-disable-next-line no-new-func
@@ -330,6 +330,104 @@ describe('SpeechService speech-to-text', () => {
     expect(started).toBe(false);
     expect(onError).toHaveBeenCalledWith('InvalidStateError');
     expect(service.getSttDiagnostics().error).toBe('InvalidStateError');
+  });
+
+  describe('restarting the recognizer right after aborting it', () => {
+    /**
+     * The reported failure, from a call that listened but never transcribed:
+     *
+     *   recognition_audiostart          ← a turn is live
+     *   abort_requested                 ← the hand-off drops it
+     *   start_requested
+     *   start_failed                    ← InvalidStateError
+     *   recognition_audioend
+     *   recognition_onerror
+     *   recognition_onend               ← the aborted session ends *after* the failed start
+     *
+     * `abort()` returns immediately but the browser keeps the session alive until it has
+     * torn the capture down, and `start()` before then throws on the same object. The old
+     * code cleared `isRecognizing` at the call site, so the guard saw an idle recognizer and
+     * started straight into the race. Losing it killed voice input for the rest of the call:
+     * the microphone stayed open, the input meter kept moving, and nothing was transcribed.
+     */
+    class EndsAsynchronously extends FakeRecognition {
+      start() {
+        // Exactly Chrome's rule: one live session per object, and aborting does not end it.
+        if (this.live) {
+          const error = new Error('recognition has already started');
+          error.name = 'InvalidStateError';
+          throw error;
+        }
+        this.live = true;
+        super.start();
+      }
+
+      abort() {
+        this.abortCalls += 1;
+        // Note what is *not* here: `onend`. The browser delivers it on a later task.
+      }
+
+      /** The teardown the browser gets round to after the abort. */
+      finishEnding() {
+        this.live = false;
+        this.onend?.();
+      }
+    }
+
+    beforeEach(() => {
+      service = loadSpeechService(EndsAsynchronously);
+    });
+
+    it('waits for the aborted session to end instead of racing it', async () => {
+      await service.startSTT();
+      const first = EndsAsynchronously.last;
+      first.emitAudioStart();
+
+      service.abortSTT('handoff');
+      expect(first.abortCalls).toBe(1);
+
+      // The hand-off restarts listening immediately, as the voice controller does.
+      const restart = service.startSTT();
+
+      // Nothing has been started yet: the previous session has not ended.
+      expect(first.startCalls).toBe(1);
+      expect(traceEvents()).toContain('start_waiting_for_previous_end');
+
+      // The browser gets round to the teardown it owed us.
+      first.finishEnding();
+
+      await expect(restart).resolves.toBe(true);
+      expect(first.startCalls).toBe(2);
+      expect(traceEvents()).not.toContain('start_failed');
+    });
+
+    it('recovers when the end never arrives, rather than losing voice input', async () => {
+      await service.startSTT();
+      const recognition = EndsAsynchronously.last;
+      service.abortSTT('handoff');
+
+      const restart = service.startSTT();
+      // `onend` is never delivered. The wait is a ceiling, not a promise of one.
+      advance(service.RECOGNITION_END_TIMEOUT_MS);
+      await Promise.resolve();
+      // The start that follows still hits InvalidStateError, and the retry waits out its own
+      // window before reporting — a bounded failure, not a hang.
+      advance(service.RECOGNITION_END_TIMEOUT_MS);
+
+      await expect(restart).resolves.toBe(false);
+      expect(traceEvents()).toContain('start_retry_after_invalid_state');
+      expect(recognition.abortCalls).toBe(1);
+    });
+
+    it('starts cleanly when the previous session ended on its own', async () => {
+      await service.startSTT();
+      const first = EndsAsynchronously.last;
+      first.finishEnding();
+
+      // Nothing is winding down, so there is nothing to wait for.
+      await expect(service.startSTT()).resolves.toBe(true);
+      expect(traceEvents()).not.toContain('start_waiting_for_previous_end');
+    });
   });
 
   it('aborts on demand so another surface can take the microphone', async () => {

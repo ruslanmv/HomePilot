@@ -53,6 +53,8 @@ interface Session {
   owner: MicrophoneOwner;
   generation: number;
   handlers: WebSpeechHandlers;
+  /** Recorded so a repeat start on the same terms can be recognized as a no-op. */
+  continuous: boolean;
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -70,6 +72,25 @@ let dispatcherInstalled = false;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let nativeRecognition: any = null;
 let nativeDiagnostics: SttDiagnostics = {};
+/**
+ * Settles when an aborted native recognizer has reached `onend`.
+ *
+ * `abort()` returns before the browser has released the session, and a page may run only one
+ * at a time, so constructing a fresh recognizer and starting it immediately throws
+ * `InvalidStateError` just as reusing one does. `SpeechService` waits on its own equivalent;
+ * this is the same wait for the path that runs without it.
+ */
+let nativeEnded: Promise<void> | null = null;
+let resolveNativeEnded: (() => void) | null = null;
+/** Ceiling on that wait, so a browser that never fires `onend` cannot strand voice input. */
+const NATIVE_END_TIMEOUT_MS = 1500;
+
+function settleNativeEnd(): void {
+  const resolve = resolveNativeEnded;
+  resolveNativeEnded = null;
+  nativeEnded = null;
+  resolve?.();
+}
 
 export function isWebSpeechSupported(): boolean {
   const svc = speechService();
@@ -150,12 +171,37 @@ export async function startWebSpeech(
     return false;
   }
 
+  // A live session for the same surface, on the same terms, is already the thing being asked
+  // for. Cycling the recognizer to replace it with an identical one is pure risk: the abort
+  // and the restart race each other, and losing that race leaves the microphone open with
+  // nothing transcribing it. The voice controller can request a start from several paths at
+  // once (a restart timer, the capture effect, a turn lock releasing), so this is reached in
+  // ordinary use rather than only by a bug.
+  if (
+    session
+    && session.owner === owner
+    && session.continuous === Boolean(options.continuous)
+    && isWebSpeechActive()
+  ) {
+    microphoneDebug(owner === 'voice' ? 'voice' : 'chat', 'web_speech_start_coalesced', {
+      owner,
+      continuous: Boolean(options.continuous),
+    });
+    // The newer handlers win: the caller expects its own callbacks for this turn.
+    session.handlers = handlers;
+    // And it is owed the same `onStart` a fresh session would have given it. Resolving `true`
+    // has to mean "you are listening" on every path, or the surface that just asked sits in
+    // whatever state it was in while the recognizer streams words at it.
+    handlers.onStart?.();
+    return true;
+  }
+
   // One recognizer means the previous turn ends before this one starts — never two live
   // sessions, and never a stale `onend` landing on the new owner.
   if (session || isWebSpeechActive()) abortWebSpeech('handoff');
 
   const gen = ++generation;
-  session = { owner, generation: gen, handlers };
+  session = { owner, generation: gen, handlers, continuous: Boolean(options.continuous) };
 
   const svc = speechService();
   const scope = owner === 'voice' ? 'voice' : 'chat';
@@ -185,6 +231,16 @@ export async function startWebSpeech(
       );
       return false;
     }
+  }
+
+  // Same reason `SpeechService.startSTT` waits: the recognizer just aborted has not reached
+  // `onend`, and the page allows only one session at a time whatever object holds it.
+  if (nativeEnded) {
+    microphoneDebug(scope, 'web_speech_waiting_for_previous_end', { owner });
+    await Promise.race([
+      nativeEnded,
+      new Promise<void>((resolve) => { setTimeout(resolve, NATIVE_END_TIMEOUT_MS); }),
+    ]);
   }
 
   return startNativeRecognition(owner, gen, handlers, options);
@@ -257,6 +313,7 @@ function startNativeRecognition(
   };
   recognition.onend = () => {
     nativeRecognition = null;
+    settleNativeEnd();
     const ending = session;
     deliver('onEnd', gen, (h) => h.onEnd?.(nativeDiagnostics));
     if (session && ending && session.generation === ending.generation) session = null;
@@ -310,7 +367,16 @@ export function abortWebSpeech(reason = 'abort'): void {
     try { svc.abortSTT(reason); } catch { /* already gone */ }
   }
   if (nativeRecognition) {
-    try { nativeRecognition.abort(); } catch { /* already gone */ }
+    // Armed *before* the abort, so the `onend` it provokes has something to settle.
+    if (!nativeEnded) {
+      nativeEnded = new Promise<void>((resolve) => { resolveNativeEnded = resolve; });
+    }
+    try {
+      nativeRecognition.abort();
+    } catch {
+      // Never started, or already gone — nothing will end, so nothing should wait.
+      settleNativeEnd();
+    }
     nativeRecognition = null;
   }
   if (ending) {
@@ -328,4 +394,6 @@ export function resetWebSpeechForTests(): void {
   dispatcherInstalled = false;
   nativeRecognition = null;
   nativeDiagnostics = {};
+  resolveNativeEnded = null;
+  nativeEnded = null;
 }
