@@ -4253,9 +4253,26 @@ export default function App() {
   }, [handleConfirmAction])
 
   const sendTextOrIntent = useCallback(
-    async (rawText: string) => {
+    async (rawText: string, opts?: { spoken?: boolean }) => {
       const trimmed = rawText.trim()
       if (!trimmed) return
+
+      /*
+       * A turn that will be *spoken back* rather than read.
+       *
+       * The 📞 overlay is a call, but it does not swap the app out of chat mode — so every
+       * call turn used to be sent as an ordinary chat turn: no brevity instruction, and the
+       * chat token ceiling (900) instead of the voice one (80, see orchestrator.py). Nothing
+       * streams on this path, so the first word of audio waits for the *last* token of a
+       * chat-length answer. That is the whole of why a call felt slower than the Voice tab
+       * while using the same microphone, the same controller and the same endpoint.
+       *
+       * `spoken` shapes the *response* only — how long it should be and how it should read.
+       * Project, session and personality routing stay exactly as the caller's mode defines
+       * them: a call answers as whoever the user is already talking to.
+       */
+      const spokenTurn = opts?.spoken === true
+      const voiceLike = mode === 'voice' || spokenTurn
 
       // Batch 6: honest offline. If the user pinned a specific computer that is
       // offline, do NOT silently run on Web CPU — block the send and surface the
@@ -4565,7 +4582,7 @@ export default function App() {
                   provider_model: chatSelection.modelChat,
                   provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
                   textTemperature: settingsDraft.textTemperature,
-                  textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                  textMaxTokens: voiceLike ? undefined : settingsDraft.textMaxTokens,
                   nsfwMode: settingsDraft.nsfwMode,
                   memoryEngine: settingsDraft.memoryEngine || 'v2',
                   incognito: chatSettings?.incognito || false,
@@ -4637,7 +4654,7 @@ export default function App() {
         }
       }
 
-      if (mode === 'voice') {
+      if (voiceLike) {
         const activePersonaId = currentProject?.project_type === 'persona' ? `persona:${currentProject.id}` : null
         const savedVoiceStyleId = localStorage.getItem(LS_VOICE_STYLE_ID)
         const legacyPersonalityId = localStorage.getItem('homepilot_personality_id')
@@ -4803,6 +4820,23 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         }
       }
 
+      /*
+       * A call must never fall through to the chat shape.
+       *
+       * The block above deliberately leaves `voiceSystemPrompt` undefined in linked-persona
+       * mode, because there the backend owns both the prompt and the brevity hint — but it
+       * only does so when the request actually carries that persona (`personalityId`, sent
+       * below, is what sets `is_voice_mode` server-side). A voice style pointing at a persona
+       * the user is not currently in would satisfy neither, and the turn would land on the
+       * plain chat prompt with the 900-token ceiling: exactly the slow path.
+       */
+      const carriesPersonaId = currentProject?.project_type === 'persona'
+      if (spokenTurn && !voiceSystemPrompt && !carriesPersonaId) {
+        voiceSystemPrompt =
+          'You are in a live voice call. Reply in 1-2 short sentences only. '
+          + 'Talk like a real person. Never mention being an AI.'
+      }
+
       try {
         // ── Agent/Knowledge topology: route text messages through /v1/agent/chat ──
         // The agent decides autonomously whether to use tools (vision, knowledge, memory, etc.)
@@ -4826,7 +4860,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               provider_model: chatSelection.modelChat,
               provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
               temperature: settingsDraft.textTemperature ?? 0.7,
-              max_tokens: mode === 'voice' ? 300 : (settingsDraft.textMaxTokens ?? 900),
+              max_tokens: voiceLike ? 300 : (settingsDraft.textMaxTokens ?? 900),
               vision_provider: settingsDraft.providerMultimodal || 'ollama',
               vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
               vision_model: settingsDraft.modelMultimodal || undefined,
@@ -4897,7 +4931,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 // Custom generation parameters (from settingsDraft)
                 textTemperature: settingsDraft.textTemperature,
                 // Voice mode: let backend enforce its own token cap for short spoken replies
-                textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                textMaxTokens: voiceLike ? undefined : settingsDraft.textMaxTokens,
                 imgWidth: settingsDraft.imgWidth,
                 imgHeight: settingsDraft.imgHeight,
                 imgSteps: settingsDraft.imgSteps,
@@ -5477,6 +5511,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 provider_base_url: chatSelection.baseUrlChat || undefined,
                 provider_model: chatSelection.modelChat,
                 textTemperature: settingsDraft.textTemperature,
+                // `uploadAndSend` is the attach-an-image path; a call never reaches it, so
+                // this stays keyed on the app mode rather than on a spoken turn.
                 textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                 nsfwMode: settingsDraft.nsfwMode,
                 memoryEngine: settingsDraft.memoryEngine || 'v2',
@@ -6532,7 +6568,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
       {/* Call overlay — a distinct session layered over the chat.
           Open it with the 📞 header icon; end it with the red button
-          inside the overlay. Not the same as Voice mode. */}
+          inside the overlay. Not the same as Voice mode.
+
+          `onSendText` marks the turn spoken: the overlay leaves the app in chat
+          mode, so without it every reply is generated as chat prose — no brevity
+          instruction, the 900-token ceiling instead of 80 — and because this path
+          does not stream, the first word of audio waits for the last token of it. */}
       <CallOverlay
         open={callOpen}
         onClose={() => {
@@ -6631,7 +6672,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           const clean = rel.replace(/^\/+/, '')
           return `${base}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
         })()}
-        onSendText={(text) => sendTextOrIntent(text)}
+        onSendText={(text) => sendTextOrIntent(text, { spoken: true })}
         backend={{
           backendUrl: settings.backendUrl,
           authToken: localStorage.getItem('homepilot_auth_token'),

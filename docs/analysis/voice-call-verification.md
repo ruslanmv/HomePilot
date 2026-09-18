@@ -25,6 +25,19 @@ PERSONA_CALL_ENABLED=true          # loads persona_call module
 PERSONA_CALL_APPLY=true            # attaches suffix to the LLM call
 ```
 
+A fifth flag decides whether the call is *fast*, and it is off even when the
+four above are on:
+
+```
+VOICE_CALL_STREAMING_ENABLED=true  # default FALSE — token streaming + sentence TTS
+```
+
+Without it the session negotiates `capabilities.streaming: false`, the client
+skips `streamTts` and speaks only the finished answer, so time-to-first-audio is
+the whole generation (measured at 4–6 s against a local model) rather than the
+≤600 ms budgeted in §1 of `voice-call-streaming-design.md`. Barge-in is gated on
+it too: `router.py` advertises `barge_in = streaming_enabled AND barge_in_enabled`.
+
 Quick self-check with `curl`:
 
 ```bash
