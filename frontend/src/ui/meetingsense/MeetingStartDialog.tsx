@@ -57,6 +57,10 @@ export function MeetingStartDialog({
         [status, capture.mode],
     );
     const selectedMode = MODES.find((mode) => mode.id === capture.mode) ?? MODES[0];
+    // Note-taker says nothing by design, so asking it who you are would be a field that
+    // changes nothing. Practice is a mock run with no room to be addressed from.
+    const needsNames = capture.mode === 'participant' || capture.mode === 'presenter'
+        || capture.mode === 'coach';
     const remote = Boolean(status?.stt?.remote);
 
     const onKeyDown = useCallback(
@@ -221,6 +225,48 @@ export function MeetingStartDialog({
                             <p className="mt-2.5 text-[11px] leading-4 text-white/35">
                                 <span className="font-medium text-white/55">{selectedMode.label}:</span> {selectedMode.note}
                             </p>
+
+                            {/* Names are what make a role more than a label. Without them the
+                                detector has only second person to go on, so "somebody just
+                                asked *you* something" never fires and the draft that rides on
+                                it never appears — the role reads as broken rather than
+                                narrow. Shown only for the roles that use them. */}
+                            {needsNames ? (
+                                <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                                    <label className="block">
+                                        <span className="mb-1 block text-[11px] font-medium text-white/55">
+                                            People call me
+                                        </span>
+                                        <input
+                                            type="text"
+                                            value={capture.myNames}
+                                            onChange={(event) => onCaptureChange({ ...capture, myNames: event.target.value })}
+                                            placeholder="Ruslan, Rus"
+                                            data-testid="ms-start-my-names"
+                                            className="w-full rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2 text-xs text-white/85 placeholder:text-white/25 focus:border-violet-300/30 focus:outline-none focus:ring-2 focus:ring-violet-400/40"
+                                        />
+                                        <span className="mt-1 block text-[10px] leading-4 text-white/30">
+                                            So it can tell when a question is aimed at you and draft a reply.
+                                        </span>
+                                    </label>
+                                    <label className="block">
+                                        <span className="mb-1 block text-[11px] font-medium text-white/55">
+                                            The assistant answers to
+                                        </span>
+                                        <input
+                                            type="text"
+                                            value={capture.assistantName}
+                                            onChange={(event) => onCaptureChange({ ...capture, assistantName: event.target.value })}
+                                            placeholder="Leave empty so it never speaks"
+                                            data-testid="ms-start-assistant-name"
+                                            className="w-full rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2 text-xs text-white/85 placeholder:text-white/25 focus:border-violet-300/30 focus:outline-none focus:ring-2 focus:ring-violet-400/40"
+                                        />
+                                        <span className="mt-1 block text-[10px] leading-4 text-white/30">
+                                            Empty is the safe default: it answers nobody out loud.
+                                        </span>
+                                    </label>
+                                </div>
+                            ) : null}
                         </section>
 
                         <section aria-labelledby="ms-privacy-heading" className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">

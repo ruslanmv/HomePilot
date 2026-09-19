@@ -9,11 +9,11 @@ import {
   Search,
   MessageSquare,
   Mic,
+  Loader2,
   Folder,
   Clock,
   Settings,
   Lock,
-  Paperclip,
   Server,
   PlugZap,
   Trash2,
@@ -36,6 +36,25 @@ import {
   LayoutGrid,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
+import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
+import { explainSttError, explainSttOutcome, type SttDiagnostics } from './media/voiceSelfTest'
+import { describeBrowserMicCheck } from './media/browserMicHelp'
+import { ComposerPlusMenu, ScreenShareStatus } from './components/ComposerPlusMenu'
+import { recordAndTranscribe, SttUnavailableError } from './media/sttService'
+import { describeSttResolution, type ResolvedSttEngine } from './media/sttPreferences'
+import {
+  acquireMicrophone,
+  applySttSessionOverride,
+  describeEngineHandoff,
+  ensureSttRuntimeResolved,
+  subscribeEffectiveEngine,
+  getMicrophoneLease,
+  releaseMicrophone,
+  rememberRecognizerIsDeaf,
+  systemDefaultMicrophoneLabel,
+} from './media/sttRuntime'
+import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
+import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
@@ -113,7 +132,6 @@ import {
 import { useMeetingCatalog } from './meetingsense/useMeetingCatalog'
 import { MeetingLibrary } from './meetingsense/MeetingLibrary'
 import { MeetingSenseProvider } from './meetingsense/MeetingSenseProvider'
-import { MeetingAction } from './meetingsense/MeetingAction'
 import type { MeetingSenseStatus } from './meetingsense/entryPoint'
 
 /** Shared so History does not allocate a Set per render on an install with no meetings. */
@@ -1538,6 +1556,24 @@ function Sidebar({
   )
 }
 
+/**
+ * Recognizer outcomes that are not faults during dictation.
+ *
+ * A dictation session is held open until the user presses Stop, so it spends most of its life
+ * waiting. `no-speech` is Chrome saying nobody spoke — which is what a pause *is* — and
+ * `aborted` is HomePilot taking the microphone back for a hand-off. Reporting either would put
+ * a warning under the composer every few seconds of a session that is working.
+ */
+const BENIGN_DICTATION_ERRORS = new Set(['no-speech', 'aborted'])
+
+/** Errors that reopening the session would only repeat. */
+const FATAL_DICTATION_ERRORS = new Set([
+  'not-allowed',
+  'service-not-allowed',
+  'audio-capture',
+  'not-supported',
+])
+
 function QueryBar({
   centered,
   input,
@@ -1613,47 +1649,393 @@ function QueryBar({
 
   // ---- Speech-to-text for the mic button ----
   const [isListening, setIsListening] = useState(false)
-  const recognitionRef = useRef<any>(null)
+  // Surfaced next to the composer. The button used to swallow every failure,
+  // so a blocked permission, an unsupported browser and a recognizer that
+  // heard nothing were all indistinguishable from a dead button.
+  const [micNotice, setMicNotice] = useState<string | null>(null)
+  const micTranscriptRef = useRef('')
+  // Set while the backend path is recording, so the same button stops it.
+  const micStopRecordingRef = useRef<(() => void) | null>(null)
+  const [micTranscribing, setMicTranscribing] = useState(false)
+  // Consecutive turns where the recognizer's capture opened and heard nothing while the
+  // selected microphone was working — see `media/sttTurnHealth`. Any turn with words
+  // resets it. A recovery goes to the shared runtime, so the Voice tab moves with it
+  // instead of rediscovering the same broken device on its own.
+  const micDeafTurnsRef = useRef(0)
+  const micBackendUsableRef = useRef(false)
+  /** The server-side provider's name, for the hand-off line. Filled in when the engine resolves. */
+  const micProviderRef = useRef<string | null>(null)
+  /*
+   * Dictation *adds to* the composer; it does not take it over.
+   *
+   * `setInput(text)` replaced whatever was there, so starting dictation on a half-typed
+   * message erased it, and in a session that produces more than one finished phrase each one
+   * replaced the last — leaving only the final sentence of everything that was said.
+   *
+   * ChatGPT, Claude and Gemini all behave the other way: the text you already have stays, and
+   * speech is appended to it. `micBaseTextRef` is the draft as it was when the microphone
+   * opened, `micFinalRef` accumulates the phrases finished since.
+   */
+  const micBaseTextRef = useRef('')
+  const micFinalRef = useRef('')
+  /**
+   * The composer's current text, reachable without re-creating the dictation session.
+   *
+   * `input` changes on every keystroke, so a callback listing it would be a new function each
+   * time — and the session holds these handlers for its whole life.
+   */
+  const inputRef = useRef(input)
+  /** Set when the user presses Stop, so an auto-restart can tell itself from a real end. */
+  const micStoppingRef = useRef(false)
+  useEffect(() => { inputRef.current = input }, [input])
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const modeMenuRef = useRef<HTMLDivElement | null>(null)
   const modeButtonRef = useRef<HTMLButtonElement | null>(null)
   const modeMenuPanelRef = useRef<HTMLDivElement | null>(null)
   const [modeMenuPos, setModeMenuPos] = useState<{ top: number; right: number } | null>(null)
 
+  /**
+   * The browser recognizer, through the one adapter the Voice tab also uses.
+   *
+   * The composer used to construct `new SpeechRecognition()` itself. A page can run only one
+   * recognition session at a time, so it had to abort the Voice tab's session before taking
+   * a turn — and nothing did the reverse, which left a recognizer started here able to
+   * outlive the composer and break the next Voice turn. `media/webSpeechSession` owns that
+   * hand-off now: one recognizer, one lifecycle, one place to abort.
+   *
+   * The device caveat comes with the engine — `SpeechRecognition` takes no `deviceId` and
+   * records the OS default input, not the microphone chosen in Settings — so the notice text
+   * says so when it hears nothing.
+   */
+  const startWebSpeechListening = useCallback(async (options: { resumed?: boolean } = {}) => {
+    if (!options.resumed) {
+      micTranscriptRef.current = ''
+      micFinalRef.current = ''
+      micStoppingRef.current = false
+      // Whatever is already in the composer is the user's and is kept.
+      micBaseTextRef.current = inputRef.current
+    }
+    microphoneDebug('chat', 'composer_mic_start_click', {
+      resumed: Boolean(options.resumed),
+      recognitionDevice: 'browser-managed-web-speech',
+    })
+
+    /** base draft + phrases finished so far + the words currently being said. */
+    const compose = (interim: string) =>
+      [micBaseTextRef.current.trim(), micFinalRef.current.trim(), interim.trim()]
+        .filter(Boolean)
+        .join(' ')
+
+    const started = await startWebSpeech('chat', {
+      onStart: () => {
+        microphoneDebug('chat', 'composer_mic_onstart')
+        setIsListening(true)
+      },
+      // Words as they are recognized, straight into the composer: the browser engine's one
+      // real advantage, and what tells the user it is hearing them at all.
+      onInterim: (text) => setInput(compose(text)),
+      onResult: (text) => {
+        micFinalRef.current = [micFinalRef.current.trim(), text.trim()].filter(Boolean).join(' ')
+        micTranscriptRef.current = micFinalRef.current
+        setInput(compose(''))
+      },
+      onEnd: (diagnostics: SttDiagnostics) => {
+        microphoneDebug('chat', 'composer_mic_onend', {
+          characters: micTranscriptRef.current.trim().length,
+          sawAudioStart: diagnostics.sawAudioStart ?? null,
+          sawSpeechStart: diagnostics.sawSpeechStart ?? null,
+          sawInterim: diagnostics.sawInterim ?? null,
+          sawNoMatch: diagnostics.sawNoMatch ?? null,
+          error: diagnostics.error ?? null,
+        })
+        /*
+         * Chrome ends a continuous session on its own — after a long silence, and every
+         * minute or so regardless. Dictation is over when the *user* says it is, so anything
+         * else reopens it. That is what "hold the mic until I press stop" means, and it is
+         * what ChatGPT, Claude and Gemini all do.
+         */
+        if (!micStoppingRef.current && !FATAL_DICTATION_ERRORS.has(diagnostics.error || '')) {
+          microphoneDebug('chat', 'composer_mic_resumed', {
+            characters: micFinalRef.current.trim().length,
+          })
+          void startWebSpeechListening({ resumed: true })
+          return
+        }
+
+        setIsListening(false)
+        // Say why nothing arrived instead of resetting the button in silence.
+        if (!micTranscriptRef.current.trim()) {
+          const outcome = explainSttOutcome(diagnostics, '')
+          setMicNotice(`${outcome.headline}. ${outcome.detail}`)
+        }
+
+        // A recognizer that keeps opening a silent device is not something to keep
+        // explaining once per press. Advice the user has already read twice and not acted on
+        // is not advice any more, so if there is a transcription path that records the
+        // microphone they actually selected, take it.
+        const deaf = isDeafTurn({
+          hadResult: Boolean(micTranscriptRef.current.trim()),
+          sawAudioStart: diagnostics.sawAudioStart,
+          sawSpeechStart: diagnostics.sawSpeechStart,
+          sawInterim: diagnostics.sawInterim,
+          error: diagnostics.error,
+        })
+        micDeafTurnsRef.current = deaf ? micDeafTurnsRef.current + 1 : 0
+        if (!deaf) return
+
+        const recovery = planSttRecovery(micDeafTurnsRef.current, {
+          backendUsable: micBackendUsableRef.current,
+          homepilotHoldsMicrophone: getMicrophoneLease()?.engine === 'homepilot-backend',
+          // The user pressed record, spoke, and pressed stop. That is a person asserting they
+          // said something, so one empty turn is already the answer — waiting for a second
+          // only costs them another turn to learn what this one proved.
+          turnWasDeliberate: true,
+          // The device the recognizer was actually recording. Naming it is what turns "make
+          // your microphone the system default" into something the user can act on without
+          // first working out which of their inputs is currently holding that slot.
+          systemDefaultLabel: systemDefaultMicrophoneLabel(),
+          // Where the browser keeps its own microphone selection, which is a different setting
+          // from the OS default and is the likelier culprit on a Chromium browser.
+          browserMicCheck: describeBrowserMicCheck(),
+        })
+        if (recovery.action === 'none') return
+        microphoneDebug('chat', 'composer_mic_deaf_recognizer_recovery', {
+          action: recovery.action,
+          deafTurns: micDeafTurnsRef.current,
+          backendUsable: micBackendUsableRef.current,
+        })
+        micDeafTurnsRef.current = 0
+        setMicNotice(recovery.message)
+        // For this session only, and for both surfaces: the same microphone is deaf in the
+        // Voice tab too. The stored preference is the user's and stays theirs; Settings goes
+        // on showing what they chose, and the notice says where to change it.
+        if (recovery.action === 'switch-to-backend') {
+          // Remembered across reloads, keyed by this microphone. Without that, every page
+          // load offered the browser recognizer again and burned the user's first sentence
+          // re-proving the same fact.
+          rememberRecognizerIsDeaf()
+          applySttSessionOverride('homepilot-backend', recovery.message, 'chat')
+        }
+      },
+      onError: (code) => {
+        microphoneDebug('chat', 'composer_mic_error', {
+          error: code || 'unknown',
+          benign: BENIGN_DICTATION_ERRORS.has(code),
+        })
+        if (BENIGN_DICTATION_ERRORS.has(code)) {
+          // A pause in dictation, or our own hand-off. `onEnd` follows and reopens the
+          // session; a message here would be an error about nothing going wrong.
+          return
+        }
+        // `onEnd` usually follows and renders the verdict; keep the state reset here so the
+        // button never sticks if it does not.
+        micStoppingRef.current = true
+        setIsListening(false)
+        if (code === 'not-supported') {
+          setMicNotice(
+            'Voice input needs the Web Speech API. Use Chrome or Edge, or set Settings → '
+            + 'Voice Assistant → Speech Recognition to “On this computer”.',
+          )
+          return
+        }
+        const outcome = explainSttError(code)
+        setMicNotice(`${outcome.headline}. ${outcome.detail}`)
+      },
+    }, { continuous: true })
+
+    if (!started) setIsListening(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setInput])
+
+  /**
+   * Record the microphone selected in Settings and transcribe it server-side.
+   *
+   * This is the path that removes the device split: the bytes sent for
+   * transcription are the bytes captured from the selected input, so the
+   * meter and the transcript cannot come from different microphones.
+   */
+  const startBackendListening = useCallback(async () => {
+    setIsListening(true)
+    // Same rule as the browser path: dictation adds to the draft rather than replacing it.
+    const base = inputRef.current.trim()
+    try {
+      const result = await recordAndTranscribe({
+        scope: 'chat',
+        maxMs: 20_000,
+        onRecording: ({ stop }) => { micStopRecordingRef.current = stop },
+      })
+      micStopRecordingRef.current = null
+      void releaseMicrophone('chat')
+      setIsListening(false)
+      setMicTranscribing(false)
+
+      if (result.text) {
+        setInput([base, result.text.trim()].filter(Boolean).join(' '))
+        return
+      }
+      // Empty text is a successful transcription of silence — a different fact
+      // from a failure, and the user needs to be told which happened.
+      setMicNotice(
+        `No speech was found in the recording from ${result.deviceLabel}. ` +
+        'Speak a full sentence, and check the input level meter in Settings → Audio & Video.',
+      )
+    } catch (error) {
+      micStopRecordingRef.current = null
+      void releaseMicrophone('chat')
+      setIsListening(false)
+      setMicTranscribing(false)
+      microphoneDebugError('chat', 'composer_mic_backend_failed', error)
+
+      if (error instanceof SttUnavailableError) {
+        // The server lost its provider mid-session. Fall back rather than leaving the user
+        // with a dead button — and move the whole session, so the Voice tab does not go on
+        // posting clips to a transcriber that is gone.
+        microphoneDebug('chat', 'composer_mic_fallback_web_speech')
+        applySttSessionOverride(
+          'web-speech',
+          'HomePilot could not transcribe on this computer, so this session has moved to the '
+          + 'browser’s speech recognition. It records your system default input, not the '
+          + 'microphone selected in Audio & Video.',
+          'chat',
+        )
+        await acquireMicrophone('chat', 'web-speech', () => abortWebSpeech('microphone_handoff'))
+        void startWebSpeechListening()
+        return
+      }
+      const message = error instanceof Error ? error.message : 'Voice input failed.'
+      setMicNotice(message)
+    }
+  }, [setInput, startWebSpeechListening])
+
+  /**
+   * Open dictation on a named engine.
+   *
+   * Split out of the click handler because starting is no longer only something a click does:
+   * an engine changed in Settings mid-dictation has to reopen the microphone on the new engine,
+   * and it must take exactly the same path a click would rather than a second, subtly
+   * different one.
+   */
+  const startDictationOn = useCallback(async (engine: ResolvedSttEngine) => {
+    if (engine === 'homepilot-backend') {
+      // Take the microphone before opening it: if the Voice tab is holding a capture, its
+      // release runs first, so there are never two recorders on one device.
+      await acquireMicrophone('chat', 'homepilot-backend', () => {
+        micStopRecordingRef.current?.()
+        micStopRecordingRef.current = null
+      })
+      void startBackendListening()
+      return
+    }
+    await acquireMicrophone('chat', 'web-speech', () => abortWebSpeech('microphone_handoff'))
+    void startWebSpeechListening()
+  }, [startBackendListening, startWebSpeechListening])
+
+  /* ── Changing the engine while the composer is dictating ──────────────────────────────
+   *
+   * The engine was resolved once, at the moment the microphone button was pressed, and after
+   * that nothing looked again. So changing it in Settings mid-dictation left the composer
+   * recording through the engine the user had just moved away from — audio still going to the
+   * browser recognizer after they chose on-device transcription for privacy, which is the one
+   * way this can be wrong that actually matters.
+   *
+   * The hand-off is stop-then-start, never a swap underneath a live capture: the two engines
+   * are exclusive by construction, and the old one has a turn in flight that is worth
+   * finishing. Stopping the backend path transcribes what was said rather than discarding it;
+   * stopping the browser path lets its final result land. Either way the words the user has
+   * already spoken end up in the draft, and `micBaseTextRef` means the restart appends to that
+   * draft instead of replacing it.
+   *
+   * The restart is deliberately *not* done here. It waits for `isListening` to fall, below —
+   * both stops are asynchronous, and reopening the microphone from inside this callback races
+   * the teardown for the same device.
+   */
+  const pendingEngineHandoffRef = useRef<ResolvedSttEngine | null>(null)
+  const isListeningRef = useRef(isListening)
+  useEffect(() => { isListeningRef.current = isListening }, [isListening])
+
+  useEffect(() => subscribeEffectiveEngine((next) => {
+    setMicNotice(describeEngineHandoff(next, micProviderRef.current))
+    micDeafTurnsRef.current = 0
+    if (!isListeningRef.current) return
+    microphoneDebug('chat', 'composer_mic_engine_handoff', { to: next })
+    pendingEngineHandoffRef.current = next
+    if (micStopRecordingRef.current) {
+      setMicTranscribing(true)
+      micStopRecordingRef.current()
+      return
+    }
+    // Suppresses the auto-resume, which would otherwise reopen the *old* engine the moment
+    // this stop lands and leave two restarts racing for one microphone.
+    micStoppingRef.current = true
+    stopWebSpeech('chat', { reason: 'stt_engine_changed', force: true })
+  }), [])
+
+  useEffect(() => {
+    const next = pendingEngineHandoffRef.current
+    if (!next || isListening) return
+    pendingEngineHandoffRef.current = null
+    void startDictationOn(next)
+  }, [isListening, startDictationOn])
+
+  /** Give the microphone back if the composer unmounts mid-turn. */
+  useEffect(() => () => {
+    abortWebSpeech('chat_unmount')
+    void releaseMicrophone('chat')
+  }, [])
+
   const toggleListening = useCallback(() => {
-    // Stop if already listening
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop()
+    // Stop if already listening — whichever path owns the turn.
+    if (isListening) {
+      microphoneDebug('chat', 'composer_mic_stop_click')
+      if (micStopRecordingRef.current) {
+        // Stopping means "transcribe what I said", not "discard it".
+        setMicTranscribing(true)
+        micStopRecordingRef.current()
+        return
+      }
+      // An explicit press of Stop must stop now, not after the recognizer's warm-up guard —
+      // and must not be reopened by the auto-resume above.
+      micStoppingRef.current = true
+      stopWebSpeech('chat', { reason: 'composer_mic_stop_click', force: true })
       return
     }
 
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) return
+    setMicNotice(null)
 
-    const recognition = new SR()
-    recognition.continuous = false
-    recognition.interimResults = true
-    recognition.lang = 'en-US'
-    recognitionRef.current = recognition
+    // One shared decision, not a private one. The Voice tab reads the same runtime, so an
+    // engine chosen — or recovered onto — in either surface is the engine in both, and the
+    // user's Settings choice means what it says.
+    void ensureSttRuntimeResolved().then(async (runtime) => {
+      const { capability, resolution, effectiveEngine, sessionOverride } = runtime
+      micBackendUsableRef.current = runtime.backendUsable
+      micProviderRef.current = capability?.provider ?? null
+      microphoneDebug('chat', 'composer_mic_engine', {
+        preference: runtime.preference,
+        engine: effectiveEngine,
+        reason: sessionOverride ? 'session-override' : resolution?.reason ?? null,
+        fellBack: Boolean(resolution?.fellBack),
+        provider: capability?.provider ?? null,
+        remote: Boolean(capability?.remote),
+      })
 
-    recognition.onstart = () => setIsListening(true)
-    recognition.onend = () => { setIsListening(false); recognitionRef.current = null }
-    recognition.onerror = () => { setIsListening(false); recognitionRef.current = null }
-
-    recognition.onresult = (event: any) => {
-      let finalTranscript = ''
-      let interimTranscript = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript
-        if (event.results[i].isFinal) finalTranscript += t + ' '
-        else interimTranscript += t
+      if (!effectiveEngine) {
+        setMicNotice('HomePilot is still working out which speech engine to use. Try again in a moment.')
+        return
       }
-      // Show interim text while speaking, final text when done
-      setInput(finalTranscript.trim() || interimTranscript)
-    }
+      if (resolution && !resolution.usable && !sessionOverride) {
+        setMicNotice(describeSttResolution(resolution, capability?.provider ?? null))
+        return
+      }
+      // A choice that was overridden is said out loud: somebody who picked on-device
+      // transcription for privacy must not be quietly served the browser's, which sends
+      // audio to Google.
+      if (resolution?.fellBack && !sessionOverride) {
+        setMicNotice(describeSttResolution(resolution, capability?.provider ?? null))
+      }
 
-    try { recognition.start() } catch { /* already started */ }
-  }, [isListening, setInput])
+      await startDictationOn(effectiveEngine)
+    })
+  }, [isListening, startDictationOn])
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
@@ -1707,9 +2089,11 @@ function QueryBar({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      {/* The privacy indicator the floating button used to be. Nothing while idle. */}
+      <ScreenShareStatus />
       <div
         className={[
-          'relative w-full overflow-hidden',
+          'relative w-full overflow-visible',
           'bg-[#101010] shadow-sm shadow-black/20',
           isDragging
             ? 'ring-2 ring-inset ring-purple-500/60 bg-purple-500/5'
@@ -1723,17 +2107,15 @@ function QueryBar({
             <span className="text-purple-300 text-sm font-semibold">Drop image to attach</span>
           </div>
         )}
-        {/* Left: attach */}
+        {/* Left: everything HomePilot can be given to look at.
+            This was a bare paperclip. It is now the one place that collects a file, a
+            screenshot, a live screen and a meeting — three of which used to live somewhere
+            else entirely (the header, and a floating button the page mounted for itself).
+            `+` replaces the paperclip rather than joining it: two buttons for one intent make
+            the reader work out which is the superset. The file input below is untouched, and
+            the menu's first item fires the same click the paperclip did. */}
         <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="h-10 w-10 rounded-full grid place-items-center text-white/50 hover:text-white hover:bg-white/5 transition-colors"
-            aria-label="Upload image"
-            title="Upload image"
-          >
-            <Paperclip size={18} />
-          </button>
+          <ComposerPlusMenu onAddFile={() => fileInputRef.current?.click()} />
           <input
             type="file"
             ref={fileInputRef}
@@ -1815,17 +2197,45 @@ function QueryBar({
               : null}
             </div>
           ) : null}
-          {isListening ? (
+          {/* The microphone is always here.
+              It used to be the *alternative* to Submit, so the moment there was anything to
+              send — a typed word, a dictated sentence, a pasted line — the button vanished.
+              That is the report "the mic button is hidden in the browser": dictating a
+              correction onto an existing draft, or simply starting to type and changing your
+              mind, meant there was no way back to voice without clearing the field first.
+              Voice input is not the absence of text, so it no longer disappears when text
+              exists. */}
+          {micTranscribing ? (
+            /* Transcription is a round trip. Showing it as a distinct state
+               beats a still-pulsing record button that implies it is
+               listening, or a dead button that implies nothing happened. */
             <button
               type="button"
-              className="h-10 w-10 rounded-full grid place-items-center bg-red-500/20 text-red-400 ring-2 ring-red-500/60 animate-pulse transition-colors"
-              aria-label="Stop recording"
-              title="Stop recording"
+              disabled
+              data-testid="composer-mic"
+              className="h-10 w-10 rounded-full grid place-items-center bg-white/10 text-white/60 cursor-wait"
+              aria-label="Transcribing"
+              title="Transcribing…"
+            >
+              <Loader2 size={18} className="animate-spin" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="composer-mic"
+              className={
+                isListening
+                  ? 'h-10 w-10 rounded-full grid place-items-center bg-red-500/20 text-red-400 ring-2 ring-red-500/60 animate-pulse transition-colors'
+                  : 'h-10 w-10 rounded-full bg-white/5 text-white/60 grid place-items-center hover:bg-white/10 hover:text-white transition-colors'
+              }
+              aria-label={isListening ? 'Stop recording' : 'Voice input'}
+              title={isListening ? 'Stop recording' : 'Voice input'}
               onClick={toggleListening}
             >
               <Mic size={18} />
             </button>
-          ) : canSend ? (
+          )}
+          {canSend && !isListening && !micTranscribing ? (
             <button
               type="button"
               onClick={onSend}
@@ -1835,18 +2245,30 @@ function QueryBar({
             >
               <Send size={18} strokeWidth={2.25} />
             </button>
-          ) : (
-            <button
-              type="button"
-              className="h-10 w-10 rounded-full bg-white/5 text-white/60 grid place-items-center hover:bg-white/10 hover:text-white transition-colors"
-              aria-label="Voice input"
-              title="Voice input"
-              onClick={toggleListening}
-            >
-              <Mic size={18} />
-            </button>
-          )}
+          ) : null}
         </div>
+
+        {/* Why voice input produced nothing. Silently resetting the button is
+            what made it look broken rather than blocked or unsupported. */}
+        {micNotice && (
+          <div className="ps-12 pe-20 pt-2">
+            <div
+              role="status"
+              data-testid="composer-mic-notice"
+              className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-2 text-[11px] leading-relaxed text-amber-200/90"
+            >
+              <span className="flex-1 min-w-0">{micNotice}</span>
+              <button
+                type="button"
+                onClick={() => setMicNotice(null)}
+                className="shrink-0 text-amber-200/60 hover:text-amber-100 transition-colors"
+                aria-label="Dismiss voice input message"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Pending image attachment preview */}
         {pendingPreviewUrl && (
@@ -2140,10 +2562,11 @@ function ChatState({
               </button>
             )
           })()}
-          {/* MS32. Meeting is Call's closest sibling — both start a session that runs
-              alongside the chat rather than inside it — so it sits beside Call and not
-              under the composer. Renders nothing when the server has the feature off. */}
-          <MeetingAction />
+          {/* Meeting used to sit here, beside Call. It now lives in the composer's `+` menu
+              with the other things you can give HomePilot to look at — see
+              `meetingsense/MeetingMenuItem`. The header is Call, Settings and New Chat: what
+              you do *with* the app, not what you feed it. `RecordingPill` still carries §2a's
+              promise that an active meeting is unmissable, so nothing was hidden by this. */}
           <button
             type="button"
             onClick={() => setChatSettingsOpen((v) => !v)}
@@ -2993,10 +3416,9 @@ export default function App() {
     // Prompt refinement: default to true (enabled by default for better results)
     const promptRefinement = localStorage.getItem('homepilot_prompt_refinement') !== 'false'
 
-    // ComfyUI VRAM mode — default "high" (keep model resident).
-    // Low-VRAM users can flip to "normal" or "low" in Settings.
+    // ComfyUI VRAM mode — normal is safe for mixed image/video model stacks.
     const comfyVramMode = (
-      localStorage.getItem('homepilot_comfy_vram_mode') || 'high'
+      localStorage.getItem('homepilot_comfy_vram_mode') || 'normal'
     ) as 'high' | 'normal' | 'low' | 'gpu-only'
 
     // Multimodal (Vision) settings
@@ -3361,7 +3783,7 @@ export default function App() {
     localStorage.setItem('homepilot_experimental_civitai', String(!!settingsDraft.experimentalCivitai))
     localStorage.setItem('homepilot_civitai_api_key', settingsDraft.civitaiApiKey || '')
     localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
-    localStorage.setItem('homepilot_comfy_vram_mode', settingsDraft.comfyVramMode || 'high')
+    localStorage.setItem('homepilot_comfy_vram_mode', settingsDraft.comfyVramMode || 'normal')
 
     // Persist launcher-only flags to the backend so
     // scripts/start-comfyui.sh sources them on next boot. Without
@@ -3370,7 +3792,7 @@ export default function App() {
     // Fire-and-forget: if the backend is down, localStorage still
     // updated above so the UI stays consistent.
     try {
-      const comfyMode = settingsDraft.comfyVramMode || 'high'
+      const comfyMode = settingsDraft.comfyVramMode || 'normal'
       const comfyBaseUrl = (
         settingsDraft.baseUrlImages ||
         settingsDraft.baseUrlVideo ||
@@ -3497,7 +3919,7 @@ export default function App() {
         experimentalCivitai: localStorage.getItem('homepilot_experimental_civitai') === 'true',
         civitaiApiKey: localStorage.getItem('homepilot_civitai_api_key') || '',
         promptRefinement: localStorage.getItem('homepilot_prompt_refinement') !== 'false',
-        comfyVramMode: (localStorage.getItem('homepilot_comfy_vram_mode') || 'high') as
+        comfyVramMode: (localStorage.getItem('homepilot_comfy_vram_mode') || 'normal') as
           'high' | 'normal' | 'low' | 'gpu-only',
         textTemperature: parseFloat(localStorage.getItem('homepilot_text_temp') || '0.7'),
         textMaxTokens: parseInt(localStorage.getItem('homepilot_text_maxtokens') || '2048'),
@@ -3831,9 +4253,26 @@ export default function App() {
   }, [handleConfirmAction])
 
   const sendTextOrIntent = useCallback(
-    async (rawText: string) => {
+    async (rawText: string, opts?: { spoken?: boolean }) => {
       const trimmed = rawText.trim()
       if (!trimmed) return
+
+      /*
+       * A turn that will be *spoken back* rather than read.
+       *
+       * The 📞 overlay is a call, but it does not swap the app out of chat mode — so every
+       * call turn used to be sent as an ordinary chat turn: no brevity instruction, and the
+       * chat token ceiling (900) instead of the voice one (80, see orchestrator.py). Nothing
+       * streams on this path, so the first word of audio waits for the *last* token of a
+       * chat-length answer. That is the whole of why a call felt slower than the Voice tab
+       * while using the same microphone, the same controller and the same endpoint.
+       *
+       * `spoken` shapes the *response* only — how long it should be and how it should read.
+       * Project, session and personality routing stay exactly as the caller's mode defines
+       * them: a call answers as whoever the user is already talking to.
+       */
+      const spokenTurn = opts?.spoken === true
+      const voiceLike = mode === 'voice' || spokenTurn
 
       // Batch 6: honest offline. If the user pinned a specific computer that is
       // offline, do NOT silently run on Web CPU — block the send and surface the
@@ -4143,7 +4582,7 @@ export default function App() {
                   provider_model: chatSelection.modelChat,
                   provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
                   textTemperature: settingsDraft.textTemperature,
-                  textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                  textMaxTokens: voiceLike ? undefined : settingsDraft.textMaxTokens,
                   nsfwMode: settingsDraft.nsfwMode,
                   memoryEngine: settingsDraft.memoryEngine || 'v2',
                   incognito: chatSettings?.incognito || false,
@@ -4215,7 +4654,7 @@ export default function App() {
         }
       }
 
-      if (mode === 'voice') {
+      if (voiceLike) {
         const activePersonaId = currentProject?.project_type === 'persona' ? `persona:${currentProject.id}` : null
         const savedVoiceStyleId = localStorage.getItem(LS_VOICE_STYLE_ID)
         const legacyPersonalityId = localStorage.getItem('homepilot_personality_id')
@@ -4381,6 +4820,23 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         }
       }
 
+      /*
+       * A call must never fall through to the chat shape.
+       *
+       * The block above deliberately leaves `voiceSystemPrompt` undefined in linked-persona
+       * mode, because there the backend owns both the prompt and the brevity hint — but it
+       * only does so when the request actually carries that persona (`personalityId`, sent
+       * below, is what sets `is_voice_mode` server-side). A voice style pointing at a persona
+       * the user is not currently in would satisfy neither, and the turn would land on the
+       * plain chat prompt with the 900-token ceiling: exactly the slow path.
+       */
+      const carriesPersonaId = currentProject?.project_type === 'persona'
+      if (spokenTurn && !voiceSystemPrompt && !carriesPersonaId) {
+        voiceSystemPrompt =
+          'You are in a live voice call. Reply in 1-2 short sentences only. '
+          + 'Talk like a real person. Never mention being an AI.'
+      }
+
       try {
         // ── Agent/Knowledge topology: route text messages through /v1/agent/chat ──
         // The agent decides autonomously whether to use tools (vision, knowledge, memory, etc.)
@@ -4404,7 +4860,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               provider_model: chatSelection.modelChat,
               provider_api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
               temperature: settingsDraft.textTemperature ?? 0.7,
-              max_tokens: mode === 'voice' ? 300 : (settingsDraft.textMaxTokens ?? 900),
+              max_tokens: voiceLike ? 300 : (settingsDraft.textMaxTokens ?? 900),
               vision_provider: settingsDraft.providerMultimodal || 'ollama',
               vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
               vision_model: settingsDraft.modelMultimodal || undefined,
@@ -4475,7 +4931,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 // Custom generation parameters (from settingsDraft)
                 textTemperature: settingsDraft.textTemperature,
                 // Voice mode: let backend enforce its own token cap for short spoken replies
-                textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                textMaxTokens: voiceLike ? undefined : settingsDraft.textMaxTokens,
                 imgWidth: settingsDraft.imgWidth,
                 imgHeight: settingsDraft.imgHeight,
                 imgSteps: settingsDraft.imgSteps,
@@ -5055,6 +5511,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 provider_base_url: chatSelection.baseUrlChat || undefined,
                 provider_model: chatSelection.modelChat,
                 textTemperature: settingsDraft.textTemperature,
+                // `uploadAndSend` is the attach-an-image path; a call never reaches it, so
+                // this stays keyed on the app mode rather than on a spoken turn.
                 textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                 nsfwMode: settingsDraft.nsfwMode,
                 memoryEngine: settingsDraft.memoryEngine || 'v2',
@@ -6110,7 +6568,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
       {/* Call overlay — a distinct session layered over the chat.
           Open it with the 📞 header icon; end it with the red button
-          inside the overlay. Not the same as Voice mode. */}
+          inside the overlay. Not the same as Voice mode.
+
+          `onSendText` marks the turn spoken: the overlay leaves the app in chat
+          mode, so without it every reply is generated as chat prose — no brevity
+          instruction, the 900-token ceiling instead of 80 — and because this path
+          does not stream, the first word of audio waits for the last token of it. */}
       <CallOverlay
         open={callOpen}
         onClose={() => {
@@ -6209,7 +6672,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           const clean = rel.replace(/^\/+/, '')
           return `${base}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
         })()}
-        onSendText={(text) => sendTextOrIntent(text)}
+        onSendText={(text) => sendTextOrIntent(text, { spoken: true })}
         backend={{
           backendUrl: settings.backendUrl,
           authToken: localStorage.getItem('homepilot_auth_token'),

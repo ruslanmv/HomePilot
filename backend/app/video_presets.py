@@ -8,6 +8,7 @@ Now includes aspect ratio support with model compatibility filtering.
 
 import json
 import os
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 # Load presets from JSON file
@@ -238,6 +239,49 @@ def get_preset_for_vram(vram_gb: Optional[float] = None) -> str:
     return fallback
 
 
+def select_ltx_t5_encoder(
+    clip_dir: Path,
+    preset_name: Optional[str] = None,
+) -> str:
+    """Select the best installed LTX T5 encoder for the requested preset.
+
+    Consumer presets prefer FP8 to reduce VRAM pressure, but an installed
+    FP16 encoder remains a compatible fallback. Generation should not fail
+    merely because the smaller optional encoder has not been downloaded yet.
+    """
+    clip_dir = Path(clip_dir)
+    preset = (preset_name or "medium").strip().lower()
+    fp8 = clip_dir / "t5xxl_fp8_e4m3fn.safetensors"
+    fp16 = clip_dir / "t5xxl_fp16.safetensors"
+
+    if preset == "ultra":
+        if fp16.exists():
+            return fp16.name
+        if fp8.exists():
+            print("[ANIMATE] FP16 T5 is unavailable for ultra; falling back to FP8 T5.")
+            return fp8.name
+        raise FileNotFoundError(
+            "LTX-Video requires a T5-XXL encoder. Neither t5xxl_fp16.safetensors "
+            f"nor t5xxl_fp8_e4m3fn.safetensors exists in {clip_dir}. "
+            "Run `make download-video`."
+        )
+
+    if fp8.exists():
+        return fp8.name
+
+    if fp16.exists():
+        print(
+            "[ANIMATE] FP8 T5 is not installed; using the compatible FP16 T5 "
+            "encoder. Install FP8 with `make download-video` to reduce VRAM pressure."
+        )
+        return fp16.name
+
+    raise FileNotFoundError(
+        "LTX-Video requires t5xxl_fp8_e4m3fn.safetensors for "
+        f"{preset}. Expected it in {clip_dir}. Run `make download-video`."
+    )
+
+
 def enforce_frame_rule(model_type: Optional[str], frames: int, strategy: str = "closest") -> int:
     """
     Enforce model-specific frame rules.
@@ -431,15 +475,24 @@ def apply_preset_to_workflow_vars(
     if vid_seconds is not None:
         fps = result.get("fps", 8)
         frames = vid_seconds * fps
+        result["requested_seconds"] = vid_seconds
         # Enforce frame rules with ceil strategy (round up to ensure requested duration)
         result["frames"] = enforce_frame_rule(model_type, frames, strategy="ceil")
-        result["seconds"] = vid_seconds
 
     # Enforce max_frames cap to prevent GPU overload
     max_frames = result.get("max_frames")
     if max_frames and result.get("frames", 0) > max_frames:
         # Cap to max_frames, then enforce frame rule again
         result["frames"] = enforce_frame_rule(model_type, max_frames)
+
+    # Report the duration of the final, possibly safety-capped frame count.
+    fps = result.get("fps")
+    frames = result.get("frames")
+    if fps and frames:
+        try:
+            result["seconds"] = round(float(frames) / float(fps), 2)
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
 
     # Add seed if provided
     if vid_seed is not None:

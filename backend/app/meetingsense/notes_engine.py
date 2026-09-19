@@ -38,6 +38,56 @@ log = logging.getLogger(__name__)
 _FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 _BARE_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
+#: Stored on the notes and sent to the card: notes stopped because nothing answered.
+MODEL_UNREACHABLE = "model_unreachable"
+
+#: How long to leave a model alone once it has refused to connect.
+#:
+#: Without this, a meeting against a stopped Ollama pays two connection timeouts every window
+#: for its whole length, and writes two tracebacks per window into the log — sixty of them in
+#: a half-hour meeting, each one burying whatever real failure happens next. One window's
+#: worth of retry is enough to pick a model back up when it returns.
+MODEL_RETRY_AFTER_S = 60
+
+#: Exception types that mean "nothing answered", by name.
+#:
+#: Matched by name rather than by import because this module is deliberately importable
+#: without the compute stack — the same reason `call_model` imports the router inside the
+#: function — and because the transport is `httpx` today and need not be forever.
+_UNREACHABLE_ERRORS = frozenset({
+    "ConnectError",
+    "ConnectTimeout",
+    "ConnectionError",
+    "ConnectionRefusedError",
+    "PoolTimeout",
+    "ReadTimeout",
+    "TimeoutException",
+    "WriteTimeout",
+})
+
+
+def classify_model_failure(exc: BaseException) -> Optional[str]:
+    """``MODEL_UNREACHABLE`` when nothing answered, ``None`` when something did and was wrong.
+
+    These are genuinely different facts and deserve different treatment. A model that is not
+    running is an ordinary, expected state of a self-hosted install — the user has not started
+    Ollama, or has just restarted it — and it is fixed by starting it, not by reading a stack
+    trace. A model that *answered* with something unusable is a bug worth a traceback.
+
+    The whole `__cause__` chain is walked because that distinction arrives wrapped: `httpx`
+    raises `ConnectError` from `httpcore.ConnectError` from `OSError`, and the router may wrap
+    it again before it reaches here.
+    """
+    seen = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for klass in type(current).__mro__:
+            if klass.__name__ in _UNREACHABLE_ERRORS:
+                return MODEL_UNREACHABLE
+        current = current.__cause__ or current.__context__
+    return None
+
 
 def parse_delta(raw: Any) -> Dict[str, Any]:
     """Get a delta out of whatever the model said. ``{}`` when there is nothing usable.
@@ -200,6 +250,11 @@ class NotesEngine:
         self._pending: List[Dict[str, Any]] = []
         self._pending_words = 0
         self._last_run = now()
+        #: ``MODEL_UNREACHABLE`` while nothing is answering, else ``None``. Read by the card
+        #: and persisted with the notes, so "there is no recap" can say why.
+        self.model_unavailable: Optional[str] = None
+        #: When to try the model again after it refused to connect.
+        self._model_retry_at = 0.0
 
     # ── the trigger ─────────────────────────────────────────────────────────
 
@@ -239,6 +294,7 @@ class NotesEngine:
         window, self._pending, self._pending_words = self._pending, [], 0
         self._last_run = self._now()
         valid_t0 = {int(s.get("t0_ms") or 0) for s in window}
+        was_unavailable = self.model_unavailable
 
         delta = await self._ask_for_delta(window)
         recap = await self._ask_for_recap(window)
@@ -249,33 +305,96 @@ class NotesEngine:
         if recap and recap != self.recap:
             self.recap = recap
             changed = True
+        # Notes stopping, or starting again, is news in its own right: it is the difference
+        # between "nothing was decided" and "nothing was listening". Worth a version, and
+        # worth a frame, even when no note changed.
+        if self.model_unavailable != was_unavailable:
+            changed = True
 
         if not changed:
             # Small talk. Storing a version that says nothing new would make the version
             # history useless for debugging the one that does.
             return None
 
-        self.version = store.save_notes(self.meeting_id, {**self.notes, "recap": self.recap})
+        self.version = store.save_notes(self.meeting_id, self.stored_notes())
         return self.frame()
+
+    def stored_notes(self) -> Dict[str, Any]:
+        """The notes as persisted, carrying why they are empty when they are."""
+        stored = {**self.notes, "recap": self.recap}
+        if self.model_unavailable:
+            stored["model_unavailable"] = self.model_unavailable
+        return stored
 
     def frame(self) -> Dict[str, Any]:
         """The `notes` frame, in the shape the card renders."""
-        return {"type": "notes", "version": self.version, "recap": self.recap, **self.notes}
+        return {
+            "type": "notes",
+            "version": self.version,
+            "recap": self.recap,
+            # Always present, so a card that has been showing the warning clears it on the
+            # frame that says the model is back rather than waiting for a note to change.
+            "model_unavailable": self.model_unavailable,
+            **self.notes,
+        }
+
+    # ── talking to the model ────────────────────────────────────────────────
+
+    def _model_is_resting(self) -> bool:
+        """Whether the model refused recently enough that asking again would just cost a wait."""
+        return bool(self.model_unavailable) and self._now() < self._model_retry_at
+
+    def _record_model_failure(self, exc: BaseException, what: str) -> None:
+        """Log a model failure at the volume it deserves, and remember an unreachable one."""
+        reason = classify_model_failure(exc)
+        if reason is None:
+            # Something answered and what it said was unusable. That is a bug, and a bug gets
+            # a traceback.
+            log.exception("meetingsense: %s failed for %s", what, self.meeting_id)
+            return
+
+        first = self.model_unavailable != reason
+        self.model_unavailable = reason
+        self._model_retry_at = self._now() + MODEL_RETRY_AFTER_S
+        if first:
+            # Once per outage, one line, no traceback. The cause is not in the stack — it is
+            # that nothing is listening — and sixty copies of it per meeting bury the failures
+            # where the stack does matter.
+            log.warning(
+                "meetingsense: no language model reachable for %s (%s: %s) — the transcript is "
+                "unaffected; notes and the recap resume when it answers again",
+                self.meeting_id,
+                type(exc).__name__,
+                exc,
+            )
+
+    def _record_model_success(self) -> None:
+        if self.model_unavailable is None:
+            return
+        log.info("meetingsense: language model reachable again for %s", self.meeting_id)
+        self.model_unavailable = None
+        self._model_retry_at = 0.0
 
     async def _ask_for_delta(self, window: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        if self._model_is_resting():
+            return {}
         try:
             raw = await self._call(prompts.notes_messages(self.notes, window), temperature=0.2)
-        except Exception:  # noqa: BLE001 — one bad window, never the meeting
-            log.exception("meetingsense: notes delta failed for %s", self.meeting_id)
+        except Exception as exc:  # noqa: BLE001 — one bad window, never the meeting
+            self._record_model_failure(exc, "notes delta")
             return {}
+        self._record_model_success()
         return parse_delta(raw)
 
     async def _ask_for_recap(self, window: Sequence[Dict[str, Any]]) -> str:
+        if self._model_is_resting():
+            return ""
         try:
             raw = await self._call(prompts.recap_messages(self.recap, window), temperature=0.3)
-        except Exception:  # noqa: BLE001
-            log.exception("meetingsense: recap failed for %s", self.meeting_id)
+        except Exception as exc:  # noqa: BLE001
+            self._record_model_failure(exc, "recap")
             return ""
+        self._record_model_success()
         if not isinstance(raw, str):
             return ""
         return cap_words(raw.strip())

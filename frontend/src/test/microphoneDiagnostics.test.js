@@ -11,6 +11,7 @@ const controller = read('frontend/src/ui/voice/useVoiceController.ts');
 const vad = read('frontend/src/ui/voice/vad.ts');
 const chatPanel = read('frontend/src/ui/VoicePanel.tsx');
 const debug = read('frontend/src/ui/media/microphoneDebug.ts');
+const webSpeech = read('frontend/src/ui/media/webSpeechSession.ts');
 
 describe('microphone diagnostics and settings playback contract', () => {
   it('records a real local microphone sample and exposes playback', () => {
@@ -31,8 +32,11 @@ describe('microphone diagnostics and settings playback contract', () => {
   });
 
   it('awaits browser speech recognition instead of treating a click as success', () => {
-    expect(controller).toContain('await Promise.resolve(svc.startSTT({}))');
-    expect(controller).toContain('stt_start_accepted');
+    // The recognizer lives behind one adapter now, so the await is asserted there; the
+    // controller's contract is that it reports a start it did not get.
+    expect(webSpeech).toContain('await Promise.resolve(');
+    expect(webSpeech).toContain('svc.startSTT({}, { continuous: Boolean(options.continuous) })');
+    expect(webSpeech).toContain('web_speech_start_rejected');
     expect(controller).toContain('stt_start_rejected');
     expect(controller).toContain('browser-managed-web-speech');
   });

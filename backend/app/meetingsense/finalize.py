@@ -93,6 +93,19 @@ def meeting_message(
     lines = [header, " · ".join(counts)]
     body = export.notes_body(notes)
 
+    # A notes record can exist and say nothing — most often because no language model was
+    # reachable, so every window came back empty. Treating that as "there are notes" printed a
+    # header, a count and then nothing at all, and suppressed the transcript preview that is
+    # the whole point of the fallback below. What matters is whether there is *content*.
+    if body and not _has_note_content(body):
+        if body.get("model_unavailable"):
+            lines += [
+                "",
+                "No notes or recap: no language model was reachable while this meeting ran. "
+                "The transcript below was recorded and kept.",
+            ]
+        body = None
+
     if body:
         if body.get("recap"):
             lines += ["", body["recap"]]
@@ -126,6 +139,17 @@ def meeting_message(
         lines.append("")
         lines.append("Nothing was transcribed.")
     return "\n".join(lines)
+
+
+def _has_note_content(body: Dict[str, Any]) -> bool:
+    """Whether a notes object actually says anything.
+
+    An empty one is not the same as an absent one — it means the engine ran and produced
+    nothing — but for the reader they are identical, and both want the transcript preview.
+    """
+    if (body.get("recap") or "").strip() or (body.get("summary") or "").strip():
+        return True
+    return any(body.get(key) for key in ("decisions", "actions", "questions"))
 
 
 def _note_section(label: str, items: Any) -> List[str]:

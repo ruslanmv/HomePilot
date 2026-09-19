@@ -135,7 +135,9 @@ Guarantees enforced by the implementation:
   it removes the endpoint and changes nothing else.
 - **No secrets** — only ids, names, types, status, and the two permission flags.
 - **Revisioned** — content hash → monotonic `manifest_revision`, so the cloud can
-  sync with `manifest.full` / `manifest.delta` and detect continuity loss.
+  sync with `manifest.full` / `manifest.delta` and detect continuity loss. Live
+  telemetry (`disk_free_mb`, `vram_free_mb`) is reported in the payload but kept
+  out of the hash — an idle node must keep its revision between polls.
 
 ## 8. Implementation phases
 

@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional, Literal
 
-from .comfy import check_nodes_available, run_workflow
+from .comfy import check_nodes_available, proxy_comfy_view_url, run_workflow
 from .llm import is_thinking_model, strip_think_tags, _is_reasoning_text, recover_from_reasoning
 from .compute import route_chat
 from .compute.router import build_diagnostics as _compute_diag
@@ -34,7 +34,7 @@ from . import sessions as persona_sessions_mod
 from . import ltm as persona_ltm_mod
 
 # Chat media persistence (download ComfyUI images → permanent file_assets)
-from .files import persist_chat_images
+from .files import persist_chat_images, persist_chat_video
 from . import jobs as persona_jobs_mod
 from .memory_v2 import get_memory_v2
 
@@ -44,6 +44,30 @@ _conversation_memories: Dict[str, ConversationMemory] = {}
 # TTL for conversation memories: 2 hours of inactivity → auto-evict
 _MEMORY_TTL_SECONDS = 2 * 60 * 60
 _last_gc_time: float = 0.0
+
+
+#: Phase order for the image perf log. Fixed so two runs are diffable.
+_IMAGE_PERF_PHASES = (
+    "prompt_refinement_ms",
+    "preset_selection_ms",
+    "comfy_generation_ms",
+    "media_persistence_ms",
+    "message_storage_ms",
+    "total_image_request_ms",
+)
+
+
+def _log_image_perf(marks: Dict[str, float]) -> None:
+    """One block per image request, greppable as ``[IMAGE PERF]``.
+
+    Pairs with ``[COMFY PERF]``: this one's ``comfy_generation_ms`` should account for the
+    workflow blocks nested inside it, and whatever is left over is HomePilot's own overhead.
+    Reading the two together is the only way to answer "ComfyUI says two seconds, why did the
+    request take forty-five" without a profiler.
+    """
+    for key in _IMAGE_PERF_PHASES:
+        if key in marks:
+            print(f"[IMAGE PERF] {key}={marks[key]:.1f}")
 
 
 async def _persist_media(
@@ -57,18 +81,30 @@ async def _persist_media(
     file_assets. Returns the updated media dict with /files/ URLs, or
     the original if nothing to persist.
     """
-    if not media or not media.get("images") or not user_id:
+    if not media:
+        return media
+    media = dict(media)
+
+    if not user_id:
+        # Never expose a ComfyUI localhost URL to the browser. Without a user
+        # asset to persist against, route it through HomePilot's Comfy proxy.
+        video_url = media.get("video_url")
+        if isinstance(video_url, str):
+            media["video_url"] = proxy_comfy_view_url(video_url)
         return media
     try:
-        persisted_urls = await persist_chat_images(
-            image_urls=media["images"],
-            user_id=user_id,
-            conversation_id=conversation_id,
-            project_id=project_id,
-        )
-        media = {**media, "images": persisted_urls}
+        if media.get("images"):
+            media["images"] = await persist_chat_images(
+                image_urls=media["images"], user_id=user_id,
+                conversation_id=conversation_id, project_id=project_id,
+            )
+        if media.get("video_url"):
+            media["video_url"] = await persist_chat_video(
+                video_url=media["video_url"], user_id=user_id,
+                conversation_id=conversation_id, project_id=project_id,
+            )
     except Exception as e:
-        print(f"[PERSIST] Error persisting chat images: {e}")
+        print(f"[PERSIST] Error persisting chat media: {e}")
     return media
 
 
@@ -1110,45 +1146,20 @@ async def orchestrate(
             else:
                 print(f"[ANIMATE] Prompt refinement disabled, using original prompt")
 
-            # Select T5 encoder based on preset with fallback
-            # FP16: ~10GB VRAM, used ONLY for ultra (24GB+ VRAM)
-            # FP8: ~5GB VRAM, used for low/medium/high (12GB RTX 4080 compatibility)
-            # Fallback: If preferred encoder not installed, use the other one
-            from .providers import get_comfy_models_path
+            # Avoid silently loading the much larger FP16 encoder on constrained
+            # LTX presets. Other video workflow families do not use this value.
+            t5_encoder = None
+            if detected_model_type == "ltx":
+                from .providers import get_comfy_models_path
 
-            clip_path = get_comfy_models_path() / "clip"
-            fp16_available = (clip_path / "t5xxl_fp16.safetensors").exists()
-            fp8_available = (clip_path / "t5xxl_fp8_e4m3fn.safetensors").exists()
-
-            # Determine preferred encoder based on preset
-            # Only ultra gets FP16 — everything else must fit 12GB
-            if vid_preset == "ultra":
-                preferred_encoder = "t5xxl_fp16.safetensors"
-                fallback_encoder = "t5xxl_fp8_e4m3fn.safetensors"
-                preferred_available = fp16_available
-                fallback_available = fp8_available
-            else:
-                preferred_encoder = "t5xxl_fp8_e4m3fn.safetensors"
-                fallback_encoder = "t5xxl_fp16.safetensors"
-                preferred_available = fp8_available
-                fallback_available = fp16_available
-
-            # Select encoder with fallback logic
-            if preferred_available:
-                t5_encoder = preferred_encoder
-                print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset or 'default->medium'})")
-            elif fallback_available:
-                t5_encoder = fallback_encoder
-                print(f"[ANIMATE] ⚠️ WARNING: {preferred_encoder} not installed")
-                if t5_encoder == "t5xxl_fp16.safetensors":
-                    print(f"[ANIMATE] Using FP16 T5 as fallback — works fine but uses ~10GB VRAM "
-                          f"(install FP8 to save ~5GB)")
-                else:
-                    print(f"[ANIMATE] Using FP8 T5 as fallback: {t5_encoder}")
-            else:
-                # Neither available - use preferred and let ComfyUI error with helpful message
-                t5_encoder = preferred_encoder
-                print(f"[ANIMATE] ⚠️ No T5 encoder found! Please install from Models > Add-ons")
+                t5_encoder = video_presets.select_ltx_t5_encoder(
+                    get_comfy_models_path() / "clip",
+                    vid_preset,
+                )
+                print(
+                    f"[ANIMATE] Using T5 encoder: {t5_encoder} "
+                    f"(preset: {vid_preset or 'default->medium'})"
+                )
 
             # Build final workflow variables
             target_width = preset_vars.get("width", 768)
@@ -1172,9 +1183,9 @@ async def orchestrate(
                 # Resolution — drives both the conditioning image crop and the latent space
                 "width": target_width,
                 "height": target_height,
-                # T5 text encoder selection (FP8 for <=16GB, FP16 for 24GB+)
-                "t5_encoder": t5_encoder,
             }
+            if t5_encoder:
+                workflow_vars["t5_encoder"] = t5_encoder
 
             # Aspect-ratio sanity log: conditioning image + latent must agree
             vid_frames = workflow_vars.get("frames", 33)
@@ -1419,6 +1430,22 @@ async def orchestrate(
                         text_in, _img_agent, cid,
                     )
 
+        # ── Request timings ──────────────────────────────────────────────────────────────
+        # `perf_counter`, never `time.time()`. The point of these is the gap between what
+        # ComfyUI reports ("Prompt executed in 1.96 seconds") and what the user experiences
+        # (a 45-second POST /chat): every phase outside ComfyUI was unmeasured, so the gap had
+        # nowhere to show up. Prompt refinement in particular is a blocking LLM round-trip on
+        # this path, enabled by default, and was entirely invisible.
+        _img_t0 = time.perf_counter()
+        _img_marks: Dict[str, float] = {}
+
+        def _img_mark(key: str, since: float) -> float:
+            _now = time.perf_counter()
+            _img_marks[key] = (_now - since) * 1000.0
+            return _now
+
+        _img_t = _img_t0
+
         try:
             # Optional prompt refinement (enabled by default, can be disabled)
             if prompt_refinement:
@@ -1481,6 +1508,8 @@ async def orchestrate(
                     "aspect_ratio": "1:1",
                     "style": "photorealistic",
                 }
+
+            _img_t = _img_mark("prompt_refinement_ms", _img_t)
 
             # =================================================================
             # DYNAMIC PRESET SYSTEM - Prevents "two heads" issue
@@ -1695,6 +1724,8 @@ async def orchestrate(
 
             # Run the workflow with refined prompt and parameters
             # If batch_size > 1, run multiple times and aggregate results
+            _img_t = _img_mark("preset_selection_ms", _img_t)
+
             images = []
             seeds_used = []  # Track seeds for each generated image
             for i in range(batch_size):
@@ -1722,6 +1753,7 @@ async def orchestrate(
                 if i < batch_size - 1 and batch_size > 1:
                     time.sleep(0.5)
 
+            _img_t = _img_mark("comfy_generation_ms", _img_t)
             print(f"[IMAGE] Total images generated: {len(images)}")
 
             # Short Grok-like caption
@@ -1742,7 +1774,11 @@ async def orchestrate(
             } if images else None
             # Persist generated images from ComfyUI to permanent storage
             media = await _persist_media(media, user_id, cid)
+            _img_t = _img_mark("media_persistence_ms", _img_t)
             add_message(cid, "assistant", text, media)
+            _img_mark("message_storage_ms", _img_t)
+            _img_marks["total_image_request_ms"] = (time.perf_counter() - _img_t0) * 1000.0
+            _log_image_perf(_img_marks)
             return {"conversation_id": cid, "text": text, "media": media}
 
         except FileNotFoundError as e:

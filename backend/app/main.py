@@ -466,6 +466,16 @@ app.include_router(files_router)
 from .voice import router as voice_router
 app.include_router(voice_router)
 
+# One-shot speech-to-text (POST /v1/voice/transcribe, GET /v1/voice/stt/status).
+# NOT behind VOICE_BACKEND_ENABLED: that flag guards server-side LLM+TTS
+# orchestration, while this only turns recorded bytes into text. The web client
+# needs it because the browser's own recognizer cannot be pointed at the
+# microphone selected in Settings, so without it the level meter and the
+# transcript can come from two different devices. The status route reports
+# `available: false` when nothing can transcribe, so clients fall back cleanly.
+from .voice import transcribe_router as voice_transcribe_router
+app.include_router(voice_transcribe_router)
+
 # Include MeetingSense status (MS0 — additive, flag-gated MEETINGSENSE_ENABLED).
 # The status route answers whether the flag is on or off, deliberately: a frontend has to
 # tell "disabled" apart from "enabled but this machine cannot transcribe", and a 404 would
@@ -1253,6 +1263,28 @@ def _startup() -> None:
     except Exception as exc:  # noqa: BLE001
         logging.getLogger("homepilot.startup").warning(
             "Image warmup task couldn't start: %s", exc,
+        )
+
+    # ComfyUI node-metadata warmup.
+    #
+    # The generation path reads this cache without ever opening a socket, so the metadata has
+    # to arrive from somewhere else — here. In a thread rather than the event loop because the
+    # cache is synchronous `httpx`, and off the critical path because a HomePilot that starts
+    # before ComfyUI is an ordinary arrangement: failure is negative-cached, `/prompt` remains
+    # the authoritative validator, and the only cost is a less specific error message until the
+    # cache next refreshes.
+    try:
+        import threading as _threading
+
+        from .comfy import warm_object_info_cache  # late import
+        _threading.Thread(
+            target=warm_object_info_cache,
+            name="comfy-object-info-warmup",
+            daemon=True,
+        ).start()
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("homepilot.startup").warning(
+            "ComfyUI node metadata warmup couldn't start: %s", exc,
         )
 
 
