@@ -111,7 +111,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 6, "steps": 16, "cfg": 2.2, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 49, "steps": 25, "cfg": 3.0, "denoise": 0.80 },
+        "ltx": { "fps": 24, "frames": 49, "seconds": 2.04, "max_frames": 49, "steps": 25, "cfg": 3.0, "denoise": 0.80 },
         "wan": { "fps": 16, "steps": 20, "cfg": 4.0, "denoise": 1.0, "notes": "Use Wan 1.3B only" }
       }
     },
@@ -133,7 +133,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 8, "steps": 20, "cfg": 2.5, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 97, "steps": 30, "cfg": 3.5, "denoise": 0.85 },
+        "ltx": { "fps": 24, "frames": 65, "seconds": 2.71, "max_frames": 65, "steps": 30, "cfg": 3.5, "denoise": 0.85 },
         "wan": { "fps": 16, "steps": 30, "cfg": 5.0, "denoise": 1.0 },
         "hunyuan": { "fps": 16, "steps": 25, "cfg": 6.0, "denoise": 1.0, "notes": "Requires GGUF/Quantization on 12GB" },
         "mochi": { "fps": 24, "frames": 37, "steps": 40, "cfg": 4.5, "denoise": 1.0, "notes": "Requires FP8/Offloading on 12GB" }
@@ -182,7 +182,7 @@
       },
       "model_overrides": {
         "svd": { "frames": 25, "steps": 30, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 169, "steps": 40, "cfg": 4.0, "denoise": 0.95 },
+        "ltx": { "fps": 24, "frames": 97, "steps": 40, "cfg": 4.0, "denoise": 0.95 },
         "wan": { "fps": 24, "frames": 129, "steps": 40, "cfg": 5.5, "denoise": 1.0 },
         "hunyuan": { "fps": 24, "frames": 129, "steps": 40, "cfg": 6.0, "denoise": 1.0 },
         "mochi": { "fps": 24, "frames": 163, "steps": 60, "cfg": 4.5, "denoise": 1.0 },
@@ -205,7 +205,7 @@
       "min_frames": 25,
       "default_aspect_ratio": "16:9",
       "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, warping, deformed, duplicate frames, choppy motion, morphing face, static image",
-      "notes": "Best at 16:9 (1024x576). Low CFG (3.0-3.5) reduces artifacts. FP8 T5 for low/medium, FP16 for high/ultra."
+      "notes": "Best at 16:9. Low CFG (3.0-3.5) reduces artifacts. FP8 T5 for low/medium/high; FP16 is reserved for ultra."
     },
     "mochi": {
       "frame_rule": "6n+1",

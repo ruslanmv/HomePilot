@@ -46,13 +46,33 @@ function recorder(over: Record<string, unknown> = {}) {
     };
 }
 
+/**
+ * The node `MeetingWorkspace` portals into.
+ *
+ * It renders into `.hp-app-shell main` so the live meeting occupies the application's own
+ * content area rather than floating over it. Without that node the portal has no host and the
+ * workspace never appears — which looks exactly like "recording did not start", so the host is
+ * set up here rather than left to be rediscovered per test.
+ */
+let appShell: HTMLElement | null = null;
+
+function mountAppShell() {
+    appShell = document.createElement('div');
+    appShell.className = 'hp-app-shell';
+    appShell.appendChild(document.createElement('main'));
+    document.body.appendChild(appShell);
+}
+
 beforeEach(() => {
     (globalThis as Record<string, unknown>).hpMeetingSense = recorder();
+    mountAppShell();
 });
 
 afterEach(() => {
     delete (globalThis as Record<string, unknown>).hpMeetingSense;
     delete (globalThis as Record<string, unknown>).hpScreenSense;
+    appShell?.remove();
+    appShell = null;
 });
 
 // ── the promise ─────────────────────────────────────────────────────────────
@@ -155,12 +175,15 @@ describe('the record button', () => {
         );
         fireEvent.click(screen.getByTestId('ms-record-button'));
         await waitFor(() => expect(rec.start).toHaveBeenCalled());
-        expect(rec.start.mock.calls[0][0]).toMatchObject({
-            conversationId: 'c1', notes: true, watch: true,
-        });
+        expect(rec.start.mock.calls[0][0]).toMatchObject({ notes: true, watch: true });
+        // A meeting records into a conversation of its own, not the one the button was
+        // pressed from — an hour of transcript does not belong in the middle of a chat.
+        // So the id is asserted as "a fresh one", not as the caller's.
+        expect(rec.start.mock.calls[0][0].conversationId).toBeTruthy();
+        expect(rec.start.mock.calls[0][0].conversationId).not.toBe('c1');
     });
 
-    it('becomes a stop button while recording, and the pill appears', async () => {
+    it('becomes a stop button while recording, and the workspace opens', async () => {
         render(
             <MeetingSenseProvider
                 conversationId="c1" status={ON}
@@ -170,17 +193,17 @@ describe('the record button', () => {
             </MeetingSenseProvider>,
         );
         fireEvent.click(screen.getByTestId('ms-record-button'));
-        // §2a: recording state is unmissable. No prop can turn the pill off.
-        await waitFor(() => expect(screen.getByTestId('ms-pill')).toBeTruthy());
+        // §2a's rule survives the redesign: recording state is unmissable. The full-screen
+        // workspace replaced the pill as the thing that cannot be missed.
+        await waitFor(() => expect(screen.getByTestId('meeting-workspace')).toBeTruthy());
         expect(screen.getByTestId('ms-record-button').textContent).toContain('Stop meeting');
-        expect(screen.getByTestId('ms-card')).toBeTruthy();
     });
 
-    it('pressing it again begins the stop, which is a countdown not a stop', async () => {
-        // MS6's rule, and this test exists to keep the button honest about it: Stop does *not*
-        // stop the recorder. It starts a ten-second window in which capture keeps running, so
-        // undoing leaves no hole — the ten seconds somebody spends deciding are usually ten
-        // seconds somebody was still talking. So the assertion is the countdown, not the stop.
+    it('pressing it again ends the meeting and releases the microphone', async () => {
+        // This replaces MS6's ten-second undo window. That window kept capture running after
+        // Stop so an undo left no hole; the workspace removed it deliberately, because a
+        // confirmed End must release the microphone there and then rather than keep recording
+        // a room whose occupants believe it stopped.
         const rec = recorder();
         (globalThis as Record<string, unknown>).hpMeetingSense = rec;
         render(
@@ -192,14 +215,11 @@ describe('the record button', () => {
             </MeetingSenseProvider>,
         );
         fireEvent.click(screen.getByTestId('ms-record-button'));
-        await waitFor(() => screen.getByTestId('ms-pill'));
+        await waitFor(() => screen.getByTestId('meeting-workspace'));
         expect(rec.stop).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByTestId('ms-record-button'));
-        await waitFor(() => expect(screen.getByTestId('ms-undo')).toBeTruthy());
-        expect(screen.getByTestId('ms-pill').getAttribute('data-phase')).toBe('stopping');
-        // Still not stopped, on purpose.
-        expect(rec.stop).not.toHaveBeenCalled();
+        await waitFor(() => expect(rec.stop).toHaveBeenCalledTimes(1));
     });
 
     it('hides the options chevron while recording', async () => {
@@ -214,6 +234,81 @@ describe('the record button', () => {
         expect(screen.getByTestId('ms-record-options')).toBeTruthy();
         fireEvent.click(screen.getByTestId('ms-record-button'));
         await waitFor(() => expect(screen.queryByTestId('ms-record-options')).toBeNull());
+    });
+});
+
+describe('the live meeting workspace', () => {
+    /** Dispatch a transcribed line the way `homepilot-meetingsense.js` does. */
+    const emitSegment = (text, seq) => act(() => {
+        window.dispatchEvent(new CustomEvent('ms:segment', {
+            detail: { id: `s${seq}`, seq, t0: seq * 1000, speaker: 'them', text },
+        }));
+    });
+
+    async function startMeeting() {
+        render(
+            <MeetingSenseProvider
+                conversationId="c1" status={ON}
+                storage={memoryStorage({ [CONSENT_STORAGE_KEY]: 'true' })}
+            >
+                <MeetingButton />
+            </MeetingSenseProvider>,
+        );
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+        return screen.findByTestId('meeting-workspace');
+    }
+
+    it('shows the transcript as it arrives, without changing tabs', async () => {
+        /*
+         * The workspace opened on Timeline, which renders decisions, slides and capture-source
+         * changes and *no transcript*. So a live meeting showed "Meeting started" and nothing
+         * else while the words were arriving one tab away, and the only way to learn it had
+         * been working was to end the meeting and read the recap.
+         *
+         * During a meeting the question is "is it hearing me", and only the transcript
+         * answers it.
+         */
+        const workspace = await startMeeting();
+        emitSegment('the launch moves to October', 1);
+
+        expect(workspace.textContent).toContain('the launch moves to October');
+    });
+
+    it('counts the lines where both tabs can see it', async () => {
+        const workspace = await startMeeting();
+        emitSegment('the launch moves', 1);
+        emitSegment('pricing is agreed', 2);
+
+        expect(screen.getByTestId('ms-transcript-count').textContent).toBe('2');
+
+        // Still counted after switching away. The Timeline is a semantic view and shows no
+        // transcript, so without the count it reads as "nothing is happening" — which is the
+        // whole bug this replaced.
+        fireEvent.click(screen.getByText(/Timeline/));
+        expect(screen.getByTestId('ms-transcript-count').textContent).toBe('2');
+        expect(workspace.textContent).not.toContain('the launch moves');
+    });
+
+    it('offers no way to close while it is still recording', async () => {
+        // Closing a live meeting would be a Stop that does not say it is stopping, and
+        // capture would outlive the window that said it was recording.
+        await startMeeting();
+
+        expect(screen.getByTestId('ms-workspace-end')).toBeTruthy();
+        expect(screen.queryByTestId('ms-workspace-close')).toBeNull();
+    });
+
+    it('gives a way out once the meeting has ended', async () => {
+        // The workspace is a full-screen portal, so "navigate somewhere else" was not an exit
+        // — whatever you would navigate with is underneath it. A recap with no control on it
+        // is a dead end, and that is the missing close button.
+        await startMeeting();
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+
+        const close = await screen.findByTestId('ms-workspace-close');
+        fireEvent.click(close);
+
+        await waitFor(() => expect(screen.queryByTestId('meeting-workspace')).toBeNull());
     });
 });
 
@@ -247,7 +342,15 @@ describe('a blocked button says why', () => {
         expect(screen.getByTestId('ms-record-blocked').textContent).toMatch(/conversation/);
     });
 
-    it('never starts a meeting with nowhere to land', async () => {
+    it('brings its own conversation rather than needing one open', async () => {
+        // This used to refuse: a meeting had nowhere to land without a conversation. It now
+        // creates a dedicated one, so there is always somewhere — an hour of transcript does
+        // not belong in the middle of a chat anyway.
+        //
+        // `MeetingButton` has not caught up: it still disables itself when the surrounding
+        // conversation is null, and `blockedReason` still says a conversation is needed. The
+        // capability and the control disagree, which is a real gap in the flow — but it is
+        // the button that is stale, and this records which of the two is current.
         const rec = recorder();
         (globalThis as Record<string, unknown>).hpMeetingSense = rec;
         function Probe() {
@@ -263,8 +366,8 @@ describe('a blocked button says why', () => {
             </MeetingSenseProvider>,
         );
         fireEvent.click(screen.getByTestId('force'));
-        await act(async () => {});
-        expect(rec.start).not.toHaveBeenCalled();
+        await waitFor(() => expect(rec.start).toHaveBeenCalledTimes(1));
+        expect(rec.start.mock.calls[0][0].conversationId).toBeTruthy();
     });
 });
 
@@ -528,7 +631,10 @@ describe('accessibility', () => {
             </MeetingSenseProvider>,
         );
         fireEvent.click(screen.getByTestId('ms-record-button'));
-        await waitFor(() => screen.getByTestId('ms-pill'));
+        // The workspace is a portal into the app shell, so it is audited where it actually
+        // renders rather than inside the container that triggered it.
+        const workspace = await screen.findByTestId('meeting-workspace');
         expect((await axe.run(live.container)).violations.map((v) => v.id)).toEqual([]);
+        expect((await axe.run(workspace)).violations.map((v) => v.id)).toEqual([]);
     });
 });

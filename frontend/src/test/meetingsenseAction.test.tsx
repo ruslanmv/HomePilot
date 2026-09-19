@@ -369,7 +369,10 @@ describe('wired to the provider', () => {
             fireEvent.click(screen.getByTestId('ms-action-button'));
         });
         await waitFor(() => expect(start).toHaveBeenCalledTimes(1));
-        expect(start.mock.calls[0][0]).toMatchObject({ conversationId: 'c1', notes: true, watch: true });
+        expect(start.mock.calls[0][0]).toMatchObject({ notes: true, watch: true });
+        // A meeting records into a conversation of its own, not the one the button was
+        // pressed from, so the id is asserted as "a fresh one" rather than as the caller's.
+        expect((start.mock.calls[0][0] as { conversationId?: string }).conversationId).not.toBe('c1');
     });
 
     it('asks for consent before the first recording', async () => {

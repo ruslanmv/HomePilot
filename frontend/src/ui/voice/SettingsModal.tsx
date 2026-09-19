@@ -15,6 +15,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X,
   Activity,
+  Captions,
   Volume2,
   Globe,
   Settings,
@@ -52,6 +53,9 @@ interface SettingsModalProps {
   // Audio settings
   showAudioMeter?: boolean;
   setShowAudioMeter?: (show: boolean) => void;
+  /** The live "Hearing …" panel. Off by default — see `LS_SHOW_LIVE_TRANSCRIPT`. */
+  showLiveTranscript?: boolean;
+  setShowLiveTranscript?: (show: boolean) => void;
   browserVoices?: SpeechSynthesisVoice[];
   selectedBrowserVoice?: string;
   setSelectedBrowserVoice?: (voiceURI: string) => void;
@@ -62,6 +66,8 @@ export default function SettingsModal({
   onClose,
   showAudioMeter,
   setShowAudioMeter,
+  showLiveTranscript,
+  setShowLiveTranscript,
   browserVoices,
   selectedBrowserVoice,
   setSelectedBrowserVoice,
@@ -210,6 +216,40 @@ export default function SettingsModal({
                   <div
                     className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${
                       showAudioMeter ? 'translate-x-6' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
+
+            {/* Live transcript ("Hearing …") toggle — off by default.
+                The words it shows are a guess in progress: the browser recognizer revises
+                interim text repeatedly before a phrase settles, so the panel rewrites itself
+                above the composer while you are still talking. Useful as proof that the
+                microphone is working, distracting as a permanent fixture — so it is offered
+                rather than imposed. */}
+            {setShowLiveTranscript && (
+              <div className="flex items-center justify-between p-3 rounded-[12px] bg-white/5">
+                <div className="flex items-center gap-3">
+                  <Captions size={16} className="text-white/50" />
+                  <div>
+                    <span className="text-[13px] text-white/80 block">Show live transcript</span>
+                    <span className="text-[10px] text-white/40">Display words as they are recognized (browser speech recognition only)</span>
+                  </div>
+                </div>
+                <button
+                  data-testid="voice-settings-live-transcript"
+                  role="switch"
+                  aria-checked={Boolean(showLiveTranscript)}
+                  aria-label="Show live transcript"
+                  onClick={() => setShowLiveTranscript(!showLiveTranscript)}
+                  className={`w-12 h-6 rounded-full transition-all ${
+                    showLiveTranscript ? toggleOn : toggleOff
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${
+                      showLiveTranscript ? 'translate-x-6' : 'translate-x-0.5'
                     }`}
                   />
                 </button>

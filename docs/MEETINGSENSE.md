@@ -29,6 +29,28 @@ recorder gets a week of real meetings** — what to run and what to write down i
 > **It ships disabled.** With `MEETINGSENSE_ENABLED` unset, the status endpoint answers
 > honestly, every other route refuses, no table is created and no audio is touched.
 
+Chat and Voice mode speech is a separate path with its own endpoint and its own microphone
+rules — see [`VOICE.md`](VOICE.md). Meetings deliberately ask `get_meeting_stt_provider()`,
+which starts from local and never crosses to a configured remote endpoint on its own; voice
+asks `get_stt_provider()`, which does prefer one.
+
+**Shared media is transcribed too.** Share a tab with a video — or, in the Windows desktop
+app, everything the machine plays — and the audio is captured on its own channel and
+transcribed alongside the room. The recorder notices when audio is continuous rather than
+conversational and switches cadence: short overlapped segments, a floor that registers quiet
+passages instead of reading them as silence, and a queue that holds two minutes rather than
+two seconds, because a shared recording has nothing disposable in it. What each share type can
+and cannot capture — window shares and macOS screen shares carry no audio at all — is in
+[`VOICE.md` §3.5](VOICE.md#media-capture--shared-audio-that-never-stops).
+
+**Live text.** The transcript does not wait for an utterance to close. The open utterance is
+transcribed provisionally every ~1.2 s and shown greyed, then replaced by the real segment —
+so a speaker who does not pause still produces text rather than eight seconds of blank
+screen. It is sent outside the retry queue, one read at a time, and never while real audio is
+waiting, so provisional text cannot cost the transcript that gets kept. The mechanics, and
+the microphone selection meetings now honour, are in
+[`VOICE.md` §3.5](VOICE.md#35-meetings-are-a-different-path--read-this-before-debugging-them).
+
 ## Is it available on this machine?
 
 ```bash
@@ -1169,6 +1191,41 @@ one people learn to dismiss without reading, which is the opposite of consent.
 **"Stop" is still a countdown, and the button says so.** Pressing it a second time starts MS6's
 ten-second window with capture still running, so undoing leaves no hole in the transcript.
 
+#### Where the button lives now
+
+Not in the header. Meeting spent a batch under the composer (MS29) and a batch beside Call
+(MS32); it is now a row in the composer's **`+` menu**, with the other things you can give
+HomePilot to look at.
+
+The axis is what changed, not the feature. The header is Call, Settings and New Chat — what you
+*do with* the application. `+` is a file, a screenshot, a shared screen and a meeting — what you
+*give it to look at*. Those had been in three different places, none findable from the others,
+and screen sharing was a floating button the page mounted for itself over the conversation.
+
+| | |
+|---|---|
+| `meetingsense/MeetingMenuItem.tsx` | the menu presentation — **new** |
+| `meetingsense/MeetingAction.tsx` | the button presentation — kept, mounted nowhere in the chat shell |
+| `MeetingSenseProvider` | the state both read, unchanged |
+
+Neither presentation owns anything: both call the same `useMeetingControls()` and reuse the
+same `meetingBlock` / `SetupPanel` / `LivePanel`, so a meeting started from either is the same
+meeting and a refusal gives the same reason. The menu row is not a `begin()` call with an icon
+— it keeps the three states a naive row gets wrong: **blocked** explains itself instead of
+starting something that cannot work, **starting** stays visible because the wait is the
+feedback, and **live** shows `● Meeting in progress · 08:42` rather than offering to start a
+second one.
+
+One thing the move exposed: `SetupPanel` has no dismiss control of its own. In the header it
+sat in a popover an outside click closed, and its only button is the optional *Open Settings* —
+so inside a menu it stranded the reader with an explanation and, on `settings: false` blocks
+like "open a conversation first", no controls whatsoever. `MeetingMenuItem` adds the way back
+rather than changing the shared panel.
+
+**§2a is untouched.** `RecordingPill` still carries the promise that an active meeting is
+unmissable, at the top of the viewport, exactly as before. Removing Meeting from the header
+removed an entry point, not the recording indicator.
+
 #### What this makes work, that already existed
 
 The part everybody asks for — *"the AI can see what's going on in the meeting"* — needed no new
@@ -1213,6 +1270,33 @@ exists only *while* a screen is actively being shared — a deliberate act, with
 operating-system indicator on it, taken in order to be seen. It appears when you share and is
 gone the moment you stop. Every other flag here gates something that would otherwise run in the
 background, which is why they all default off.
+
+#### Starting a share: the floating button is gone
+
+`index.html` now sets `window.HOMEPILOT_SCREENSENSE_NO_AUTOBUTTON = true` before loading
+`homepilot-screensense.js`, so the script stops mounting its own floating 👁 control. Sharing is
+reached from the composer's `+` menu instead, which calls the same `hpScreenSense.enable()` and
+`hpScreenSense.stop()` the floating button always did.
+
+This suppresses one `mountButton()` call at load and nothing else: the script still loads,
+`window.hpScreenSense` and every capability on it are unchanged, and `MeetingSenseProvider`'s
+hide-the-legacy-button effect was already null-safe, so it degrades to a no-op for the button
+while still stopping a browser share when a meeting takes over capture.
+
+Two rules the menu keeps:
+
+- **It reads the engine, never its own memory.** A share ends in ways no React tree observes —
+  the browser's own "Stop sharing" bar, a shared window closing, a stream going inactive — and
+  the one state that must never be wrong is claiming a share is live after it stopped. The menu
+  re-reads `enabled` every time it opens; the status line polls it.
+- **Screenshot and share stay separate rows.** Close technically, different in meaning: a
+  screenshot is one image attached to one message, a share is an ongoing permission. Collapsing
+  them would hide the privacy half, which is the half that matters.
+
+**The floating button was also the only sign a share was running**, so removing it without
+replacing that would have taken away a privacy indicator rather than tidying up. `● Screen
+sharing — Stop` now sits above the composer while a share is live, and nothing at all when it
+is not.
 
 ### What the automated tests cover, and what they cannot
 
@@ -1330,6 +1414,47 @@ a real bound, not a guess — and failing both a two-second span; a measured end
 because taking the next start first would stretch a two-second sentence across a thirty-second
 silence. JSON leaves `t1_ms` null: the other formats have to put something on screen, a data
 export does not, and inventing an end hands the next tool a measurement nobody made.
+
+### Asking a live meeting — the private lane
+
+The workspace has three tabs, and the third one is not part of the meeting.
+
+| Tab | What it is | Whose |
+|---|---|---|
+| Transcript | what was said in the room, `You` / `Them` | everyone's — the record |
+| Timeline | the meeting's own events: decisions, slides, capture changes | everyone's — the record |
+| **Ask** | your questions and HomePilot's answers | **yours, private** |
+
+**Why a separate lane at all.** A transcript is worth having because everything in it was
+spoken. Merge one assistant answer into it and that property is gone: a reader six months
+later — or the recap model, or search — cannot tell a private question from a sentence
+somebody said out loud. The same argument rules out the Timeline, which is the meeting's own
+record of what happened. So the exchange sits beside both, is labelled *"private to you… not
+part of the meeting"*, and reaches the permanent record only when you press **Keep in meeting
+notes** — which writes a `suggestion` artifact *beside* the notes (`POST /{id}/notes`,
+`op: suggestion`) rather than merging it in, for exactly the same reason.
+
+**It is answered from the transcript.** `POST /v1/meetingsense/{id}/ask` assembles the last
+ninety seconds verbatim, the rolling recap, and the passages that match the question, then
+cites what it used; `cited` is the set of stamps the server vouched for, so only a real source
+is rendered as a link and following one jumps to that moment in the Transcript tab. It works on
+a **live** meeting — the verbatim tier is the reason it exists — and the vector tier is simply
+empty until the meeting is indexed on stop.
+
+Three things this replaced, all of which shipped and none of which worked:
+
+1. the composer posted to `/chat`, so a question about the meeting was answered by a model that
+   had never seen the transcript;
+2. the exchange was rendered only inside the Timeline while the workspace opens on Transcript,
+   so pressing Enter changed nothing visible anywhere;
+3. posting to `/chat` carried the meeting's `conversation_id`, which persisted every private
+   question into the thread the meeting was recorded in.
+
+**Whether your own voice is in the transcript is yours to decide, at the start.** `My
+microphone · Include what you say` in the start dialog is what puts `You` lines in the record
+at all; with it off, a meeting captures only the other side and every line reads `Them`. `You`
+and `Them` are also different colours rather than two greys, because scanning a transcript the
+question is who was talking.
 
 ### Where the meeting lands
 

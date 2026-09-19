@@ -246,6 +246,36 @@ def save_generated_image_as_asset(
     return {"asset_id": asset_id, "url": f"/files/{asset_id}", "mime": mime or "image/png"}
 
 
+def save_generated_media_as_asset(
+    user_id: str,
+    media_bytes: bytes,
+    mime: str,
+    kind: str,
+    project_id: str = "",
+    conversation_id: str = "",
+) -> Dict[str, Any]:
+    """Store generated image/video bytes without losing their media type."""
+    safe_kind = "video" if kind == "video" else "image"
+    extension = mimetypes.guess_extension((mime or "").split(";", 1)[0].strip())
+    allowed_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm"}
+    extension = extension if extension in allowed_extensions else ".bin"
+    folder = _ensure_user_dir(user_id, safe_kind, project_id=project_id)
+    filename = f"{uuid.uuid4().hex}{extension}"
+    absolute_path = folder / filename
+    absolute_path.write_bytes(media_bytes)
+    asset_id = insert_asset(
+        user_id=user_id,
+        kind=safe_kind,
+        rel_path=str(absolute_path.relative_to(_upload_root())),
+        mime=mime or "application/octet-stream",
+        size_bytes=len(media_bytes),
+        original_name=filename,
+        project_id=project_id,
+        conversation_id=conversation_id,
+    )
+    return {"asset_id": asset_id, "url": f"/files/{asset_id}", "mime": mime}
+
+
 # ---------------------------------------------------------------------------
 # Chat media persistence: download ComfyUI images → permanent file_assets
 # ---------------------------------------------------------------------------
@@ -335,6 +365,72 @@ async def persist_chat_images(
             persisted.append(url)
 
     return persisted
+
+
+async def persist_chat_video(
+    video_url: str,
+    user_id: str,
+    conversation_id: str,
+    project_id: str = "",
+) -> str:
+    """Persist a ComfyUI animation so clients never receive localhost URLs."""
+    from .comfy import proxy_comfy_view_url
+
+    if not video_url or ("/files/" in video_url and "/comfy/" not in video_url):
+        return video_url
+
+    from urllib.parse import parse_qs, urlencode, urlparse
+
+    import httpx
+
+    from .config import COMFY_BASE_URL
+
+    parsed = urlparse(video_url)
+    comfy = urlparse(COMFY_BASE_URL)
+    if parsed.path != "/view" or parsed.hostname not in {
+        comfy.hostname,
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+    }:
+        return video_url
+
+    query = parse_qs(parsed.query)
+    filename = (query.get("filename") or [""])[0]
+    if not filename:
+        return video_url
+    view_params = urlencode({
+        'filename': filename,
+        'subfolder': (query.get('subfolder') or [''])[0],
+        'type': (query.get('type') or ['output'])[0],
+    })
+    fetch_url = f"{COMFY_BASE_URL.rstrip('/')}/view?{view_params}"
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=True
+        ) as client:
+            response = await client.get(fetch_url)
+            response.raise_for_status()
+        if not response.content:
+            return proxy_comfy_view_url(video_url)
+        content_type = response.headers.get("content-type") or mimetypes.guess_type(filename)[0]
+        result = save_generated_media_as_asset(
+            user_id=user_id,
+            media_bytes=response.content,
+            mime=content_type or "application/octet-stream",
+            kind="video",
+            project_id=project_id,
+            conversation_id=conversation_id,
+        )
+        print(f"[PERSIST] Saved chat video: {video_url} → {result['url']}")
+        # Keep the original extension visible in the stable URL. The Animate
+        # client uses it to render animated WebP/GIF outputs with <img> rather
+        # than the <video> element used for MP4/WebM.
+        filename_query = urlencode({"filename": filename})
+        return f"{result['url']}?{filename_query}"
+    except Exception as error:
+        print(f"[PERSIST] Failed to persist video {video_url}: {error}")
+        return proxy_comfy_view_url(video_url)
 
 
 def delete_conversation_media(conversation_id: str) -> int:
