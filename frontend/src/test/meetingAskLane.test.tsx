@@ -93,9 +93,10 @@ beforeEach(() => {
     fn(0);
     return 0;
   });
-  if (!(globalThis as { CSS?: unknown }).CSS) {
-    (globalThis as Record<string, unknown>).CSS = { escape: (value: string) => value };
-  }
+  vi.stubGlobal('CSS', {
+    ...((globalThis as { CSS?: Record<string, unknown> }).CSS || {}),
+    escape: (value: string) => value,
+  });
   Element.prototype.scrollIntoView = vi.fn();
 });
 
