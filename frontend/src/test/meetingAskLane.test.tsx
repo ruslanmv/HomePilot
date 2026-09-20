@@ -208,7 +208,7 @@ describe('asking a live meeting', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
-
+});
 
 describe('asking after the meeting ends', () => {
   const endedView = {
