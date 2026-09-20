@@ -35,3 +35,58 @@ export function requestHeaders(): Record<string, string> {
     }
     return headers;
 }
+
+
+export interface MeetingModelTarget {
+    provider: string;
+    model: string;
+    baseUrl: string;
+}
+
+/** The app's current chat target — the same settings ordinary conversation uses. */
+export function readMeetingModelTarget(): MeetingModelTarget {
+    const get = (key: string): string => {
+        try { return (window.localStorage.getItem(key) || '').trim(); } catch { return ''; }
+    };
+    return {
+        provider: get('homepilot_provider_chat') || 'ollama',
+        model: get('homepilot_model_chat') || get('homepilot_ollama_model'),
+        baseUrl: get('homepilot_base_url_chat') || get('homepilot_ollama_url'),
+    };
+}
+
+function modelId(value: unknown): string {
+    if (typeof value === 'string') return value.trim();
+    if (value && typeof value === 'object') {
+        const row = value as Record<string, unknown>;
+        for (const key of ['id', 'name', 'model']) {
+            if (typeof row[key] === 'string' && row[key]) return String(row[key]).trim();
+        }
+    }
+    return '';
+}
+
+/**
+ * Models already reachable through HomePilot's selected chat provider.
+ * Failure returns the currently selected model rather than turning meeting setup into an error.
+ */
+export async function fetchMeetingModels(
+    target: MeetingModelTarget,
+    fetcher: typeof fetch = fetch,
+): Promise<string[]> {
+    const params = new URLSearchParams({ provider: target.provider || 'ollama' });
+    if (target.baseUrl) params.set('base_url', target.baseUrl);
+    try {
+        const response = await fetcher(`${backendBase()}/models?${params.toString()}`, {
+            credentials: 'include',
+            headers: requestHeaders(),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const body = await response.json();
+        const rows = Array.isArray(body?.models) ? body.models.map(modelId).filter(Boolean) : [];
+        if (target.model && !rows.includes(target.model)) rows.unshift(target.model);
+        return [...new Set(rows)];
+    } catch {
+        return target.model ? [target.model] : [];
+    }
+}
