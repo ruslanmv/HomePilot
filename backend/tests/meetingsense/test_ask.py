@@ -329,14 +329,21 @@ class TestAnswer:
         assert frame["error"] == "empty_question"
         assert recorder.calls == []
 
-    def test_a_model_that_raises_answers_rather_than_propagating(self, modules):
-        # On the WebSocket path the alternative is a dropped meeting.
+    def test_a_model_that_raises_degrades_to_transcript_evidence(self, modules):
+        # A model outage must not turn a recorded transcript into a dead-end error.
         async def boom(messages, **kwargs):
             raise RuntimeError("model gone")
 
         frame = run(modules.ask.answer(seed(modules), "anything?", call=boom))
-        assert frame["error"] == "answer_failed"
-        assert frame["text"] == ""
+        assert frame["text"].startswith("From the meeting transcript:")
+        assert "no I think that is everything" in frame["text"]
+        assert frame["degraded"] == "extractive"
+        assert frame["cited"]
+
+    def test_an_empty_model_answer_also_degrades_to_transcript_evidence(self, modules):
+        frame = run(modules.ask.answer(seed(modules), "what are they talking about?", call=Recorder("")))
+        assert frame["text"].startswith("From the meeting transcript:")
+        assert frame["degraded"] == "extractive"
 
     def test_a_meeting_with_nothing_in_it_still_answers(self, modules):
         meeting_id = modules.store.create_meeting(conversation_id="c", retention="text")
@@ -374,6 +381,26 @@ class TestAskRoute:
     def test_an_empty_question_is_a_400(self, client, enabled, modules):
         response = client.post(f"/v1/meetingsense/{seed(modules)}/ask", json={"text": "  "})
         assert response.status_code == 400
+
+
+    def test_live_http_ask_uses_the_session_clock(self, client, enabled, modules, monkeypatch):
+        seen = {}
+
+        async def capture(meeting_id, question, **kwargs):
+            seen.update(kwargs)
+            return {"type": "answer", "text": "grounded", "cited": []}
+
+        class LiveSession:
+            state = modules.routes.session_mod.MeetingState.LIVE
+            elapsed_ms = 300_000
+
+        monkeypatch.setattr(modules.routes.ask_mod, "answer", capture)
+        monkeypatch.setattr(modules.routes.session_mod, "get", lambda meeting_id: LiveSession())
+
+        meeting_id = seed(modules)
+        response = client.post(f"/v1/meetingsense/{meeting_id}/ask", json={"text": "what just happened?"})
+        assert response.status_code == 200
+        assert seen["now_ms"] == 300_000
 
     def test_a_missing_meeting_is_a_404(self, client, enabled):
         assert client.post("/v1/meetingsense/nope/ask", json={"text": "q"}).status_code == 404
