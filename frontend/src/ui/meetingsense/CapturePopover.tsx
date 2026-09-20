@@ -51,6 +51,14 @@ export interface CaptureOptions {
      */
     summaryStyle: string;
     summaryLength: string;
+    /** LLM target used to write/rewrite the end-of-meeting document. */
+    summaryProvider: string;
+    summaryModel: string;
+    summaryBaseUrl: string;
+    /** LLM target used by the private meeting Q&A / conversation lane. */
+    conversationProvider: string;
+    conversationModel: string;
+    conversationBaseUrl: string;
     /**
      * Material attached to this session, for the assistant to answer from (MS34).
      *
@@ -67,7 +75,10 @@ export interface CaptureOptions {
 
 export const DEFAULT_CAPTURE: CaptureOptions = {
     audio: true, mic: true, slides: true, mode: null, myNames: '', assistantName: '',
-    summaryStyle: 'minutes', summaryLength: 'standard', context: '',
+    summaryStyle: 'minutes', summaryLength: 'standard',
+    summaryProvider: '', summaryModel: '', summaryBaseUrl: '',
+    conversationProvider: '', conversationModel: '', conversationBaseUrl: '',
+    context: '',
 };
 
 /** Split a comma-separated name field into the list the wire expects. */
