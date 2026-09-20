@@ -238,6 +238,11 @@ class Options:
     audience: str = ""
     language: str = ""
     instructions: str = ""
+    # Compute target chosen in the meeting setup / rewrite panel. Empty values preserve the
+    # operator-level MeetingSense defaults and existing installs.
+    provider: str = ""
+    model: str = ""
+    base_url: str = ""
 
     #: Whether the document ends with the chronological digest of the whole meeting. This is
     #: the "summary transcript": one paragraph per chunk, in order, with its time range — the
@@ -251,6 +256,9 @@ class Options:
             "audience": self.audience,
             "language": self.language,
             "instructions": self.instructions,
+            "provider": self.provider,
+            "model": self.model,
+            "base_url": self.base_url,
             "include_outline": self.include_outline,
         }
 
@@ -288,6 +296,9 @@ def options_from(raw: Any) -> Options:
         audience=text("audience", 120),
         language=text("language", 40),
         instructions=text("instructions", MAX_INSTRUCTIONS),
+        provider=text("provider", 64).lower(),
+        model=text("model", 240),
+        base_url=text("base_url", 600),
         include_outline=True if outline is None else bool(outline),
     )
 
