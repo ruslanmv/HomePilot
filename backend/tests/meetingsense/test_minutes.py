@@ -71,9 +71,11 @@ class Recorder:
         self.answers = list(answers)
         self.default = default
         self.calls = []
+        self.kwargs = []
 
     async def __call__(self, messages, **kwargs):
         self.calls.append(messages)
+        self.kwargs.append(kwargs)
         return self.answers.pop(0) if self.answers else self.default
 
     @property
@@ -390,9 +392,21 @@ class TestTheSummaryTranscript:
 class TestPreferences:
     def test_a_preference_is_remembered_and_read_back(self, modules):
         meeting_id = seed(modules)
-        modules.minutes.set_prefs(meeting_id, modules.minutes.Options(style="email", length="short"))
+        modules.minutes.set_prefs(
+            meeting_id,
+            modules.minutes.Options(
+                style="email",
+                length="short",
+                provider="ollama",
+                model="qwen2.5:7b",
+                base_url="http://localhost:11434",
+            ),
+        )
         stored = modules.minutes.prefs(meeting_id)
         assert (stored.style, stored.length) == ("email", "short")
+        assert (stored.provider, stored.model, stored.base_url) == (
+            "ollama", "qwen2.5:7b", "http://localhost:11434"
+        )
 
     def test_writing_one_replaces_rather_than_appends(self, modules):
         meeting_id = seed(modules)
@@ -459,6 +473,35 @@ class TestTheEndOfTheMeeting:
         ready = session.transport.of_type("ready")[0]
         assert ready["summary"]["style"] == "brief"
         assert ready["summary"]["length"] == "short"
+
+    def test_the_setup_model_target_is_used_when_the_meeting_ends(self, modules, monkeypatch):
+        import app.meetingsense.notes_engine as notes_engine
+        import app.meetingsense.session as session_mod
+
+        recorder = Recorder(default="The selected model wrote this.")
+        monkeypatch.setattr(notes_engine, "call_model", recorder)
+        session = session_mod.MeetingSession(
+            transport=session_mod.ListTransport(), config=modules.routes.load_config(),
+            now=lambda: 1000.0,
+        )
+        run(session.start({
+            "conversation_id": "c",
+            "summary": {
+                "style": "minutes",
+                "provider": "ollama",
+                "model": "qwen2.5:7b",
+                "base_url": "http://localhost:11434",
+            },
+        }))
+        modules.store.add_segments(session.meeting_id, [
+            {**seg(0, "we agreed to ship in October"), "seq": 1}
+        ])
+        run(session.stop())
+
+        assert recorder.kwargs
+        assert all(call.get("provider") == "ollama" for call in recorder.kwargs)
+        assert all(call.get("model") == "qwen2.5:7b" for call in recorder.kwargs)
+        assert all(call.get("base_url") == "http://localhost:11434" for call in recorder.kwargs)
 
     def test_an_operator_can_turn_it_off(self, modules, monkeypatch):
         monkeypatch.setenv("MEETINGSENSE_SUMMARY_AUTO", "false")
@@ -563,6 +606,23 @@ class TestSummaryRoutes:
                            json={"style": "email", "length": "short"}).json()
         assert body["style"] == "email"
         assert "agreed to ship" in body["text"]
+
+    def test_it_routes_the_rewrite_through_the_selected_model(self, client, enabled, modules, model):
+        meeting_id = seed(modules)
+        response = client.post(
+            f"/v1/meetingsense/{meeting_id}/summary",
+            json={
+                "style": "minutes",
+                "provider": "ollama",
+                "model": "qwen2.5:7b",
+                "base_url": "http://localhost:11434",
+            },
+        )
+        assert response.status_code == 200
+        assert model.kwargs
+        assert all(call.get("provider") == "ollama" for call in model.kwargs)
+        assert all(call.get("model") == "qwen2.5:7b" for call in model.kwargs)
+        assert all(call.get("base_url") == "http://localhost:11434" for call in model.kwargs)
 
     def test_every_call_appends(self, client, enabled, modules, model):
         meeting_id = seed(modules)
