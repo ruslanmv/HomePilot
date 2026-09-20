@@ -24,9 +24,15 @@
  * them. The alternative — one summary slot, overwritten — makes every press of the button a
  * gamble on liking the new one better, and people stop pressing it.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Copy, FileText, Loader2, RefreshCw } from 'lucide-react';
-import { backendBase, requestHeaders } from './api';
+import {
+    backendBase,
+    fetchMeetingModels,
+    readMeetingModelTarget,
+    requestHeaders,
+    type MeetingModelTarget,
+} from './api';
 import type { MeetingSummaryDoc } from './meetingRecord';
 
 /** Mirrors `minutes.STYLES` server-side. Held here too so the picker needs no round trip. */
@@ -116,12 +122,15 @@ export interface MeetingMinutesProps {
     documents: MeetingSummaryDoc[];
     /** The transcript is what a document is written from; with none there is nothing to do. */
     hasTranscript: boolean;
+    /** Initial model target, normally the one chosen in meeting setup. */
+    modelTarget?: MeetingModelTarget;
     /** Injected in tests. */
     fetcher?: typeof fetch;
+    modelFetcher?: typeof fetch;
 }
 
 export function MeetingMinutes({
-    meetingId, documents, hasTranscript, fetcher,
+    meetingId, documents, hasTranscript, modelTarget, fetcher, modelFetcher,
 }: MeetingMinutesProps) {
     const [written, setWritten] = useState<MeetingSummaryDoc[]>([]);
     const [selected, setSelected] = useState<number | null>(null);
@@ -132,6 +141,29 @@ export function MeetingMinutes({
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
+    const globalTarget = useMemo(() => readMeetingModelTarget(), []);
+    const latestStoredTarget = documents[documents.length - 1]?.options;
+    const initialTarget = modelTarget || {
+        provider: String(latestStoredTarget?.provider || globalTarget.provider),
+        model: String(latestStoredTarget?.model || globalTarget.model),
+        baseUrl: String(latestStoredTarget?.base_url || globalTarget.baseUrl),
+    };
+    const [provider, setProvider] = useState(initialTarget.provider || 'ollama');
+    const [model, setModel] = useState(initialTarget.model || '');
+    const [baseUrl, setBaseUrl] = useState(initialTarget.baseUrl || '');
+    const [models, setModels] = useState<string[]>(initialTarget.model ? [initialTarget.model] : []);
+
+    useEffect(() => {
+        if (!tuning) return;
+        let cancelled = false;
+        void fetchMeetingModels(
+            { provider, model, baseUrl },
+            modelFetcher || fetch,
+        ).then((rows) => {
+            if (!cancelled) setModels(rows);
+        });
+        return () => { cancelled = true; };
+    }, [tuning, provider, model, baseUrl, modelFetcher]);
 
     // The server's documents plus this session's, in the order they were written. Kept as
     // two lists rather than one mutable one so that a record reload — which happens while a
@@ -159,7 +191,15 @@ export function MeetingMinutes({
                     method: 'POST',
                     credentials: 'include',
                     headers: requestHeaders(),
-                    body: JSON.stringify({ style, length, instructions, remember: true }),
+                    body: JSON.stringify({
+                        style,
+                        length,
+                        instructions,
+                        remember: true,
+                        provider,
+                        model,
+                        base_url: baseUrl,
+                    }),
                 },
             );
             if (response.status === 409) {
@@ -261,6 +301,21 @@ export function MeetingMinutes({
                             ))}
                         </div>
                     </div>
+                    <label className="block">
+                        <span className="mb-1.5 block text-[11px] font-medium text-white/55">Language model</span>
+                        <select
+                            value={model}
+                            onChange={(event) => setModel(event.target.value)}
+                            data-testid="ms-minutes-model"
+                            className="w-full rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2 text-xs text-white/85 focus:border-violet-300/30 focus:outline-none"
+                        >
+                            <option value="">Automatic / provider default</option>
+                            {models.map((row) => <option key={row} value={row}>{row}</option>)}
+                        </select>
+                        <span className="mt-1 block text-[10px] text-white/30">
+                            {provider || 'ollama'} · the same provider family configured for HomePilot chat
+                        </span>
+                    </label>
                     <label className="block">
                         <span className="mb-1.5 block text-[11px] font-medium text-white/55">Anything else</span>
                         <input
