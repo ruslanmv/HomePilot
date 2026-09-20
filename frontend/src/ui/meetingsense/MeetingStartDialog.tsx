@@ -10,14 +10,17 @@ import {
     AudioLines,
     Check,
     Cloud,
+    FileText,
     HardDrive,
     Mic2,
     MonitorUp,
+    Paperclip,
     ShieldCheck,
     Sparkles,
     X,
 } from 'lucide-react';
 import { MODES, type CaptureOptions } from './CapturePopover';
+import { SUMMARY_LENGTHS, SUMMARY_STYLES } from './MeetingMinutes';
 import type { ConsentStatus } from './ConsentSheet';
 import { consentSentences } from './meetingState';
 
@@ -267,6 +270,95 @@ export function MeetingStartDialog({
                                     </label>
                                 </div>
                             ) : null}
+                        </section>
+
+                        {/*
+                          MS34. Context for the assistant, attached before the meeting runs.
+
+                          Everything else here says what HomePilot may *capture*. This is the
+                          one thing the user can give it that the room will not: the agenda,
+                          the brief, the numbers they mean to land. Questions asked during
+                          the meeting are answered from the transcript *and* this, so "what
+                          were we supposed to cover?" has an answer in the first minute.
+                        */}
+                        <section aria-labelledby="ms-context-heading">
+                            <div className="mb-2 flex items-center gap-2">
+                                <Paperclip size={14} className="text-violet-200/80" />
+                                <h3 id="ms-context-heading" className="text-sm font-medium text-white/90">
+                                    Context for this meeting
+                                    <span className="ml-2 text-[10px] font-normal text-white/30">optional</span>
+                                </h3>
+                            </div>
+                            <textarea
+                                rows={3}
+                                value={capture.context}
+                                onChange={(event) => onCaptureChange({ ...capture, context: event.target.value })}
+                                placeholder="Paste an agenda, a brief, or last week's notes. Answers during the meeting can draw on it."
+                                data-testid="ms-start-context"
+                                className="w-full resize-y rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2 text-xs leading-5 text-white/85 placeholder:text-white/25 focus:border-violet-300/30 focus:outline-none focus:ring-2 focus:ring-violet-400/40"
+                            />
+                            <p className="mt-1.5 text-[10px] leading-4 text-white/30">
+                                Kept with this meeting only, and deleted with it. It is never spoken
+                                into the call.
+                            </p>
+                        </section>
+
+                        {/*
+                          MS34. What you are left with when this ends.
+                          Asked before rather than after, because the moment a meeting stops
+                          the user wants the recap and not a form — and because for most
+                          people the answer is the same every week. It is only the default:
+                          the recap screen rewrites the document in any other shape, and
+                          keeps every version.
+                        */}
+                        <section aria-labelledby="ms-summary-heading">
+                            <div className="mb-3 flex items-center gap-2">
+                                <FileText size={14} className="text-violet-200/80" />
+                                <h3 id="ms-summary-heading" className="text-sm font-medium text-white/90">When this ends</h3>
+                            </div>
+                            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Summary style">
+                                {SUMMARY_STYLES.map((option) => {
+                                    const selected = capture.summaryStyle === option.id;
+                                    return (
+                                        <button
+                                            type="button"
+                                            key={option.id}
+                                            role="radio"
+                                            aria-checked={selected}
+                                            title={option.note}
+                                            onClick={() => onCaptureChange({ ...capture, summaryStyle: option.id })}
+                                            data-testid={`ms-start-summary-${option.id}`}
+                                            className={`rounded-xl border px-3 py-2 text-xs transition focus:outline-none focus:ring-2 focus:ring-violet-400/60 ${selected ? 'border-violet-300/30 bg-violet-400/10 text-violet-100' : 'border-white/[0.08] bg-white/[0.02] text-white/45 hover:border-white/15 hover:text-white/75'}`}
+                                        >
+                                            {option.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] text-white/35">Length</span>
+                                {SUMMARY_LENGTHS.map((option) => {
+                                    const selected = capture.summaryLength === option.id;
+                                    return (
+                                        <button
+                                            type="button"
+                                            key={option.id}
+                                            role="radio"
+                                            aria-checked={selected}
+                                            onClick={() => onCaptureChange({ ...capture, summaryLength: option.id })}
+                                            data-testid={`ms-start-length-${option.id}`}
+                                            className={`rounded-lg border px-2.5 py-1 text-[11px] transition focus:outline-none focus:ring-2 focus:ring-violet-400/60 ${selected ? 'border-violet-300/30 bg-violet-400/10 text-violet-100' : 'border-white/[0.08] bg-white/[0.02] text-white/45 hover:text-white/75'}`}
+                                        >
+                                            {option.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="mt-2.5 text-[11px] leading-4 text-white/35">
+                                {SUMMARY_STYLES.find((option) => option.id === capture.summaryStyle)?.note}
+                                {' '}Long meetings are summarised part by part, so this works on a
+                                three-hour recording as well as a ten-minute one.
+                            </p>
                         </section>
 
                         <section aria-labelledby="ms-privacy-heading" className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">

@@ -107,4 +107,120 @@ describe('premium meeting start preflight', () => {
         expect(dialog.textContent).toContain('whisper-local');
         expect(dialog.textContent).toContain('Only the transcript is kept');
     });
+
+    /*
+     * MS34. What the meeting leaves behind, asked before rather than after.
+     *
+     * The moment a meeting stops is the moment the user is least willing to answer a form —
+     * they want the recap. And for most people the answer is the same every week, so it
+     * belongs with the other things they set once, beside the capture sources.
+     */
+    it('carries the chosen summary shape into the start frame', async () => {
+        const rec = recorder();
+        (globalThis as Record<string, unknown>).hpMeetingSense = rec;
+
+        render(
+            <MeetingSenseProvider conversationId="c1" status={ON} storage={memoryStorage()}>
+                <MeetingButton />
+            </MeetingSenseProvider>,
+        );
+
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+        await waitFor(() => expect(screen.getByTestId('ms-consent')).toBeTruthy());
+        fireEvent.click(screen.getByTestId('ms-start-summary-email'));
+        fireEvent.click(screen.getByTestId('ms-start-length-detailed'));
+        fireEvent.click(screen.getByTestId('ms-consent-accept'));
+
+        await waitFor(() => expect(rec.start).toHaveBeenCalledTimes(1));
+        expect(rec.start.mock.calls[0][0].summary).toEqual({ style: 'email', length: 'detailed' });
+    });
+
+    it('defaults to minutes at standard length without being asked', async () => {
+        const rec = recorder();
+        (globalThis as Record<string, unknown>).hpMeetingSense = rec;
+
+        render(
+            <MeetingSenseProvider conversationId="c1" status={ON} storage={memoryStorage()}>
+                <MeetingButton />
+            </MeetingSenseProvider>,
+        );
+
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+        await waitFor(() => expect(screen.getByTestId('ms-consent')).toBeTruthy());
+        fireEvent.click(screen.getByTestId('ms-consent-accept'));
+
+        await waitFor(() => expect(rec.start).toHaveBeenCalledTimes(1));
+        expect(rec.start.mock.calls[0][0].summary).toEqual({ style: 'minutes', length: 'standard' });
+    });
+
+    /*
+     * MS34. Context the room will not supply.
+     *
+     * Everything else in this dialog says what HomePilot may capture. This is the one thing
+     * the user can give it that the meeting cannot, and the reason the ask path grounds on
+     * more than the transcript.
+     */
+    it('attaches pasted context to the meeting it belongs to', async () => {
+        const rec = recorder();
+        (globalThis as Record<string, unknown>).hpMeetingSense = rec;
+        const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(
+            <MeetingSenseProvider conversationId="c1" status={ON} storage={memoryStorage()}>
+                <MeetingButton />
+            </MeetingSenseProvider>,
+        );
+
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+        await waitFor(() => expect(screen.getByTestId('ms-consent')).toBeTruthy());
+        fireEvent.change(screen.getByTestId('ms-start-context'), {
+            target: { value: 'Agenda: launch date, legal sign-off, pricing.' },
+        });
+        fireEvent.click(screen.getByTestId('ms-consent-accept'));
+
+        await waitFor(() => {
+            const call = fetchMock.mock.calls.find(([url]) => String(url).includes('/prep'));
+            expect(call).toBeTruthy();
+            // Attached to the meeting the socket just created, not to the conversation: prep
+            // is scoped to one meeting and is deleted with it.
+            expect(String(call![0])).toContain('/v1/meetingsense/m1/prep');
+            expect(JSON.parse(String((call![1] as RequestInit).body)).text)
+                .toContain('legal sign-off');
+        });
+        vi.unstubAllGlobals();
+    });
+
+    it('attaches nothing when nothing was pasted', async () => {
+        const rec = recorder();
+        (globalThis as Record<string, unknown>).hpMeetingSense = rec;
+        const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(
+            <MeetingSenseProvider conversationId="c1" status={ON} storage={memoryStorage()}>
+                <MeetingButton />
+            </MeetingSenseProvider>,
+        );
+
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+        await waitFor(() => expect(screen.getByTestId('ms-consent')).toBeTruthy());
+        fireEvent.click(screen.getByTestId('ms-consent-accept'));
+
+        await waitFor(() => expect(rec.start).toHaveBeenCalled());
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/prep'))).toBe(false);
+        vi.unstubAllGlobals();
+    });
+
+    it('says the long-meeting case is handled, because that is the doubt', async () => {
+        render(
+            <MeetingSenseProvider conversationId="c1" status={ON} storage={memoryStorage()}>
+                <MeetingButton />
+            </MeetingSenseProvider>,
+        );
+
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+        const dialog = await screen.findByTestId('ms-consent');
+        expect(dialog.textContent).toContain('part by part');
+    });
 });

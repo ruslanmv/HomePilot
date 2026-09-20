@@ -649,11 +649,17 @@ async def get_meeting(meeting_id: str) -> Dict[str, Any]:
     be reopened days later, and what makes a reload during a live meeting cheap.
     """
     meeting = _require_meeting(meeting_id)
+    from . import minutes as minutes_mod
+
     return {
         "meeting": meeting,
         "segments": store.get_segments(meeting_id),
         "keyframes": store.get_keyframes(meeting_id),
         "notes": store.get_notes(meeting_id),
+        # MS34. The documents written for this meeting, beside the notes and never instead of
+        # them. Carried on the hydrate rather than fetched separately so that reopening a
+        # meeting from History shows the summary in the same paint as the transcript.
+        "summaries": minutes_mod.summaries(meeting_id),
         # A live meeting is one with a socket attached right now, which the store cannot know.
         "live": session_mod.get(meeting_id) is not None
         and session_mod.get(meeting_id).state == session_mod.MeetingState.LIVE,
@@ -949,6 +955,64 @@ async def ask_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
         else None
     )
     return await ask_mod.answer(meeting_id, question, call=call_model, now_ms=now_ms)
+
+
+@router.get("/v1/meetingsense/{meeting_id}/summary")
+async def read_summary(meeting_id: str) -> Dict[str, Any]:
+    """The documents written for this meeting, and the styles one can be written in (MS34).
+
+    The catalog rides along with the documents rather than sitting on a route of its own, so
+    a picker needs one request and so there is no static path competing with
+    ``/{meeting_id}`` for the same prefix.
+    """
+    _require_meeting(meeting_id)
+    from . import minutes as minutes_mod
+
+    rows = minutes_mod.summaries(meeting_id)
+    return {
+        "meeting_id": meeting_id,
+        "summaries": rows,
+        "latest": rows[-1] if rows else None,
+        "styles": minutes_mod.style_catalog(),
+        "lengths": sorted(minutes_mod.LENGTHS),
+        "preferences": minutes_mod.prefs(meeting_id).as_dict(),
+    }
+
+
+@router.post("/v1/meetingsense/{meeting_id}/summary")
+async def write_summary(meeting_id: str, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Write a new document for this meeting, in the style asked for (MS34).
+
+    **Additive.** Every call appends; nothing is overwritten and the meeting's notes are not
+    touched at all. Asking for a recap email after taking minutes leaves the minutes exactly
+    where they were, which matters because the obvious alternative — one summary slot per
+    meeting — makes every regeneration a gamble on liking the new one better.
+
+    Runs the map-reduce, so it is bounded on a three-hour meeting and on a nine-minute one
+    alike. It can take a while on a long meeting against a local model; that is the work, and
+    the route waits for it rather than inventing a job queue MeetingSense does not have.
+    """
+    _require_meeting(meeting_id)
+    from . import minutes as minutes_mod
+    from .notes_engine import call_model
+
+    options = minutes_mod.options_from(body or {})
+    if (body or {}).get("remember"):
+        # The picker doubles as the preference: a user who regenerated as an email once
+        # usually wants the next meeting's document to be one too.
+        minutes_mod.set_prefs(meeting_id, options)
+
+    model = getattr(load_config().summary, "model", "") or ""
+
+    async def call(messages, **kw):
+        return await call_model(messages, model=model, **kw)
+
+    document = await minutes_mod.summarise(meeting_id, call=call, options=options)
+    if not (document.get("text") or "").strip():
+        # A meeting with no transcript has no document, and says which of the two it is.
+        raise HTTPException(status_code=409, detail=document.get("reason") or "no_transcript")
+    stored = minutes_mod.store_summary(meeting_id, document)
+    return {**document, "id": stored}
 
 
 @router.post("/v1/meetingsense/{meeting_id}/notes")

@@ -198,6 +198,62 @@ describe('asking a live meeting', () => {
     expect(screen.getByTestId('ms-ask-keep')).toHaveTextContent('Kept in meeting notes');
   });
 
+  it('labels an answer that was quoted rather than written', async () => {
+    // `degraded: "extractive"` means no model was reachable and the server quoted the
+    // transcript. Swallowing that leaves the reader unable to tell a written answer from a
+    // pasted one, and they will either distrust the first or over-trust the second.
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        text: 'From the meeting transcript:\n[00:00:19] them: including tax cuts',
+        cited: [],
+        degraded: 'extractive',
+      }),
+    }));
+    renderWorkspace();
+    await ask('what are they talking about?');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ms-ask-degraded')).toHaveTextContent('no language model was reachable');
+    });
+  });
+
+  it('does not print a dead end when the server says nothing came back', async () => {
+    /*
+     * The fault as reported: "what are they talking about" answered with *"that question
+     * could not be answered from this meeting"* — the client's own words for an empty
+     * `text` — printed beside a transcript the user could read on screen. The server now
+     * sends a sentence instead of an empty string; this covers the older-server path, and
+     * the wording has to read as "the meeting was quiet", not "this is broken".
+     */
+    fetchMock.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ text: '' }) }));
+    renderWorkspace();
+    await ask('what are they talking about?');
+
+    await waitFor(() => {
+      const answer = screen.getByTestId('ms-ask-answer');
+      expect(answer).toHaveTextContent('Nothing in what has been captured');
+      expect(answer).not.toHaveTextContent('could not be answered from this meeting');
+    });
+  });
+
+  it('shows the sentence the server sent rather than inventing one', async () => {
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        text: 'Nothing has been transcribed in this meeting yet, so there is nothing to answer from.',
+        cited: [],
+        error: 'no_transcript',
+      }),
+    }));
+    renderWorkspace();
+    await ask('what are they saying?');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ms-ask-answer')).toHaveTextContent('Nothing has been transcribed');
+    });
+  });
+
   it('does not answer from nothing before the meeting id exists', async () => {
     // Falling back to the general model here is how a confident answer about no transcript
     // gets produced during the two seconds a meeting takes to connect.
@@ -251,6 +307,14 @@ describe('asking after the meeting ends', () => {
     expect(String(url)).toContain('/v1/meetingsense/m-live/ask');
     expect(String(url)).not.toContain('/chat');
     expect(JSON.parse(String(init.body))).toEqual({ text: 'what are they talking about?' });
+  });
+
+  it('shows the full-summary panel beside the private lane', async () => {
+    // The two are different documents from the same meeting, and a reader who only sees the
+    // shorter one has no way to know the longer one exists.
+    renderWorkspace(endedView as never, record);
+    expect(await screen.findByTestId('ms-minutes')).toBeTruthy();
+    expect(screen.getByTestId('ms-ended-ask')).toBeTruthy();
   });
 
   it('opens the ended transcript when an answer citation is followed', async () => {

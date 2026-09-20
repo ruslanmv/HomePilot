@@ -41,10 +41,33 @@ export interface CaptureOptions {
     myNames: string;
     /** What the assistant answers to (MS26's `assistant_names`). Empty means it never does. */
     assistantName: string;
+    /**
+     * What the meeting's own document should be when it ends (MS34).
+     *
+     * Asked here rather than at the end because the moment a meeting stops is the moment the
+     * user is least willing to answer a dialog — they want the recap, not a form — and
+     * because the answer is usually the same every week. It is only a default: the recap
+     * screen can rewrite the document in any other shape, and keeps both.
+     */
+    summaryStyle: string;
+    summaryLength: string;
+    /**
+     * Material attached to this session, for the assistant to answer from (MS34).
+     *
+     * The agenda, the brief, last week's minutes — context the user has and the transcript
+     * does not. Without it, "what were we supposed to cover?" is answered from the meeting
+     * alone, which is the same shape of failure as answering from the general chat model:
+     * the material exists, the user has it open, and the assistant never sees it.
+     *
+     * Stored on the meeting as MS27's prep artifact, which is the mechanism that already
+     * exists for exactly this and is already scoped to one meeting.
+     */
+    context: string;
 }
 
 export const DEFAULT_CAPTURE: CaptureOptions = {
     audio: true, mic: true, slides: true, mode: null, myNames: '', assistantName: '',
+    summaryStyle: 'minutes', summaryLength: 'standard', context: '',
 };
 
 /** Split a comma-separated name field into the list the wire expects. */

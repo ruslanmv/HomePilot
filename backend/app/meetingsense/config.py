@@ -70,6 +70,28 @@ class NotesConfig:
 
 
 @dataclass(frozen=True)
+class SummaryConfig:
+    """The end-of-meeting document (wave W14, :mod:`minutes`).
+
+    Separate from :class:`NotesConfig` because the two are different products from the same
+    transcript: notes are written *while* a meeting runs and held to a card's worth of words,
+    and this is written once at the end and sized to the meeting.
+
+    ``auto`` on by default, and it can be: it runs only after a meeting the user started and
+    stopped, it writes a new artifact rather than touching the notes, and an install with no
+    reachable model produces the extractive version rather than failing. An operator who does
+    not want a model reading the whole transcript at the end sets it to false — the same
+    distinction ``flags.together`` draws, at the other end of the meeting.
+    """
+
+    auto: bool = True
+    style: str = "minutes"
+    length: str = "standard"
+    model: str = ""
+    chunk_words: int = 700
+
+
+@dataclass(frozen=True)
 class VisionConfig:
     """Slide captioning (wave W3). ``model`` empty means "use the multimodal default"; the
     keyframe path is still gated by whether a vision model exists at all."""
@@ -144,6 +166,7 @@ class MeetingSenseConfig:
     retention: str = "text"
     flags: SubFlags = field(default_factory=SubFlags)
     notes: NotesConfig = field(default_factory=NotesConfig)
+    summary: SummaryConfig = field(default_factory=SummaryConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     panels: PanelsConfig = field(default_factory=PanelsConfig)
     resume: ResumeConfig = field(default_factory=ResumeConfig)
@@ -162,6 +185,11 @@ class MeetingSenseConfig:
             "notes.interval_s": self.notes.interval_s,
             "notes.max_words": self.notes.max_words,
             "notes.model": self.notes.model,
+            "summary.auto": self.summary.auto,
+            "summary.style": self.summary.style,
+            "summary.length": self.summary.length,
+            "summary.model": self.summary.model,
+            "summary.chunk_words": self.summary.chunk_words,
             "vision.model": self.vision.model,
             "vision.max_keyframes_per_hour": self.vision.max_keyframes_per_hour,
             "panels.max_kb": self.panels.max_kb,
@@ -210,6 +238,13 @@ def load_config() -> MeetingSenseConfig:
             interval_s=_int("MEETINGSENSE_NOTES_INTERVAL_S", 60),
             max_words=_int("MEETINGSENSE_NOTES_MAX_WORDS", 400),
             model=os.getenv("MEETINGSENSE_NOTES_MODEL", "").strip(),
+        ),
+        summary=SummaryConfig(
+            auto=_flag("MEETINGSENSE_SUMMARY_AUTO", True),
+            style=os.getenv("MEETINGSENSE_SUMMARY_STYLE", "minutes").strip().lower() or "minutes",
+            length=os.getenv("MEETINGSENSE_SUMMARY_LENGTH", "standard").strip().lower() or "standard",
+            model=os.getenv("MEETINGSENSE_SUMMARY_MODEL", "").strip(),
+            chunk_words=_int("MEETINGSENSE_SUMMARY_CHUNK_WORDS", 700),
         ),
         vision=VisionConfig(
             model=os.getenv("MEETINGSENSE_VISION_MODEL", "").strip(),

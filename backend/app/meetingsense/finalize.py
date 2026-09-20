@@ -59,11 +59,18 @@ def conversation_title(meeting: Dict[str, Any]) -> str:
     return "🎙 " + " · ".join(parts)
 
 
+#: Lines of the end-of-meeting document that go into the chat message when the rolling notes
+#: have nothing. The whole document can be pages long; this message is a glance, and the card
+#: shows all of it.
+SUMMARY_PREVIEW_LINES = 12
+
+
 def meeting_message(
     meeting: Dict[str, Any],
     segments: Sequence[Dict[str, Any]],
     keyframes: Sequence[Dict[str, Any]] = (),
     notes: Any = None,
+    summary: Any = None,
 ) -> str:
     """The message body — **self-sufficient, per D9** (MS14).
 
@@ -97,13 +104,14 @@ def meeting_message(
     # reachable, so every window came back empty. Treating that as "there are notes" printed a
     # header, a count and then nothing at all, and suppressed the transcript preview that is
     # the whole point of the fallback below. What matters is whether there is *content*.
+    #
+    # The "no model was reachable" notice is *held* rather than appended here, because what
+    # follows it decides how it should read: it used to end "the transcript below was
+    # recorded and kept", which is a promise about what comes next, and once an MS34 document
+    # can come next instead the promise is sometimes false. It is written below, where its
+    # ending is known.
+    outage = bool(body and not _has_note_content(body) and body.get("model_unavailable"))
     if body and not _has_note_content(body):
-        if body.get("model_unavailable"):
-            lines += [
-                "",
-                "No notes or recap: no language model was reachable while this meeting ran. "
-                "The transcript below was recorded and kept.",
-            ]
         body = None
 
     if body:
@@ -125,8 +133,24 @@ def meeting_message(
                 lines.append(f"  {export.clock(frame.get('t_ms'))} {caption}")
         return "\n".join(lines)
 
-    # No notes — no model reachable, or a meeting too short to have triggered a window. Fall
-    # back to the opening exchange, which at least says what the meeting was about.
+    # MS34. Before the transcript preview, because it is a better answer to the same
+    # question: the rolling notes can be empty on a meeting the end-of-meeting summariser
+    # handled perfectly well — a long meeting whose windows all fell in a model outage, or a
+    # short one that never triggered a window at all. "No summary for this meeting" beside a
+    # document that exists is the bug this branch removes.
+    document = _summary_section(summary)
+    if document:
+        if outage:
+            lines += ["", "No rolling notes: no language model was reachable while this "
+                          "meeting ran. The summary below was written after it ended."]
+        return "\n".join(lines + document)
+
+    if outage:
+        lines += ["", "No notes or recap: no language model was reachable while this meeting "
+                      "ran. The transcript below was recorded and kept."]
+
+    # No notes and no document — nothing was reachable, or nothing was said. Fall back to the
+    # opening exchange, which at least says what the meeting was about.
     preview = [s for s in segments if (s.get("text") or "").strip()][:PREVIEW_SEGMENTS]
     if preview:
         lines.append("")
@@ -139,6 +163,28 @@ def meeting_message(
         lines.append("")
         lines.append("Nothing was transcribed.")
     return "\n".join(lines)
+
+
+def _summary_section(summary: Any) -> List[str]:
+    """The end-of-meeting document, trimmed to a glance. ``[]`` when there is none.
+
+    Trimmed rather than included whole: the document for a three-hour meeting is pages long,
+    and HomePilot's chat path passes the last six messages to a persona — one of them being
+    a wall of minutes would crowd out the conversation the user is actually having. The card
+    shows all of it, and this says where the rest is.
+    """
+    text = ""
+    if isinstance(summary, dict):
+        text = (summary.get("text") or "").strip()
+    elif isinstance(summary, str):
+        text = summary.strip()
+    if not text:
+        return []
+    rows = [line for line in text.splitlines() if line.strip()]
+    lines = ["", *rows[:SUMMARY_PREVIEW_LINES]]
+    if len(rows) > SUMMARY_PREVIEW_LINES:
+        lines.append("… the full summary is on the meeting card.")
+    return lines
 
 
 def _has_note_content(body: Dict[str, Any]) -> bool:
@@ -192,7 +238,7 @@ def finalize_meeting(meeting_id: str) -> Optional[str]:
     which is the part that cannot be recovered.
     """
     try:
-        from . import store
+        from . import minutes, store
         from ..storage import add_message
 
         meeting = store.get_meeting(meeting_id)
@@ -202,11 +248,12 @@ def finalize_meeting(meeting_id: str) -> Optional[str]:
         segments = store.get_segments(meeting_id)
         keyframes = store.get_keyframes(meeting_id)
         notes = store.get_notes(meeting_id)
+        summary = minutes.latest(meeting_id)
         images = thumbnails(keyframes)
         add_message(
             meeting["conversation_id"],
             "assistant",
-            meeting_message(meeting, segments, keyframes, notes),
+            meeting_message(meeting, segments, keyframes, notes, summary),
             media={"images": images} if images else None,
             project_id=meeting.get("project_id"),
         )

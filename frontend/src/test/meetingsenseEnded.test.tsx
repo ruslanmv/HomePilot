@@ -550,6 +550,11 @@ describe('capture options', () => {
         // assistant answers to nobody out loud.
         expect(DEFAULT_CAPTURE).toEqual({
             audio: true, mic: true, slides: true, mode: null, myNames: '', assistantName: '',
+            // MS34. Minutes, at standard length: the shape most people want and the one a
+            // meeting ends with if nobody touches the picker. `context` is empty for the
+            // same reason the name fields are — nothing is attached that was not attached
+            // on purpose.
+            summaryStyle: 'minutes', summaryLength: 'standard', context: '',
         });
         const onChange = vi.fn();
         render(<CapturePopover value={DEFAULT_CAPTURE} onChange={onChange} onClose={() => {}} />);
@@ -575,8 +580,9 @@ describe('capture options', () => {
         const onChange = vi.fn();
         render(<CapturePopover value={DEFAULT_CAPTURE} onChange={onChange} onClose={() => {}} />);
         fireEvent.click(screen.getByTestId('ms-cap-slides'));
-        expect(onChange).toHaveBeenCalledWith({
-            audio: true, mic: true, slides: false, mode: null, myNames: '', assistantName: '',
-        });
+        // Spread rather than re-listed: the claim is that *only* `slides` moved, and a
+        // literal restates the whole shape, so adding a field to CaptureOptions fails this
+        // test for a reason that has nothing to do with the claim.
+        expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_CAPTURE, slides: false });
     });
 });

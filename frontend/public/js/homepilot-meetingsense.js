@@ -1684,6 +1684,14 @@
                                       // meeting runs in the wrong mode while a second request
                                       // is in flight.
                                       mode: opts.mode || '',
+                                      // MS34. How this meeting wants to be summarised when
+                                      // it ends — the style and the length the wizard
+                                      // offered. Stored server-side on the meeting rather
+                                      // than held here, so a stop after a reconnect still
+                                      // writes the document the user asked for.
+                                      summary:
+                                          opts.summary && typeof opts.summary === 'object'
+                                              ? opts.summary : null,
                                       audio: {
                                           rate: TARGET_RATE,
                                           channels: this._channels || 1,

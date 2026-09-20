@@ -17,6 +17,79 @@ this is reachable and no table is created.
 
 ---
 
+## W14 — The payoff
+
+### MS34 — grounded Q&A, and the document a long meeting leaves behind
+
+Three faults, one theme: the meeting was recorded correctly and the thing the user came for
+was missing.
+
+**1. You could not chat about a meeting once it had a recap.** The ask lane lived only in the
+live workspace's third tab, and the ended view has no tabs — so the composer at the bottom of
+the recap screen took a question, sent it, and showed nothing anywhere. The lane now renders
+under the summary, answered by the same `POST /{id}/ask`, and following a citation opens the
+collapsed transcript at that moment instead of switching to a tab that is not there.
+
+**2. A live question came back "that question could not be answered from this meeting."**
+That sentence was the client's own words for an empty `text`, and it was printed beside a
+transcript the user could read on screen. Three causes, each fixed where it was:
+
+- *The verbatim window could be empty.* It is measured against the session clock, which is
+  right — a question asked during a lull is still about now — and means that after ninety
+  seconds of silence it holds nothing at all. `verbatim()` now has a floor: the last
+  `MIN_VERBATIM_ROWS` lines are in the prompt whatever the clock says. Without it, the broad
+  questions people actually ask mid-meeting — *"what are they talking about?"* — match no
+  keyword and have no window either, which is exactly the reported case.
+- *An unreachable model produced nothing.* It degrades to the meeting's own words, and the
+  lane labels that answer as quoted rather than written (`degraded: "extractive"`). A reader
+  who cannot tell the two apart will either distrust the written ones or over-trust the rest.
+- *Empty `text` was a valid response.* It no longer is, past an empty question. The server
+  says which kind of nothing it found — the meeting is quiet, or nothing matches it.
+
+Also new: **material attached at session setup is part of the grounding.** *Context for this
+meeting* in the start dialog stores what you paste as MS27's `prep` artifact, and the ask
+path includes it under `ATTACHMENT_BUDGET` — deliberately **outside** D9's transcript budget,
+so attaching a brief never shortens the transcript the model is given.
+
+**3. A long meeting had no summary worth the name.** MS12's rolling notes are written a
+window at a time and capped at 120 words for the whole meeting; a three-hour workshop and a
+nine-minute stand-up came out identical. `minutes.py` is the end-of-meeting document:
+
+- **A map-reduce.** Chunks of `CHUNK_WORDS` cut on segment boundaries with a small overlap,
+  one digest each, then one reduce. Every prompt is bounded whatever the length of the
+  meeting. Beyond `MAX_FANOUT` digests they are folded first, and folded again if needed —
+  the "very long" case, in three lines, because the map-reduce was the right shape already.
+- **Additive by construction.** A new `ms_artifacts` row of kind `summary`; `ms_notes` is
+  never written. A second style leaves the first document where it was and the panel keeps
+  both. A test asserts the notes row is byte-identical before and after. With one summary
+  slot, every press of *Rewrite* is a gamble, and people stop pressing it.
+- **Five styles**, because minutes, a recap email, personal notes, an executive brief and a
+  bare action list are five documents and one summary trying to be all five is a worse
+  version of each. Chosen in the start dialog under **When this ends**, stored on the meeting
+  so a stop after a reconnect still writes the one that was asked for, and changeable on the
+  recap screen. A free-form instruction is quoted as the user's request in the user message
+  rather than merged into the system prompt, so a pasted paragraph cannot switch the citation
+  rule off.
+- **It works with no model.** Extractive digests, and the document opens by saying so. One
+  outage is logged once, not once per chunk — the same rule `notes_engine` follows, and the
+  reason is the same: forty identical connection tracebacks bury the next real failure.
+- **The chat message stops lying.** `finalize` falls back to the generated document before
+  the transcript preview, so *"No summary for this meeting"* no longer appears beside one
+  that exists.
+
+Routes: `POST`/`GET /v1/meetingsense/{id}/summary`, and `GET /v1/meetingsense/{id}` now
+carries `summaries`. Config: `MEETINGSENSE_SUMMARY_AUTO` (on), `_STYLE`, `_LENGTH`, `_MODEL`,
+`_CHUNK_WORDS`.
+
+**One test was measuring the wrong thing and is now measuring the right one.** MS13's
+"a two-hour meeting stays inside the budget" asserted on system + user tokens, so the
+transcript's allowance quietly shrank every time a rule was added to `ASK_SYSTEM` — and
+adding two failed it for a reason that had nothing to do with the transcript. It measures the
+user message, which is the part that grows with the meeting and the part `TOKEN_BUDGET` is
+documented as bounding.
+
+---
+
 ## W11 — The mount
 
 ### MS30 — two flags that ship on · `a591e14`

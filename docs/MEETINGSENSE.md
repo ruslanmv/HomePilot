@@ -20,6 +20,11 @@ whatever the browser share dialog happened to offer (MS11).
 Everything in the recorder works: rolling notes, a summary that carries its own recap and
 decisions, asking a question about a meeting live or afterwards, export, and one-call deletion.
 
+When a meeting ends it also writes a **full document** from the whole transcript — minutes, a
+recap email, notes, a brief or a bare action list, chosen before the meeting starts and
+rewritable afterwards. A map-reduce, so it works on a three-hour recording as well as a
+ten-minute one, and additive, so a second version never replaces the first (MS34).
+
 The order of work, and the reasoning behind each decision, is
 [`docs/design/MEETINGSENSE_BATCHES.md`](design/MEETINGSENSE_BATCHES.md). What changed when is
 [`MEETINGSENSE_CHANGELOG.md`](MEETINGSENSE_CHANGELOG.md). **Before the next wave is built, the
@@ -1441,6 +1446,33 @@ is rendered as a link and following one jumps to that moment in the Transcript t
 a **live** meeting — the verbatim tier is the reason it exists — and the vector tier is simply
 empty until the meeting is indexed on stop.
 
+**The lane stays on the recap screen** (MS34). A meeting ending is when most of the questions
+arrive — *"what did they decide?"*, *"who owes me something?"* — and the ended view used to
+have no lane at all, so the composer at the bottom took a question and showed nothing. The
+same lane renders under the summary, the same endpoint answers it, and following a citation
+opens the collapsed transcript at that moment rather than switching a tab that is not there.
+
+**Three ways an answer used to come back empty**, and what each is now (MS34):
+
+* *A silence.* The verbatim window is measured against the session clock, which is right — a
+  question asked during a lull is still about now — and means that after ninety seconds of
+  nobody speaking the window holds nothing. A broad question then had no evidence at all, and
+  `what are they talking about?` came back as *"that question could not be answered from this
+  meeting"* beside a transcript the user could read on screen. The window now has a floor: the
+  last `MIN_VERBATIM_ROWS` lines are always in the prompt whatever the clock says.
+* *No model.* An unreachable model produced an empty answer; it now degrades to the meeting's
+  own words, and the lane labels that answer as quoted rather than written. A reader who
+  cannot tell the two apart will either distrust the written ones or over-trust the quoted.
+* *Genuinely nothing.* The server no longer returns empty `text` for a real question. It says
+  which kind of nothing it found — the meeting is quiet, or nothing matches — because a client
+  handed an empty string invents a sentence, and every such sentence reads as a broken feature.
+
+**Material you attach is part of the grounding.** *Context for this meeting* in the start
+dialog stores what you paste as MS27's `prep` artifact on that meeting, and the ask path
+includes it under its own budget (`ATTACHMENT_BUDGET`) — **outside** D9's transcript budget,
+so attaching a brief never shortens the transcript the model is given. It answers the question
+the room cannot: *"what were we supposed to cover?"*, in the first minute.
+
 Three things this replaced, all of which shipped and none of which worked:
 
 1. the composer posted to `/chat`, so a question about the meeting was answered by a model that
@@ -1455,6 +1487,69 @@ microphone · Include what you say` in the start dialog is what puts `You` lines
 at all; with it off, a meeting captures only the other side and every line reads `Them`. `You`
 and `Them` are also different colours rather than two greys, because scanning a transcript the
 question is who was talking.
+
+### The document a long meeting leaves behind (MS34)
+
+The rolling notes (MS12) are written a window at a time *while* a meeting runs and held to
+120 words for its whole length. That is the right shape for a card somebody glances at
+mid-call and the wrong shape for what they need afterwards: a three-hour workshop and a
+nine-minute stand-up come out as the same four sentences, and the two hours fifty-one minutes
+in between are represented by nothing.
+
+So `backend/app/meetingsense/minutes.py` writes the *other* summary — once, when the meeting
+has ended and the whole transcript exists, sized to the meeting.
+
+**A map-reduce, because one big prompt is the failure D9 already refuses.** The transcript is
+cut into chunks of `CHUNK_WORDS` on segment boundaries (never mid-utterance, with a small
+overlap so a decision straddling a boundary is seen whole by one side); each chunk is digested
+on its own; the digests are summarised together. Every prompt is bounded whatever the length
+of the meeting, and the bound does not depend on guessing the model's context window. For a
+meeting long enough that even the digests do not fit — a full day, a conference track — they
+are **folded** in groups of `MAX_FANOUT` before the reduce, and folded again if needed.
+
+**Additive, and that is a property rather than an intention.** Nothing here writes to
+`ms_notes`; a document is a new `ms_artifacts` row of kind `summary`. Generating a second one
+in a different style leaves the first exactly where it was, and the panel keeps both. A test
+asserts the notes row is byte-identical before and after. The reason is behavioural: with one
+summary slot, every press of *Rewrite* is a gamble on liking the new one better, and people
+stop pressing it.
+
+**The style is the product.** "Summarise the meeting" is five documents, and one summary
+trying to be all five is a worse version of each:
+
+| Style | For |
+|---|---|
+| `minutes` | the record — discussion, decisions, actions, open questions |
+| `email` | sending to people who were not there, subject line included |
+| `notes` | your own reading order, with what you personally owe at the end |
+| `brief` | a reader with two minutes: outcome first |
+| `actions` | only what is owed, and by whom |
+
+Style, length, audience and a free-form instruction (*"in Spanish"*, *"for the board"*) are
+chosen in the start dialog under **When this ends** and stored on the meeting, so a stop that
+happens after a reconnect still writes the document that was asked for. The instruction is
+quoted as the user's request in the user message rather than merged into the system prompt: a
+pasted paragraph must not be able to switch the citation rule off.
+
+**It works with no model at all.** Every call degrades to an *extractive* digest — real
+sentences with their timestamps, chosen by how much of the chunk's own vocabulary they carry —
+and the document opens by saying that is what happened. One outage is logged once, not once
+per chunk, for the reason `notes_engine` gives.
+
+**The document ends with the meeting in order.** One paragraph per part, each carrying the
+time range it covers. That is what makes a long recording navigable: a reader who doubts a
+line in the summary can find the twenty minutes it came from without scrolling three hours.
+
+| Route | What |
+|---|---|
+| `POST /v1/meetingsense/{id}/summary` | write one, in the style given. Appends. `409` with `no_transcript` when there is nothing to summarise. |
+| `GET /v1/meetingsense/{id}/summary` | the documents written so far, the style catalog, and this meeting's preference |
+| `GET /v1/meetingsense/{id}` | now carries `summaries` alongside `notes`, so a reopened meeting paints both at once |
+
+`MEETINGSENSE_SUMMARY_AUTO` (on) writes one when a meeting stops, after the `final` frame so
+nobody waits on it and before `finalize`, so the message the meeting leaves in its conversation
+carries the real document when the rolling notes came back empty — which is what *"No summary
+for this meeting"* beside a perfectly good transcript used to mean.
 
 ### Where the meeting lands
 

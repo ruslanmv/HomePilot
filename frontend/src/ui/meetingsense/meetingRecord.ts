@@ -43,13 +43,46 @@ export interface MeetingRow {
     status?: string | null;
 }
 
+/**
+ * One document written from the whole transcript once the meeting ended (MS34).
+ *
+ * Not the notes. The notes are written a window at a time *while* the meeting runs and held
+ * to a card's worth of words however long it goes on; this is written once at the end, from
+ * the whole transcript, and sized to the meeting. A meeting accumulates these — minutes and
+ * then a recap email is two documents, not one overwritten — which is why the record carries
+ * a list rather than a field.
+ */
+export interface MeetingSummaryDoc {
+    id?: string;
+    style?: string;
+    label?: string;
+    length?: string;
+    text?: string;
+    /** The chronological digest: one paragraph per part, each carrying its time range. */
+    outline?: string;
+    sections?: Array<{ t0_ms?: number; t1_ms?: number; text?: string; extractive?: boolean }>;
+    chunks?: number;
+    words?: number;
+    /** `extractive` when no model was reachable and the meeting's own words were used. */
+    degraded?: string | null;
+    created_at?: number;
+}
+
 /** What `GET /v1/meetingsense/{id}` answers with. */
 export interface MeetingRecord {
     meeting?: MeetingRow | null;
     segments?: Array<Record<string, unknown>> | null;
     keyframes?: Array<Record<string, unknown>> | null;
     notes?: unknown;
+    summaries?: MeetingSummaryDoc[] | null;
     live?: boolean;
+}
+
+/** The documents on a record, newest last, with the empty ones dropped. */
+export function summaryDocs(record: MeetingRecord | null | undefined): MeetingSummaryDoc[] {
+    const rows = record?.summaries;
+    if (!Array.isArray(rows)) return [];
+    return rows.filter((row) => Boolean(row && typeof row === 'object' && (row.text || '').trim()));
 }
 
 /**

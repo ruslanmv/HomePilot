@@ -16,6 +16,8 @@ import {
     X,
 } from 'lucide-react';
 import MeetingSummary from './MeetingSummary';
+import MeetingMinutes from './MeetingMinutes';
+import { backendBase, requestHeaders } from './api';
 import {
     elapsedLabel,
     modeLabel,
@@ -29,6 +31,7 @@ import {
     durationLabel,
     notesBody,
     segmentAt,
+    summaryDocs,
     titleOf,
     type MeetingRecord,
 } from './meetingRecord';
@@ -114,6 +117,14 @@ type ChatTurn = {
     cited?: string[];
     /** Whether this answer has been deliberately added to the meeting's notes. */
     kept?: boolean;
+    /**
+     * `extractive` when the server quoted the transcript because no model answered.
+     *
+     * Surfaced rather than swallowed: an answer that is the meeting's own words and an
+     * answer that was written are different things, and a reader who cannot tell will either
+     * distrust the written ones or over-trust the quoted ones.
+     */
+    degraded?: string | null;
 };
 
 type TimelineEvent = {
@@ -123,30 +134,6 @@ type TimelineEvent = {
     title: string;
     text?: string;
 };
-
-function backendBase(): string {
-    try {
-        const saved = window.localStorage.getItem('homepilot_backend_url') || '';
-        if (saved.trim()) return saved.replace(/\/+$/, '');
-    } catch {
-        // Storage can be unavailable in locked-down contexts.
-    }
-    const fromWindow = (window as typeof window & { HOMEPILOT_API_BASE?: string }).HOMEPILOT_API_BASE || '';
-    return fromWindow.replace(/\/+$/, '');
-}
-
-function requestHeaders(): Record<string, string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    try {
-        const apiKey = window.localStorage.getItem('homepilot_api_key') || '';
-        const token = window.localStorage.getItem('homepilot_auth_token') || '';
-        if (apiKey) headers['x-api-key'] = apiKey;
-        if (token) headers.Authorization = `Bearer ${token}`;
-    } catch {
-        // A meeting can still run on an unauthenticated local backend.
-    }
-    return headers;
-}
 
 function healthCopy(status: CaptureSourceStatus): string {
     switch (status.health) {
@@ -253,6 +240,11 @@ function AskLane({
                                         )
                                     ))}
                                 </p>
+                                {turn.degraded === 'extractive' ? (
+                                    <p className="mt-1.5 text-[10px] leading-4 text-amber-100/55" data-testid="ms-ask-degraded">
+                                        Quoted from the transcript — no language model was reachable to write an answer.
+                                    </p>
+                                ) : null}
                                 {!turn.error ? (
                                     <button
                                         type="button"
@@ -529,10 +521,24 @@ export function MeetingWorkspace({
             const body = await response.json();
             const answer = String(body?.text ?? '').trim();
             if (!answer) {
-                settle({ text: 'That question could not be answered from this meeting.', error: true });
+                /*
+                 * The server does not send an empty answer any more — it says which kind of
+                 * nothing it found, in a sentence. This is the older-server path, and the
+                 * wording matters: "that question could not be answered from this meeting"
+                 * was printed beside a transcript the user could read on screen, which reads
+                 * as the feature being broken rather than as the meeting being quiet.
+                 */
+                settle({
+                    text: 'Nothing in what has been captured of this meeting answers that yet.',
+                    error: true,
+                });
                 return;
             }
-            settle({ text: answer, cited: Array.isArray(body?.cited) ? body.cited : [] });
+            settle({
+                text: answer,
+                cited: Array.isArray(body?.cited) ? body.cited : [],
+                degraded: typeof body?.degraded === 'string' ? body.degraded : null,
+            });
         } catch (sendError) {
             const message = sendError instanceof Error ? sendError.message : 'request failed';
             settle({ text: `Could not answer from this meeting: ${message}`, error: true });
@@ -664,6 +670,15 @@ export function MeetingWorkspace({
                                     {recapMeta ? <p className="mt-1 text-xs text-white/40">{recapMeta}</p> : null}
                                 </div>
                                 <MeetingSummary body={body} pending={pendingNotes} />
+                                {/* The rolling notes are what the reader watched being written;
+                                    this is the document written from the whole transcript once
+                                    the meeting ended. Both, in that order: the glance first and
+                                    the thing they are going to send second. */}
+                                <MeetingMinutes
+                                    meetingId={view.meetingId}
+                                    documents={summaryDocs(record)}
+                                    hasTranscript={view.segments.length > 0}
+                                />
                                 <section className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
                                     <div className="mb-3 flex items-center gap-2">
                                         <Sparkles size={14} className="text-sky-200/70" />

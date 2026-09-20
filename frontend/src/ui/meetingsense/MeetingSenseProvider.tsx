@@ -213,6 +213,29 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         if (!response.ok) throw new Error(`conversation marker HTTP ${response.status}`);
     }, [capture, status?.stt?.remote]);
 
+    /**
+     * Attach the context the user pasted in the setup dialog (MS34).
+     *
+     * After `start`, not before it: the meeting id does not exist until the socket answers
+     * `ready`, and there is nothing to attach it to. Failure is logged and swallowed — a
+     * meeting that records perfectly well must not be taken down because an optional
+     * paragraph did not reach the store, and the user can attach it again.
+     */
+    const attachContext = useCallback(async (meetingId: string, text: string) => {
+        const body = text.trim();
+        if (!meetingId || !body) return;
+        try {
+            await fetch(`${apiBase()}/v1/meetingsense/${encodeURIComponent(meetingId)}/prep`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: headers(),
+                body: JSON.stringify({ title: 'Meeting context', text: body }),
+            });
+        } catch (attachError) {
+            console.warn('[MeetingSense] meeting context could not be attached', attachError);
+        }
+    }, []);
+
     const actuallyStart = useCallback(async () => {
         const nextConversation = freshMeetingConversationId();
         // Remember where the user was before the dedicated meeting thread takes over. Close
@@ -241,6 +264,11 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                 // "Ruslan, Rus" is how a person writes the two things they are called.
                 names: parseNames(capture.myNames),
                 assistantNames: parseNames(capture.assistantName),
+                // MS34. The shape of the document this meeting should leave behind. Sent at
+                // `start` and stored on the meeting, so a stop that happens after a
+                // reconnect — or after this tab was closed — still writes the one the user
+                // chose rather than the default.
+                summary: { style: capture.summaryStyle, length: capture.summaryLength },
             });
             if (!result.ok) {
                 setError(result.error || 'The meeting could not start.');
@@ -256,6 +284,8 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
             const stream = browserRecorder()?.getScreenPreviewStream?.() || null;
             if (stream) setScreenStream(stream);
 
+            if (result.meetingId) void attachContext(result.meetingId, capture.context);
+
             try {
                 await persistStartMarker(nextConversation);
             } catch (markerError) {
@@ -268,7 +298,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         } finally {
             setStarting(false);
         }
-    }, [capture, conversationId, meeting, onOpenConversation, persistStartMarker]);
+    }, [attachContext, capture, conversationId, meeting, onOpenConversation, persistStartMarker]);
 
     const begin = useCallback(() => {
         if (live || starting) return;

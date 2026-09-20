@@ -138,7 +138,13 @@ class TestTheTranscriptNeverGoesIn:
         meeting_id = seed(modules, self._long_meeting(), recap="A long planning meeting.")
         recorder = Recorder("The ceiling is four hundred thousand [00:40:00].")
         run(modules.ask.answer(meeting_id, "what is the budget ceiling?", call=recorder))
-        assert modules.ask.estimate_tokens(recorder.prompt) <= modules.ask.TOKEN_BUDGET
+        # The **user message** is what the budget is about: it is the part that grows with
+        # the meeting, and TOKEN_BUDGET is documented as the budget for the meeting block.
+        # Measuring system + user instead — which this did — quietly spends the transcript's
+        # allowance on the instructions, so adding a rule to `ASK_SYSTEM` shrinks how much of
+        # the meeting reaches the model and eventually fails a test about the transcript for
+        # a reason that has nothing to do with the transcript.
+        assert modules.ask.estimate_tokens(recorder.calls[-1][1]["content"]) <= modules.ask.TOKEN_BUDGET
 
     def test_and_still_contains_the_sentence_that_answers_it(self, modules):
         # The other half. A prompt that is small because it dropped the answer is not a success,
@@ -287,6 +293,23 @@ class TestVerbatimWindow:
         rows = [seg(0, "a"), seg(1000, "b")]
         assert len(modules.ask.verbatim(rows, now_ms=2000)) == 2
 
+    def test_a_long_silence_does_not_empty_the_window(self, modules):
+        # The window is measured against the session clock, which is right — a question
+        # asked during a silence is still about now. The consequence that is not right: after
+        # ninety seconds of nobody speaking, a clock-anchored window holds no transcript at
+        # all, and a broad question then has nothing behind it. The tail is the floor.
+        rows = [seg(0, "we agreed to ship in October"), seg(10_000, "Marina is chasing legal")]
+        assert modules.ask.verbatim(rows, now_ms=900_000) == rows
+
+    def test_the_floor_is_the_tail_and_not_the_whole_meeting(self, modules):
+        rows = [seg(i * 1000, f"line {i}") for i in range(50)]
+        out = modules.ask.verbatim(rows, now_ms=3_600_000)
+        assert len(out) == modules.ask.MIN_VERBATIM_ROWS
+        assert out[-1]["text"] == "line 49"
+
+    def test_the_floor_never_invents_a_line_for_a_silent_meeting(self, modules):
+        assert modules.ask.verbatim([], now_ms=900_000) == []
+
 
 # ── the answer ──────────────────────────────────────────────────────────────
 
@@ -350,6 +373,117 @@ class TestAnswer:
         frame = run(modules.ask.answer(meeting_id, "what happened?", call=Recorder("Nothing was recorded.")))
         assert frame["type"] == "answer"
         assert frame["sources"] == 0
+
+
+class TestAskIsNeverADeadEnd:
+    """The failure the user actually hit: *"that question could not be answered from this
+    meeting"* — the client's own words for an empty ``text`` — printed beside a transcript
+    the user could read on screen. An empty answer is indistinguishable from a broken
+    feature, so past an empty question this function does not produce one."""
+
+    def test_a_broad_live_question_during_a_silence_is_still_grounded(self, modules):
+        # "What are they talking about?" matches no keyword and, five minutes into a quiet
+        # stretch, falls outside the verbatim window too. This is the exact combination that
+        # produced an empty answer.
+        meeting_id = seed(modules, [seg(30_000, "I am describing a romantic-partner persona")])
+        recorder = Recorder("They are describing a persona [00:00:30].")
+        frame = run(modules.ask.answer(
+            meeting_id, "what are they talking about?", call=recorder, now_ms=300_000))
+        assert "romantic-partner persona" in recorder.prompt
+        assert frame["text"].startswith("They are describing")
+
+    def test_an_unanswerable_question_says_which_kind_of_nothing_it_is(self, modules):
+        frame = run(modules.ask.answer(seed(modules), "who chases legal?", call=Recorder("")))
+        # Degrades to evidence first; the sentence below is only for when even that is empty.
+        assert frame["text"]
+
+    def test_a_meeting_with_no_transcript_says_nothing_has_been_transcribed(self, modules):
+        meeting_id = modules.store.create_meeting(conversation_id="c", retention="text")
+        frame = run(modules.ask.answer(meeting_id, "what are they saying?", call=Recorder("")))
+        assert frame["text"] == modules.ask.NOTHING_TRANSCRIBED
+        assert frame["error"] == "no_transcript"
+
+    def test_the_text_is_never_empty_for_a_real_question(self, modules):
+        async def boom(messages, **kwargs):
+            raise RuntimeError("model gone")
+
+        meeting_id = modules.store.create_meeting(conversation_id="c", retention="text")
+        for call in (boom, Recorder(""), Recorder("   ")):
+            frame = run(modules.ask.answer(meeting_id, "anything?", call=call))
+            assert frame["text"].strip()
+
+    def test_an_empty_question_is_still_the_one_empty_answer(self, modules):
+        # Deliberately unchanged: nothing was asked, so there is nothing to say back, and a
+        # sentence here would be the assistant answering a question the user did not put.
+        frame = run(modules.ask.answer(seed(modules), "  ", call=Recorder("x")))
+        assert frame["text"] == ""
+        assert frame["error"] == "empty_question"
+
+
+class TestSessionAttachments:
+    """MS27's prep material, read by the ask path (MS34).
+
+    Material the user attached when setting the session up is context they chose for this
+    meeting. A question it answers — "what did we say we would cover?" — was being answered
+    from the transcript alone, which is the same shape of failure as answering from the
+    general chat model: the material exists, the user attached it on purpose, and the
+    assistant never saw it.
+    """
+
+    def _with_prep(self, modules, text="The agenda: launch date, legal sign-off, pricing."):
+        from app.meetingsense.agent import coaching
+
+        meeting_id = seed(modules)
+        coaching.add_prep(meeting_id, "Agenda", text)
+        return meeting_id
+
+    def test_attached_material_reaches_the_prompt(self, modules):
+        recorder = Recorder("The agenda covers the launch date.")
+        run(modules.ask.answer(self._with_prep(modules), "what is on the agenda?", call=recorder))
+        assert "The agenda: launch date" in recorder.prompt
+
+    def test_a_meeting_with_no_attachments_sends_the_prompt_it_always_did(self, modules):
+        recorder = Recorder("Marina does.")
+        run(modules.ask.answer(seed(modules), "who chases legal?", call=recorder))
+        assert "attached to this session" not in recorder.calls[-1][1]["content"]
+
+    def test_the_attachments_do_not_come_out_of_the_meeting_budget(self, modules):
+        # Attached material is not the meeting, so it does not compete with it for D9's
+        # transcript budget — otherwise attaching a brief silently shortens the transcript
+        # the model is given, which is a worse answer to every other question.
+        rows = [{"t0_ms": i * 1000, "text": f"sentence number {i} with several words in it"}
+                for i in range(40)]
+        bare = modules.ask.build_prompt("q", recap="r", verbatim_rows=rows)[1]["content"]
+        with_prep = modules.ask.build_prompt(
+            "q", recap="r", verbatim_rows=rows,
+            attachments=[{"title": "Agenda", "text": "launch date and legal"}],
+        )[1]["content"]
+        assert bare in with_prep
+
+    def test_attachments_are_capped(self, modules):
+        body = modules.ask.build_prompt(
+            "q", attachments=[{"title": "Brief", "text": "word " * 5000}],
+        )[1]["content"]
+        assert modules.ask.estimate_tokens(body) < modules.ask.ATTACHMENT_BUDGET * 2
+
+    def test_they_are_the_last_resort_of_the_fallback_not_the_first(self, modules):
+        # The transcript is what the question is about. Attached material answers only when
+        # the meeting itself said nothing.
+        from app.meetingsense.agent import coaching
+
+        meeting_id = modules.store.create_meeting(conversation_id="c", retention="text")
+        coaching.add_prep(meeting_id, "Agenda", "launch date, legal sign-off")
+
+        async def boom(messages, **kwargs):
+            raise RuntimeError("model gone")
+
+        frame = run(modules.ask.answer(meeting_id, "what is on the agenda?", call=boom))
+        assert "legal sign-off" in frame["text"]
+        assert frame["degraded"] == "extractive"
+
+    def test_the_frame_reports_how_many_were_used(self, modules):
+        frame = run(modules.ask.answer(self._with_prep(modules), "anything?", call=Recorder("x")))
+        assert frame["attachments"] == 1
 
 
 # ── the routes ──────────────────────────────────────────────────────────────
