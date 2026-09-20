@@ -213,6 +213,31 @@ def _render(rows: Sequence[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _extractive_fallback(
+    *,
+    recap: str,
+    verbatim_rows: Sequence[Dict[str, Any]],
+    retrieved_rows: Sequence[Dict[str, Any]],
+) -> str:
+    """Return a useful grounded answer when generation is unavailable.
+
+    Meeting Q&A should degrade to evidence, not to a dead-end error. Prefer rows selected by
+    retrieval for specific questions; otherwise use the newest transcript lines, which makes
+    broad live questions such as "what are they talking about?" useful even before a recap
+    exists. This is deliberately extractive: without a language model we can quote the record,
+    but we must not pretend to have inferred more than it says.
+    """
+    preferred = list(retrieved_rows) or list(verbatim_rows)
+    if preferred:
+        rows = preferred[-3:]
+        rendered = _render(rows)
+        if rendered:
+            return f"From the meeting transcript:\n{rendered}"
+    if recap.strip():
+        return f"From the meeting recap: {recap.strip()}"
+    return ""
+
+
 ASK_SYSTEM = """\
 You answer questions about a meeting, using only what you are given.
 
@@ -343,13 +368,27 @@ async def answer(
         budget=budget,
         mode=mode,
     )
+    degraded = False
     try:
         text = await call(messages, temperature=0.2)
     except Exception:  # noqa: BLE001 — a failed answer is never worth the meeting
-        log.exception("meetingsense: ask failed for %s", meeting_id)
-        return {"type": "answer", "text": "", "error": "answer_failed", "cited": []}
+        log.exception("meetingsense: ask generation failed for %s; using transcript fallback", meeting_id)
+        text = _extractive_fallback(
+            recap=recap,
+            verbatim_rows=verbatim_rows,
+            retrieved_rows=retrieved_rows,
+        )
+        degraded = True
 
     text = (text or "").strip() if isinstance(text, str) else ""
+    if not text:
+        text = _extractive_fallback(
+            recap=recap,
+            verbatim_rows=verbatim_rows,
+            retrieved_rows=retrieved_rows,
+        )
+        degraded = bool(text)
+
     offered = {export.clock(r.get("t0_ms")) for r in list(retrieved_rows) + list(verbatim_rows)}
     return {
         "type": "answer",
@@ -358,4 +397,6 @@ async def answer(
         # a test can check that nothing else was cited.
         "cited": sorted(stamp for stamp in offered if stamp in text),
         "sources": len(retrieved_rows) + len(verbatim_rows),
+        "degraded": "extractive" if degraded else None,
+        **({"error": "no_meeting_context"} if not text else {}),
     }
