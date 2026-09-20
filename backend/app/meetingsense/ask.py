@@ -27,14 +27,82 @@ does not know, because the first is checkable only by someone who already has th
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
 from . import export, store
 
 log = logging.getLogger(__name__)
+
+#: Per-meeting compute target for the private Ask lane. Stored as an artifact so no schema
+#: migration is needed and deleting the meeting deletes this choice with it.
+PREFS_KIND = "ask_prefs"
+
+
+@dataclass(frozen=True)
+class ModelTarget:
+    provider: str = ""
+    model: str = ""
+    base_url: str = ""
+
+    def as_dict(self) -> Dict[str, str]:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "base_url": self.base_url,
+        }
+
+
+def target_from(raw: Any) -> ModelTarget:
+    body = raw if isinstance(raw, dict) else {}
+    return ModelTarget(
+        provider=str(body.get("provider") or "").strip().lower()[:64],
+        model=str(body.get("model") or "").strip()[:240],
+        base_url=str(body.get("base_url") or "").strip()[:600],
+    )
+
+
+def set_prefs(meeting_id: str, raw: Any) -> ModelTarget:
+    """Remember the model target used for this meeting's private conversation."""
+    target = target_from(raw)
+    try:
+        store.delete_artifacts(meeting_id, kind=PREFS_KIND)
+        store.add_artifact(
+            meeting_id,
+            kind=PREFS_KIND,
+            target=target.provider,
+            detail=json.dumps(target.as_dict()),
+        )
+    except Exception:  # noqa: BLE001 — model preference is never worth a recording
+        log.exception("meetingsense: could not store ask preferences for %s", meeting_id)
+    return target
+
+
+def prefs(meeting_id: str) -> ModelTarget:
+    try:
+        rows = store.artifacts_for_meeting(meeting_id, kind=PREFS_KIND)
+    except Exception:  # noqa: BLE001
+        return ModelTarget()
+    for row in reversed(rows):
+        try:
+            raw = json.loads(row.get("detail") or "")
+        except (TypeError, ValueError):
+            continue
+        return target_from(raw)
+    return ModelTarget()
+
+
+def target_for(meeting_id: str, raw: Any = None) -> ModelTarget:
+    """Request override when supplied, otherwise the target chosen at meeting setup."""
+    override = target_from(raw)
+    if override.provider or override.model or override.base_url:
+        return override
+    return prefs(meeting_id)
+
 
 #: The verbatim tier: what a question asked mid-meeting is usually about.
 VERBATIM_MS = 90_000
