@@ -41,6 +41,10 @@ beforeEach(() => {
 
 afterEach(() => {
     delete (globalThis as Record<string, unknown>).hpMeetingSense;
+    window.localStorage.removeItem('homepilot_provider_chat');
+    window.localStorage.removeItem('homepilot_model_chat');
+    window.localStorage.removeItem('homepilot_base_url_chat');
+    vi.unstubAllGlobals();
 });
 
 describe('premium meeting start preflight', () => {
@@ -132,7 +136,11 @@ describe('premium meeting start preflight', () => {
         fireEvent.click(screen.getByTestId('ms-consent-accept'));
 
         await waitFor(() => expect(rec.start).toHaveBeenCalledTimes(1));
-        expect(rec.start.mock.calls[0][0].summary).toEqual({ style: 'email', length: 'detailed' });
+        expect(rec.start.mock.calls[0][0].summary).toMatchObject({
+            style: 'email',
+            length: 'detailed',
+            provider: 'ollama',
+        });
     });
 
     it('defaults to minutes at standard length without being asked', async () => {
@@ -150,7 +158,62 @@ describe('premium meeting start preflight', () => {
         fireEvent.click(screen.getByTestId('ms-consent-accept'));
 
         await waitFor(() => expect(rec.start).toHaveBeenCalledTimes(1));
-        expect(rec.start.mock.calls[0][0].summary).toEqual({ style: 'minutes', length: 'standard' });
+        expect(rec.start.mock.calls[0][0].summary).toMatchObject({
+            style: 'minutes',
+            length: 'standard',
+            provider: 'ollama',
+        });
+    });
+
+    it('lets summary and private meeting conversation use different installed models', async () => {
+        const rec = recorder();
+        (globalThis as Record<string, unknown>).hpMeetingSense = rec;
+        window.localStorage.setItem('homepilot_provider_chat', 'ollama');
+        window.localStorage.setItem('homepilot_model_chat', 'llama3.2:3b');
+        window.localStorage.setItem('homepilot_base_url_chat', 'http://localhost:11434');
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+            if (String(input).includes('/models?')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ ok: true, models: ['llama3.2:3b', 'qwen2.5:7b'] }),
+                } as Response;
+            }
+            return { ok: true, status: 200, json: async () => ({}) } as Response;
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(
+            <MeetingSenseProvider conversationId="c1" status={ON} storage={memoryStorage()}>
+                <MeetingButton />
+            </MeetingSenseProvider>,
+        );
+
+        fireEvent.click(screen.getByTestId('ms-record-button'));
+        await waitFor(() => {
+            expect(screen.getByTestId('ms-start-summary-model')).toHaveTextContent('qwen2.5:7b');
+        });
+
+        fireEvent.change(screen.getByTestId('ms-start-summary-model'), {
+            target: { value: 'qwen2.5:7b' },
+        });
+        fireEvent.change(screen.getByTestId('ms-start-conversation-model'), {
+            target: { value: 'llama3.2:3b' },
+        });
+        fireEvent.click(screen.getByTestId('ms-consent-accept'));
+
+        await waitFor(() => expect(rec.start).toHaveBeenCalledTimes(1));
+        expect(rec.start.mock.calls[0][0].summary).toMatchObject({
+            provider: 'ollama',
+            model: 'qwen2.5:7b',
+            base_url: 'http://localhost:11434',
+        });
+        expect(rec.start.mock.calls[0][0].conversation).toEqual({
+            provider: 'ollama',
+            model: 'llama3.2:3b',
+            base_url: 'http://localhost:11434',
+        });
     });
 
     /*
