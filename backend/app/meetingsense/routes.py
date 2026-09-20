@@ -929,10 +929,11 @@ async def resolve_queue(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]
 
 @router.post("/v1/meetingsense/{meeting_id}/ask")
 async def ask_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
-    """Ask about a meeting that has ended.
+    """Ask about a live or ended meeting from its grounded record.
 
-    The same function the live socket uses, so an answer does not depend on whether the
-    meeting is still running — only on how much of it exists.
+    The browser uses this route for both states. When the meeting is live, pass the session
+    clock just like the WebSocket ask frame does; the last transcript segment is not "now"
+    during a silence, and using it would make the 90-second verbatim window drift backwards.
     """
     _require_meeting(meeting_id)
     question = str((body or {}).get("text") or "").strip()
@@ -941,7 +942,13 @@ async def ask_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
 
     from .notes_engine import call_model
 
-    return await ask_mod.answer(meeting_id, question, call=call_model)
+    session = session_mod.get(meeting_id)
+    now_ms = (
+        session.elapsed_ms
+        if session is not None and session.state == session_mod.MeetingState.LIVE
+        else None
+    )
+    return await ask_mod.answer(meeting_id, question, call=call_model, now_ms=now_ms)
 
 
 @router.post("/v1/meetingsense/{meeting_id}/notes")
