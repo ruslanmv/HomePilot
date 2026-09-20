@@ -194,6 +194,85 @@ function SourceRow({
     );
 }
 
+
+function AskLane({
+    turns,
+    live,
+    onSeek,
+    onKeep,
+}: {
+    turns: ChatTurn[];
+    live: boolean;
+    onSeek: (ms: number) => void;
+    onKeep: (turn: ChatTurn) => void | Promise<void>;
+}) {
+    return (
+        <div className="space-y-3" aria-label="Your questions about this meeting" data-testid={live ? 'ms-ask-lane' : 'ms-ended-ask'}>
+            <p className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-3.5 py-2.5 text-[11px] leading-5 text-white/40" data-testid="ms-ask-privacy">
+                Private to you. These questions are answered from the {live ? 'live transcript available so far' : 'meeting transcript'},
+                and are not part of the meeting — they are not spoken into the call, not recorded
+                in the transcript, and not in the recap unless you keep one.
+            </p>
+            {turns.length === 0 ? (
+                <div className="py-8 text-center text-sm text-white/35" data-testid="ms-ask-empty">
+                    {live
+                        ? 'Ask anything about what has been said so far — “what are they talking about?”'
+                        : 'Ask anything about what was said in this meeting — “what did they decide?”'}
+                </div>
+            ) : null}
+            {turns.map((turn) => (turn.role === 'user' ? (
+                <div key={turn.id} className="flex justify-end" data-testid="ms-ask-question">
+                    <div className="max-w-[85%] rounded-2xl rounded-br-md border border-sky-400/20 bg-sky-400/[0.08] px-3.5 py-2.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-sky-200/70">You · private</div>
+                        <p className="mt-1 text-sm leading-5 text-white/90">{turn.text}</p>
+                    </div>
+                </div>
+            ) : (
+                <div key={turn.id} className="flex justify-start" data-testid="ms-ask-answer">
+                    <div className={`max-w-[85%] rounded-2xl rounded-bl-md border px-3.5 py-2.5 ${turn.error ? 'border-red-400/20 bg-red-500/[0.07]' : 'border-white/[0.08] bg-white/[0.03]'}`}>
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-white/40">HomePilot</div>
+                        {turn.pending ? (
+                            <p className="mt-1 text-sm leading-5 text-white/45" data-testid="ms-ask-pending">Looking through the meeting…</p>
+                        ) : (
+                            <>
+                                <p className={`mt-1 text-sm leading-5 ${turn.error ? 'text-red-200/85' : 'text-white/85'}`}>
+                                    {answerParts(turn.text, turn.cited).map((part, index) => (
+                                        part.kind === 'cite' ? (
+                                            <button
+                                                key={`c${index}`}
+                                                type="button"
+                                                onClick={() => onSeek(part.ms)}
+                                                title="Show this in the transcript"
+                                                data-testid="ms-ask-cite"
+                                                className="rounded bg-white/10 px-1 font-mono text-[11px] text-sky-200 hover:bg-white/15"
+                                            >
+                                                {part.text}
+                                            </button>
+                                        ) : (
+                                            <React.Fragment key={`t${index}`}>{part.text}</React.Fragment>
+                                        )
+                                    ))}
+                                </p>
+                                {!turn.error ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => void onKeep(turn)}
+                                        disabled={turn.kept}
+                                        data-testid="ms-ask-keep"
+                                        className="mt-2 text-[10px] text-white/35 hover:text-white/65 disabled:text-emerald-300/70"
+                                    >
+                                        {turn.kept ? '✓ Kept in meeting notes' : '+ Keep in meeting notes'}
+                                    </button>
+                                ) : null}
+                            </>
+                        )}
+                    </div>
+                </div>
+            )))}
+        </div>
+    );
+}
+
 function useMainHost() {
     const [host, setHost] = useState<HTMLElement | null>(null);
     useEffect(() => {
@@ -421,7 +500,7 @@ export function MeetingWorkspace({
          * on Transcript — so pressing Enter produced no visible change anywhere, and the
          * question looked like it had been swallowed. Sending is a request to see the answer.
          */
-        setTab('ask');
+        if (view.phase !== 'ended') setTab('ask');
 
         const settle = (patch: Partial<ChatTurn>) => {
             setChatTurns((turns) => turns.map((turn) => (
@@ -486,7 +565,12 @@ export function MeetingWorkspace({
 
     /** Jump from a citation to the moment it names. */
     const seekTo = (ms: number) => {
-        setTab('transcript');
+        if (view.phase === 'ended') {
+            const details = document.querySelector<HTMLDetailsElement>('[data-testid="ms-ended-transcript"]');
+            if (details) details.open = true;
+        } else {
+            setTab('transcript');
+        }
         const id = segmentAt(view.segments, ms);
         if (!id) return;
         window.requestAnimationFrame(() => {
@@ -580,6 +664,18 @@ export function MeetingWorkspace({
                                     {recapMeta ? <p className="mt-1 text-xs text-white/40">{recapMeta}</p> : null}
                                 </div>
                                 <MeetingSummary body={body} pending={pendingNotes} />
+                                <section className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+                                    <div className="mb-3 flex items-center gap-2">
+                                        <Sparkles size={14} className="text-sky-200/70" />
+                                        <h3 className="text-sm font-semibold text-white/90">Ask this meeting</h3>
+                                    </div>
+                                    <AskLane
+                                        turns={chatTurns}
+                                        live={false}
+                                        onSeek={seekTo}
+                                        onKeep={keepInNotes}
+                                    />
+                                </section>
                                 {view.slideList.length ? (
                                     <section className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
                                         <h3 className="text-sm font-semibold text-white/90">Key screens</h3>
@@ -593,11 +689,15 @@ export function MeetingWorkspace({
                                         </div>
                                     </section>
                                 ) : null}
-                                <details className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+                                <details data-testid="ms-ended-transcript" className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
                                     <summary className="cursor-pointer text-sm font-semibold text-white/85">Transcript · {view.segments.length}</summary>
                                     <div className="mt-4 space-y-2">
                                         {view.segments.map((segment, index) => (
-                                            <div key={segment.id || index} className="grid grid-cols-[64px_70px_1fr] gap-2 text-xs leading-5">
+                                            <div
+                                                key={segment.id || index}
+                                                data-segment-id={segment.id || undefined}
+                                                className="grid grid-cols-[64px_70px_1fr] gap-2 text-xs leading-5"
+                                            >
                                                 <span className="font-mono text-white/30">{stampLabel(segment.t0)}</span>
                                                 <span className="font-medium text-white/55">{speakerLabel(segment.speaker)}</span>
                                                 <span className="text-white/75">{segment.text}</span>
@@ -637,77 +737,12 @@ export function MeetingWorkspace({
                             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
                                 <div className="mx-auto max-w-3xl">
                                     {tab === 'ask' ? (
-                                        <div className="space-y-3" aria-label="Your questions about this meeting" data-testid="ms-ask-lane">
-                                            {/*
-                                              Said once, at the top, and not repeated per turn.
-                                              The single most important property of this lane is
-                                              that it is *not* the meeting — a user who thinks
-                                              their question was spoken into the room, or will
-                                              appear in the recap somebody else reads, is being
-                                              misled by the interface.
-                                            */}
-                                            <p className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-3.5 py-2.5 text-[11px] leading-5 text-white/40" data-testid="ms-ask-privacy">
-                                                Private to you. These questions are answered from the live transcript,
-                                                and are not part of the meeting — they are not spoken into the call, not
-                                                recorded in the transcript, and not in the recap unless you keep one.
-                                            </p>
-                                            {chatTurns.length === 0 ? (
-                                                <div className="py-8 text-center text-sm text-white/35" data-testid="ms-ask-empty">
-                                                    Ask anything about what has been said so far — “what did they say about tax cuts?”
-                                                </div>
-                                            ) : null}
-                                            {chatTurns.map((turn) => (turn.role === 'user' ? (
-                                                <div key={turn.id} className="flex justify-end" data-testid="ms-ask-question">
-                                                    <div className="max-w-[85%] rounded-2xl rounded-br-md border border-sky-400/20 bg-sky-400/[0.08] px-3.5 py-2.5">
-                                                        <div className="text-[10px] font-semibold uppercase tracking-wide text-sky-200/70">You · private</div>
-                                                        <p className="mt-1 text-sm leading-5 text-white/90">{turn.text}</p>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div key={turn.id} className="flex justify-start" data-testid="ms-ask-answer">
-                                                    <div className={`max-w-[85%] rounded-2xl rounded-bl-md border px-3.5 py-2.5 ${turn.error ? 'border-red-400/20 bg-red-500/[0.07]' : 'border-white/[0.08] bg-white/[0.03]'}`}>
-                                                        <div className="text-[10px] font-semibold uppercase tracking-wide text-white/40">HomePilot</div>
-                                                        {turn.pending ? (
-                                                            <p className="mt-1 text-sm leading-5 text-white/45" data-testid="ms-ask-pending">Looking through the meeting…</p>
-                                                        ) : (
-                                                            <>
-                                                                <p className={`mt-1 text-sm leading-5 ${turn.error ? 'text-red-200/85' : 'text-white/85'}`}>
-                                                                    {answerParts(turn.text, turn.cited).map((part, index) => (
-                                                                        part.kind === 'cite' ? (
-                                                                            <button
-                                                                                key={`c${index}`}
-                                                                                type="button"
-                                                                                onClick={() => seekTo(part.ms)}
-                                                                                title="Show this in the transcript"
-                                                                                data-testid="ms-ask-cite"
-                                                                                className="rounded bg-white/10 px-1 font-mono text-[11px] text-sky-200 hover:bg-white/15"
-                                                                            >
-                                                                                {part.text}
-                                                                            </button>
-                                                                        ) : (
-                                                                            <React.Fragment key={`t${index}`}>{part.text}</React.Fragment>
-                                                                        )
-                                                                    ))}
-                                                                </p>
-                                                                {!turn.error ? (
-                                                                    /* The "optional" half of the ask: nothing reaches the
-                                                                       meeting's record unless it is put there on purpose. */
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => void keepInNotes(turn)}
-                                                                        disabled={turn.kept}
-                                                                        data-testid="ms-ask-keep"
-                                                                        className="mt-2 text-[10px] text-white/35 hover:text-white/65 disabled:text-emerald-300/70"
-                                                                    >
-                                                                        {turn.kept ? '✓ Kept in meeting notes' : '+ Keep in meeting notes'}
-                                                                    </button>
-                                                                ) : null}
-                                                            </>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )))}
-                                        </div>
+                                        <AskLane
+                                            turns={chatTurns}
+                                            live
+                                            onSeek={seekTo}
+                                            onKeep={keepInNotes}
+                                        />
                                     ) : tab === 'timeline' ? (
                                         <div className="space-y-3">
                                             {semanticEvents.map((event) => (
