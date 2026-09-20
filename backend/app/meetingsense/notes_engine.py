@@ -414,10 +414,27 @@ def engine_factory(config: Any) -> Callable[[str], "NotesEngine"]:
     notes_config = getattr(config, "notes", None)
 
     def build(meeting_id: str) -> "NotesEngine":
+        # Summary preferences are stored before this factory runs. Reuse that target for the
+        # rolling notes/recap so the top recap and the full end document do not mysteriously
+        # use different providers. Operator-level notes.model remains the fallback.
+        try:
+            from . import minutes as minutes_mod
+
+            target = minutes_mod.prefs(meeting_id)
+        except Exception:  # noqa: BLE001
+            target = None
+        provider = getattr(target, "provider", "") or ""
+        model = getattr(target, "model", "") or getattr(notes_config, "model", "") or ""
+        base_url = getattr(target, "base_url", "") or ""
+
         return NotesEngine(
             meeting_id,
             call=lambda messages, **kw: call_model(
-                messages, model=getattr(notes_config, "model", "") or "", **kw
+                messages,
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                **kw,
             ),
             interval_s=getattr(notes_config, "interval_s", None),
             max_words=getattr(notes_config, "max_words", None),
