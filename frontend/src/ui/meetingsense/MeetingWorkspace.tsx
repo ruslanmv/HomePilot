@@ -514,7 +514,12 @@ export function MeetingWorkspace({
                     method: 'POST',
                     credentials: 'include',
                     headers: requestHeaders(),
-                    body: JSON.stringify({ text }),
+                    body: JSON.stringify({
+                        text,
+                        ...(capture.conversationProvider ? { provider: capture.conversationProvider } : {}),
+                        ...(capture.conversationModel ? { model: capture.conversationModel } : {}),
+                        ...(capture.conversationBaseUrl ? { base_url: capture.conversationBaseUrl } : {}),
+                    }),
                 },
             );
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -617,6 +622,17 @@ export function MeetingWorkspace({
         <div className="absolute inset-0 z-[35] flex min-h-0 flex-col overflow-hidden bg-[#111214] text-white" data-testid="meeting-workspace">
             <header className="shrink-0 border-b border-white/[0.08] bg-[#141519] px-4 py-3 sm:px-5">
                 <div className="flex items-center gap-3">
+                    {ended && onClose ? (
+                        <button
+                            type="button"
+                            data-testid="ms-workspace-close"
+                            onClick={onClose}
+                            title="Close meeting recap"
+                            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 text-xs font-semibold text-white/75 hover:bg-white/10"
+                        >
+                            <X size={13} /> Close
+                        </button>
+                    ) : null}
                     <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                             <span className={ended || ending ? 'text-white/65' : 'font-semibold text-emerald-300'}>
@@ -637,24 +653,6 @@ export function MeetingWorkspace({
                             className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3.5 text-xs font-semibold text-red-200 hover:bg-red-500/15"
                         >
                             <Square size={13} /> End meeting
-                        </button>
-                    ) : onClose ? (
-                        /*
-                         * The way out.
-                         *
-                         * The workspace is a full-screen portal over the application, and once
-                         * a meeting ended it offered no control at all: the only exit was to
-                         * navigate to a different conversation somewhere underneath it, which
-                         * is not reachable from on top of it. That is a dead end, and it is
-                         * the missing "close" button.
-                         */
-                        <button
-                            type="button"
-                            data-testid="ms-workspace-close"
-                            onClick={onClose}
-                            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 text-xs font-semibold text-white/75 hover:bg-white/10"
-                        >
-                            <X size={13} /> Close
                         </button>
                     ) : null}
                 </div>
@@ -678,6 +676,11 @@ export function MeetingWorkspace({
                                     meetingId={view.meetingId}
                                     documents={summaryDocs(record)}
                                     hasTranscript={view.segments.length > 0}
+                                    modelTarget={{
+                                        provider: capture.summaryProvider,
+                                        model: capture.summaryModel,
+                                        baseUrl: capture.summaryBaseUrl,
+                                    }}
                                 />
                                 <section className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
                                     <div className="mb-3 flex items-center gap-2">
