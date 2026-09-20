@@ -56,11 +56,11 @@ const VIEW = {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-function renderWorkspace(view = VIEW, record: unknown = null) {
+function renderWorkspace(view = VIEW, record: unknown = null, capture = DEFAULT_CAPTURE) {
   return render(
     <MeetingWorkspace
       view={view as never}
-      capture={DEFAULT_CAPTURE}
+      capture={capture}
       captureStatus={CAPTURE_STATUS as never}
       conversationId="conv-meeting"
       screenStream={null}
@@ -118,6 +118,25 @@ describe('asking a live meeting', () => {
     expect(String(url)).toContain('/v1/meetingsense/m-live/ask');
     expect(String(url)).not.toContain('/chat');
     expect(JSON.parse(String(init.body))).toEqual({ text: 'what did they say about tax cuts?' });
+  });
+
+  it('routes private Q&A through the model selected for this meeting', async () => {
+    renderWorkspace(VIEW, null, {
+      ...DEFAULT_CAPTURE,
+      conversationProvider: 'ollama',
+      conversationModel: 'qwen2.5:7b',
+      conversationBaseUrl: 'http://localhost:11434',
+    });
+    await ask('what are they talking about?');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(init.body))).toEqual({
+      text: 'what are they talking about?',
+      provider: 'ollama',
+      model: 'qwen2.5:7b',
+      base_url: 'http://localhost:11434',
+    });
   });
 
   it('never posts the question into the meeting conversation', async () => {
