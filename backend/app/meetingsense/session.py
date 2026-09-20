@@ -265,6 +265,12 @@ class MeetingSession:
         except Exception:  # noqa: BLE001 — a missing link is a card that does not hydrate
             log.exception("meetingsense: could not record the thread for %s", self.meeting_id)
 
+        # The compute targets are recorded before the notes engine is built. The rolling recap
+        # is part of the same summary experience as the final document, so it must use the
+        # summary model selected in setup instead of silently falling back to another provider.
+        self._remember_summary_prefs(message.get("summary"))
+        self._remember_ask_prefs(message.get("conversation"))
+
         # MS12-a. The engine is built here rather than in the constructor because whether
         # notes are wanted arrives in this frame — and because it was built *nowhere* until
         # this batch: `start` echoed `notes: true` back to clients and nothing ever produced
@@ -292,8 +298,7 @@ class MeetingSession:
         # rather than asked for at `stop`, because the moment a meeting ends is the moment
         # the user is least willing to answer a dialog, and because a preference set here
         # survives the browser being closed before the recap is read.
-        self._remember_summary_prefs(message.get("summary"))
-        self._remember_ask_prefs(message.get("conversation"))
+        # Preferences were recorded before the notes engine was built above.
 
         # The helper mode the wizard offered. Applied here rather than left to a second
         # request: the mode decides whether the assistant may answer or draft at all, so a
