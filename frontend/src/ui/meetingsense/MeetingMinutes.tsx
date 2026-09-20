@@ -148,9 +148,9 @@ export function MeetingMinutes({
         model: String(latestStoredTarget?.model || globalTarget.model),
         baseUrl: String(latestStoredTarget?.base_url || globalTarget.baseUrl),
     };
-    const [provider, setProvider] = useState(initialTarget.provider || 'ollama');
+    const [provider] = useState(initialTarget.provider || 'ollama');
     const [model, setModel] = useState(initialTarget.model || '');
-    const [baseUrl, setBaseUrl] = useState(initialTarget.baseUrl || '');
+    const [baseUrl] = useState(initialTarget.baseUrl || '');
     const [models, setModels] = useState<string[]>(initialTarget.model ? [initialTarget.model] : []);
 
     useEffect(() => {
