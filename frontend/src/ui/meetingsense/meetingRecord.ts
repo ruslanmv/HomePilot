@@ -65,6 +65,12 @@ export interface MeetingSummaryDoc {
     words?: number;
     /** `extractive` when no model was reachable and the meeting's own words were used. */
     degraded?: string | null;
+    options?: {
+        provider?: string;
+        model?: string;
+        base_url?: string;
+        [key: string]: unknown;
+    };
     created_at?: number;
 }
 
