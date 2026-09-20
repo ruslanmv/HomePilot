@@ -95,6 +95,37 @@ describe('the full summary panel', () => {
         expect(body.length).toBe('short');
     });
 
+    it('sends the selected summary model target with a rewrite', async () => {
+        const modelFetcher = vi.fn(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true, models: ['llama3.2:3b', 'qwen2.5:7b'] }),
+        } as Response));
+        renderPanel({
+            modelTarget: {
+                provider: 'ollama',
+                model: 'llama3.2:3b',
+                baseUrl: 'http://localhost:11434',
+            },
+            modelFetcher: modelFetcher as unknown as typeof fetch,
+        });
+
+        fireEvent.click(screen.getByTestId('ms-minutes-tune'));
+        await waitFor(() => expect(screen.getByTestId('ms-minutes-model')).toHaveTextContent('qwen2.5:7b'));
+        fireEvent.change(screen.getByTestId('ms-minutes-model'), {
+            target: { value: 'qwen2.5:7b' },
+        });
+        fireEvent.click(screen.getByTestId('ms-minutes-generate'));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body).toMatchObject({
+            provider: 'ollama',
+            model: 'qwen2.5:7b',
+            base_url: 'http://localhost:11434',
+        });
+    });
+
     it('sends a custom instruction with the request', async () => {
         renderPanel();
         fireEvent.click(screen.getByTestId('ms-minutes-tune'));
