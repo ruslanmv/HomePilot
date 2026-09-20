@@ -426,16 +426,27 @@ def engine_factory(config: Any) -> Callable[[str], "NotesEngine"]:
     return build
 
 
-async def call_model(messages: List[Dict[str, str]], *, temperature: float = 0.2, model: str = "") -> str:
-    """The default model call: the same router `jobs.py` uses.
+async def call_model(
+    messages: List[Dict[str, str]],
+    *,
+    temperature: float = 0.2,
+    model: str = "",
+    provider: str = "",
+    base_url: str = "",
+) -> str:
+    """The default MeetingSense model call, routed through HomePilot's compute layer.
 
-    Imported inside the function so this module stays importable — and testable — without the
-    compute stack, which is the same reason `store` reaches for `storage` lazily.
+    `provider` and `base_url` are optional for compatibility with operator-level defaults,
+    but a meeting setup can now supply the same chat target the rest of HomePilot is using.
+    Previously MeetingSense passed only a model name, so `route_chat` silently defaulted to
+    `openai_compat` even when the app was configured for Ollama.
     """
     from ..compute import route_chat
 
     response = await route_chat(
         messages,
+        provider=provider or "openai_compat",
+        base_url=base_url or None,
         temperature=temperature,
         max_tokens=600,
         model=model or None,
