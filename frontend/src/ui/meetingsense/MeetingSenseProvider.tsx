@@ -20,6 +20,7 @@ import { DEFAULT_CAPTURE, parseNames, type CaptureOptions } from './CapturePopov
 import { useMeetingRecord } from './useMeetingRecord';
 import type { MeetingRecord } from './meetingRecord';
 import type { MeetingSenseStatus } from './entryPoint';
+import { readMeetingModelTarget } from './api';
 
 export interface MeetingSenseProviderProps {
     conversationId: string | null;
@@ -179,7 +180,18 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         children,
     } = props;
     const meeting = useMeetingSense({ provider: status?.stt?.provider ?? null });
-    const [capture, setCapture] = useState<CaptureOptions>(DEFAULT_CAPTURE);
+    const [capture, setCapture] = useState<CaptureOptions>(() => {
+        const target = readMeetingModelTarget();
+        return {
+            ...DEFAULT_CAPTURE,
+            summaryProvider: target.provider,
+            summaryModel: target.model,
+            summaryBaseUrl: target.baseUrl,
+            conversationProvider: target.provider,
+            conversationModel: target.model,
+            conversationBaseUrl: target.baseUrl,
+        };
+    });
     const [pendingStart, setPendingStart] = useState(false);
     const [starting, setStarting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -268,7 +280,18 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                 // `start` and stored on the meeting, so a stop that happens after a
                 // reconnect — or after this tab was closed — still writes the one the user
                 // chose rather than the default.
-                summary: { style: capture.summaryStyle, length: capture.summaryLength },
+                summary: {
+                    style: capture.summaryStyle,
+                    length: capture.summaryLength,
+                    provider: capture.summaryProvider,
+                    model: capture.summaryModel,
+                    base_url: capture.summaryBaseUrl,
+                },
+                conversation: {
+                    provider: capture.conversationProvider,
+                    model: capture.conversationModel,
+                    base_url: capture.conversationBaseUrl,
+                },
             });
             if (!result.ok) {
                 setError(result.error || 'The meeting could not start.');
