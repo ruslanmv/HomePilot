@@ -83,7 +83,9 @@ export async function fetchMeetingModels(
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = await response.json();
-        const rows = Array.isArray(body?.models) ? body.models.map(modelId).filter(Boolean) : [];
+        const rows: string[] = Array.isArray(body?.models)
+            ? (body.models as unknown[]).map(modelId).filter((id): id is string => Boolean(id))
+            : [];
         if (target.model && !rows.includes(target.model)) rows.unshift(target.model);
         return [...new Set(rows)];
     } catch {
