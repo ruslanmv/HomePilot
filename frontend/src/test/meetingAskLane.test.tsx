@@ -56,7 +56,7 @@ const VIEW = {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-function renderWorkspace(view = VIEW) {
+function renderWorkspace(view = VIEW, record: unknown = null) {
   return render(
     <MeetingWorkspace
       view={view as never}
@@ -64,7 +64,7 @@ function renderWorkspace(view = VIEW) {
       captureStatus={CAPTURE_STATUS as never}
       conversationId="conv-meeting"
       screenStream={null}
-      record={null}
+      record={record as never}
       pendingNotes={false}
       onEnd={vi.fn()}
       onMute={vi.fn()}
@@ -89,6 +89,14 @@ beforeEach(() => {
     json: async () => ({ text: 'They announced tax cuts and grants [00:00:19].', cited: ['00:00:19'] }),
   }));
   vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => {
+    fn(0);
+    return 0;
+  });
+  if (!(globalThis as { CSS?: unknown }).CSS) {
+    (globalThis as Record<string, unknown>).CSS = { escape: (value: string) => value };
+  }
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -200,4 +208,69 @@ describe('asking a live meeting', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+
+describe('asking after the meeting ends', () => {
+  const endedView = {
+    ...VIEW,
+    phase: 'ended',
+    elapsedMs: 40_000,
+    segments: [
+      { id: 's30', t0: 30_000, t1: 32_000, speaker: 'them', text: "I'm girlfriend, your romantic partner." },
+      { id: 's32', t0: 32_000, t1: 37_000, speaker: 'them', text: 'I love to flirt, roleplay, and make you feel desired and appreciated.' },
+      { id: 's37', t0: 37_000, t1: 40_000, speaker: 'them', text: "I'm playful, passionate, and deeply caring." },
+    ],
+  };
+
+  const record = {
+    meeting: { id: 'm-live', title: 'Meeting recap', started_at: 1_700_000_000, ended_at: 1_700_000_040 },
+    notes: null,
+  };
+
+  it('keeps the private Q&A lane visible on the recap screen', async () => {
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        text: 'They are describing a romantic-partner persona [00:00:30].',
+        cited: ['00:00:30'],
+      }),
+    }));
+
+    renderWorkspace(endedView as never, record);
+    expect(await screen.findByTestId('ms-ended-ask')).toBeTruthy();
+
+    await ask('what are they talking about?');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ms-ask-answer')).toHaveTextContent('romantic-partner persona');
+    });
+    expect(screen.getByTestId('ms-ask-question')).toHaveTextContent('what are they talking about?');
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/v1/meetingsense/m-live/ask');
+    expect(String(url)).not.toContain('/chat');
+    expect(JSON.parse(String(init.body))).toEqual({ text: 'what are they talking about?' });
+  });
+
+  it('opens the ended transcript when an answer citation is followed', async () => {
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        text: 'They describe a romantic-partner persona [00:00:30].',
+        cited: ['00:00:30'],
+      }),
+    }));
+
+    renderWorkspace(endedView as never, record);
+    const transcript = await screen.findByTestId('ms-ended-transcript');
+    expect((transcript as HTMLDetailsElement).open).toBe(false);
+
+    await ask('what are they talking about?');
+    const cite = await screen.findByTestId('ms-ask-cite');
+    fireEvent.click(cite);
+
+    expect((transcript as HTMLDetailsElement).open).toBe(true);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+});
 });
