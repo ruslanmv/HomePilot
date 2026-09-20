@@ -66,9 +66,11 @@ class Recorder:
     def __init__(self, *answers):
         self.answers = list(answers)
         self.calls = []
+        self.kwargs = []
 
     async def __call__(self, messages, **kwargs):
         self.calls.append(messages)
+        self.kwargs.append(kwargs)
         return self.answers.pop(0) if self.answers else "I don't know."
 
     @property
@@ -512,6 +514,26 @@ class TestAskRoute:
         assert body["text"].startswith("Marina")
         assert body["cited"] == ["00:01:00"]
 
+    def test_it_routes_http_ask_through_the_selected_model(self, client, enabled, modules, monkeypatch):
+        import app.meetingsense.notes_engine as notes_engine
+
+        recorder = Recorder("Grounded answer.")
+        monkeypatch.setattr(notes_engine, "call_model", recorder)
+        meeting_id = seed(modules)
+        response = client.post(
+            f"/v1/meetingsense/{meeting_id}/ask",
+            json={
+                "text": "what happened?",
+                "provider": "ollama",
+                "model": "qwen2.5:7b",
+                "base_url": "http://localhost:11434",
+            },
+        )
+        assert response.status_code == 200
+        assert recorder.kwargs[-1]["provider"] == "ollama"
+        assert recorder.kwargs[-1]["model"] == "qwen2.5:7b"
+        assert recorder.kwargs[-1]["base_url"] == "http://localhost:11434"
+
     def test_an_empty_question_is_a_400(self, client, enabled, modules):
         response = client.post(f"/v1/meetingsense/{seed(modules)}/ask", json={"text": "  "})
         assert response.status_code == 400
@@ -563,6 +585,35 @@ class TestAskOnTheSocket:
         run(session.start({"conversation_id": "c"}))
         run(modules.routes._handle_ask(session, {"type": "ask", "text": "who chases legal?"}))
         assert session.transport.of_type("answer")
+
+    def test_live_socket_ask_uses_the_model_chosen_at_setup(self, modules, monkeypatch):
+        import app.meetingsense.notes_engine as notes_engine
+        import app.meetingsense.session as session_mod
+
+        recorder = Recorder("Marina.")
+        monkeypatch.setattr(notes_engine, "call_model", recorder)
+        session = session_mod.MeetingSession(
+            transport=session_mod.ListTransport(),
+            config=modules.routes.load_config(),
+            now=lambda: 1000.0,
+        )
+        run(session.start({
+            "conversation_id": "c",
+            "conversation": {
+                "provider": "ollama",
+                "model": "qwen2.5:7b",
+                "base_url": "http://localhost:11434",
+            },
+        }))
+        run(modules.routes._handle_ask(session, {"text": "who chases legal?"}))
+
+        chosen = modules.ask.prefs(session.meeting_id)
+        assert (chosen.provider, chosen.model, chosen.base_url) == (
+            "ollama", "qwen2.5:7b", "http://localhost:11434"
+        )
+        assert recorder.kwargs[-1]["provider"] == "ollama"
+        assert recorder.kwargs[-1]["model"] == "qwen2.5:7b"
+        assert recorder.kwargs[-1]["base_url"] == "http://localhost:11434"
 
     def test_the_window_follows_the_session_clock_not_the_last_segment(self, modules, monkeypatch):
         # A question asked during a silence is still about *now*. Taking the last segment's
