@@ -5,7 +5,7 @@
  * choice back to MeetingSenseProvider. The provider remains the single place
  * that starts capture, enforces the server flag and persists consent.
  */
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     AudioLines,
     Check,
@@ -23,6 +23,7 @@ import { MODES, type CaptureOptions } from './CapturePopover';
 import { SUMMARY_LENGTHS, SUMMARY_STYLES } from './MeetingMinutes';
 import type { ConsentStatus } from './ConsentSheet';
 import { consentSentences } from './meetingState';
+import { fetchMeetingModels } from './api';
 
 export interface MeetingStartDialogProps {
     status: ConsentStatus | null;
@@ -54,6 +55,36 @@ export function MeetingStartDialog({
 }: MeetingStartDialogProps) {
     const dialog = useRef<HTMLDivElement | null>(null);
     const remember = useRef<HTMLInputElement | null>(null);
+    const [summaryModels, setSummaryModels] = useState<string[]>([]);
+    const [conversationModels, setConversationModels] = useState<string[]>([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        void Promise.all([
+            fetchMeetingModels({
+                provider: capture.summaryProvider || 'ollama',
+                model: capture.summaryModel,
+                baseUrl: capture.summaryBaseUrl,
+            }),
+            fetchMeetingModels({
+                provider: capture.conversationProvider || 'ollama',
+                model: capture.conversationModel,
+                baseUrl: capture.conversationBaseUrl,
+            }),
+        ]).then(([summary, conversation]) => {
+            if (cancelled) return;
+            setSummaryModels(summary);
+            setConversationModels(conversation);
+        });
+        return () => { cancelled = true; };
+    }, [
+        capture.summaryProvider,
+        capture.summaryModel,
+        capture.summaryBaseUrl,
+        capture.conversationProvider,
+        capture.conversationModel,
+        capture.conversationBaseUrl,
+    ]);
 
     const privacyLines = useMemo(
         () => consentSentences({ ...(status || {}), mode: capture.mode }),
@@ -353,6 +384,42 @@ export function MeetingStartDialog({
                                         </button>
                                     );
                                 })}
+                            </div>
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2" data-testid="ms-start-models">
+                                <label className="block">
+                                    <span className="mb-1 block text-[11px] font-medium text-white/55">
+                                        Summary model
+                                    </span>
+                                    <select
+                                        value={capture.summaryModel}
+                                        onChange={(event) => onCaptureChange({ ...capture, summaryModel: event.target.value })}
+                                        data-testid="ms-start-summary-model"
+                                        className="w-full rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2 text-xs text-white/85 focus:border-violet-300/30 focus:outline-none focus:ring-2 focus:ring-violet-400/40"
+                                    >
+                                        <option value="">Automatic / provider default</option>
+                                        {summaryModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                                    </select>
+                                    <span className="mt-1 block text-[10px] text-white/30">
+                                        {capture.summaryProvider || 'ollama'} · used for the full summary and rewrites
+                                    </span>
+                                </label>
+                                <label className="block">
+                                    <span className="mb-1 block text-[11px] font-medium text-white/55">
+                                        Meeting conversation model
+                                    </span>
+                                    <select
+                                        value={capture.conversationModel}
+                                        onChange={(event) => onCaptureChange({ ...capture, conversationModel: event.target.value })}
+                                        data-testid="ms-start-conversation-model"
+                                        className="w-full rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2 text-xs text-white/85 focus:border-violet-300/30 focus:outline-none focus:ring-2 focus:ring-violet-400/40"
+                                    >
+                                        <option value="">Automatic / provider default</option>
+                                        {conversationModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                                    </select>
+                                    <span className="mt-1 block text-[10px] text-white/30">
+                                        {capture.conversationProvider || 'ollama'} · used for private Ask this meeting answers
+                                    </span>
+                                </label>
                             </div>
                             <p className="mt-2.5 text-[11px] leading-4 text-white/35">
                                 {SUMMARY_STYLES.find((option) => option.id === capture.summaryStyle)?.note}
