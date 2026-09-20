@@ -759,10 +759,21 @@ async def _handle_ask(session, message: Dict[str, Any]) -> Dict[str, Any]:
     """
     from .notes_engine import call_model
 
+    target = ask_mod.prefs(session.meeting_id)
+
+    async def call(messages, **kw):
+        return await call_model(
+            messages,
+            provider=target.provider,
+            model=target.model,
+            base_url=target.base_url,
+            **kw,
+        )
+
     frame = await ask_mod.answer(
         session.meeting_id,
         str(message.get("text") or ""),
-        call=call_model,
+        call=call,
         now_ms=session.elapsed_ms,
     )
     await session.transport.send(frame)
@@ -780,7 +791,18 @@ def _ask_bridge():
     from .notes_engine import call_model
 
     async def ask(meeting_id: str, question: str, *, mode: str = "") -> Dict[str, Any]:
-        return await ask_mod.answer(meeting_id, question, call=call_model, mode=mode)
+        target = ask_mod.prefs(meeting_id)
+
+        async def call(messages, **kw):
+            return await call_model(
+                messages,
+                provider=target.provider,
+                model=target.model,
+                base_url=target.base_url,
+                **kw,
+            )
+
+        return await ask_mod.answer(meeting_id, question, call=call, mode=mode)
 
     return ask
 
@@ -948,13 +970,24 @@ async def ask_meeting(meeting_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
 
     from .notes_engine import call_model
 
+    target = ask_mod.target_for(meeting_id, body)
+
+    async def call(messages, **kw):
+        return await call_model(
+            messages,
+            provider=target.provider,
+            model=target.model,
+            base_url=target.base_url,
+            **kw,
+        )
+
     session = session_mod.get(meeting_id)
     now_ms = (
         session.elapsed_ms
         if session is not None and session.state == session_mod.MeetingState.LIVE
         else None
     )
-    return await ask_mod.answer(meeting_id, question, call=call_model, now_ms=now_ms)
+    return await ask_mod.answer(meeting_id, question, call=call, now_ms=now_ms)
 
 
 @router.get("/v1/meetingsense/{meeting_id}/summary")
@@ -1002,10 +1035,17 @@ async def write_summary(meeting_id: str, body: Dict[str, Any] | None = None) -> 
         # usually wants the next meeting's document to be one too.
         minutes_mod.set_prefs(meeting_id, options)
 
-    model = getattr(load_config().summary, "model", "") or ""
+    summary_cfg = load_config().summary
+    model = options.model or getattr(summary_cfg, "model", "") or ""
 
     async def call(messages, **kw):
-        return await call_model(messages, model=model, **kw)
+        return await call_model(
+            messages,
+            provider=options.provider,
+            model=model,
+            base_url=options.base_url,
+            **kw,
+        )
 
     document = await minutes_mod.summarise(meeting_id, call=call, options=options)
     if not (document.get("text") or "").strip():
