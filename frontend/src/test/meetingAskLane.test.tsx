@@ -273,4 +273,3 @@ describe('asking after the meeting ends', () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 });
-});
