@@ -95,6 +95,8 @@ jobs:
           src/test/meetingsenseCloseNavigation.test.tsx
           src/test/meetingAudioOnly.test.tsx
           src/test/meetingAskLane.test.tsx
+          src/test/meetingMinutes.test.tsx
+          src/test/meetingStartDialog.test.tsx
           src/test/meetingMenuItem.test.tsx
           src/test/composerPlusMenu.test.tsx
         working-directory: frontend
