@@ -293,6 +293,7 @@ class MeetingSession:
         # the user is least willing to answer a dialog, and because a preference set here
         # survives the browser being closed before the recap is read.
         self._remember_summary_prefs(message.get("summary"))
+        self._remember_ask_prefs(message.get("conversation"))
 
         # The helper mode the wizard offered. Applied here rather than left to a second
         # request: the mode decides whether the assistant may answer or draft at all, so a
@@ -336,6 +337,15 @@ class MeetingSession:
             self.summary_options = minutes_mod.set_prefs(self.meeting_id, options)
         except Exception:  # noqa: BLE001 — a preference is never worth a recording
             log.exception("meetingsense: could not record summary preferences for %s", self.meeting_id)
+
+    def _remember_ask_prefs(self, raw: Any) -> None:
+        """Store the private meeting-conversation model target chosen in setup."""
+        try:
+            from . import ask as ask_mod
+
+            ask_mod.set_prefs(self.meeting_id, raw)
+        except Exception:  # noqa: BLE001 — a preference is never worth a recording
+            log.exception("meetingsense: could not record ask preferences for %s", self.meeting_id)
 
     # ── suspend and resume (D10) ────────────────────────────────────────────
 
@@ -494,13 +504,22 @@ class MeetingSession:
             from . import minutes as minutes_mod
             from .notes_engine import call_model
 
-            model = getattr(summary_cfg, "model", "") or ""
+            options = self.summary_options or minutes_mod.prefs(self.meeting_id)
+            model = options.model or getattr(summary_cfg, "model", "") or ""
+            provider = options.provider
+            base_url = options.base_url
 
             async def call(messages, **kw):
-                return await call_model(messages, model=model, **kw)
+                return await call_model(
+                    messages,
+                    model=model,
+                    provider=provider,
+                    base_url=base_url,
+                    **kw,
+                )
 
             document = await minutes_mod.autogenerate(
-                self.meeting_id, call=call, options=self.summary_options
+                self.meeting_id, call=call, options=options
             )
         except Exception:  # noqa: BLE001 — the summary is never worth the meeting
             log.exception("meetingsense: could not write the summary for %s", self.meeting_id)
