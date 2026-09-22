@@ -23,7 +23,7 @@ from ..config import (
     OLLAMA_MODEL,
 )
 from ..orchestrator import handle_request
-from . import actions, store
+from . import actions, events, store
 
 
 def _scheduled_now() -> str:
@@ -180,7 +180,24 @@ async def execute_routine(
             result_preview=_speech_text(text)[:240],
             result=result,
         )
-        return finished or run
+        completed = finished or run
+        await events.publish(
+            user_id,
+            {
+                "type": "routine.completed",
+                "run_id": completed["id"],
+                "routine": {
+                    "id": routine["id"],
+                    "name": routine.get("name") or "Routine",
+                },
+                "target": routine.get("target") or {"type": "assistant"},
+                "scheduled_for": completed.get("scheduled_for"),
+                "project_id": project_id,
+                "conversation_id": actual_conversation_id,
+                "presentation": presentation,
+            },
+        )
+        return completed
     except Exception as exc:
         failed = store.finish_run(
             user_id,
