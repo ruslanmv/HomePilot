@@ -183,7 +183,7 @@ function RoutineEditor({
   const setAction = (type: RoutineActionType) => {
     const parameters =
       type === 'news_digest'
-        ? { scope: ['local', 'national', 'world'], max_items: 6 }
+        ? { scope: ['local', 'national', 'world'], max_items: 6, location: '' }
         : type === 'reminder'
           ? { message: '' }
           : type === 'assistant_prompt'
@@ -217,6 +217,7 @@ function RoutineEditor({
 
   const message = String(draft.action.parameters.message || '')
   const prompt = String(draft.action.parameters.prompt || '')
+  const newsLocation = String(draft.action.parameters.location || '')
 
   const valid =
     draft.name.trim().length > 0 &&
@@ -291,6 +292,29 @@ function RoutineEditor({
                 )
               })}
             </div>
+
+            {draft.action.type === 'news_digest' ? (
+              <div className="mt-3">
+                <label className="text-xs text-white/40">News location <span className="text-white/25">(optional)</span></label>
+                <input
+                  value={newsLocation}
+                  onChange={(e) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      action: {
+                        ...prev.action,
+                        parameters: { ...prev.action.parameters, location: e.target.value },
+                      },
+                    }))
+                  }
+                  className="mt-1.5 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-white/25"
+                  placeholder="For example: Milan, Lombardy"
+                />
+                <p className="mt-1.5 text-xs leading-5 text-white/35">
+                  Used to prioritize local headlines. Leave blank for the general news feed.
+                </p>
+              </div>
+            ) : null}
 
             {draft.action.type === 'reminder' ? (
               <textarea
