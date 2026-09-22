@@ -87,6 +87,7 @@ def _conversation_for_target(
             mode="text",
             title=_local_title(routine, scheduled_for),
             force_new=True,
+            activate=False,
         )
         return str(session["conversation_id"]), str(project_id), "project"
 
@@ -129,6 +130,7 @@ async def execute_routine(
             "extra_system_context": material.get("extra_context") or "",
             "user_id": user_id,
             "memoryEngine": "v2",
+            "persist_project_conversation": False,
             **_provider_payload(),
         }
         if mode == "project":
@@ -140,12 +142,6 @@ async def execute_routine(
             raise RuntimeError("Routine generated an empty response")
 
         actual_conversation_id = str(generated.get("conversation_id") or conversation_id)
-        if project_id:
-            try:
-                projects._save_project_conversation(project_id, actual_conversation_id)
-            except Exception:
-                pass
-
         presentation = {
             "speech_text": _speech_text(text),
             "display_markdown": text,
