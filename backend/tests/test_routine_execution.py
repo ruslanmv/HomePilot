@@ -113,6 +113,7 @@ def test_run_now_creates_native_conversation_and_presentation(tmp_path: Path, mo
     async def fake_handle(mode, payload):
         assert mode == "chat"
         assert payload["extra_system_context"] == "trusted fresh context"
+        assert payload["persist_project_conversation"] is False
         return {
             "conversation_id": payload["conversation_id"],
             "text": "## Good morning\n\nHere is your briefing.",
@@ -141,12 +142,13 @@ def test_run_now_creates_native_conversation_and_presentation(tmp_path: Path, mo
 def test_persona_target_allocates_fresh_session(monkeypatch):
     calls = {}
 
-    def fake_create(project_id, mode, title, force_new):
+    def fake_create(project_id, mode, title, force_new, activate=True):
         calls.update(
             project_id=project_id,
             mode=mode,
             title=title,
             force_new=force_new,
+            activate=activate,
         )
         return {"conversation_id": "persona-conversation"}
 
@@ -160,6 +162,7 @@ def test_persona_target_allocates_fresh_session(monkeypatch):
     assert project_id == "sofia"
     assert mode == "project"
     assert calls["force_new"] is True
+    assert calls["activate"] is False
     assert calls["title"].startswith("Morning news ·")
 
 
