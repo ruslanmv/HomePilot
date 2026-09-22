@@ -19,7 +19,7 @@ from ..users import (
     get_current_user,
     get_or_create_default_user,
 )
-from . import service, store
+from . import scheduler, service, store
 
 
 router = APIRouter(prefix="/v1/routines", tags=["routines"])
@@ -111,7 +111,8 @@ def capabilities() -> Dict[str, Any]:
     return {
         "available": True,
         "version": 2,
-        "execution": "manual",
+        "execution": "scheduled" if scheduler.execution_enabled() else "manual",
+        "scheduler_enabled": scheduler.execution_enabled(),
         "actions": [
             "news_digest",
             "daily_briefing",
