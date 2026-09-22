@@ -108,6 +108,9 @@ from .users import router as users_router
 # Per-User Profile, Secrets & Memory (additive — multi-user aware)
 from .user_profile_store import router as user_profile_store_router
 
+# Routines (additive — definitions are inert until an execution capability consumes them)
+from .routines import router as routines_router
+
 # Avatar Studio (additive — persona avatar generation)
 from .avatar import router as avatar_router
 
@@ -455,6 +458,9 @@ app.include_router(users_router)
 
 # Include Per-User Profile Store routes (/v1/user-profile/*, /v1/user-memory/*)
 app.include_router(user_profile_store_router)
+
+# Include Routines definition routes (/v1/routines/*). CRUD only in v1; no background worker.
+app.include_router(routines_router)
 
 # Include Secure File Storage routes (/v1/files/upload, /files/{asset_id})
 from .files import router as files_router
