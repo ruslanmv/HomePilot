@@ -4,11 +4,15 @@ import {
   Bot,
   CalendarClock,
   Check,
+  CheckCircle2,
   Clock3,
   Folder,
+  History,
+  AlertCircle,
   Loader2,
   Newspaper,
   Pencil,
+  Play,
   Plus,
   Sparkles,
   Trash2,
@@ -21,11 +25,13 @@ import {
   createRoutine,
   deleteRoutine,
   listRoutines,
+  listRoutineRuns,
   listRoutineTargetProjects,
+  runRoutineNow,
   updateRoutine,
   type RoutineTargetProject,
 } from './api'
-import type { Routine, RoutineActionType, RoutineDraft } from './types'
+import type { Routine, RoutineActionType, RoutineDraft, RoutineRun } from './types'
 
 const DAYS = [
   { id: 1, short: 'M', label: 'Monday' },
@@ -493,12 +499,17 @@ function RoutineEditor({
 export default function RoutinesView({
   backendUrl,
   apiKey,
+  onOpenConversation,
 }: {
   backendUrl: string
   apiKey?: string
+  onOpenConversation?: (run: RoutineRun) => void
 }) {
   const [routines, setRoutines] = useState<Routine[]>([])
   const [targets, setTargets] = useState<RoutineTargetProject[]>([])
+  const [runs, setRuns] = useState<RoutineRun[]>([])
+  const [runningId, setRunningId] = useState<string | null>(null)
+  const [historyRoutine, setHistoryRoutine] = useState<Routine | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -510,17 +521,26 @@ export default function RoutinesView({
     () => new Map(targets.map((target) => [target.id, target.name])),
     [targets],
   )
+  const latestRuns = useMemo(() => {
+    const map = new Map<string, RoutineRun>()
+    for (const run of runs) {
+      if (!map.has(run.routine_id)) map.set(run.routine_id, run)
+    }
+    return map
+  }, [runs])
 
   const refresh = async () => {
     setLoading(true)
     setError('')
     try {
-      const [routineRows, targetRows] = await Promise.all([
+      const [routineRows, targetRows, runRows] = await Promise.all([
         listRoutines(backendUrl, apiKey),
         listRoutineTargetProjects(backendUrl, apiKey).catch(() => []),
+        listRoutineRuns(backendUrl, undefined, apiKey, 100).catch(() => []),
       ])
       setRoutines(routineRows)
       setTargets(targetRows)
+      setRuns(runRows)
     } catch (err: any) {
       setError(err?.message || 'Could not load routines.')
     } finally {
@@ -573,6 +593,30 @@ export default function RoutinesView({
       setRoutines(snapshot)
       setError(err?.message || 'Could not remove routine.')
     }
+  }
+
+  const runNow = async (routine: Routine) => {
+    setRunningId(routine.id)
+    setError('')
+    try {
+      const run = await runRoutineNow(backendUrl, routine.id, apiKey)
+      setRuns((items) => [run, ...items.filter((item) => item.id !== run.id)])
+      if (run.status === 'failed') {
+        setError(run.error || 'Routine execution failed.')
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Could not run routine.')
+    } finally {
+      setRunningId(null)
+    }
+  }
+
+  const openRun = (run?: RoutineRun) => {
+    if (!run?.conversation_id) {
+      setError('This run does not have a conversation to open.')
+      return
+    }
+    onOpenConversation?.(run)
   }
 
   return (
@@ -697,7 +741,46 @@ export default function RoutinesView({
                           </button>
                         </div>
 
-                        <div className="mt-4 flex items-center gap-2">
+                        {(() => {
+                          const latest = latestRuns.get(routine.id)
+                          if (!latest) return null
+                          return (
+                            <div className="mt-3 flex items-center gap-2 text-xs text-white/40">
+                              {latest.status === 'success' ? <CheckCircle2 size={13} className="text-emerald-300/70" /> : latest.status === 'failed' ? <AlertCircle size={13} className="text-red-300/70" /> : <Clock3 size={13} />}
+                              <span>
+                                Last run: {latest.status} · {new Date(latest.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                          )
+                        })()}
+
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void runNow(routine)}
+                            disabled={runningId === routine.id}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.035] px-2.5 py-1.5 text-xs text-white/65 hover:bg-white/[0.07] disabled:opacity-40"
+                          >
+                            {runningId === routine.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                            Run now
+                          </button>
+                          {latestRuns.get(routine.id)?.conversation_id ? (
+                            <button
+                              type="button"
+                              onClick={() => openRun(latestRuns.get(routine.id))}
+                              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-cyan-200/70 hover:bg-cyan-300/[0.06] hover:text-cyan-100"
+                            >
+                              Open latest
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => setHistoryRoutine(routine)}
+                            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-white/45 hover:bg-white/[0.05] hover:text-white/75"
+                          >
+                            <History size={13} />
+                            History
+                          </button>
                           <button
                             type="button"
                             onClick={() => setEditing(routine)}
@@ -724,6 +807,46 @@ export default function RoutinesView({
           )}
         </main>
       </div>
+
+      {historyRoutine ? (
+        <div className="fixed inset-0 z-[85] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#121212] shadow-2xl">
+            <div className="sticky top-0 flex items-center justify-between border-b border-white/[0.06] bg-[#121212]/95 px-6 py-5">
+              <div>
+                <div className="text-lg font-semibold">{historyRoutine.name}</div>
+                <div className="text-xs text-white/40 mt-1">Execution history</div>
+              </div>
+              <button type="button" onClick={() => setHistoryRoutine(null)} className="h-9 w-9 rounded-xl grid place-items-center text-white/45 hover:bg-white/[0.06] hover:text-white">
+                <X size={17} />
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              {runs.filter((run) => run.routine_id === historyRoutine.id).length === 0 ? (
+                <div className="py-10 text-center text-sm text-white/35">No runs yet.</div>
+              ) : runs.filter((run) => run.routine_id === historyRoutine.id).map((run) => (
+                <div key={run.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm text-white/75">
+                        {run.status === 'success' ? <CheckCircle2 size={14} className="text-emerald-300" /> : run.status === 'failed' ? <AlertCircle size={14} className="text-red-300" /> : <Clock3 size={14} />}
+                        <span className="capitalize">{run.status}</span>
+                      </div>
+                      <div className="mt-1 text-xs text-white/35">{new Date(run.created_at).toLocaleString()}</div>
+                      {run.result_preview ? <p className="mt-2 text-xs leading-5 text-white/50">{run.result_preview}</p> : null}
+                      {run.error ? <p className="mt-2 text-xs leading-5 text-red-200/60">{run.error}</p> : null}
+                    </div>
+                    {run.conversation_id ? (
+                      <button type="button" onClick={() => openRun(run)} className="rounded-lg px-2.5 py-1.5 text-xs text-cyan-200/70 hover:bg-cyan-300/[0.06]">
+                        Open
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {(creating || editing) ? (
         <RoutineEditor
