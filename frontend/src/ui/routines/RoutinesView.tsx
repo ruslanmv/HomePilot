@@ -11,6 +11,7 @@ import {
   Sparkles,
   Trash2,
   X,
+  type LucideIcon,
 } from 'lucide-react'
 
 import { createRoutine, deleteRoutine, listRoutines, updateRoutine } from './api'
@@ -30,7 +31,7 @@ const ACTIONS: Array<{
   id: RoutineActionType
   title: string
   description: string
-  icon: React.ComponentType<{ size?: number; className?: string }>
+  icon: LucideIcon
 }> = [
   {
     id: 'news_digest',
