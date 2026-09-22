@@ -4,7 +4,7 @@ Design rules:
 - additive schema only
 - every row is scoped by user_id
 - delete is soft-delete (archived_at), so UI can add Undo later
-- schedule/action/delivery stay JSON objects to keep the public contract
+- schedule/target/action/delivery stay JSON objects to keep the public contract
   extensible without schema churn
 """
 
@@ -26,6 +26,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _columns(con: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
 def ensure_schema() -> None:
     con = sqlite3.connect(_db_path())
     try:
@@ -39,6 +43,7 @@ def ensure_schema() -> None:
                 enabled INTEGER NOT NULL DEFAULT 1,
                 timezone TEXT NOT NULL DEFAULT 'UTC',
                 schedule_json TEXT NOT NULL DEFAULT '{}',
+                target_json TEXT NOT NULL DEFAULT '{"type":"assistant"}',
                 action_json TEXT NOT NULL DEFAULT '{}',
                 delivery_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
@@ -47,6 +52,14 @@ def ensure_schema() -> None:
             )
             """
         )
+        # Existing v1 installs predate target_json. Add it in-place without
+        # rewriting or deleting any routine definitions.
+        if "target_json" not in _columns(con, "user_routines"):
+            cur.execute(
+                """ALTER TABLE user_routines
+                   ADD COLUMN target_json TEXT NOT NULL
+                   DEFAULT '{"type":"assistant"}'"""
+            )
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_routines_owner "
             "ON user_routines(user_id, archived_at, updated_at)"
@@ -56,22 +69,36 @@ def ensure_schema() -> None:
         con.close()
 
 
+def _load_object(value: str) -> Dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
 def _decode(row: sqlite3.Row) -> Dict[str, Any]:
-    def load_json(value: str) -> Dict[str, Any]:
-        try:
-            parsed = json.loads(value or "{}")
-            return parsed if isinstance(parsed, dict) else {}
-        except Exception:
-            return {}
+    target = {"type": "assistant"}
+    target.update(_load_object(row["target_json"]))
+
+    delivery = {
+        "in_app": True,
+        "notification": True,
+        "create_conversation": True,
+        "speak_if_active": True,
+        "catch_up": True,
+    }
+    delivery.update(_load_object(row["delivery_json"]))
 
     return {
         "id": row["id"],
         "name": row["name"],
         "enabled": bool(row["enabled"]),
         "timezone": row["timezone"],
-        "schedule": load_json(row["schedule_json"]),
-        "action": load_json(row["action_json"]),
-        "delivery": load_json(row["delivery_json"]),
+        "schedule": _load_object(row["schedule_json"]),
+        "target": target,
+        "action": _load_object(row["action_json"]),
+        "delivery": delivery,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -122,10 +149,10 @@ def create_routine(user_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
             """
             INSERT INTO user_routines(
                 id, user_id, name, enabled, timezone,
-                schedule_json, action_json, delivery_json,
+                schedule_json, target_json, action_json, delivery_json,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 routine_id,
@@ -134,6 +161,7 @@ def create_routine(user_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
                 1 if data.get("enabled", True) else 0,
                 data.get("timezone") or "UTC",
                 json.dumps(data.get("schedule") or {}, ensure_ascii=False),
+                json.dumps(data.get("target") or {"type": "assistant"}, ensure_ascii=False),
                 json.dumps(data.get("action") or {}, ensure_ascii=False),
                 json.dumps(data.get("delivery") or {}, ensure_ascii=False),
                 now,
@@ -156,6 +184,7 @@ def update_routine(user_id: str, routine_id: str, changes: Dict[str, Any]) -> Op
         "enabled": "enabled",
         "timezone": "timezone",
         "schedule": "schedule_json",
+        "target": "target_json",
         "action": "action_json",
         "delivery": "delivery_json",
     }
@@ -169,7 +198,7 @@ def update_routine(user_id: str, routine_id: str, changes: Dict[str, Any]) -> Op
             value = str(value).strip()
         elif key == "enabled":
             value = 1 if value else 0
-        elif key in {"schedule", "action", "delivery"}:
+        elif key in {"schedule", "target", "action", "delivery"}:
             value = json.dumps(value or {}, ensure_ascii=False)
         sets.append(f"{column} = ?")
         values.append(value)
