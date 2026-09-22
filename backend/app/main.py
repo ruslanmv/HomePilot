@@ -108,6 +108,9 @@ from .users import router as users_router
 # Per-User Profile, Secrets & Memory (additive — multi-user aware)
 from .user_profile_store import router as user_profile_store_router
 
+# Routines (additive — definitions are inert until an execution capability consumes them)
+from .routines import router as routines_router
+
 # Avatar Studio (additive — persona avatar generation)
 from .avatar import router as avatar_router
 
@@ -455,6 +458,9 @@ app.include_router(users_router)
 
 # Include Per-User Profile Store routes (/v1/user-profile/*, /v1/user-memory/*)
 app.include_router(user_profile_store_router)
+
+# Include Routines definition routes (/v1/routines/*). CRUD only in v1; no background worker.
+app.include_router(routines_router)
 
 # Include Secure File Storage routes (/v1/files/upload, /files/{asset_id})
 from .files import router as files_router
@@ -1250,6 +1256,22 @@ def _startup() -> None:
     # block the rest of startup.
     if os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", "yes"):
         asyncio.get_event_loop().create_task(_start_agentic_servers())
+
+    # Routines scheduler is opt-in at the server level so upgrading from the
+    # original definition-only release cannot unexpectedly execute saved rows.
+    try:
+        from .routines.scheduler import start_scheduler
+        routine_task = start_scheduler()
+        if routine_task is not None:
+            logging.getLogger("homepilot.startup").info("Routines scheduler started")
+        else:
+            logging.getLogger("homepilot.startup").info(
+                "Routines scheduler disabled (set ROUTINES_EXECUTION_ENABLED=true to enable)"
+            )
+    except Exception as exc:
+        logging.getLogger("homepilot.startup").warning(
+            "Routines scheduler couldn't start: %s", exc
+        )
 
     # Image-model warmup — preload the configured IMAGE_MODEL into
     # VRAM so the first user image-gen request doesn't pay the
@@ -5814,7 +5836,14 @@ async def _shutdown() -> None:
         except Exception as exc:
             _log.warning("Error stopping MCP servers: %s", exc)
 
-    # 2. Close the httpx client for edit sessions
+    # 2. Stop the optional Routines scheduler.
+    try:
+        from .routines.scheduler import stop_scheduler
+        await stop_scheduler()
+    except Exception as exc:
+        _log.warning("Error stopping Routines scheduler: %s", exc)
+
+    # 3. Close the httpx client for edit sessions
     global _edit_session_client
     if _edit_session_client is not None:
         await _edit_session_client.aclose()
