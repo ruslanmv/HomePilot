@@ -73,6 +73,7 @@ function defaultDraft(): RoutineDraft {
     enabled: true,
     timezone: browserTimezone(),
     schedule: { type: 'daily', time: '08:00' },
+    target: { type: 'assistant' },
     action: {
       type: 'news_digest',
       parameters: {
@@ -82,6 +83,8 @@ function defaultDraft(): RoutineDraft {
     },
     delivery: {
       in_app: true,
+      notification: true,
+      create_conversation: true,
       speak_if_active: true,
       catch_up: true,
     },
@@ -126,8 +129,15 @@ function RoutineEditor({
       enabled: initial.enabled,
       timezone: initial.timezone,
       schedule: initial.schedule,
+      target: initial.target || { type: 'assistant' },
       action: initial.action,
-      delivery: initial.delivery,
+      delivery: {
+        in_app: initial.delivery.in_app ?? true,
+        notification: initial.delivery.notification ?? true,
+        create_conversation: initial.delivery.create_conversation ?? true,
+        speak_if_active: initial.delivery.speak_if_active ?? true,
+        catch_up: initial.delivery.catch_up ?? true,
+      },
     }
   })
 
