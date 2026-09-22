@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .. import projects
@@ -158,6 +158,52 @@ def update_user_routine(
     if not routine:
         raise HTTPException(status_code=404, detail="Routine not found")
     return routine
+
+
+
+
+@router.get("/runs")
+def list_user_runs(
+    unseen_only: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: Dict[str, Any] = Depends(_user),
+) -> Dict[str, Any]:
+    return {
+        "runs": store.list_runs(
+            user["id"],
+            limit=limit,
+            unseen_only=unseen_only,
+        )
+    }
+
+
+@router.get("/{routine_id}/runs")
+def list_routine_runs(
+    routine_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    user: Dict[str, Any] = Depends(_user),
+) -> Dict[str, Any]:
+    if not store.get_routine(user["id"], routine_id):
+        raise HTTPException(status_code=404, detail="Routine not found")
+    return {
+        "runs": store.list_runs(
+            user["id"],
+            routine_id=routine_id,
+            limit=limit,
+        )
+    }
+
+
+@router.patch("/runs/{run_id}/seen")
+def mark_run_seen(
+    run_id: str,
+    opened: bool = Query(default=False),
+    user: Dict[str, Any] = Depends(_user),
+) -> Dict[str, Any]:
+    run = store.mark_run_seen(user["id"], run_id, opened=opened)
+    if not run:
+        raise HTTPException(status_code=404, detail="Routine run not found")
+    return run
 
 
 @router.delete("/{routine_id}")
