@@ -1607,8 +1607,11 @@ You have access to the project's context. When relevant context from the knowled
         print(f"[PROJECT CHAT {_trace_id}] assistant_final len={len(text or '')} preview={str(text or '')[:120]!r} media={bool(text_media)}")
         add_message(conversation_id, "assistant", text, media=text_media, project_id=project_id)
 
-        # 8. Save last conversation_id on the project so it can be restored
-        _save_project_conversation(project_id, conversation_id)
+        # 8. Save last conversation_id on the project so it can be restored.
+        # Background automation may explicitly suppress this pointer update so
+        # it never replaces the conversation the user was actively using.
+        if payload.get("persist_project_conversation", True):
+            _save_project_conversation(project_id, conversation_id)
 
         return {
             "type": "project",
