@@ -1,5 +1,17 @@
 import type { Routine, RoutineDraft, RoutineRun } from './types'
 
+export type RoutineCapabilities = {
+  available: boolean
+  version: number
+  execution: 'manual' | 'scheduled' | string
+  scheduler_enabled: boolean
+  actions: string[]
+  schedule_types: string[]
+  target_types: string[]
+  delivery: string[]
+  companion_compatible: boolean
+}
+
 export type RoutineTargetProject = {
   id: string
   name: string
@@ -20,6 +32,17 @@ async function readJson(response: Response) {
     throw new Error(body?.detail || body?.message || `Request failed (${response.status})`)
   }
   return body
+}
+
+export async function getRoutineCapabilities(
+  backendUrl: string,
+  apiKey?: string,
+): Promise<RoutineCapabilities> {
+  const response = await fetch(`${backendUrl}/v1/routines/capabilities`, {
+    credentials: 'include',
+    headers: headers(apiKey),
+  })
+  return readJson(response)
 }
 
 export async function listRoutines(backendUrl: string, apiKey?: string): Promise<Routine[]> {
