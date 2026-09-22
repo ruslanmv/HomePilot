@@ -146,6 +146,10 @@ def create_user_routine(
 ) -> Dict[str, Any]:
     data = body.model_dump()
     data["target"] = _validate_target(body.target)
+    # Routine results are native HomePilot conversations by design. Keep this
+    # invariant server-side so older/third-party clients cannot create a run
+    # that advertises "no conversation" while execution still needs context.
+    data["delivery"]["create_conversation"] = True
     return store.create_routine(user["id"], data)
 
 
@@ -169,6 +173,8 @@ def update_user_routine(
     changes = body.model_dump(exclude_unset=True)
     if body.target is not None:
         changes["target"] = _validate_target(body.target)
+    if "delivery" in changes:
+        changes["delivery"]["create_conversation"] = True
     routine = store.update_routine(user["id"], routine_id, changes)
     if not routine:
         raise HTTPException(status_code=404, detail="Routine not found")
