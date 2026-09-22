@@ -9,21 +9,36 @@ export type RoutineSchedule =
   | { type: 'weekly'; time: string; days: number[] }
   | { type: 'once'; at: string; time?: string; days?: number[] }
 
+export type RoutineTarget =
+  | { type: 'assistant'; project_id?: undefined }
+  | { type: 'persona'; project_id: string }
+  | { type: 'project'; project_id: string }
+
+export type RoutineDelivery = {
+  /** Backwards-compatible v1 flag. */
+  in_app: boolean
+  /** Show the completed run in HomePilot's notification surface. */
+  notification: boolean
+  /** Persist routine output as a native conversation. */
+  create_conversation: boolean
+  /** Speak only when an optional companion is actively connected. */
+  speak_if_active: boolean
+  /** Run useful missed work after backend downtime. */
+  catch_up: boolean
+}
+
 export type Routine = {
   id: string
   name: string
   enabled: boolean
   timezone: string
   schedule: RoutineSchedule
+  target: RoutineTarget
   action: {
     type: RoutineActionType
     parameters: Record<string, unknown>
   }
-  delivery: {
-    in_app: boolean
-    speak_if_active: boolean
-    catch_up: boolean
-  }
+  delivery: RoutineDelivery
   created_at: string
   updated_at: string
 }
