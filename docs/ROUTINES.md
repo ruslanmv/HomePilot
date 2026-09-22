@@ -1,71 +1,124 @@
 # Routines
 
-Routines are user-owned schedule definitions for HomePilot. They are designed so
-HomePilot remains the source of truth while optional clients (including the
-3D Avatar Chatbot) can display and manage the same definitions.
+Routines turn HomePilot from a purely reactive assistant into an optional,
+user-owned automation layer. HomePilot remains the source of truth for schedule
+definitions, execution, conversations, notifications, and history. Optional
+clients such as the 3D Avatar only present the same HomePilot-owned result.
+
+## Core model
+
+Each routine answers four questions:
+
+1. **What?** `news_digest`, `daily_briefing`, `reminder`, or
+   `assistant_prompt`.
+2. **Who / where?** HomePilot assistant, a Persona project, or a normal Project.
+3. **When?** Daily, selected weekdays, or once, in an IANA timezone.
+4. **How should it be delivered?** Notification, optional companion speech, and
+   catch-up behavior.
+
+Every successful run is saved as a native HomePilot conversation. This is an
+intentional invariant: a notification is a pointer to a real conversation, not
+a disposable blob of text.
 
 ## Ownership boundary
 
 HomePilot owns:
 
-- routine persistence
-- user ownership and permissions
-- timezone and schedule definitions
-- action parameters
-- delivery preferences
-- future execution history / scheduler state
+- per-user routine definitions
+- target context and schedule resolution
+- timezone/DST handling
+- action execution
+- native conversation/session creation
+- durable `routine_runs` history
+- notifications and read/open state
+- scheduler and catch-up behavior
+- structured completion events
 
 Companion clients own presentation only:
 
 - voice input
-- cards / status UI
+- routine cards/status UI
 - TTS playback
-- avatar emotion / animation
+- avatar emotion/animation
 
-A companion must not keep an independent routine database or timer.
+A companion must not keep an independent routine database or browser timer.
 
-## V1 scope
+## Targets
 
-V1 is intentionally definition-only. It adds CRUD and the HomePilot Routines
-tab, but it does **not** start a background scheduler or execute actions.
+### Assistant
 
-This makes the first release inert by default: adding the tab cannot cause
-emails, notifications, web requests, speech, or other actions to happen in the
-background.
+A fresh normal HomePilot conversation is created for the run.
 
-Supported action definitions:
+### Persona
 
-- `news_digest`
-- `daily_briefing`
-- `reminder`
-- `assistant_prompt`
+The target is a HomePilot project with `project_type: "persona"`. Scheduled
+runs call the existing persona session factory with `force_new=True`, creating
+a discrete session such as:
 
-Supported schedule definitions:
+```text
+Sofia
+  Morning news · Sep 22
+  Morning news · Sep 23
+  Morning news · Sep 24
+```
 
-- `daily`
-- `weekly`
-- `once`
+The sessions remain separate while continuing to use the persona project's
+existing instructions, RAG context, and long-term memory.
+
+### Project
+
+A fresh conversation ID is created and the request is passed through the
+existing project chat pipeline, preserving project instructions, files, RAG,
+and agent/persona context.
+
+## UI
+
+The Routines tab supports:
+
+- create/edit/remove
+- enable/pause
+- `Run with` selector grouped into HomePilot, Personas, and Projects
+- daily/weekdays/custom-day schedules
+- local timezone
+- notification preference
+- optional companion speech
+- catch-up preference
+- **Run now**
+- latest-run status
+- **Open latest**
+- execution history
+
+The editor always shows **Save as a conversation** as enabled because native
+conversation persistence is part of the Routines contract.
 
 ## API
 
-### Capability probe
+### Capabilities
 
 `GET /v1/routines/capabilities`
 
-The probe is intentionally public and contains no personal data. A client can
-use it to decide whether to show optional routine controls.
+The response reports whether the server supports manual execution only or has
+automatic scheduling enabled:
 
-### List
+```json
+{
+  "available": true,
+  "version": 2,
+  "execution": "manual",
+  "scheduler_enabled": false,
+  "target_types": ["assistant", "persona", "project"],
+  "companion_compatible": true
+}
+```
 
-`GET /v1/routines`
+### Definition CRUD
 
-Returns routines owned by the current HomePilot user. Logged-in installs use
-the normal bearer/cookie identity. Legacy single-user installs fall back to
-their default user. Anonymous ownership is never guessed on multi-user installs.
+- `GET /v1/routines`
+- `POST /v1/routines`
+- `PATCH /v1/routines/{routine_id}`
+- `DELETE /v1/routines/{routine_id}`
 
-### Create
-
-`POST /v1/routines`
+Delete is a soft delete.
 
 Example:
 
@@ -76,8 +129,11 @@ Example:
   "timezone": "Europe/Rome",
   "schedule": {
     "type": "daily",
-    "time": "08:00",
-    "days": []
+    "time": "05:43"
+  },
+  "target": {
+    "type": "persona",
+    "project_id": "persona-project-sofia"
   },
   "action": {
     "type": "news_digest",
@@ -88,90 +144,169 @@ Example:
   },
   "delivery": {
     "in_app": true,
+    "notification": true,
+    "create_conversation": true,
     "speak_if_active": true,
     "catch_up": true
   }
 }
 ```
 
-### Update
+### Manual execution
 
-`PATCH /v1/routines/{id}`
+`POST /v1/routines/{routine_id}/run`
 
-Partial update. Example:
+Manual execution is available even when the background scheduler is disabled.
+
+### Run history
+
+- `GET /v1/routines/runs`
+- `GET /v1/routines/{routine_id}/runs`
+- `PATCH /v1/routines/runs/{run_id}/seen?opened=true|false`
+
+Runs use a unique `run_key` so scheduler retries cannot execute the same
+scheduled occurrence twice.
+
+### Completion stream
+
+`GET /v1/routines/events?since={sequence}`
+
+This authenticated SSE stream emits `routine.completed` events to active
+HomePilot/companion clients. The stream is a low-latency transport only; SQLite
+run history remains the durable recovery source.
+
+Example event:
 
 ```json
 {
-  "enabled": false
+  "type": "routine.completed",
+  "run_id": "run-123",
+  "routine": {
+    "id": "routine-123",
+    "name": "Morning news"
+  },
+  "target": {
+    "type": "persona",
+    "project_id": "persona-project-sofia"
+  },
+  "project_id": "persona-project-sofia",
+  "conversation_id": "conv-456",
+  "presentation": {
+    "speech_text": "Buongiorno. Ecco le notizie principali...",
+    "display_markdown": "## Morning news\n...",
+    "sources": [],
+    "avatar": {
+      "emotion": "thinking",
+      "intensity": 0.6
+    }
+  }
 }
 ```
 
-### Remove
+## News and briefing execution
 
-`DELETE /v1/routines/{id}`
+`news_digest` is read-only:
 
-Removal is a soft delete. The row is archived rather than destroyed, leaving a
-safe path for a future Undo UI and audit tooling.
+1. try Context Forge tool `news.top` (hp-news)
+2. fall back to `hp.web.search`
+3. pass retrieved current information into hidden orchestration context
+4. generate the final response through the selected assistant/persona/project
+   chat pipeline
+5. store the human-readable response as the native conversation
 
-## Optional 3D Avatar usage
+Raw tool JSON is not inserted as the visible user message.
 
-The avatar should treat routines as a HomePilot capability:
+`daily_briefing` reuses the existing Secretary Daily Briefing workflow hints
+and current-information tools, while avoiding claims of calendar/email access
+unless that context is actually available.
 
-```text
-User voice/text
-      |
-      v
-3D Avatar / OllaBridge
-      |
-      v
-HomePilot routine API / conversational intent
-      |
-      v
-HomePilot-owned routine
+## Scheduler
+
+Automatic scheduling is deliberately opt-in at the HomePilot server level.
+
+```bash
+ROUTINES_EXECUTION_ENABLED=true
 ```
 
-For a lightweight UI, the avatar can:
+Restart HomePilot after changing the flag.
 
-1. probe `/v1/routines/capabilities`
-2. list `/v1/routines`
-3. show today's/active routines
-4. send create/update/delete intents back to HomePilot
+When disabled:
 
-It should not schedule timers in browser JavaScript.
+- routine CRUD works
+- **Run now** works
+- history and notifications work
+- no timed background routine fires
 
-## Execution phase
+When enabled, the scheduler:
 
-A later execution layer should be additive and independently switchable:
+- uses `zoneinfo` / IANA timezone names
+- handles DST without storing fixed UTC offsets
+- wakes on a short configurable interval
+- atomically claims each scheduled occurrence
+- skips duplicate claims
+- marks stale non-catch-up runs as `missed`
+- executes catch-up-enabled routines after downtime
+
+Optional settings:
 
 ```text
-routine definitions (this module)
-        |
-        v
-due-time calculator
-        |
-        v
-idempotent run claim
+ROUTINES_SCHEDULER_INTERVAL_SECONDS=30
+ROUTINES_ON_TIME_GRACE_SECONDS=90
+```
+
+## Notification behavior
+
+A completed routine never forces the user away from their current HomePilot
+screen. The global notification shows a preview and offers:
+
+- **Open conversation**
+- **Dismiss**
+
+Opening restores the run's target project/persona context (when present), marks
+the run opened, and uses HomePilot's existing conversation loader to display the
+generated thread.
+
+## Optional 3D Avatar integration
+
+The avatar should probe HomePilot and consume the completion stream:
+
+```text
+HomePilot scheduler / Run now
         |
         v
 safe action executor
         |
-        +-- news_digest -> hp-news preferred, hp.web.search fallback
-        +-- reminder -> in-app event
-        +-- daily_briefing -> secretary briefing workflow
-        +-- assistant_prompt -> approved informational prompt
+        v
+native HomePilot conversation
+        |
+        +--> routine_runs (durable)
+        |
+        +--> HomePilot notification
+        |
+        +--> routine.completed SSE
+                  |
+                  v
+          optional 3D Avatar
+          display + TTS + emotion
 ```
 
-Write-capable actions (sending messages, changing files, purchases, smart-home
-control, etc.) should remain outside the default routine action set and respect
-HomePilot's ask-before-acting permission model.
+The avatar must not implement another scheduler. `speech_text` is already
+separated from `display_markdown`, so raw Markdown or internal emotion markers
+do not need to be spoken.
 
-## Non-destructive rules
+## Safety boundary
 
-- New code lives under `backend/app/routines/` and
-  `frontend/src/ui/routines/`.
-- Existing chat, voice, avatar and project stores are untouched.
-- The main backend only mounts one new router.
-- The main frontend only imports the view, adds one `Mode`, one sidebar item,
-  and one render branch.
-- Deleting a routine archives it.
-- No background work starts in V1.
+The default action set is informational/read-only. Write-capable actions such as
+sending messages, changing files, purchases, or smart-home control are not part
+of this Routines executor and must continue to respect HomePilot's existing
+authorization / ask-before-acting model.
+
+## Compatibility
+
+- Existing v1 routine rows are migrated additively with
+  `target = assistant`.
+- Existing delivery rows receive safe defaults when decoded.
+- Routine deletion stays soft-delete.
+- New frontend + scheduler-disabled backend remains manually executable.
+- Optional hp-news absence falls back to `hp.web.search`.
+- Optional companion absence does not affect normal HomePilot notifications.
