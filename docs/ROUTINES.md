@@ -79,6 +79,7 @@ The Routines tab supports:
 - enable/pause
 - `Run with` selector grouped into HomePilot, Personas, and Projects
 - daily/weekdays/custom-day schedules
+- optional city/region for local news prioritization
 - local timezone
 - notification preference
 - optional companion speech
@@ -207,12 +208,13 @@ Example event:
 
 `news_digest` is read-only:
 
-1. try Context Forge tool `news.top` (hp-news)
-2. fall back to `hp.web.search`
-3. pass retrieved current information into hidden orchestration context
-4. generate the final response through the selected assistant/persona/project
+1. when a News location is configured, try hp-news `news.search` for that city/region
+2. otherwise (or if local search is unavailable), try hp-news `news.top`
+3. fall back to `hp.web.search`
+4. pass retrieved current information into hidden orchestration context
+5. generate the final response through the selected assistant/persona/project
    chat pipeline
-5. store the human-readable response as the native conversation
+6. store the human-readable response as the native conversation
 
 Raw tool JSON is not inserted as the visible user message.
 
