@@ -130,3 +130,52 @@ def test_v1_schema_is_migrated_without_losing_routines(tmp_path: Path, monkeypat
     assert rows[0]["target"] == {"type": "assistant"}
     assert rows[0]["delivery"]["notification"] is True
     assert rows[0]["delivery"]["create_conversation"] is True
+
+
+
+def test_run_claims_are_idempotent_and_user_scoped(tmp_path: Path, monkeypatch):
+    db = tmp_path / "routines.sqlite"
+    monkeypatch.setattr(store, "_db_path", lambda: str(db))
+
+    routine = store.create_routine("owner", _routine())
+    scheduled_for = "2026-09-22T05:43:00+02:00"
+    run_key = f"{routine['id']}:{scheduled_for}"
+
+    first, created_first = store.claim_run(
+        "owner",
+        routine["id"],
+        scheduled_for=scheduled_for,
+        run_key=run_key,
+    )
+    second, created_second = store.claim_run(
+        "owner",
+        routine["id"],
+        scheduled_for=scheduled_for,
+        run_key=run_key,
+    )
+
+    assert created_first is True
+    assert created_second is False
+    assert first["id"] == second["id"]
+    assert store.get_run("other-user", first["id"]) is None
+
+    finished = store.finish_run(
+        "owner",
+        first["id"],
+        status="success",
+        conversation_id="conversation-123",
+        result_preview="Morning briefing ready",
+        result={"speech_text": "Good morning"},
+    )
+    assert finished is not None
+    assert finished["status"] == "success"
+    assert finished["conversation_id"] == "conversation-123"
+
+    unseen = store.list_runs("owner", unseen_only=True)
+    assert [item["id"] for item in unseen] == [first["id"]]
+
+    opened = store.mark_run_seen("owner", first["id"], opened=True)
+    assert opened is not None
+    assert opened["seen_at"]
+    assert opened["opened_at"]
+    assert store.list_runs("owner", unseen_only=True) == []
