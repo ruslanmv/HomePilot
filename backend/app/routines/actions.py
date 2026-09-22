@@ -67,7 +67,7 @@ async def _invoke_current_information(
             {"limit": max_items},
             timeout=20.0,
         )
-        if not news_result.get("error"):
+        if not (isinstance(news_result, dict) and news_result.get("error")):
             text = _tool_payload(news_result)
             return {
                 "provider": "hp-news",
@@ -85,7 +85,7 @@ async def _invoke_current_information(
         },
         timeout=25.0,
     )
-    if not web_result.get("error"):
+    if not (isinstance(web_result, dict) and web_result.get("error")):
         text = _tool_payload(web_result)
         return {
             "provider": "hp.web.search",
