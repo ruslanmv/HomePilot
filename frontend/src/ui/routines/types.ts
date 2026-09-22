@@ -44,3 +44,35 @@ export type Routine = {
 }
 
 export type RoutineDraft = Omit<Routine, 'id' | 'created_at' | 'updated_at'>
+
+
+export type RoutineRun = {
+  id: string
+  routine_id: string
+  run_key: string
+  scheduled_for: string
+  started_at?: string | null
+  completed_at?: string | null
+  status: 'running' | 'success' | 'failed' | 'missed'
+  project_id?: string | null
+  conversation_id?: string | null
+  result_preview?: string | null
+  result?: {
+    routine_id?: string
+    routine_name?: string
+    target?: RoutineTarget
+    provider?: string
+    notification?: boolean
+    speak_if_active?: boolean
+    presentation?: {
+      speech_text?: string
+      display_markdown?: string
+      sources?: Array<{ name?: string; url?: string }>
+      avatar?: { emotion?: string; intensity?: number }
+    }
+  }
+  error?: string | null
+  seen_at?: string | null
+  opened_at?: string | null
+  created_at: string
+}
