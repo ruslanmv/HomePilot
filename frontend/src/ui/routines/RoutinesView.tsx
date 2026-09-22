@@ -24,11 +24,13 @@ import {
 import {
   createRoutine,
   deleteRoutine,
+  getRoutineCapabilities,
   listRoutines,
   listRoutineRuns,
   listRoutineTargetProjects,
   runRoutineNow,
   updateRoutine,
+  type RoutineCapabilities,
   type RoutineTargetProject,
 } from './api'
 import type { Routine, RoutineActionType, RoutineDraft, RoutineRun } from './types'
@@ -442,9 +444,17 @@ function RoutineEditor({
           <section>
             <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">Delivery</div>
             <div className="space-y-2">
+              <div className="flex items-start gap-3 rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.025] px-4 py-3">
+                <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-300/70" />
+                <span>
+                  <span className="block text-sm text-white/80">Save as a conversation</span>
+                  <span className="block text-xs text-white/40 mt-0.5">
+                    Always on. Every routine result is a native HomePilot conversation you can open and continue.
+                  </span>
+                </span>
+              </div>
               {[
                 ['notification', 'Show a notification', 'Surface a non-disruptive notification when the run is ready.'],
-                ['create_conversation', 'Save as a conversation', 'Create a native HomePilot thread you can open and continue.'],
                 ['speak_if_active', 'Speak when a companion is active', 'Lets a voice/avatar client present it naturally.'],
                 ['catch_up', 'Catch up after downtime', 'Run useful missed work when HomePilot starts again.'],
               ].map(([key, title, description]) => {
@@ -457,7 +467,7 @@ function RoutineEditor({
                       onChange={(e) =>
                         setDraft((prev) => ({
                           ...prev,
-                          delivery: { ...prev.delivery, [key]: e.target.checked },
+                          delivery: { ...prev.delivery, [key]: e.target.checked, create_conversation: true },
                         }))
                       }
                       className="mt-0.5"
@@ -508,6 +518,7 @@ export default function RoutinesView({
   const [routines, setRoutines] = useState<Routine[]>([])
   const [targets, setTargets] = useState<RoutineTargetProject[]>([])
   const [runs, setRuns] = useState<RoutineRun[]>([])
+  const [capabilities, setCapabilities] = useState<RoutineCapabilities | null>(null)
   const [runningId, setRunningId] = useState<string | null>(null)
   const [historyRoutine, setHistoryRoutine] = useState<Routine | null>(null)
   const [loading, setLoading] = useState(true)
@@ -533,14 +544,16 @@ export default function RoutinesView({
     setLoading(true)
     setError('')
     try {
-      const [routineRows, targetRows, runRows] = await Promise.all([
+      const [routineRows, targetRows, runRows, capabilityInfo] = await Promise.all([
         listRoutines(backendUrl, apiKey),
         listRoutineTargetProjects(backendUrl, apiKey).catch(() => []),
         listRoutineRuns(backendUrl, undefined, apiKey, 100).catch(() => []),
+        getRoutineCapabilities(backendUrl, apiKey).catch(() => null),
       ])
       setRoutines(routineRows)
       setTargets(targetRows)
       setRuns(runRows)
+      setCapabilities(capabilityInfo)
     } catch (err: any) {
       setError(err?.message || 'Could not load routines.')
     } finally {
@@ -659,9 +672,22 @@ export default function RoutinesView({
           </div>
         </div>
 
-        <div className="mt-7 rounded-2xl border border-amber-300/15 bg-amber-300/[0.035] px-4 py-3 text-xs leading-5 text-white/50">
-          This first Routines release stores and manages definitions only. Automatic background execution is intentionally a separate capability,
-          so enabling this tab cannot change existing HomePilot behavior or trigger actions unexpectedly.
+        <div className={[
+          'mt-7 rounded-2xl border px-4 py-3 text-xs leading-5',
+          capabilities?.scheduler_enabled
+            ? 'border-emerald-300/15 bg-emerald-300/[0.035] text-white/55'
+            : 'border-amber-300/15 bg-amber-300/[0.035] text-white/50',
+        ].join(' ')}>
+          {capabilities?.scheduler_enabled ? (
+            <>
+              Automatic scheduling is active. Enabled routines run at their configured local time, and you can also use <strong className="text-white/70">Run now</strong>.
+            </>
+          ) : (
+            <>
+              <strong className="text-white/65">Run now is available.</strong> Automatic time-based execution is disabled on this HomePilot server.
+              Set <code className="mx-1 text-white/65">ROUTINES_EXECUTION_ENABLED=true</code> and restart HomePilot to activate scheduled runs.
+            </>
+          )}
         </div>
 
         {error ? (
