@@ -86,8 +86,24 @@ async def _invoke_current_information(
     query: str,
     max_items: int,
     prefer_news: bool = False,
+    news_query: str = "",
 ) -> Dict[str, Any]:
     client = _forge_client()
+
+    if prefer_news and news_query:
+        news_search = await _invoke_named_tool(
+            client,
+            "news.search",
+            {"query": news_query, "limit": max_items},
+            timeout=20.0,
+        )
+        if not (isinstance(news_search, dict) and news_search.get("error")):
+            text = _tool_payload(news_search)
+            return {
+                "provider": "hp-news",
+                "raw": text,
+                "sources": _source_urls(text),
+            }
 
     if prefer_news:
         news_result = await _invoke_named_tool(
@@ -149,6 +165,7 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
             query=" ".join(query_bits),
             max_items=max_items,
             prefer_news=True,
+            news_query=f"{location} latest news today" if location else "",
         )
         extra_context = (
             "This turn was triggered by the user's scheduled Morning News routine. "
