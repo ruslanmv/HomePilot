@@ -64,6 +64,32 @@ def ensure_schema() -> None:
             "CREATE INDEX IF NOT EXISTS idx_user_routines_owner "
             "ON user_routines(user_id, archived_at, updated_at)"
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS routine_runs(
+                id TEXT PRIMARY KEY,
+                routine_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                run_key TEXT NOT NULL UNIQUE,
+                scheduled_for TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                status TEXT NOT NULL,
+                project_id TEXT,
+                conversation_id TEXT,
+                result_preview TEXT,
+                result_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT,
+                seen_at TEXT,
+                opened_at TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_routine_runs_owner "
+            "ON routine_runs(user_id, routine_id, created_at DESC)"
+        )
         con.commit()
     finally:
         con.close()
@@ -240,3 +266,189 @@ def archive_routine(user_id: str, routine_id: str) -> bool:
         return cur.rowcount > 0
     finally:
         con.close()
+
+
+
+def _decode_run(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "routine_id": row["routine_id"],
+        "run_key": row["run_key"],
+        "scheduled_for": row["scheduled_for"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "status": row["status"],
+        "project_id": row["project_id"],
+        "conversation_id": row["conversation_id"],
+        "result_preview": row["result_preview"],
+        "result": _load_object(row["result_json"]),
+        "error": row["error"],
+        "seen_at": row["seen_at"],
+        "opened_at": row["opened_at"],
+        "created_at": row["created_at"],
+    }
+
+
+def get_run(user_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+    ensure_schema()
+    con = sqlite3.connect(_db_path())
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute(
+            "SELECT * FROM routine_runs WHERE id = ? AND user_id = ?",
+            (run_id, user_id),
+        ).fetchone()
+        return _decode_run(row) if row else None
+    finally:
+        con.close()
+
+
+def get_run_by_key(user_id: str, run_key: str) -> Optional[Dict[str, Any]]:
+    ensure_schema()
+    con = sqlite3.connect(_db_path())
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute(
+            "SELECT * FROM routine_runs WHERE run_key = ? AND user_id = ?",
+            (run_key, user_id),
+        ).fetchone()
+        return _decode_run(row) if row else None
+    finally:
+        con.close()
+
+
+def claim_run(
+    user_id: str,
+    routine_id: str,
+    *,
+    scheduled_for: str,
+    run_key: Optional[str] = None,
+) -> tuple[Dict[str, Any], bool]:
+    """Atomically claim an execution slot.
+
+    Returns (run, created). A duplicate run_key returns the original run with
+    created=False, which makes scheduler retries and multi-worker ticks safe.
+    """
+    ensure_schema()
+    key = run_key or f"{routine_id}:{scheduled_for}"
+    run_id = str(uuid.uuid4())
+    now = _now()
+    con = sqlite3.connect(_db_path())
+    try:
+        cur = con.execute(
+            """
+            INSERT OR IGNORE INTO routine_runs(
+                id, routine_id, user_id, run_key, scheduled_for,
+                started_at, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?)
+            """,
+            (run_id, routine_id, user_id, key, scheduled_for, now, now),
+        )
+        con.commit()
+        created = cur.rowcount > 0
+    finally:
+        con.close()
+
+    run = get_run(user_id, run_id) if created else get_run_by_key(user_id, key)
+    if not run:
+        raise RuntimeError("Could not load claimed routine run")
+    return run, created
+
+
+def finish_run(
+    user_id: str,
+    run_id: str,
+    *,
+    status: str,
+    project_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    result_preview: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    ensure_schema()
+    con = sqlite3.connect(_db_path())
+    try:
+        con.execute(
+            """
+            UPDATE routine_runs
+            SET completed_at = ?, status = ?, project_id = ?,
+                conversation_id = ?, result_preview = ?, result_json = ?, error = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                _now(),
+                status,
+                project_id,
+                conversation_id,
+                result_preview,
+                json.dumps(result or {}, ensure_ascii=False),
+                error,
+                run_id,
+                user_id,
+            ),
+        )
+        con.commit()
+    finally:
+        con.close()
+    return get_run(user_id, run_id)
+
+
+def list_runs(
+    user_id: str,
+    *,
+    routine_id: Optional[str] = None,
+    limit: int = 50,
+    unseen_only: bool = False,
+) -> List[Dict[str, Any]]:
+    ensure_schema()
+    clauses = ["user_id = ?"]
+    params: List[Any] = [user_id]
+    if routine_id:
+        clauses.append("routine_id = ?")
+        params.append(routine_id)
+    if unseen_only:
+        clauses.append("seen_at IS NULL")
+        clauses.append("status = 'success'")
+    params.append(max(1, min(int(limit), 200)))
+
+    con = sqlite3.connect(_db_path())
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            f"SELECT * FROM routine_runs WHERE {' AND '.join(clauses)} "
+            "ORDER BY created_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [_decode_run(row) for row in rows]
+    finally:
+        con.close()
+
+
+def mark_run_seen(user_id: str, run_id: str, *, opened: bool = False) -> Optional[Dict[str, Any]]:
+    ensure_schema()
+    now = _now()
+    con = sqlite3.connect(_db_path())
+    try:
+        if opened:
+            con.execute(
+                """
+                UPDATE routine_runs
+                SET seen_at = COALESCE(seen_at, ?), opened_at = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (now, now, run_id, user_id),
+            )
+        else:
+            con.execute(
+                """
+                UPDATE routine_runs
+                SET seen_at = COALESCE(seen_at, ?)
+                WHERE id = ? AND user_id = ?
+                """,
+                (now, run_id, user_id),
+            )
+        con.commit()
+    finally:
+        con.close()
+    return get_run(user_id, run_id)
