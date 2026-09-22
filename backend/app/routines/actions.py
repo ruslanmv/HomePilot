@@ -120,7 +120,8 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
             max_items=max_items,
             prefer_news=True,
         )
-        prompt = (
+        extra_context = (
+            "This turn was triggered by the user's scheduled Morning News routine. "
             "Prepare today's news briefing from the CURRENT INFORMATION below. "
             "Do not invent facts that are not present. Deduplicate repeated stories, "
             "prioritize fresh and important items, and sound natural rather than reading "
@@ -129,7 +130,8 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
             f"CURRENT INFORMATION ({current['provider']}):\n{current['raw'][:16000]}"
         )
         return {
-            "prompt": prompt,
+            "message": "Prepare my morning news briefing for today.",
+            "extra_context": extra_context,
             "sources": current["sources"],
             "provider": current["provider"],
         }
@@ -144,8 +146,9 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
         step_hints = "\n".join(
             f"- {step.prompt_hint}" for step in workflow.steps if step.prompt_hint
         )
-        prompt = (
-            f"Run the '{workflow.display_name}' routine. Follow these existing Secretary workflow hints:\n"
+        extra_context = (
+            f"This turn was triggered by the scheduled '{workflow.display_name}' routine. "
+            "Follow these existing Secretary workflow hints:\n"
             f"{step_hints}\n\n"
             "Use the current information below only where relevant. Keep the briefing concise, "
             "warm, and useful. Do not claim access to calendar/email data unless it is actually "
@@ -153,7 +156,8 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
             f"CURRENT INFORMATION ({current['provider']}):\n{current['raw'][:12000]}"
         )
         return {
-            "prompt": prompt,
+            "message": "Give me my daily briefing.",
+            "extra_context": extra_context,
             "sources": current["sources"],
             "provider": current["provider"],
         }
@@ -163,9 +167,10 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
         if not message:
             raise RoutineActionError("Reminder routine has no message.")
         return {
-            "prompt": (
-                "Deliver this reminder to the user now. Keep it short and natural. "
-                f"Reminder: {message}"
+            "message": f"Reminder: {message}",
+            "extra_context": (
+                "This message was triggered automatically by a scheduled reminder. "
+                "Acknowledge it briefly and naturally; do not invent extra tasks."
             ),
             "sources": [],
             "provider": "local",
@@ -175,6 +180,14 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
         prompt = str(params.get("prompt") or "").strip()
         if not prompt:
             raise RoutineActionError("Assistant prompt routine has no prompt.")
-        return {"prompt": prompt, "sources": [], "provider": "local"}
+        return {
+            "message": prompt,
+            "extra_context": (
+                "This user prompt was triggered by a scheduled HomePilot routine. "
+                "Answer it normally in the selected assistant/persona/project context."
+            ),
+            "sources": [],
+            "provider": "local",
+        }
 
     raise RoutineActionError(f"Unsupported routine action: {action_type or 'unknown'}")
