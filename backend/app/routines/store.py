@@ -148,6 +148,29 @@ def list_routines(user_id: str) -> List[Dict[str, Any]]:
         con.close()
 
 
+def list_enabled_routines_with_owner() -> List[Dict[str, Any]]:
+    """Return active routine definitions for the background scheduler."""
+    ensure_schema()
+    con = sqlite3.connect(_db_path())
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """
+            SELECT * FROM user_routines
+            WHERE enabled = 1 AND archived_at IS NULL
+            ORDER BY updated_at ASC
+            """
+        ).fetchall()
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            routine = _decode(row)
+            routine["user_id"] = row["user_id"]
+            result.append(routine)
+        return result
+    finally:
+        con.close()
+
+
 def get_routine(user_id: str, routine_id: str) -> Optional[Dict[str, Any]]:
     ensure_schema()
     con = sqlite3.connect(_db_path())
