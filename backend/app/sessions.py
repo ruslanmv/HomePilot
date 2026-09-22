@@ -84,6 +84,7 @@ def create_session(
     conversation_id: Optional[str] = None,
     *,
     force_new: bool = False,
+    activate: bool = True,
 ) -> Dict[str, Any]:
     """
     Create a new session for a persona project.
@@ -93,6 +94,8 @@ def create_session(
     This prevents "session spam" from reconnects, refreshes, and mic retries.
 
     Pass *force_new=True* to bypass reuse and always create a fresh session.
+    Pass *activate=False* for background-created sessions that must not replace
+    the user's current active persona session.
 
     Returns the created (or reused) session dict.
     """
@@ -124,7 +127,8 @@ def create_session(
                 con.commit()
                 con.close()
                 recent["ended_at"] = None
-            _set_active_session(project_id, recent["id"])
+            if activate:
+                _set_active_session(project_id, recent["id"])
             return recent
 
     # ── Insert a genuinely new session ────────────────────────────────────
@@ -145,8 +149,10 @@ def create_session(
     con.commit()
     con.close()
 
-    # Update project metadata with active session pointer
-    _set_active_session(project_id, session_id)
+    # Interactive sessions become active by default. Background automation can
+    # opt out so it never steals the user's current persona session.
+    if activate:
+        _set_active_session(project_id, session_id)
 
     return {
         "id": session_id,
