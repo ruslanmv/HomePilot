@@ -39,6 +39,34 @@ def _tool_payload(result: Any) -> str:
         return str(result)
 
 
+async def _invoke_named_tool(
+    client: ContextForgeClient,
+    name: str,
+    args: Dict[str, Any],
+    *,
+    timeout: float,
+) -> Any:
+    """Invoke a Forge tool by stable name, resolving generated IDs if needed."""
+    result = await client.invoke_tool(name, args, timeout=timeout)
+    if not (isinstance(result, dict) and result.get("error")):
+        return result
+
+    try:
+        tools = await client.list_tools(timeout=5.0)
+    except Exception:
+        tools = []
+    for tool in tools:
+        if str(tool.get("name") or "") != name:
+            continue
+        tool_id = str(tool.get("id") or tool.get("tool_id") or name)
+        if tool_id == name:
+            break
+        resolved = await client.invoke_tool(tool_id, args, timeout=timeout)
+        if not (isinstance(resolved, dict) and resolved.get("error")):
+            return resolved
+    return result
+
+
 def _source_urls(text: str, limit: int = 12) -> List[Dict[str, str]]:
     urls: List[Dict[str, str]] = []
     seen: set[str] = set()
@@ -62,7 +90,8 @@ async def _invoke_current_information(
     client = _forge_client()
 
     if prefer_news:
-        news_result = await client.invoke_tool(
+        news_result = await _invoke_named_tool(
+            client,
             "news.top",
             {"limit": max_items},
             timeout=20.0,
@@ -75,7 +104,8 @@ async def _invoke_current_information(
                 "sources": _source_urls(text),
             }
 
-    web_result = await client.invoke_tool(
+    web_result = await _invoke_named_tool(
+        client,
         "hp.web.search",
         {
             "query": query,
