@@ -12,6 +12,7 @@ import {
   Loader2,
   Folder,
   Clock,
+  CalendarClock,
   Settings,
   Lock,
   Server,
@@ -104,6 +105,7 @@ import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { AvatarStudio } from './avatar'
 import { TeamsView, useTeamsMcpAvailable } from './teams'
+import RoutinesView from './routines'
 import type { GalleryItem } from './avatar/galleryTypes'
 import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
 import { PersonaWizard } from './PersonaWizard'
@@ -337,7 +339,7 @@ function useEnterpriseCallRow(): boolean {
   return String(envVal ?? 'true') !== 'false'
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams' | 'meetings'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams' | 'routines' | 'meetings'
 
 /**
  * OllaBridge GPU-node routing: when the chat provider points at an OllaBridge
@@ -1423,6 +1425,7 @@ function Sidebar({
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} collapsed={collapsed} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} />
           <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} collapsed={collapsed} />
+          <NavItem icon={CalendarClock} label="Routines" active={mode === 'routines'} onClick={() => setMode('routines')} collapsed={collapsed} />
           {/* MS28, behind `_CATALOG` (default off). D5 put the catalog in History and said a
               sidebar tab is for "only if History gets crowded" — this flag is that condition
               made operable. With it off there is no extra node here at all, which is the
@@ -6351,6 +6354,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
             teamsMcpAvailable={teamsMcpAvailable}
+          />
+        ) : mode === 'routines' ? (
+          // Routines: user-owned schedule definitions. Execution remains a separate capability.
+          <RoutinesView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
           />
         ) : mode === 'meetings' ? (
           // MS28, only reachable when `_CATALOG` is on — `mode` cannot be set to this without
