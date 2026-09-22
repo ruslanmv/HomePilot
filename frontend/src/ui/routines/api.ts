@@ -1,5 +1,13 @@
 import type { Routine, RoutineDraft } from './types'
 
+export type RoutineTargetProject = {
+  id: string
+  name: string
+  description?: string
+  project_type?: string
+  is_example?: boolean
+}
+
 function headers(apiKey?: string): HeadersInit {
   const out: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) out['X-API-Key'] = apiKey
@@ -21,6 +29,19 @@ export async function listRoutines(backendUrl: string, apiKey?: string): Promise
   })
   const body = await readJson(response)
   return Array.isArray(body.routines) ? body.routines : []
+}
+
+export async function listRoutineTargetProjects(
+  backendUrl: string,
+  apiKey?: string,
+): Promise<RoutineTargetProject[]> {
+  const response = await fetch(`${backendUrl}/projects`, {
+    credentials: 'include',
+    headers: headers(apiKey),
+  })
+  const body = await readJson(response)
+  const projects = Array.isArray(body.projects) ? body.projects : []
+  return projects.filter((project: RoutineTargetProject) => project?.id && !project.is_example)
 }
 
 export async function createRoutine(
