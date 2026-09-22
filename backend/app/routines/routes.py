@@ -7,9 +7,12 @@ behind it without changing how routines are authored.
 
 from __future__ import annotations
 
+import json
+
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import projects
@@ -19,7 +22,7 @@ from ..users import (
     get_current_user,
     get_or_create_default_user,
 )
-from . import scheduler, service, store
+from . import events, scheduler, service, store
 
 
 router = APIRouter(prefix="/v1/routines", tags=["routines"])
@@ -172,6 +175,34 @@ def update_user_routine(
     return routine
 
 
+
+
+@router.get("/events")
+async def stream_routine_events(
+    since: int = Query(default=0, ge=0),
+    user: Dict[str, Any] = Depends(_user),
+):
+    async def generate():
+        cursor = since
+        while True:
+            batch = await events.wait_after(user["id"], cursor, timeout=15.0)
+            if not batch:
+                yield ": keepalive\n\n"
+                continue
+            for event in batch:
+                cursor = max(cursor, int(event.get("seq") or 0))
+                event_type = str(event.get("type") or "routine.event")
+                yield (
+                    f"id: {cursor}\n"
+                    f"event: {event_type}\n"
+                    f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                )
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/runs")
