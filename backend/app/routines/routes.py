@@ -19,7 +19,7 @@ from ..users import (
     get_current_user,
     get_or_create_default_user,
 )
-from . import store
+from . import service, store
 
 
 router = APIRouter(prefix="/v1/routines", tags=["routines"])
@@ -111,7 +111,7 @@ def capabilities() -> Dict[str, Any]:
     return {
         "available": True,
         "version": 2,
-        "execution": "definition_only",
+        "execution": "manual",
         "actions": [
             "news_digest",
             "daily_briefing",
@@ -143,6 +143,17 @@ def create_user_routine(
     data = body.model_dump()
     data["target"] = _validate_target(body.target)
     return store.create_routine(user["id"], data)
+
+
+@router.post("/{routine_id}/run")
+async def run_user_routine_now(
+    routine_id: str,
+    user: Dict[str, Any] = Depends(_user),
+) -> Dict[str, Any]:
+    routine = store.get_routine(user["id"], routine_id)
+    if not routine:
+        raise HTTPException(status_code=404, detail="Routine not found")
+    return await service.run_now(user["id"], routine)
 
 
 @router.patch("/{routine_id}")
