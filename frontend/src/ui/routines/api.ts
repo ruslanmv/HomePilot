@@ -1,4 +1,4 @@
-import type { Routine, RoutineDraft } from './types'
+import type { Routine, RoutineDraft, RoutineRun } from './types'
 
 export type RoutineTargetProject = {
   id: string
@@ -80,4 +80,64 @@ export async function deleteRoutine(backendUrl: string, id: string, apiKey?: str
     headers: headers(apiKey),
   })
   await readJson(response)
+}
+
+
+export async function runRoutineNow(
+  backendUrl: string,
+  id: string,
+  apiKey?: string,
+): Promise<RoutineRun> {
+  const response = await fetch(`${backendUrl}/v1/routines/${encodeURIComponent(id)}/run`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: headers(apiKey),
+  })
+  return readJson(response)
+}
+
+export async function listRoutineRuns(
+  backendUrl: string,
+  routineId?: string,
+  apiKey?: string,
+  limit = 50,
+): Promise<RoutineRun[]> {
+  const path = routineId
+    ? `/v1/routines/${encodeURIComponent(routineId)}/runs?limit=${limit}`
+    : `/v1/routines/runs?limit=${limit}`
+  const response = await fetch(`${backendUrl}${path}`, {
+    credentials: 'include',
+    headers: headers(apiKey),
+  })
+  const body = await readJson(response)
+  return Array.isArray(body.runs) ? body.runs : []
+}
+
+export async function listUnreadRoutineRuns(
+  backendUrl: string,
+  apiKey?: string,
+): Promise<RoutineRun[]> {
+  const response = await fetch(`${backendUrl}/v1/routines/runs?unseen_only=true&limit=20`, {
+    credentials: 'include',
+    headers: headers(apiKey),
+  })
+  const body = await readJson(response)
+  return Array.isArray(body.runs) ? body.runs : []
+}
+
+export async function markRoutineRunSeen(
+  backendUrl: string,
+  runId: string,
+  apiKey?: string,
+  opened = false,
+): Promise<RoutineRun> {
+  const response = await fetch(
+    `${backendUrl}/v1/routines/runs/${encodeURIComponent(runId)}/seen?opened=${opened ? 'true' : 'false'}`,
+    {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: headers(apiKey),
+    },
+  )
+  return readJson(response)
 }
