@@ -1,20 +1,30 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   Bell,
+  Bot,
   CalendarClock,
   Check,
   Clock3,
+  Folder,
   Loader2,
   Newspaper,
   Pencil,
   Plus,
   Sparkles,
   Trash2,
+  UserRound,
   X,
   type LucideIcon,
 } from 'lucide-react'
 
-import { createRoutine, deleteRoutine, listRoutines, updateRoutine } from './api'
+import {
+  createRoutine,
+  deleteRoutine,
+  listRoutines,
+  listRoutineTargetProjects,
+  updateRoutine,
+  type RoutineTargetProject,
+} from './api'
 import type { Routine, RoutineActionType, RoutineDraft } from './types'
 
 const DAYS = [
@@ -113,11 +123,13 @@ function actionLabel(type: RoutineActionType): string {
 
 function RoutineEditor({
   initial,
+  targets,
   onClose,
   onSave,
   saving,
 }: {
   initial?: Routine
+  targets: RoutineTargetProject[]
   onClose: () => void
   onSave: (draft: RoutineDraft) => void
   saving: boolean
@@ -142,6 +154,23 @@ function RoutineEditor({
   })
 
   const selectedDays = draft.schedule.type === 'weekly' ? draft.schedule.days : []
+  const personaTargets = targets.filter((project) => project.project_type === 'persona')
+  const projectTargets = targets.filter((project) => project.project_type !== 'persona')
+  const targetValue =
+    draft.target.type === 'assistant'
+      ? 'assistant'
+      : `${draft.target.type}:${draft.target.project_id}`
+
+  const setTarget = (value: string) => {
+    if (value === 'assistant') {
+      setDraft((prev) => ({ ...prev, target: { type: 'assistant' } }))
+      return
+    }
+    const separator = value.indexOf(':')
+    const type = value.slice(0, separator) as 'persona' | 'project'
+    const projectId = value.slice(separator + 1)
+    setDraft((prev) => ({ ...prev, target: { type, project_id: projectId } }))
+  }
 
   const setAction = (type: RoutineActionType) => {
     const parameters =
@@ -185,7 +214,8 @@ function RoutineEditor({
     draft.name.trim().length > 0 &&
     (draft.schedule.type !== 'weekly' || draft.schedule.days.length > 0) &&
     (draft.action.type !== 'reminder' || message.trim().length > 0) &&
-    (draft.action.type !== 'assistant_prompt' || prompt.trim().length > 0)
+    (draft.action.type !== 'assistant_prompt' || prompt.trim().length > 0) &&
+    (draft.target.type === 'assistant' || Boolean(draft.target.project_id))
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-sm flex items-center justify-center p-4">
@@ -283,6 +313,44 @@ function RoutineEditor({
             ) : null}
           </section>
 
+
+          <section>
+            <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">Run with</div>
+            <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+              <div className="flex items-start gap-3">
+                <div className="h-9 w-9 rounded-xl bg-violet-400/10 text-violet-200 grid place-items-center shrink-0">
+                  {draft.target.type === 'persona' ? <UserRound size={18} /> : draft.target.type === 'project' ? <Folder size={18} /> : <Bot size={18} />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <select
+                    value={targetValue}
+                    onChange={(e) => setTarget(e.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-[#171717] px-3 py-2.5 text-sm text-white outline-none focus:border-white/25"
+                  >
+                    <option value="assistant">HomePilot assistant</option>
+                    {personaTargets.length ? (
+                      <optgroup label="Personas">
+                        {personaTargets.map((project) => (
+                          <option key={project.id} value={`persona:${project.id}`}>{project.name}</option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                    {projectTargets.length ? (
+                      <optgroup label="Projects">
+                        {projectTargets.map((project) => (
+                          <option key={project.id} value={`project:${project.id}`}>{project.name}</option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                  </select>
+                  <p className="mt-2 text-xs leading-5 text-white/40">
+                    Routine results use this assistant, persona memory, or project context. Scheduled runs never replace your currently open chat.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section>
             <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">When?</div>
             <div className="flex flex-wrap gap-2">
@@ -369,9 +437,10 @@ function RoutineEditor({
             <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">Delivery</div>
             <div className="space-y-2">
               {[
-                ['in_app', 'Show inside HomePilot', 'Keep the result available in the app.'],
+                ['notification', 'Show a notification', 'Surface a non-disruptive notification when the run is ready.'],
+                ['create_conversation', 'Save as a conversation', 'Create a native HomePilot thread you can open and continue.'],
                 ['speak_if_active', 'Speak when a companion is active', 'Lets a voice/avatar client present it naturally.'],
-                ['catch_up', 'Catch up after downtime', 'Keep the routine relevant if HomePilot was offline at the scheduled time.'],
+                ['catch_up', 'Catch up after downtime', 'Run useful missed work when HomePilot starts again.'],
               ].map(([key, title, description]) => {
                 const checked = Boolean(draft.delivery[key as keyof RoutineDraft['delivery']])
                 return (
@@ -429,6 +498,7 @@ export default function RoutinesView({
   apiKey?: string
 }) {
   const [routines, setRoutines] = useState<Routine[]>([])
+  const [targets, setTargets] = useState<RoutineTargetProject[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -436,12 +506,21 @@ export default function RoutinesView({
   const [creating, setCreating] = useState(false)
 
   const enabledCount = useMemo(() => routines.filter((routine) => routine.enabled).length, [routines])
+  const targetNames = useMemo(
+    () => new Map(targets.map((target) => [target.id, target.name])),
+    [targets],
+  )
 
   const refresh = async () => {
     setLoading(true)
     setError('')
     try {
-      setRoutines(await listRoutines(backendUrl, apiKey))
+      const [routineRows, targetRows] = await Promise.all([
+        listRoutines(backendUrl, apiKey),
+        listRoutineTargetProjects(backendUrl, apiKey).catch(() => []),
+      ])
+      setRoutines(routineRows)
+      setTargets(targetRows)
     } catch (err: any) {
       setError(err?.message || 'Could not load routines.')
     } finally {
@@ -592,6 +671,12 @@ export default function RoutinesView({
                               </span>
                               <span>{actionLabel(routine.action.type)}</span>
                               <span>{routine.timezone}</span>
+                              <span className="inline-flex items-center gap-1.5 text-violet-200/65">
+                                {routine.target?.type === 'persona' ? <UserRound size={13} /> : routine.target?.type === 'project' ? <Folder size={13} /> : <Bot size={13} />}
+                                {routine.target?.type === 'assistant'
+                                  ? 'HomePilot'
+                                  : targetNames.get(routine.target?.project_id || '') || (routine.target?.type === 'persona' ? 'Persona' : 'Project')}
+                              </span>
                             </div>
                           </div>
                           <button
@@ -643,6 +728,7 @@ export default function RoutinesView({
       {(creating || editing) ? (
         <RoutineEditor
           initial={editing || undefined}
+          targets={targets}
           onClose={() => { setCreating(false); setEditing(null) }}
           onSave={(draft) => void save(draft)}
           saving={saving}
