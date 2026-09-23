@@ -77,12 +77,16 @@ export function MeetingStartDialog({
             setConversationModels(conversation);
         });
         return () => { cancelled = true; };
+        // The two *model* fields are deliberately absent. They are what these lists are
+        // being fetched to populate, so depending on them costs two more round trips on
+        // every selection — and because `fetchMeetingModels` pins the current model to the
+        // front of its list, the options would reorder under the cursor mid-choice. Only
+        // the provider and the endpoint change which models exist.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         capture.summaryProvider,
-        capture.summaryModel,
         capture.summaryBaseUrl,
         capture.conversationProvider,
-        capture.conversationModel,
         capture.conversationBaseUrl,
     ]);
 

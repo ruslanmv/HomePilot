@@ -372,3 +372,89 @@ class TestEngineFactory:
         first, second = build("m1"), build("m2")
         assert first is not second
         assert (first.meeting_id, second.meeting_id) == ("m1", "m2")
+
+
+# ── which provider a meeting actually reaches (MS34-a) ──────────────────────
+
+
+class TestTheProviderIsResolvedNotAssumed:
+    """The real cause of *"no language model was reachable"* on a working install.
+
+    `route_chat`'s own default provider is ``openai_compat``. MeetingSense named only a
+    model, so every call went to a vLLM endpoint that does not exist on a machine running
+    Ollama — while the rest of HomePilot chatted happily two panels away. Naming the target
+    in the browser fixes the browser, and only the browser: a meeting recorded before that
+    shipped, one started from the hosted avatar page, one driven by the MCP tools, and the
+    rolling notes of any meeting whose setup stored nothing all still arrive with an empty
+    provider. So the default has to be right too.
+
+    `teams/llm_adapter._resolve_provider_settings` reached the same conclusion first — its
+    docstring says *"Reads DEFAULT_PROVIDER from config (not hardcoded openai_compat)"* —
+    and two subsystems disagreeing about the default is how this gets reported a third time.
+    """
+
+    def test_an_unspecified_provider_follows_the_install_not_openai_compat(self, modules, monkeypatch):
+        import app.config as app_config
+
+        monkeypatch.setattr(app_config, "DEFAULT_PROVIDER", "ollama", raising=False)
+        target = modules.notes_engine.resolve_target()
+        assert target["provider"] == "ollama"
+
+    def test_a_named_provider_always_wins(self, modules, monkeypatch):
+        import app.config as app_config
+
+        monkeypatch.setattr(app_config, "DEFAULT_PROVIDER", "ollama", raising=False)
+        assert modules.notes_engine.resolve_target(provider="openai_compat")["provider"] == "openai_compat"
+
+    def test_ollama_gets_its_configured_endpoint_when_none_was_given(self, modules, monkeypatch):
+        import app.config as app_config
+
+        monkeypatch.setattr(app_config, "OLLAMA_BASE_URL", "http://ollama.local:11434", raising=False)
+        target = modules.notes_engine.resolve_target(provider="ollama")
+        assert target["base_url"] == "http://ollama.local:11434"
+
+    def test_an_explicit_endpoint_is_not_overwritten(self, modules, monkeypatch):
+        import app.config as app_config
+
+        monkeypatch.setattr(app_config, "OLLAMA_BASE_URL", "http://ollama.local:11434", raising=False)
+        target = modules.notes_engine.resolve_target(provider="ollama", base_url="http://box:11434")
+        assert target["base_url"] == "http://box:11434"
+
+    def test_an_empty_ollama_model_stays_empty_so_the_backend_can_pick(self, modules, monkeypatch):
+        # `OLLAMA_MODEL` is allowed to be unset on purpose — naming a model that has not
+        # been pulled fails harder than letting Ollama choose one that has.
+        import app.config as app_config
+
+        monkeypatch.setattr(app_config, "OLLAMA_MODEL", "", raising=False)
+        assert modules.notes_engine.resolve_target(provider="ollama")["model"] is None
+
+    def test_openai_compat_still_resolves_its_own_endpoint_and_model(self, modules, monkeypatch):
+        import app.config as app_config
+
+        monkeypatch.setattr(app_config, "LLM_BASE_URL", "http://llm:8001/v1", raising=False)
+        monkeypatch.setattr(app_config, "LLM_MODEL", "local-model", raising=False)
+        target = modules.notes_engine.resolve_target(provider="openai_compat")
+        assert (target["base_url"], target["model"]) == ("http://llm:8001/v1", "local-model")
+
+    def test_the_call_reaches_the_router_with_the_resolved_target(self, modules, monkeypatch):
+        # The end of the wire, not just the resolver: a correct resolution that the call
+        # path does not pass on is the same outage with a tidier helper behind it.
+        import asyncio
+
+        import app.config as app_config
+        import app.compute as compute
+
+        monkeypatch.setattr(app_config, "DEFAULT_PROVIDER", "ollama", raising=False)
+        monkeypatch.setattr(app_config, "OLLAMA_BASE_URL", "http://ollama.local:11434", raising=False)
+        seen = {}
+
+        async def route_chat(messages, **kwargs):
+            seen.update(kwargs)
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        monkeypatch.setattr(compute, "route_chat", route_chat)
+        asyncio.get_event_loop_policy().new_event_loop().run_until_complete(
+            modules.notes_engine.call_model([{"role": "user", "content": "x"}])
+        )
+        assert seen["provider"] == "ollama"
+        assert seen["base_url"] == "http://ollama.local:11434"

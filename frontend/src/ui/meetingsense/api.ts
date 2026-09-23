@@ -43,13 +43,23 @@ export interface MeetingModelTarget {
     baseUrl: string;
 }
 
-/** The app's current chat target — the same settings ordinary conversation uses. */
+/**
+ * The app's current chat target — the same settings ordinary conversation uses.
+ *
+ * The fallback chain is copied from `TeamsSettingsDrawer`, deliberately and key for key,
+ * because it is the same question with the same right answer: *which provider is this
+ * install actually talking to?* The middle link matters and is easy to miss — an install
+ * configured before the per-modality keys existed has only `homepilot_provider`, and
+ * skipping it hands back `ollama` for a machine pointed at something else. That is the
+ * exact class of bug this whole path exists to remove, so it must not be reintroduced by
+ * the code that reads the setting.
+ */
 export function readMeetingModelTarget(): MeetingModelTarget {
     const get = (key: string): string => {
         try { return (window.localStorage.getItem(key) || '').trim(); } catch { return ''; }
     };
     return {
-        provider: get('homepilot_provider_chat') || 'ollama',
+        provider: get('homepilot_provider_chat') || get('homepilot_provider') || 'ollama',
         model: get('homepilot_model_chat') || get('homepilot_ollama_model'),
         baseUrl: get('homepilot_base_url_chat') || get('homepilot_ollama_url'),
     };

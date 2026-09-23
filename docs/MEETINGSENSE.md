@@ -1551,6 +1551,59 @@ nobody waits on it and before `finalize`, so the message the meeting leaves in i
 carries the real document when the rolling notes came back empty — which is what *"No summary
 for this meeting"* beside a perfectly good transcript used to mean.
 
+### Which model a meeting talks to (MS34-a)
+
+*"No language model was reachable"* on an install that was chatting happily two panels away
+was not a MeetingSense outage. It was a **routing** bug, and it had two halves.
+
+**The default was wrong.** `route_chat`'s own default provider is `openai_compat`, and
+MeetingSense named only a model — so every call went to a vLLM endpoint that does not exist
+on a machine running Ollama. `notes_engine.resolve_target` now fills in whatever the caller
+did not say from the install's own configuration: `DEFAULT_PROVIDER` for the provider, then
+that provider's configured endpoint and model. `teams/llm_adapter._resolve_provider_settings`
+reached this conclusion first — its docstring says *"Reads DEFAULT_PROVIDER from config (not
+hardcoded openai_compat)"* — and the precedent is worth naming, because two subsystems
+quietly disagreeing about the default provider is how this gets reported a third time.
+
+Naming the target at the call site fixes the browser, and **only** the browser. A meeting
+recorded before this shipped, one started from the hosted avatar page, one driven by the MCP
+tools, and the rolling notes of any meeting whose setup stored no preference all arrive with
+nothing — so the default has to be right too, not merely overridable.
+
+**The choice was not offered.** Meeting setup now carries two model pickers, because they are
+two different jobs: a small fast model answers questions well *during* a call, and a larger
+one writes the document afterwards.
+
+| Choice | Drives |
+|---|---|
+| **Summary model** | the rolling notes and recap, the automatic end-of-meeting document, and every *Rewrite* |
+| **Meeting conversation model** | the private *Ask this meeting* lane, live and after the meeting |
+
+Both inherit the **provider and endpoint** from HomePilot's chat settings and let you pick the
+model independently, so an Ollama-configured install lists Ollama models rather than silently
+attempting OpenAI-compatible inference. The reading of those settings follows the same
+fallback chain `TeamsSettingsDrawer` uses, key for key, including the legacy
+`homepilot_provider` — an install configured before the per-modality keys existed has only
+that one, and skipping it is the original bug wearing a different hat.
+
+**Both targets travel on the `start` frame and are stored with the meeting.** That is what
+makes a reconnect, or reopening the recap days later, use the model the meeting was set up
+with rather than whatever the app is pointed at now. Two consequences follow from it and are
+easy to get backwards:
+
+* the `ask` route takes a per-request `provider`/`model`/`base_url` override, and the
+  workspace sends one **only while the meeting is live**. Once it has ended, `capture` is no
+  longer this meeting's anything — it is the app's current settings, read at mount — so the
+  override is omitted and the meeting's stored preference wins;
+* the *Rewrite* panel resolves its target **per field**, preferring what the document on
+  screen was actually written with, then this session's setup, then the app's settings. The
+  document's own `options` are the only place a reopened meeting's original choice still
+  exists.
+
+Nothing here is required. Every field may be empty, and empty means *"whatever this install
+is configured for"* — which is the behaviour every meeting recorded before MS34-a gets, and
+the reason the resolution above has to be correct rather than merely available.
+
 ### Where the meeting lands
 
 **HomePilot has no `conversations` table.** A conversation is `messages` grouped by

@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MeetingMinutes, DocumentBody, SUMMARY_STYLES } from '../ui/meetingsense/MeetingMinutes';
 import { summaryDocs } from '../ui/meetingsense/meetingRecord';
+import { readMeetingModelTarget } from '../ui/meetingsense/api';
 
 const DOC = {
     id: 'doc-1',
@@ -213,6 +214,142 @@ describe('the document reader', () => {
     it('drops blank lines instead of rendering empty paragraphs', () => {
         render(<DocumentBody text={'one\n\n\n\ntwo'} />);
         expect(screen.getByTestId('ms-minutes-body').children).toHaveLength(2);
+    });
+});
+
+describe('which model rewrites the document', () => {
+    /*
+     * MS34-a. Resolved field by field, from three sources.
+     *
+     * This was an all-or-nothing choice — `modelTarget || {stored…}` — and because the
+     * workspace always passes a `modelTarget`, the stored branch never ran. The code that
+     * read `options` off the document was dead, and a meeting reopened from History offered
+     * to rewrite with whatever the app is pointed at *now* rather than with the model that
+     * wrote the document on screen.
+     */
+    const withOptions = {
+        ...DOC,
+        options: { provider: 'ollama', model: 'qwen2.5:7b', base_url: 'http://stored:11434' },
+    };
+
+    it('prefers the model the document on screen was actually written with', async () => {
+        // No `modelTarget`: a meeting reopened from History, where setup is long gone.
+        renderPanel({ documents: [withOptions], modelTarget: undefined });
+        fireEvent.click(screen.getByTestId('ms-minutes-tune'));
+        fireEvent.click(screen.getByTestId('ms-minutes-generate'));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body.model).toBe('qwen2.5:7b');
+        expect(body.base_url).toBe('http://stored:11434');
+    });
+
+    it('still prefers the document’s own model over the app-wide setting', async () => {
+        // The reopened-meeting case as it actually arrives: the workspace always passes a
+        // target, and for a meeting it did not set up that target is just the app's current
+        // chat settings. The document knows better, so the document wins.
+        renderPanel({
+            documents: [withOptions],
+            modelTarget: { provider: 'ollama', model: 'llama3.2:3b', baseUrl: 'http://app:11434' },
+        });
+        fireEvent.click(screen.getByTestId('ms-minutes-generate'));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body.model).toBe('qwen2.5:7b');
+    });
+
+    it('uses this session’s setup target when there is no document yet', async () => {
+        renderPanel({
+            documents: [],
+            modelTarget: { provider: 'ollama', model: 'llama3.2:3b', baseUrl: 'http://setup:11434' },
+        });
+        fireEvent.click(screen.getByTestId('ms-minutes-generate'));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body.model).toBe('llama3.2:3b');
+        expect(body.base_url).toBe('http://setup:11434');
+    });
+
+    it('fills the gaps per field rather than all or nothing', async () => {
+        // The common shape: a document that recorded its provider but no model — the setup
+        // left the picker on "automatic" — so the model has to come from the next source
+        // down instead of being lost along with it.
+        renderPanel({
+            documents: [{ ...DOC, options: { provider: 'ollama' } }],
+            modelTarget: { provider: '', model: 'llama3.2:3b', baseUrl: 'http://setup:11434' },
+        });
+        fireEvent.click(screen.getByTestId('ms-minutes-generate'));
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+        const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        expect(body.provider).toBe('ollama');
+        expect(body.model).toBe('llama3.2:3b');
+    });
+
+    it('does not refetch the model list when a model is chosen', async () => {
+        // The list is what the selection is being made *from*: refetching on every click
+        // costs a round trip and reorders the options under the cursor, because the current
+        // model is pinned to the front of whatever comes back.
+        const modelFetch = vi.fn(async () => ({
+            ok: true, status: 200, json: async () => ({ ok: true, models: ['a:1', 'b:2'] }),
+        }));
+        renderPanel({ modelFetcher: modelFetch as unknown as typeof fetch });
+        fireEvent.click(screen.getByTestId('ms-minutes-tune'));
+        await waitFor(() => expect(modelFetch).toHaveBeenCalledTimes(1));
+
+        fireEvent.change(screen.getByTestId('ms-minutes-model'), { target: { value: 'b:2' } });
+        await waitFor(() => {
+            expect((screen.getByTestId('ms-minutes-model') as HTMLSelectElement).value).toBe('b:2');
+        });
+        expect(modelFetch).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('reading the app’s chat target', () => {
+    /*
+     * MS34-a. The fallback chain is copied from `TeamsSettingsDrawer`, key for key.
+     *
+     * It is the same question — *which provider is this install actually talking to?* — and
+     * getting it wrong here reintroduces, in the code that reads the setting, exactly the
+     * bug the whole model-routing path exists to remove.
+     */
+    afterEach(() => {
+        for (const key of ['homepilot_provider_chat', 'homepilot_provider',
+            'homepilot_model_chat', 'homepilot_ollama_model',
+            'homepilot_base_url_chat', 'homepilot_ollama_url']) {
+            window.localStorage.removeItem(key);
+        }
+    });
+
+    it('prefers the per-modality chat keys', () => {
+        window.localStorage.setItem('homepilot_provider_chat', 'openai_compat');
+        window.localStorage.setItem('homepilot_model_chat', 'local-model');
+        window.localStorage.setItem('homepilot_base_url_chat', 'http://llm:8001/v1');
+        expect(readMeetingModelTarget()).toEqual({
+            provider: 'openai_compat', model: 'local-model', baseUrl: 'http://llm:8001/v1',
+        });
+    });
+
+    it('falls back to the legacy provider key before assuming Ollama', () => {
+        // An install configured before the per-modality keys existed has only this one.
+        // Skipping it hands back `ollama` for a machine pointed at something else — which
+        // is the original "no language model was reachable", wearing a different hat.
+        window.localStorage.setItem('homepilot_provider', 'openai_compat');
+        expect(readMeetingModelTarget().provider).toBe('openai_compat');
+    });
+
+    it('falls back to the legacy Ollama keys for the model and endpoint', () => {
+        window.localStorage.setItem('homepilot_ollama_model', 'llama3.2:3b');
+        window.localStorage.setItem('homepilot_ollama_url', 'http://localhost:11434');
+        const target = readMeetingModelTarget();
+        expect(target.model).toBe('llama3.2:3b');
+        expect(target.baseUrl).toBe('http://localhost:11434');
+    });
+
+    it('assumes Ollama only when nothing is configured at all', () => {
+        expect(readMeetingModelTarget().provider).toBe('ollama');
     });
 });
 

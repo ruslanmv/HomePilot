@@ -99,6 +99,8 @@ jobs:
           src/test/meetingStartDialog.test.tsx
           src/test/meetingMenuItem.test.tsx
           src/test/composerPlusMenu.test.tsx
+          src/test/meetingsenseAddon.test.js
+          src/test/meetingsenseEnded.test.tsx
         working-directory: frontend
       - run: npm run build
         working-directory: frontend

@@ -1692,6 +1692,21 @@
                                       summary:
                                           opts.summary && typeof opts.summary === 'object'
                                               ? opts.summary : null,
+                                      // MS34-a. The compute target for the *private* Ask
+                                      // lane, which is a different choice from the summary
+                                      // model: a small fast model answers questions well
+                                      // during a call, and a larger one writes the document
+                                      // afterwards.
+                                      //
+                                      // It has to travel on this frame. The HTTP ask route
+                                      // can carry an override per request, but the live
+                                      // socket's `ask` frame and Participant mode read the
+                                      // target stored on the meeting — so leaving it out
+                                      // here is what made the dropdown do nothing at all on
+                                      // the two paths that only exist while a meeting runs.
+                                      conversation:
+                                          opts.conversation && typeof opts.conversation === 'object'
+                                              ? opts.conversation : null,
                                       audio: {
                                           rate: TARGET_RATE,
                                           channels: this._channels || 1,

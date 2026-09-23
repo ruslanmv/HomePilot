@@ -555,6 +555,14 @@ describe('capture options', () => {
             // same reason the name fields are — nothing is attached that was not attached
             // on purpose.
             summaryStyle: 'minutes', summaryLength: 'standard', context: '',
+            // MS34-a. The six compute fields default **empty**, and that is the load-bearing
+            // part rather than an oversight: empty means "whatever HomePilot chat is already
+            // configured for". `MeetingSenseProvider` fills them from the app's own settings
+            // at mount, and the backend resolves anything still blank from `DEFAULT_PROVIDER`.
+            // A literal default here — 'ollama', say — would be this module asserting an
+            // opinion about the install that it is in no position to have.
+            summaryProvider: '', summaryModel: '', summaryBaseUrl: '',
+            conversationProvider: '', conversationModel: '', conversationBaseUrl: '',
         });
         const onChange = vi.fn();
         render(<CapturePopover value={DEFAULT_CAPTURE} onChange={onChange} onClose={() => {}} />);

@@ -19,6 +19,56 @@ this is reachable and no table is created.
 
 ## W14 — The payoff
 
+### MS34-a — which model a meeting actually talks to
+
+The follow-up to MS34, and the answer to *"no language model was reachable"* on an install
+that was chatting happily two panels away. It was never an outage; it was routing.
+
+**The default provider was wrong, everywhere.** `route_chat` defaults to `openai_compat` and
+MeetingSense passed only a model name, so every call went to a vLLM endpoint that does not
+exist on a machine running Ollama. `notes_engine.resolve_target` now resolves provider,
+endpoint and model from the install's configuration — `DEFAULT_PROVIDER` first — for anything
+the caller did not name. `teams/llm_adapter` fixed this exact bug for Teams already and says
+so in its docstring; MeetingSense now agrees with it, which matters because two subsystems
+disagreeing about the default provider is how this gets reported a third time.
+
+Carrying the target from the browser fixes the browser alone. Meetings recorded before this
+shipped, meetings started from the hosted avatar page, the MCP tools, and the rolling notes of
+any meeting whose setup stored nothing all still arrive with an empty provider — so the
+fallback had to be right, not merely overridable.
+
+**Two model pickers, because they are two jobs.** Setup now offers a *Summary model* and a
+*Meeting conversation model*: a small fast model answers questions during a call, a larger one
+writes the document afterwards. Both inherit the provider and endpoint from HomePilot chat and
+let the model be chosen independently, so an Ollama install lists Ollama models. The summary
+choice drives the rolling recap and the automatic end-of-meeting document as well as *Rewrite*;
+the conversation choice drives the private Ask lane, live and after the meeting.
+
+**Four defects found reviewing the first cut, each of which made a selector do nothing:**
+
+1. **The recorder never put `conversation` on the wire.** The backend stored it correctly and
+   a backend test proved it — by calling `session.start({...})` directly, bypassing the client
+   half of the contract. Nothing sent the key, so the conversation model was inert on exactly
+   the two paths that read the stored target: the live socket's `ask` frame, and Participant
+   mode. Now sent, and asserted on the frame the shipped recorder emits.
+2. **`readMeetingModelTarget` skipped the legacy `homepilot_provider` key** that
+   `TeamsSettingsDrawer` reads. An install configured before the per-modality keys existed got
+   `ollama` regardless of what it was actually pointed at — the original bug, one layer up.
+3. **The *Rewrite* panel's stored-target branch was dead code.** `modelTarget || {stored…}`,
+   and the workspace always passes a `modelTarget` — so the `options` recorded on each
+   document were read by nothing, and reopening a meeting offered to rewrite it with whatever
+   the app is pointed at now. Resolution is per field now, and prefers what the document on
+   screen was actually written with.
+4. **The ask lane overrode its own stored preference after the meeting ended.** `capture` is
+   this meeting's setup only while it is live; on a reopened meeting it is the app's current
+   settings. The override is now sent only while live, so the stored preference wins
+   afterwards — which is what storing it per meeting was for.
+
+Also: `DEFAULT_CAPTURE`'s shape test was not updated for the six new fields and was failing;
+the six default **empty** on purpose, meaning *"whatever this install is configured for"*, and
+the test now says why. The model lists no longer refetch when a model is picked — the list is
+what the selection is made from, and refetching reordered the options under the cursor.
+
 ### MS34 — grounded Q&A, and the document a long meeting leaves behind
 
 Three faults, one theme: the meeting was recorded correctly and the thing the user came for

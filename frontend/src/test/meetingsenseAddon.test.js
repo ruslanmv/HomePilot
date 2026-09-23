@@ -606,6 +606,52 @@ describe('reconnect and backpressure, wired', () => {
         expect(recorder.meetingId).toBe('m1');
     });
 
+    /*
+     * MS34-a. Both compute targets travel on the start frame.
+     *
+     * The bug this locks down was invisible from the server side, which is why it shipped:
+     * the backend stored `message["conversation"]` correctly and a backend test proved it by
+     * calling `session.start({...})` directly — but nothing put that key on the wire, so the
+     * dropdown was inert on every path that reads the target stored on the meeting. The
+     * private Ask lane over the live socket, and Participant mode, both did.
+     *
+     * Asserted here, on the frame the shipped recorder actually sends, because that is the
+     * seam where the two halves of the contract meet and the only place a missing key shows.
+     */
+    it('carries both model targets on the start frame', async () => {
+        const promise = recorder._connect({
+            conversationId: 'c1',
+            summary: { style: 'email', provider: 'ollama', model: 'qwen2.5:7b' },
+            conversation: { provider: 'ollama', model: 'llama3.2:3b', base_url: 'http://localhost:11434' },
+        });
+        const ws = sockets[0];
+        ws.open();
+
+        expect(ws.sent[0].summary).toMatchObject({ style: 'email', model: 'qwen2.5:7b' });
+        // The half that was missing: a different, smaller model answers questions during the
+        // call than writes the document afterwards, and that is the whole point of there
+        // being two dropdowns rather than one.
+        expect(ws.sent[0].conversation).toMatchObject({
+            provider: 'ollama', model: 'llama3.2:3b', base_url: 'http://localhost:11434',
+        });
+
+        ws.deliver({ type: 'ready', meeting_id: 'm1' });
+        await promise;
+    });
+
+    it('sends null for a model target the wizard did not set', async () => {
+        // Null rather than an absent key or an empty object: the server reads "nothing was
+        // chosen" and resolves the install's own default, which is what an older client and
+        // a meeting started from the hosted page both need it to do.
+        const promise = recorder._connect({ conversationId: 'c1' });
+        const ws = sockets[0];
+        ws.open();
+        expect(ws.sent[0].summary).toBeNull();
+        expect(ws.sent[0].conversation).toBeNull();
+        ws.deliver({ type: 'ready', meeting_id: 'm1' });
+        await promise;
+    });
+
     it('opens with a resume frame once a meeting exists', async () => {
         await openMeeting();
         sockets[0].deliver({ type: 'segment', seq: 4, text: 'hello' });

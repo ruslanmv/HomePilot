@@ -303,6 +303,34 @@ describe('asking after the meeting ends', () => {
     notes: null,
   };
 
+  it('lets the meeting’s own stored model answer once it has ended', async () => {
+    /*
+     * MS34-a. No compute override once the meeting is over.
+     *
+     * While it runs, `capture` is this meeting's setup and restating it costs nothing. On a
+     * meeting reopened from History it is not: it is whatever the app's chat settings say
+     * now, read when the provider mounted. Sending that would silently beat the model the
+     * meeting was actually set up with — which is the exact thing storing the preference
+     * per meeting exists to prevent, so the server's copy has to be allowed to win.
+     */
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({ text: 'They discussed the launch [00:00:30].', cited: [] }),
+    }));
+
+    renderWorkspace(endedView as never, record, {
+      ...DEFAULT_CAPTURE,
+      conversationProvider: 'ollama',
+      conversationModel: 'some-other-model:latest',
+      conversationBaseUrl: 'http://elsewhere:11434',
+    });
+    await ask('what did they decide?');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(init.body))).toEqual({ text: 'what did they decide?' });
+  });
+
   it('keeps the private Q&A lane visible on the recap screen', async () => {
     fetchMock.mockImplementationOnce(async () => ({
       ok: true,

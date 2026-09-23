@@ -443,6 +443,57 @@ def engine_factory(config: Any) -> Callable[[str], "NotesEngine"]:
     return build
 
 
+def resolve_target(
+    *,
+    provider: str = "",
+    model: str = "",
+    base_url: str = "",
+) -> Dict[str, Optional[str]]:
+    """Fill in whatever the caller did not say, from the install's own configuration.
+
+    **This is the fix for "No language model was reachable" on a working install.**
+    `route_chat`'s own default provider is ``openai_compat``, so a MeetingSense call that
+    named only a model was routed to a vLLM endpoint that does not exist on a machine
+    running Ollama — and the meeting reported that nothing answered while the rest of
+    HomePilot was chatting happily two panels away.
+
+    Naming the target at the call site fixes the browser path, and only the browser path.
+    A meeting recorded before that shipped, one started from the hosted avatar page, one
+    driven by the MCP tools, and the rolling notes of any meeting whose setup stored no
+    preference all still arrive here with nothing — so the default has to be right too.
+
+    `teams/llm_adapter._resolve_provider_settings` reached this conclusion first and its
+    docstring says so in as many words: *"Reads DEFAULT_PROVIDER from config (not hardcoded
+    openai_compat)"*. This is the same resolution for the same reason, and the precedent is
+    worth naming because two subsystems quietly disagreeing about the default provider is
+    how this bug gets reported a third time.
+
+    Priority per field: explicit argument → the provider's configured endpoint → let the
+    provider decide. Imported inside the function, like `route_chat` below it, so this
+    module stays importable — and testable — without the compute stack.
+    """
+    from .. import config as app_config
+
+    chosen = (provider or "").strip() or app_config.DEFAULT_PROVIDER
+    resolved_model = (model or "").strip()
+    resolved_url = (base_url or "").strip()
+
+    if chosen == "ollama":
+        resolved_url = resolved_url or app_config.OLLAMA_BASE_URL
+        # `OLLAMA_MODEL` is deliberately allowed to be empty: the backend auto-picks, and
+        # naming a model that is not pulled is worse than letting it choose one that is.
+        resolved_model = resolved_model or app_config.OLLAMA_MODEL
+    elif chosen == "openai_compat":
+        resolved_url = resolved_url or app_config.LLM_BASE_URL
+        resolved_model = resolved_model or app_config.LLM_MODEL
+
+    return {
+        "provider": chosen,
+        "model": resolved_model or None,
+        "base_url": resolved_url or None,
+    }
+
+
 async def call_model(
     messages: List[Dict[str, str]],
     *,
@@ -453,19 +504,19 @@ async def call_model(
 ) -> str:
     """The default MeetingSense model call, routed through HomePilot's compute layer.
 
-    `provider` and `base_url` are optional for compatibility with operator-level defaults,
-    but a meeting setup can now supply the same chat target the rest of HomePilot is using.
-    Previously MeetingSense passed only a model name, so `route_chat` silently defaulted to
-    `openai_compat` even when the app was configured for Ollama.
+    All three of `provider`, `model` and `base_url` are optional: a meeting's setup supplies
+    the chat target the rest of HomePilot is using, and anything it leaves out is resolved
+    from the install's configuration by :func:`resolve_target` rather than assumed.
     """
     from ..compute import route_chat
 
+    target = resolve_target(provider=provider, model=model, base_url=base_url)
     response = await route_chat(
         messages,
-        provider=provider or "openai_compat",
-        base_url=base_url or None,
+        provider=target["provider"],
+        base_url=target["base_url"],
         temperature=temperature,
         max_tokens=600,
-        model=model or None,
+        model=target["model"],
     )
     return ((response.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""

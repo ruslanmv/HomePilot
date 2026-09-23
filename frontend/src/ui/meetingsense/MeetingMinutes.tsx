@@ -141,21 +141,56 @@ export function MeetingMinutes({
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
+    /*
+     * Which model rewrites this document, resolved **field by field**.
+     *
+     * Three sources, each right about something the others are not, and the order is the
+     * argument:
+     *
+     * 1. **what the document on screen was written with.** The strongest evidence of this
+     *    meeting's own choice, because the end-of-meeting document is generated from the
+     *    target stored at setup — so for a meeting reopened from History, where setup is
+     *    long gone, this is the only place that choice still exists;
+     * 2. **this session's setup target**, for a meeting that has no document yet;
+     * 3. **the app's current chat settings**, for everything else.
+     *
+     * This used to be an all-or-nothing choice — `modelTarget || {stored…}` — and because
+     * the workspace always passes a `modelTarget`, the stored branch never ran: the code
+     * that read `options` off the document was dead, and reopening a meeting offered to
+     * rewrite it with whatever the app happens to be pointed at *now*.
+     *
+     * Resolved per field rather than per source, so a partially-filled target — a provider
+     * with no model, which is the common case — still falls through for the rest.
+     */
     const globalTarget = useMemo(() => readMeetingModelTarget(), []);
-    const latestStoredTarget = documents[documents.length - 1]?.options;
-    const initialTarget = modelTarget || {
-        provider: String(latestStoredTarget?.provider || globalTarget.provider),
-        model: String(latestStoredTarget?.model || globalTarget.model),
-        baseUrl: String(latestStoredTarget?.base_url || globalTarget.baseUrl),
-    };
-    const [provider] = useState(initialTarget.provider || 'ollama');
-    const [model, setModel] = useState(initialTarget.model || '');
-    const [baseUrl] = useState(initialTarget.baseUrl || '');
-    const [models, setModels] = useState<string[]>(initialTarget.model ? [initialTarget.model] : []);
+    const storedTarget = documents[documents.length - 1]?.options;
+    const resolved = useMemo<MeetingModelTarget>(() => ({
+        provider: String(storedTarget?.provider || '') || modelTarget?.provider || globalTarget.provider || 'ollama',
+        model: String(storedTarget?.model || '') || modelTarget?.model || globalTarget.model || '',
+        baseUrl: String(storedTarget?.base_url || '') || modelTarget?.baseUrl || globalTarget.baseUrl || '',
+    }), [
+        modelTarget?.provider, modelTarget?.model, modelTarget?.baseUrl,
+        storedTarget?.provider, storedTarget?.model, storedTarget?.base_url,
+        globalTarget,
+    ]);
+
+    // Derived rather than held: `provider` and `baseUrl` are never edited here — only the
+    // model dropdown is — and freezing them in `useState` meant a target that resolved
+    // later (a record that loaded after the first paint) was ignored for the rest of the
+    // meeting's life on screen.
+    const provider = resolved.provider;
+    const baseUrl = resolved.baseUrl;
+    const [modelOverride, setModelOverride] = useState<string | null>(null);
+    const model = modelOverride ?? resolved.model;
+    const [models, setModels] = useState<string[]>(resolved.model ? [resolved.model] : []);
 
     useEffect(() => {
         if (!tuning) return;
         let cancelled = false;
+        // `model` is deliberately **not** a dependency. It is what this list is being
+        // fetched to populate, so refetching when it changes means two more round trips on
+        // every selection — and `fetchMeetingModels` pins the current model to the front,
+        // so the options would reorder under the cursor mid-choice.
         void fetchMeetingModels(
             { provider, model, baseUrl },
             modelFetcher || fetch,
@@ -163,7 +198,8 @@ export function MeetingMinutes({
             if (!cancelled) setModels(rows);
         });
         return () => { cancelled = true; };
-    }, [tuning, provider, model, baseUrl, modelFetcher]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tuning, provider, baseUrl, modelFetcher]);
 
     // The server's documents plus this session's, in the order they were written. Kept as
     // two lists rather than one mutable one so that a record reload — which happens while a
@@ -305,7 +341,7 @@ export function MeetingMinutes({
                         <span className="mb-1.5 block text-[11px] font-medium text-white/55">Language model</span>
                         <select
                             value={model}
-                            onChange={(event) => setModel(event.target.value)}
+                            onChange={(event) => setModelOverride(event.target.value)}
                             data-testid="ms-minutes-model"
                             className="w-full rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2 text-xs text-white/85 focus:border-violet-300/30 focus:outline-none"
                         >

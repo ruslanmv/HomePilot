@@ -514,12 +514,32 @@ export function MeetingWorkspace({
                     method: 'POST',
                     credentials: 'include',
                     headers: requestHeaders(),
-                    body: JSON.stringify({
-                        text,
-                        ...(capture.conversationProvider ? { provider: capture.conversationProvider } : {}),
-                        ...(capture.conversationModel ? { model: capture.conversationModel } : {}),
-                        ...(capture.conversationBaseUrl ? { base_url: capture.conversationBaseUrl } : {}),
-                    }),
+                    /*
+                     * The compute target rides along **only while the meeting is live**.
+                     *
+                     * The server already holds the target chosen at setup, and for a live
+                     * meeting `capture` is that same choice — so sending it is a harmless
+                     * restatement. Once the meeting has ended and been reopened from
+                     * History, `capture` is no longer this meeting's anything: it is
+                     * whatever the app's chat settings happen to say now, read at mount.
+                     * Sending that as an override would silently beat the model the meeting
+                     * was actually set up with, which is the behaviour storing the
+                     * preference per meeting exists to prevent.
+                     *
+                     * Omitted, the server falls back to the meeting's stored preference and
+                     * then to the install's configured provider — both better informed than
+                     * this component is.
+                     */
+                    body: JSON.stringify(
+                        view.phase === 'ended'
+                            ? { text }
+                            : {
+                                text,
+                                ...(capture.conversationProvider ? { provider: capture.conversationProvider } : {}),
+                                ...(capture.conversationModel ? { model: capture.conversationModel } : {}),
+                                ...(capture.conversationBaseUrl ? { base_url: capture.conversationBaseUrl } : {}),
+                            },
+                    ),
                 },
             );
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
