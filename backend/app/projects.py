@@ -1096,6 +1096,18 @@ You have access to the project's context. When relevant context from the knowled
         if _memory_block:
             system_instruction += f"\n\n--- PERSONA MEMORY ---\n{_memory_block}\n--- END MEMORY ---\n"
 
+    # Optional hidden context supplied by trusted HomePilot orchestration
+    # (for example, a routine's current news/tool results). It is never stored
+    # as the visible user message, so generated routine conversations remain
+    # readable while still grounding the response in fresh tool data.
+    extra_system_context = str(payload.get("extra_system_context") or "").strip()
+    if extra_system_context:
+        system_instruction += (
+            "\n\n--- HOMEPILOT ORCHESTRATION CONTEXT ---\n"
+            + extra_system_context
+            + "\n--- END ORCHESTRATION CONTEXT ---\n"
+        )
+
     # Voice mode: add brevity hint for natural spoken conversation
     is_voice = payload.get("mode", "").strip().lower() == "voice"
     if is_voice:
@@ -1595,8 +1607,11 @@ You have access to the project's context. When relevant context from the knowled
         print(f"[PROJECT CHAT {_trace_id}] assistant_final len={len(text or '')} preview={str(text or '')[:120]!r} media={bool(text_media)}")
         add_message(conversation_id, "assistant", text, media=text_media, project_id=project_id)
 
-        # 8. Save last conversation_id on the project so it can be restored
-        _save_project_conversation(project_id, conversation_id)
+        # 8. Save last conversation_id on the project so it can be restored.
+        # Background automation may explicitly suppress this pointer update so
+        # it never replaces the conversation the user was actively using.
+        if payload.get("persist_project_conversation", True):
+            _save_project_conversation(project_id, conversation_id)
 
         return {
             "type": "project",

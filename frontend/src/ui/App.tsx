@@ -12,6 +12,7 @@ import {
   Loader2,
   Folder,
   Clock,
+  CalendarClock,
   Settings,
   Lock,
   Server,
@@ -104,6 +105,9 @@ import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { AvatarStudio } from './avatar'
 import { TeamsView, useTeamsMcpAvailable } from './teams'
+import RoutinesView from './routines'
+import { listUnreadRoutineRuns, markRoutineRunSeen } from './routines/api'
+import type { RoutineRun } from './routines/types'
 import type { GalleryItem } from './avatar/galleryTypes'
 import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
 import { PersonaWizard } from './PersonaWizard'
@@ -337,7 +341,7 @@ function useEnterpriseCallRow(): boolean {
   return String(envVal ?? 'true') !== 'false'
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams' | 'meetings'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams' | 'routines' | 'meetings'
 
 /**
  * OllaBridge GPU-node routing: when the chat provider points at an OllaBridge
@@ -1423,6 +1427,7 @@ function Sidebar({
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} collapsed={collapsed} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} />
           <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} collapsed={collapsed} />
+          <NavItem icon={CalendarClock} label="Routines" active={mode === 'routines'} onClick={() => setMode('routines')} collapsed={collapsed} />
           {/* MS28, behind `_CATALOG` (default off). D5 put the catalog in History and said a
               sidebar tab is for "only if History gets crowded" — this flag is that condition
               made operable. With it off there is no extra node here at all, which is the
@@ -4001,6 +4006,52 @@ export default function App() {
     }
   }, [settings.backendUrl, authHeaders])
 
+  const openRoutineConversation = useCallback(async (run: RoutineRun) => {
+    const convId = run.conversation_id
+    if (!convId) return
+
+    const projectId = run.project_id || run.result?.target?.project_id || null
+    if (projectId) {
+      try {
+        const response = await fetch(
+          `${settings.backendUrl.replace(/\/+$/, '')}/projects/${encodeURIComponent(projectId)}`,
+          { headers: authHeaders, credentials: 'include' },
+        )
+        if (response.ok) {
+          const data = await response.json()
+          const project = data.project
+          localStorage.setItem('homepilot_current_project', projectId)
+          setCurrentProject({
+            id: projectId,
+            name: project.name,
+            document_count: project.document_count || 0,
+            project_type: project.project_type,
+            description: project.description,
+            instructions: project.instructions,
+            files: project.files,
+            agentic: project.agentic,
+            persona_agent: project.persona_agent,
+            persona_appearance: project.persona_appearance,
+          })
+          setShowSessionPanel(false)
+        }
+      } catch (err) {
+        console.warn('[Routines] Could not restore target project before opening run:', err)
+        localStorage.setItem('homepilot_current_project', projectId)
+      }
+    } else {
+      localStorage.removeItem('homepilot_current_project')
+      setCurrentProject(null)
+    }
+
+    try {
+      await markRoutineRunSeen(settings.backendUrl, run.id, settings.apiKey, true)
+    } catch {
+      // Conversation opening is more important than notification bookkeeping.
+    }
+    await loadConversation(convId)
+  }, [authHeaders, loadConversation, settings.apiKey, settings.backendUrl])
+
   const deleteConversation = useCallback(async (convId: string) => {
     // Confirm deletion
     if (!confirm('Delete this conversation? This will remove all messages permanently.')) {
@@ -4104,6 +4155,37 @@ export default function App() {
     }
     loadProjectInfo()
   }, [mode, settings.backendUrl, authHeaders, currentProject?.id])
+
+  const [routineNotifications, setRoutineNotifications] = useState<RoutineRun[]>([])
+
+  const refreshRoutineNotifications = useCallback(async () => {
+    try {
+      const rows = await listUnreadRoutineRuns(settings.backendUrl, settings.apiKey)
+      setRoutineNotifications(
+        rows.filter((run) => run.result?.notification !== false).slice(0, 5),
+      )
+    } catch {
+      // Older backends simply do not expose Routines notifications.
+      setRoutineNotifications([])
+    }
+  }, [settings.apiKey, settings.backendUrl])
+
+  useEffect(() => {
+    void refreshRoutineNotifications()
+    const timer = window.setInterval(() => {
+      void refreshRoutineNotifications()
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [refreshRoutineNotifications])
+
+  const dismissRoutineNotification = useCallback(async (run: RoutineRun) => {
+    setRoutineNotifications((items) => items.filter((item) => item.id !== run.id))
+    try {
+      await markRoutineRunSeen(settings.backendUrl, run.id, settings.apiKey, false)
+    } catch {
+      // Optimistic dismiss; it can reappear after refresh if the backend rejected it.
+    }
+  }, [settings.apiKey, settings.backendUrl])
 
   // Fetch conversations on mount so sidebar recents are always populated
   useEffect(() => {
@@ -6352,6 +6434,16 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             apiKey={settingsDraft.apiKey}
             teamsMcpAvailable={teamsMcpAvailable}
           />
+        ) : mode === 'routines' ? (
+          // Routines: user-owned schedule definitions. Execution remains a separate capability.
+          <RoutinesView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            onOpenConversation={(run) => {
+              setRoutineNotifications((items) => items.filter((item) => item.id !== run.id))
+              void openRoutineConversation(run)
+            }}
+          />
         ) : mode === 'meetings' ? (
           // MS28, only reachable when `_CATALOG` is on — `mode` cannot be set to this without
           // the nav item, and the nav item is behind the same flag.
@@ -6682,6 +6774,49 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             : null,
         }}
       />
+
+      {routineNotifications.length > 0 ? (
+        <div className="fixed bottom-5 right-5 z-[82] w-[min(390px,calc(100vw-2rem))] space-y-3">
+          {routineNotifications.slice(0, 3).map((run) => (
+            <div key={run.id} className="rounded-2xl border border-white/10 bg-[#171717]/95 p-4 shadow-2xl backdrop-blur-xl">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 h-9 w-9 shrink-0 rounded-xl bg-cyan-300/[0.08] grid place-items-center text-cyan-200/80">
+                  <CalendarClock size={17} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-white/90">
+                    {run.result?.routine_name || 'Routine ready'}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-white/50 line-clamp-3">
+                    {run.result_preview || 'Your routine result is ready.'}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    {run.conversation_id ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRoutineNotifications((items) => items.filter((item) => item.id !== run.id))
+                          void openRoutineConversation(run)
+                        }}
+                        className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black hover:bg-white/90"
+                      >
+                        Open conversation
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void dismissRoutineNotification(run)}
+                      className="rounded-lg px-2.5 py-1.5 text-xs text-white/45 hover:bg-white/[0.05] hover:text-white/70"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* Previous floating "call ended" toast has been replaced by an
           inline CallMemoryCard rendered directly in the chat stream
