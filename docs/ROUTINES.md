@@ -78,6 +78,23 @@ Once, at the top, rather than threading `user_id=` through every `add_message` c
 there are fourteen on the chat path alone, and the next one added would silently
 reintroduce the bug.
 
+### The prompt and the record are different artifacts
+
+Storing the routine's turn as `system` fixes the attribution and, on its own, breaks the
+answer: a prompt whose every message is `system` is a shape many providers handle badly and
+some openai-compatible endpoints reject outright.
+
+So the turn is **re-roled on its way to the model and nowhere else**. What the model
+receives is the familiar shape — the persona or project system prompt, then the task as a
+user turn — while what is stored stays `system`, attributed to nobody. Only the final
+history entry is eligible, and only when it is the system turn that same call just wrote.
+
+| | Model sees | Storage keeps |
+|---|---|---|
+| Persona/project instructions | `system` | — |
+| The routine's task | `user` | `system` |
+| The answer | — | `assistant` |
+
 ## Ownership boundary
 
 HomePilot owns:

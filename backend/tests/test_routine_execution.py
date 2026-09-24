@@ -460,3 +460,76 @@ def test_orchestrate_claims_the_conversation_for_the_caller(tmp_path, monkeypatc
         )
 
     assert ("conv-x", "user-a") in claimed
+
+
+# ── the prompt and the record are different artifacts ───────────────────────
+
+
+def _project_messages(monkeypatch, tmp_path, *, system_initiated: bool):
+    """Run one project turn and return (prompt sent to the model, stored record)."""
+    from app import projects, storage
+
+    db = tmp_path / f"chat-{system_initiated}.sqlite3"
+    monkeypatch.setattr(storage, "_get_db_path", lambda: str(db))
+    storage.init_db()
+
+    project = projects.create_new_project({
+        "name": "Elena",
+        "project_type": "persona",
+        "instructions": "You are Elena. ALWAYS mention Florence.",
+    })
+
+    captured: dict = {}
+
+    async def fake_route_chat(messages, **kwargs):
+        captured["messages"] = messages
+        return {"choices": [{"message": {"content": "Buongiorno from Florence."}}]}
+
+    monkeypatch.setattr(projects, "route_chat", fake_route_chat)
+
+    conversation_id = f"conv-{system_initiated}"
+    asyncio.run(projects.run_project_chat({
+        "message": "Deliver the user's evening wind-down.",
+        "conversation_id": conversation_id,
+        "project_id": project["id"],
+        "user_id": "user-a",
+        "system_initiated": system_initiated,
+    }))
+    return captured["messages"], storage.get_messages(conversation_id, user_id="user-a")
+
+
+def test_the_model_still_gets_a_user_turn_for_a_routine(tmp_path, monkeypatch):
+    """Storing the turn as `system` must not leave the prompt without a user message.
+
+    A prompt whose every message is `system` is a shape many providers handle badly and
+    some openai-compatible endpoints reject outright — so fixing the *attribution* of a
+    routine's turn came within one line of degrading every routine's answer.
+
+    The turn is therefore re-roled on its way to the model and nowhere else.
+    """
+    prompt, _ = _project_messages(monkeypatch, tmp_path, system_initiated=True)
+
+    roles = [m["role"] for m in prompt]
+    assert "user" in roles, roles
+    assert roles[0] == "system", "the persona's own instructions still lead the prompt"
+    assert "Florence" in prompt[0]["content"], "persona identity reaches the model"
+    assert "evening wind-down" in prompt[-1]["content"].lower()
+
+
+def test_and_the_record_still_has_no_user_turn(tmp_path, monkeypatch):
+    """The other half, asserted on the same run: re-roling is for the model only."""
+    _, stored = _project_messages(monkeypatch, tmp_path, system_initiated=True)
+
+    roles = [m["role"] for m in stored]
+    assert roles == ["system", "assistant"], roles
+    assert "Scheduled routine" not in "".join(
+        m["content"] for m in stored if m["role"] == "user"
+    )
+
+
+def test_an_ordinary_message_is_untouched(tmp_path, monkeypatch):
+    """Somebody typing still produces a plain user turn, stored and sent as one."""
+    prompt, stored = _project_messages(monkeypatch, tmp_path, system_initiated=False)
+
+    assert [m["role"] for m in stored] == ["user", "assistant"]
+    assert prompt[-1]["role"] == "user"

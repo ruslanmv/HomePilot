@@ -1132,7 +1132,20 @@ You have access to the project's context. When relevant context from the knowled
 
     # 5. Prepare messages for LLM
     messages = [{"role": "system", "content": system_instruction}]
-    for role, content in history:
+    # The routine's own turn is **stored** as `system`, so the record never attributes it to
+    # somebody who did not type it. The model is a different audience: it needs a user turn
+    # to answer, and a prompt whose every message is `system` is a shape many providers
+    # handle badly and some openai-compatible endpoints reject outright.
+    #
+    # So the turn is re-roled on its way to the model and nowhere else — the prompt the model
+    # reads and the record the human reads are not the same artifact, which is the whole
+    # point of storing it as `system` in the first place. Only the final entry is eligible,
+    # and only when it is the system turn this very call just wrote.
+    _system_initiated = bool(payload.get("system_initiated", False))
+    _last = len(history) - 1
+    for _index, (role, content) in enumerate(history):
+        if _system_initiated and _index == _last and role == "system":
+            role = "user"
         messages.append({"role": role, "content": content})
 
     # 5b. Hybrid intent detection — inject dynamic hint for photo-related messages
