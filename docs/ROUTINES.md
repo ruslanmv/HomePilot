@@ -59,6 +59,25 @@ The rule is one flag, `system_initiated`, carried on the chat payload and honour
 persistence paths (`orchestrator.orchestrate` and `projects.run_project_chat`). It defaults
 to `False`, so an ordinary message is still the user's.
 
+### The conversation has to be readable by the person it was made for
+
+`add_message` infers an owner when none is passed, and its last resort is the **default
+user** — right for a single-user install typing into the app, wrong for anything that
+creates a conversation on somebody's behalf. `get_messages` inner-joins
+`conversation_owners`, so a conversation owned by the wrong user returns zero rows to the
+person it belongs to, and *Open latest* opens a completely blank chat.
+
+Both chat paths therefore **claim the conversation before writing to it**:
+
+```python
+if user_id:
+    ensure_conversation_owner(cid, user_id)
+```
+
+Once, at the top, rather than threading `user_id=` through every `add_message` call —
+there are fourteen on the chat path alone, and the next one added would silently
+reintroduce the bug.
+
 ## Ownership boundary
 
 HomePilot owns:

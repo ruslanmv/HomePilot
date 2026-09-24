@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 # Imports from your existing structure
 from .compute import route_chat
-from .storage import add_message, get_recent
+from .storage import add_message, ensure_conversation_owner, get_recent
 from .tracing import log_event
 from .config import UPLOAD_DIR, PUBLIC_BASE_URL
 
@@ -822,6 +822,13 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
             "text": "Please provide a message.",
             "media": None
         }
+
+    # Claim the conversation for the caller before anything is written to it — see the note
+    # in `orchestrator.orchestrate`. Without this a routine's project conversation ends up
+    # owned by the default user, and `get_messages` (which inner-joins `conversation_owners`)
+    # hands the real user an empty chat.
+    if user_id:
+        ensure_conversation_owner(conversation_id, user_id)
 
     # 1. Add the opening turn to storage (tagged with project_id for history).
     #

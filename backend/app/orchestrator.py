@@ -14,7 +14,7 @@ from .llm import is_thinking_model, strip_think_tags, _is_reasoning_text, recove
 from .compute import route_chat
 from .compute.router import build_diagnostics as _compute_diag
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
-from .storage import add_message, get_recent
+from .storage import add_message, ensure_conversation_owner, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
 from .defaults import DEFAULT_NEGATIVE_PROMPT, enhance_negative_prompt
 from .model_config import get_model_settings, get_architecture, MODEL_ARCHITECTURES
@@ -859,6 +859,22 @@ async def orchestrate(
     """
     cid = conversation_id or str(uuid.uuid4())
     text_in = (user_text or "").strip()
+
+    # Claim the conversation for the caller **before the first message is written**.
+    #
+    # `add_message` infers an owner when none is passed, and its last resort is the *default*
+    # user — fine for a single-user install typing into the app, wrong for anything that
+    # creates a conversation on somebody's behalf. `get_messages` inner-joins
+    # `conversation_owners`, so a conversation owned by the wrong user returns **zero rows**
+    # to the person it was made for: the chat opens completely empty.
+    #
+    # That is what happened to every scheduled routine. It knew the user id, passed it in the
+    # payload, and then wrote fourteen messages through `add_message` calls that did not
+    # forward it. Claiming ownership once here fixes all of them at once and keeps working
+    # for whatever writes the next message — threading `user_id=` through every call site
+    # would leave the next one to be added silently broken again.
+    if user_id:
+        ensure_conversation_owner(cid, user_id)
 
     # Periodic GC: evict stale conversation memories (throttled to once/minute)
     _gc_stale_memories()

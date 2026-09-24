@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -368,3 +369,94 @@ def test_handle_request_forwards_system_initiated_to_both_chat_paths(monkeypatch
         )
     )
     assert seen[-1]["system_initiated"] is True
+
+
+# ── the conversation a routine leaves behind is readable by its owner ───────
+
+
+def test_a_routines_conversation_opens_with_its_content(tmp_path, monkeypatch):
+    """"Open latest" used to open an empty chat.
+
+    `add_message` infers an owner when none is passed, and its last resort is the *default*
+    user. Every scheduled routine knew the user id, put it in the payload, and then wrote its
+    messages through `add_message` calls that did not forward it — so the conversation ended
+    up owned by the default user.
+
+    `get_messages` inner-joins `conversation_owners`, so the person the routine ran for got
+    **zero rows** back: the chat opened, and it was blank.
+
+    This drives the real storage layer rather than a fake, because the bug lived entirely in
+    what the two of them agreed about — a test with a stubbed `add_message` would have passed
+    throughout.
+    """
+    from app import storage
+
+    db = tmp_path / "chat.sqlite3"
+    monkeypatch.setattr(storage, "_get_db_path", lambda: str(db))
+    storage.init_db()
+
+    conversation_id = "conv-routine-1"
+    owner = "user-a"
+
+    # What the executor does: claim the conversation, then write the turns without repeating
+    # the user id on every call.
+    storage.ensure_conversation_owner(conversation_id, owner)
+    storage.add_message(conversation_id, "system", "Scheduled routine “Evening wind-down” ran.")
+    storage.add_message(conversation_id, "assistant", "Three things matter tomorrow…")
+
+    seen = storage.get_messages(conversation_id, user_id=owner)
+    assert [m["role"] for m in seen] == ["system", "assistant"], seen
+    assert "Three things matter tomorrow" in seen[-1]["content"]
+
+
+def test_without_the_ownership_claim_the_owner_sees_nothing(tmp_path, monkeypatch):
+    """The failure mode itself, so the fix cannot be quietly removed.
+
+    Writing the same two messages *without* claiming ownership hands them to the default
+    user, and the real owner's read comes back empty — which is exactly what "open latest
+    opens a blank chat" looked like from the outside.
+    """
+    from app import storage
+
+    db = tmp_path / "chat.sqlite3"
+    monkeypatch.setattr(storage, "_get_db_path", lambda: str(db))
+    storage.init_db()
+
+    conversation_id = "conv-routine-2"
+    storage.add_message(conversation_id, "assistant", "Three things matter tomorrow…")
+
+    assert storage.get_messages(conversation_id, user_id="user-a") == []
+    # The messages are there — they just belong to somebody else.
+    assert len(storage.get_messages(conversation_id)) == 1
+
+
+def test_orchestrate_claims_the_conversation_for_the_caller(tmp_path, monkeypatch):
+    """The claim happens on the real chat path, not only in the executor.
+
+    A routine reaches storage through `orchestrate`, so asserting on the helper alone would
+    pass for a build that never calls it.
+    """
+    from app import orchestrator
+
+    claimed: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        orchestrator,
+        "ensure_conversation_owner",
+        lambda cid, uid: claimed.append((cid, uid)),
+    )
+    monkeypatch.setattr(orchestrator, "add_message", lambda *a, **k: None)
+
+    # `orchestrate` does a great deal after this point; the claim is the first thing it does
+    # and the only thing under test, so the run is allowed to fail after it.
+    import asyncio as _asyncio
+
+    with contextlib.suppress(Exception):
+        _asyncio.run(
+            orchestrator.orchestrate(
+                "hello",
+                conversation_id="conv-x",
+                user_id="user-a",
+            )
+        )
+
+    assert ("conv-x", "user-a") in claimed
