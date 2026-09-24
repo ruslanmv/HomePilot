@@ -114,10 +114,10 @@ and agent/persona context.
 
 The Routines tab supports:
 
-- **Start from a template** — ten ready-made routines (see below)
+- **Start from a template** — ten ready-made routines, behind one dropdown (see below)
 - create/edit/remove
 - enable/pause
-- `Run with` selector grouped into HomePilot, Personas, and Projects
+- searchable `Run with` picker grouped into HomePilot, Personas, and Projects
 - daily/weekdays/custom-day schedules
 - optional city/region for local news prioritization
 - local timezone
@@ -125,25 +125,63 @@ The Routines tab supports:
 - optional companion speech
 - catch-up preference
 
+### The shape of the form
+
+The creation form reads top to bottom as **name → task → context → schedule → delivery →
+create**, and the only optional thing in it — templates — sits in the header as a single
+button rather than in the flow.
+
+That ordering is a correction. The first version opened with a section of nine template
+cards, then asked for a name, then offered *another* grid of four cards for the action type:
+thirteen large targets to read before the first field of the thing the user actually came to
+create. Two problems came out of that, and both are fixed here rather than restyled:
+
+* **Optional work looked compulsory.** A shortcut that occupies the first screen is not read
+  as a shortcut. It is one dropdown now, and the menu stays shut until asked for. Once a
+  template is applied the button names it and a single line under the header says so —
+  no second card repeating what the fields below already show.
+* **The same question was asked twice.** Templates are named *Morning news*, *Start my day*,
+  *Daily reminder*; the action cards were named *Today's news*, *Daily briefing*, *Reminder*.
+  Choosing "Morning news" and then being asked to choose "Today's news" reads as the form
+  not having listened. So the four action types stopped being a card grid and became
+  suggestions under one **What should HomePilot do?** field — which is what they always
+  were. `news_digest` and `daily_briefing` take no free text, so for those the field shows
+  what will happen instead of an input bound to nothing.
+
+The names for those four live in one place (`taskKindLabel`), shared by the field and the
+routine list's badge, so the list cannot drift into calling something "Today's news" beside
+a field that calls it "News".
+
+`Run with` is a searchable picker rather than a native `<select>`: on an install with a few
+dozen personas and projects, a dropdown of every one of them stops being usable, and there
+is no recency data to shortlist honestly — so it offers search over a grouped, scrolling
+list instead.
+
 ### Templates
 
-A blank routine form asks four questions at once, and the hardest is the last: *what should
-HomePilot do?* That is a writing task, and a good answer looks nothing like the one-line
-placeholder most people type. So creating a routine opens with worked examples
-(`frontend/src/ui/routines/presets.ts`).
+The hardest question on the form is *what should HomePilot do?* — a writing task, and a good
+answer looks nothing like the one-line placeholder most people type. So the header offers
+worked examples (`frontend/src/ui/routines/presets.ts`), grouped **Popular · Work ·
+Personal** and searchable.
 
-| Template | Action | Default schedule | Best run with |
-|---|---|---|---|
-| Morning news | `news_digest` | Daily 07:00 | HomePilot |
-| Start my day | `daily_briefing` | Weekdays 08:00 | HomePilot |
-| Evening wind-down | `assistant_prompt` | Daily 21:30 | HomePilot |
-| Stand-up prep | `assistant_prompt` | Weekdays 08:45 | a Project |
-| Sunday reset | `assistant_prompt` | Sundays 18:00 | a Project |
-| Field watch | `assistant_prompt` | Weekdays 17:00 | HomePilot |
-| Daily reminder | `reminder` | Daily 09:00 | HomePilot |
-| Move of the day | `assistant_prompt` | Daily 12:30 | HomePilot |
-| Bedtime story | `assistant_prompt` | Daily 19:45 | a Persona |
-| Language practice | `assistant_prompt` | Daily 08:15 | a Persona |
+Picking one fills in name, schedule and task, and closes. Nothing stays expanded, and the
+form beneath is ordinary and fully editable — a template is a shortcut that fills the form,
+not a mode the routine is now in. Editing an existing routine offers no templates at all:
+overwriting name, schedule and task in one click is helpful on a blank form and destructive
+on a routine that has been running for a month.
+
+| Template | Group | Action | Default schedule | Best run with |
+|---|---|---|---|---|
+| Morning news | Popular | `news_digest` | Daily 07:00 | HomePilot |
+| Start my day | Popular | `daily_briefing` | Weekdays 08:00 | HomePilot |
+| Evening wind-down | Popular | `assistant_prompt` | Daily 21:30 | HomePilot |
+| Stand-up prep | Work | `assistant_prompt` | Weekdays 08:45 | a Project |
+| Sunday reset | Work | `assistant_prompt` | Sundays 18:00 | a Project |
+| Field watch | Work | `assistant_prompt` | Weekdays 17:00 | HomePilot |
+| Daily reminder | Personal | `reminder` | Daily 09:00 | HomePilot |
+| Move of the day | Personal | `assistant_prompt` | Daily 12:30 | HomePilot |
+| Bedtime story | Personal | `assistant_prompt` | Daily 19:45 | a Persona |
+| Language practice | Personal | `assistant_prompt` | Daily 08:15 | a Persona |
 
 Four rules hold the list together, and each is asserted by a test:
 

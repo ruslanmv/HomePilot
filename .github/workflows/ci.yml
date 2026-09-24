@@ -102,6 +102,7 @@ jobs:
           src/test/meetingsenseAddon.test.js
           src/test/meetingsenseEnded.test.tsx
           src/test/routinePresets.test.tsx
+          src/test/routineEditorControls.test.tsx
         working-directory: frontend
       - run: npm run build
         working-directory: frontend

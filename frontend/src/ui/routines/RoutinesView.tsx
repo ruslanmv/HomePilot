@@ -35,6 +35,7 @@ import {
 } from './api'
 import type { Routine, RoutineActionType, RoutineDraft, RoutineRun } from './types'
 import { applyPreset, availablePresets, type RoutinePreset } from './presets'
+import { TargetPicker, TaskField, TemplateMenu, parametersFor, taskKindLabel } from './EditorControls'
 
 const DAYS = [
   { id: 1, short: 'M', label: 'Monday' },
@@ -46,37 +47,19 @@ const DAYS = [
   { id: 7, short: 'S', label: 'Sunday' },
 ]
 
-const ACTIONS: Array<{
-  id: RoutineActionType
-  title: string
-  description: string
-  icon: LucideIcon
-}> = [
-  {
-    id: 'news_digest',
-    title: 'Today’s news',
-    description: 'Prepare a concise local + broader news digest.',
-    icon: Newspaper,
-  },
-  {
-    id: 'daily_briefing',
-    title: 'Daily briefing',
-    description: 'A warm overview of the day, priorities, reminders and context.',
-    icon: Sparkles,
-  },
-  {
-    id: 'reminder',
-    title: 'Reminder',
-    description: 'Have HomePilot bring something to your attention at the chosen time.',
-    icon: Bell,
-  },
-  {
-    id: 'assistant_prompt',
-    title: 'Assistant task',
-    description: 'Give HomePilot a standing task to carry out on a schedule.',
-    icon: CalendarClock,
-  },
-]
+/**
+ * Icons for the routine list.
+ *
+ * Labels are **not** here: they come from `taskKindLabel`, which the editor's suggestion
+ * row also uses. Two lists of names for the same four things is how a badge ends up
+ * reading "Today's news" next to a field that calls it "News".
+ */
+const ACTION_ICONS: Record<RoutineActionType, LucideIcon> = {
+  news_digest: Newspaper,
+  daily_briefing: Sparkles,
+  reminder: Bell,
+  assistant_prompt: CalendarClock,
+}
 
 function browserTimezone(): string {
   try {
@@ -86,19 +69,24 @@ function browserTimezone(): string {
   }
 }
 
+/**
+ * A blank routine, and blank is the point.
+ *
+ * This used to open pre-filled as a news digest called "Morning news" — a template in all
+ * but name, sitting where the empty form should be. With templates now one button away,
+ * the form's job is to be empty and get out of the way: an unnamed custom task the user
+ * types into, or the shape a template drops in.
+ */
 function defaultDraft(): RoutineDraft {
   return {
-    name: 'Morning news',
+    name: '',
     enabled: true,
     timezone: browserTimezone(),
     schedule: { type: 'daily', time: '08:00' },
     target: { type: 'assistant' },
     action: {
-      type: 'news_digest',
-      parameters: {
-        scope: ['local', 'national', 'world'],
-        max_items: 6,
-      },
+      type: 'assistant_prompt',
+      parameters: { prompt: '' },
     },
     delivery: {
       in_app: true,
@@ -127,74 +115,7 @@ function scheduleLabel(routine: Pick<RoutineDraft, 'schedule' | 'timezone'>): st
 }
 
 function actionLabel(type: RoutineActionType): string {
-  return ACTIONS.find((action) => action.id === type)?.title || type
-}
-
-/**
- * Worked examples, shown only when creating.
- *
- * The blank form asks four questions at once and the hardest is "what should HomePilot
- * do?", which is a writing task most people will not do well from a placeholder. Picking a
- * template answers three of the four and leaves a task text that is worth editing rather
- * than worth replacing.
- *
- * Editing an existing routine shows nothing here: a template overwrites name, schedule and
- * task in one click, which is a reasonable thing to offer on a blank form and a destructive
- * surprise on a routine somebody has been running for a month.
- */
-function PresetPicker({
-  presets,
-  selected,
-  onPick,
-}: {
-  presets: RoutinePreset[]
-  selected: string | null
-  onPick: (preset: RoutinePreset) => void
-}) {
-  if (!presets.length) return null
-  return (
-    <section data-testid="routine-presets">
-      <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-1">
-        Start from a template
-      </div>
-      <div className="text-xs text-white/35 mb-3">
-        Everything stays editable — a template only fills the form in.
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {presets.map((preset) => {
-          const Icon = preset.icon
-          const active = selected === preset.id
-          return (
-            <button
-              key={preset.id}
-              type="button"
-              onClick={() => onPick(preset)}
-              data-testid={`routine-preset-${preset.id}`}
-              className={[
-                'rounded-2xl border p-3 text-left transition-colors',
-                active
-                  ? 'border-cyan-400/40 bg-cyan-400/[0.08]'
-                  : 'border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05]',
-              ].join(' ')}
-            >
-              <div className="flex items-start gap-3">
-                <div className={[
-                  'h-8 w-8 rounded-lg grid place-items-center shrink-0',
-                  active ? 'bg-cyan-400/10 text-cyan-300' : 'bg-white/[0.05] text-white/55',
-                ].join(' ')}>
-                  <Icon size={16} />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-white/90">{preset.title}</div>
-                  <div className="text-[11px] leading-4 text-white/40 mt-0.5">{preset.blurb}</div>
-                </div>
-              </div>
-            </button>
-          )
-        })}
-      </div>
-    </section>
-  )
+  return taskKindLabel(type)
 }
 
 function RoutineEditor({
@@ -233,34 +154,12 @@ function RoutineEditor({
   })
 
   const selectedDays = draft.schedule.type === 'weekly' ? draft.schedule.days : []
-  const personaTargets = targets.filter((project) => project.project_type === 'persona')
-  const projectTargets = targets.filter((project) => project.project_type !== 'persona')
-  const targetValue =
-    draft.target.type === 'assistant'
-      ? 'assistant'
-      : `${draft.target.type}:${draft.target.project_id}`
 
-  const setTarget = (value: string) => {
-    if (value === 'assistant') {
-      setDraft((prev) => ({ ...prev, target: { type: 'assistant' } }))
-      return
-    }
-    const separator = value.indexOf(':')
-    const type = value.slice(0, separator) as 'persona' | 'project'
-    const projectId = value.slice(separator + 1)
-    setDraft((prev) => ({ ...prev, target: { type, project_id: projectId } }))
-  }
-
+  // Switching kind resets the parameters, so a reminder message never lingers on a news
+  // digest. `parametersFor` is shared with the control that renders the choice, because
+  // two copies of "what fields does this kind have" is how one of them goes stale.
   const setAction = (type: RoutineActionType) => {
-    const parameters =
-      type === 'news_digest'
-        ? { scope: ['local', 'national', 'world'], max_items: 6, location: '' }
-        : type === 'reminder'
-          ? { message: '' }
-          : type === 'assistant_prompt'
-            ? { prompt: '' }
-            : {}
-    setDraft((prev) => ({ ...prev, action: { type, parameters } }))
+    setDraft((prev) => ({ ...prev, action: { type, parameters: parametersFor(type) } }))
   }
 
   const setCadence = (cadence: 'daily' | 'weekdays' | 'custom') => {
@@ -288,7 +187,6 @@ function RoutineEditor({
 
   const message = String(draft.action.parameters.message || '')
   const prompt = String(draft.action.parameters.prompt || '')
-  const newsLocation = String(draft.action.parameters.location || '')
 
   const valid =
     draft.name.trim().length > 0 &&
@@ -301,48 +199,51 @@ function RoutineEditor({
     <div className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#121212] shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-5 border-b border-white/[0.06] bg-[#121212]/95 backdrop-blur">
-          <div>
+          <div className="min-w-0">
             <div className="text-lg font-semibold text-white">
               {initial ? 'Edit routine' : 'New routine'}
             </div>
             <div className="text-sm text-white/45 mt-1">Choose when it happens and what HomePilot should prepare.</div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-9 w-9 rounded-xl grid place-items-center text-white/45 hover:text-white hover:bg-white/[0.06]"
-            aria-label="Close routine editor"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Templates live in the header, as one button.
+                As a section they were the first thing on the page and the largest — nine
+                cards to scan before reaching the Name field, which makes an optional
+                shortcut read as a required step. Editing shows none of this: filling the
+                form in one click is helpful on a blank form and destructive on a routine
+                that has been running for a month. */}
+            {!initial ? (
+              <TemplateMenu
+                presets={presets}
+                applied={pickedPreset}
+                onPick={(preset) => {
+                  setPickedPreset(preset)
+                  setDraft((prev) => applyPreset(preset, prev))
+                }}
+                onClear={() => {
+                  setPickedPreset(null)
+                  setDraft(defaultDraft())
+                }}
+              />
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-9 w-9 rounded-xl grid place-items-center text-white/45 hover:text-white hover:bg-white/[0.06]"
+              aria-label="Close routine editor"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
-        <div className="p-6 space-y-7">
-          {!initial ? (
-            <PresetPicker
-              presets={presets}
-              selected={pickedPreset?.id ?? null}
-              onPick={(preset) => {
-                setPickedPreset(preset)
-                setDraft((prev) => applyPreset(preset, prev))
-              }}
-            />
-          ) : null}
-
-          {/* A preset cannot know the user's project ids, so where it wants to run is
-              advice rather than a value it sets. Said here, next to the form it affects,
-              instead of silently leaving the target on HomePilot and producing a
-              stand-up drafted from no project at all. */}
-          {pickedPreset && pickedPreset.targetHint !== 'assistant' ? (
-            <div
-              className="rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] px-4 py-3 text-[11px] leading-5 text-amber-100/70"
-              role="status"
-              data-testid="routine-preset-target-hint"
-            >
-              {pickedPreset.title} works best run with{' '}
-              {pickedPreset.targetHint === 'persona' ? 'a persona' : 'a project'} — choose one
-              under <span className="font-semibold">Run with</span> below, so it can draw on
-              that context.
+        <div className="p-6 space-y-6">
+          {/* One line, not a card: the template has already done its job by filling the
+              fields below, and repeating it as a panel would put the weight straight back. */}
+          {pickedPreset ? (
+            <div className="text-[11px] text-white/35" data-testid="routine-template-applied">
+              <span className="text-white/55">{pickedPreset.title}</span> template applied ·
+              Everything below is editable.
             </div>
           ) : null}
 
@@ -357,130 +258,52 @@ function RoutineEditor({
             />
           </section>
 
-          <section>
-            <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">What should HomePilot do?</div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {ACTIONS.map((action) => {
-                const Icon = action.icon
-                const selected = draft.action.type === action.id
-                return (
-                  <button
-                    key={action.id}
-                    type="button"
-                    onClick={() => setAction(action.id)}
-                    className={[
-                      'rounded-2xl border p-4 text-left transition-colors',
-                      selected
-                        ? 'border-cyan-400/40 bg-cyan-400/[0.08]'
-                        : 'border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05]',
-                    ].join(' ')}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={[
-                        'h-9 w-9 rounded-xl grid place-items-center shrink-0',
-                        selected ? 'bg-cyan-400/10 text-cyan-300' : 'bg-white/[0.05] text-white/55',
-                      ].join(' ')}>
-                        <Icon size={18} />
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold text-white/90">{action.title}</div>
-                        <div className="text-xs leading-5 text-white/40 mt-1">{action.description}</div>
-                      </div>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-
-            {draft.action.type === 'news_digest' ? (
-              <div className="mt-3">
-                <label className="text-xs text-white/40">News location <span className="text-white/25">(optional)</span></label>
-                <input
-                  value={newsLocation}
-                  onChange={(e) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      action: {
-                        ...prev.action,
-                        parameters: { ...prev.action.parameters, location: e.target.value },
-                      },
-                    }))
-                  }
-                  className="mt-1.5 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-white/25"
-                  placeholder="For example: Milan, Lombardy"
-                />
-                <p className="mt-1.5 text-xs leading-5 text-white/35">
-                  Used to prioritize local headlines. Leave blank for the general news feed.
-                </p>
-              </div>
-            ) : null}
-
-            {draft.action.type === 'reminder' ? (
-              <textarea
-                value={message}
-                onChange={(e) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    action: { ...prev.action, parameters: { ...prev.action.parameters, message: e.target.value } },
-                  }))
-                }
-                className="mt-3 min-h-24 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-white/25"
-                placeholder="What should HomePilot bring to your attention?"
-              />
-            ) : null}
-
-            {draft.action.type === 'assistant_prompt' ? (
-              <textarea
-                value={prompt}
-                onChange={(e) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    action: { ...prev.action, parameters: { ...prev.action.parameters, prompt: e.target.value } },
-                  }))
-                }
-                className="mt-3 min-h-24 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-white/25"
-                placeholder="What should HomePilot do? For example: check my calendar and summarize today's priorities."
-              />
-            ) : null}
-          </section>
+          {/* The four action types, as suggestions under one field rather than a second
+              grid of cards. They used to be four large targets directly under nine template
+              cards, and the two sets overlapped: "Morning news" then "Today's news" is the
+              same decision twice, and reads as the form not having listened. */}
+          <TaskField
+            action={draft.action}
+            onChangeKind={setAction}
+            onChangeText={(value) =>
+              setDraft((prev) => ({
+                ...prev,
+                action: {
+                  ...prev.action,
+                  parameters: {
+                    ...prev.action.parameters,
+                    [prev.action.type === 'reminder' ? 'message' : 'prompt']: value,
+                  },
+                },
+              }))
+            }
+            onChangeLocation={(value) =>
+              setDraft((prev) => ({
+                ...prev,
+                action: { ...prev.action, parameters: { ...prev.action.parameters, location: value } },
+              }))
+            }
+          />
 
 
-          <section>
-            <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">Run with</div>
-            <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
-              <div className="flex items-start gap-3">
-                <div className="h-9 w-9 rounded-xl bg-violet-400/10 text-violet-200 grid place-items-center shrink-0">
-                  {draft.target.type === 'persona' ? <UserRound size={18} /> : draft.target.type === 'project' ? <Folder size={18} /> : <Bot size={18} />}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <select
-                    value={targetValue}
-                    onChange={(e) => setTarget(e.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-[#171717] px-3 py-2.5 text-sm text-white outline-none focus:border-white/25"
-                  >
-                    <option value="assistant">HomePilot assistant</option>
-                    {personaTargets.length ? (
-                      <optgroup label="Personas">
-                        {personaTargets.map((project) => (
-                          <option key={project.id} value={`persona:${project.id}`}>{project.name}</option>
-                        ))}
-                      </optgroup>
-                    ) : null}
-                    {projectTargets.length ? (
-                      <optgroup label="Projects">
-                        {projectTargets.map((project) => (
-                          <option key={project.id} value={`project:${project.id}`}>{project.name}</option>
-                        ))}
-                      </optgroup>
-                    ) : null}
-                  </select>
-                  <p className="mt-2 text-xs leading-5 text-white/40">
-                    Routine results use this assistant, persona memory, or project context. Scheduled runs never replace your currently open chat.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </section>
+          {/* A searchable picker rather than a <select>: an install with forty personas
+              makes a native dropdown unusable, and this list is the user's whole project
+              space. The template's preference appears as one line under it — advice,
+              because a template cannot know anybody's project ids. */}
+          <TargetPicker
+            target={draft.target}
+            projects={targets}
+            onChange={(next) => setDraft((prev) => ({ ...prev, target: next }))}
+            hint={
+              pickedPreset
+              && pickedPreset.targetHint !== 'assistant'
+              && draft.target.type === 'assistant'
+                ? `${pickedPreset.title} works best with ${
+                  pickedPreset.targetHint === 'persona' ? 'a persona' : 'a project'
+                }, so it can draw on that context.`
+                : null
+            }
+          />
 
           <section>
             <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">When?</div>
@@ -846,7 +669,7 @@ export default function RoutinesView({
           ) : (
             <div className="space-y-3">
               {routines.map((routine) => {
-                const ActionIcon = ACTIONS.find((action) => action.id === routine.action.type)?.icon || Sparkles
+                const ActionIcon = ACTION_ICONS[routine.action.type] || Sparkles
                 return (
                   <article key={routine.id} className="rounded-2xl border border-white/[0.075] bg-white/[0.025] p-4 sm:p-5">
                     <div className="flex items-start gap-4">

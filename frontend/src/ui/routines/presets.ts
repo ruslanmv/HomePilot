@@ -51,7 +51,7 @@ export type RoutinePreset = {
   /** One line, in the picker. Says what it is for, not what it does mechanically. */
   blurb: string
   icon: LucideIcon
-  group: 'Your day' | 'Work' | 'Wellbeing' | 'Home'
+  group: 'Popular' | 'Work' | 'Personal'
   targetHint: PresetTargetHint
   /** The parts of a draft a preset decides. Everything else keeps the form's defaults. */
   draft: Pick<RoutineDraft, 'name' | 'schedule' | 'action'>
@@ -68,7 +68,7 @@ export const ROUTINE_PRESETS: RoutinePreset[] = [
     title: 'Morning news',
     blurb: 'Today’s local and world headlines, before you are properly awake.',
     icon: Newspaper,
-    group: 'Your day',
+    group: 'Popular',
     targetHint: 'assistant',
     draft: {
       name: 'Morning news',
@@ -84,7 +84,7 @@ export const ROUTINE_PRESETS: RoutinePreset[] = [
     title: 'Start my day',
     blurb: 'A warm overview of the day ahead, on working mornings.',
     icon: Sunrise,
-    group: 'Your day',
+    group: 'Popular',
     targetHint: 'assistant',
     draft: {
       name: 'Start my day',
@@ -97,7 +97,7 @@ export const ROUTINE_PRESETS: RoutinePreset[] = [
     title: 'Evening wind-down',
     blurb: 'Close the day: what matters tomorrow, and what to let go of.',
     icon: Moon,
-    group: 'Your day',
+    group: 'Popular',
     targetHint: 'assistant',
     draft: {
       name: 'Evening wind-down',
@@ -183,7 +183,7 @@ export const ROUTINE_PRESETS: RoutinePreset[] = [
     title: 'Daily reminder',
     blurb: 'Medication, stretches, the bins — the thing you keep forgetting.',
     icon: Bell,
-    group: 'Wellbeing',
+    group: 'Personal',
     targetHint: 'assistant',
     draft: {
       name: 'Daily reminder',
@@ -196,7 +196,7 @@ export const ROUTINE_PRESETS: RoutinePreset[] = [
     title: 'Move of the day',
     blurb: 'One fifteen-minute workout, no equipment, different every day.',
     icon: Dumbbell,
-    group: 'Wellbeing',
+    group: 'Personal',
     targetHint: 'assistant',
     draft: {
       name: 'Move of the day',
@@ -217,7 +217,7 @@ export const ROUTINE_PRESETS: RoutinePreset[] = [
     title: 'Bedtime story',
     blurb: 'A fresh story every night, ready when it is time to read one.',
     icon: BookOpen,
-    group: 'Home',
+    group: 'Personal',
     targetHint: 'persona',
     draft: {
       name: 'Bedtime story',
@@ -238,7 +238,7 @@ export const ROUTINE_PRESETS: RoutinePreset[] = [
     title: 'Language practice',
     blurb: 'A short daily lesson you answer in the chat it arrives in.',
     icon: GraduationCap,
-    group: 'Home',
+    group: 'Personal',
     targetHint: 'persona',
     draft: {
       name: 'Language practice',
