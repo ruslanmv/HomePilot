@@ -148,6 +148,7 @@ Guarantees enforced by the implementation:
 | **2** | **Read-only mirror RPC** (`/v1/node/rpc`): services, models, personas, projects, workflows, safe settings | HomePilot | **done** (`node_rpc.py`) |
 | **3** | **Durable jobs + artifacts** (`/v1/node/jobs`, `/v1/node/artifacts`): chat/image/video ops with progress; owner-scoped, expiring artifacts | HomePilot | **done** (`node_jobs.py`, `node_artifacts.py`) — image/video adapters await a live sidecar ComfyUI URL |
 | **2–3 cloud+daemon** | Owner-scoped `/v1/mirror/nodes/*` relay routes; daemon maps `homepilot.mirror.*` op-codes → node endpoints | ollabridge-cloud | **done** (`api/mirror.py`, `connector/bridge.py`) |
+| 4a | **MCP for external apps**: `agentic.invoke` node job, allow-listed (`HOMEPILOT_MIRROR_MCP_ENABLED`, `HOMEPILOT_MIRROR_ALLOWED_TOOLS`) — see [EXTERNAL_APPS.md](EXTERNAL_APPS.md) | HomePilot + ollabridge | **done** (`node_ops_agentic.py`; OllaBridge Local `homepilot_mirror_relay.py`) |
 | 4 | Full ops (projects/persona edit, voice, avatar, files, MCP) — per-scope | all | design |
 | 5 | Media optimization (chunked/resume/WebRTC, direct-browser media) | all | design |
 | 6 | Optional encrypted backup/sync — a **separate** product feature | all | design |
@@ -178,6 +179,7 @@ HOMEPILOT_MIRROR_JOBS_ENABLED=false
 HOMEPILOT_MIRROR_PROJECTS_ENABLED=false
 HOMEPILOT_MIRROR_FILES_ENABLED=false
 HOMEPILOT_MIRROR_MCP_ENABLED=false
+HOMEPILOT_MIRROR_ALLOWED_TOOLS=           # empty = deny all (agentic.invoke)
 HOMEPILOT_CLOUD_FALLBACK_ENABLED=true
 ```
 
