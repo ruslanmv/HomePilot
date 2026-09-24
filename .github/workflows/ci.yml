@@ -103,6 +103,7 @@ jobs:
           src/test/meetingsenseEnded.test.tsx
           src/test/routinePresets.test.tsx
           src/test/routineEditorControls.test.tsx
+          src/test/modeGroups.test.ts
         working-directory: frontend
       - run: npm run build
         working-directory: frontend

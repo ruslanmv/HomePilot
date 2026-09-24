@@ -58,6 +58,7 @@ import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeech
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
+import { modeGroup, resetsConversation } from './lib/modeGroups'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
 import { ComputerStatusPill } from './account/ComputerStatusPill'
@@ -3639,24 +3640,13 @@ export default function App() {
     const prevMode = prevModeRef.current
     const currentMode = mode
 
-    // Define mode groups
-    const chatLikeModes: Mode[] = ['chat', 'voice', 'project', 'search', 'imagine']
-    const editMode: Mode[] = ['edit']
-    const animateMode: Mode[] = ['animate']
-
-    const getModeGroup = (m: Mode): 'chat' | 'edit' | 'animate' | 'other' => {
-      if (chatLikeModes.includes(m)) return 'chat'
-      if (editMode.includes(m)) return 'edit'
-      if (animateMode.includes(m)) return 'animate'
-      return 'other'
-    }
-
-    const prevGroup = getModeGroup(prevMode)
-    const currentGroup = getModeGroup(currentMode)
-
-    // Reset conversation when switching between different mode groups
-    if (prevGroup !== currentGroup && currentGroup !== 'other') {
-      console.log(`Mode switched from ${prevMode} (${prevGroup}) to ${currentMode} (${currentGroup}) - resetting conversation`)
+    // The rule lives in `lib/modeGroups` so it can be read and tested on its own — see the
+    // note there about why opening a conversation has to switch mode *before* it loads.
+    if (resetsConversation(prevMode, currentMode)) {
+      console.log(
+        `Mode switched from ${prevMode} (${modeGroup(prevMode)}) to `
+        + `${currentMode} (${modeGroup(currentMode)}) - resetting conversation`,
+      )
       setConversationId(uuid())
       setMessages([])
     }
@@ -3986,6 +3976,28 @@ export default function App() {
   }, [settings.backendUrl, authHeaders])
 
   const loadConversation = useCallback(async (convId: string) => {
+    /*
+     * Switch the mode **first**, then fetch.
+     *
+     * The mode-group effect above resets the conversation whenever the group changes, and
+     * it runs after the commit that changed the mode. Switching after the fetch put
+     * `setMode`, `setConversationId` and `setMessages` in one commit — so the reset ran
+     * next and wiped the messages that had just arrived. Opening a routine's conversation
+     * landed on an empty chat every time, which is exactly what it looked like from the
+     * outside: "it only opens a new chat with no information".
+     *
+     * Switching first lets that reset happen while there is nothing yet to lose, and the
+     * loaded messages land last. A fetch can never resolve before React has flushed the
+     * effect, so the ordering is deterministic rather than a race.
+     *
+     * The History list already worked only because it happened to call `setMode('chat')`
+     * itself before the load; every other caller relied on this function, and every other
+     * caller was broken.
+     */
+    setMode('chat')
+    setShowSettings(false)
+    setShowHistory(false)
+
     try {
       const data = await getJson<{
         ok: boolean
@@ -3997,13 +4009,6 @@ export default function App() {
         authHeaders
       )
       if (data.ok && data.messages) {
-        // Always switch to chat mode when loading a conversation.
-        // Without this, if user is in Voice/Imagine/Models/etc, messages
-        // load into state but the UI keeps rendering the current mode screen.
-        setMode('chat')
-        setShowSettings(false)
-        setShowHistory(false)
-
         setConversationId(convId)
         setMessages(
           data.messages.map((m, idx) => {

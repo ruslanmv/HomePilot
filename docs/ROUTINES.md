@@ -95,6 +95,27 @@ history entry is eligible, and only when it is the system turn that same call ju
 | The routine's task | `user` | `system` |
 | The answer | — | `assistant` |
 
+### Opening a run's conversation
+
+*Open* on a run loads that conversation and switches the app into chat. The order of those
+two is load-bearing.
+
+The chat surface resets the conversation whenever the **mode group** changes, so that a
+transcript never bleeds into an image-edit or animate session
+(`frontend/src/ui/lib/modeGroups.ts`). Routines is an `other` surface and chat is a `chat`
+surface, so arriving in chat *from* Routines is a group change — and the reset runs after
+the commit that changed the mode.
+
+`loadConversation` used to switch mode after its fetch, which put `setMode`,
+`setConversationId` and `setMessages` in a single commit. The reset then ran next and wiped
+the messages that had just arrived: every routine's *Open* landed on an empty chat. It now
+switches **before** fetching, so the reset happens while there is nothing to lose and the
+loaded messages land last. A fetch cannot resolve before React flushes the effect, so this
+is deterministic rather than a race.
+
+The History list was unaffected only because it happened to call `setMode('chat')` itself
+before loading; everything that relied on `loadConversation` alone was broken.
+
 ## Ownership boundary
 
 HomePilot owns:
