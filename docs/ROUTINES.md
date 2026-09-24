@@ -9,8 +9,10 @@ clients such as the 3D Avatar only present the same HomePilot-owned result.
 
 Each routine answers four questions:
 
-1. **What?** `news_digest`, `daily_briefing`, `reminder`, or
-   `assistant_prompt`.
+1. **What task?** `news_digest`, `daily_briefing`, `reminder`, or
+   `assistant_prompt` — a standing task the assistant carries out, shown in the UI as
+   *Assistant task*. (The id keeps its original spelling so existing routines keep
+   working.)
 2. **Who / where?** HomePilot assistant, a Persona project, or a normal Project.
 3. **When?** Daily, selected weekdays, or once, in an IANA timezone.
 4. **How should it be delivered?** Notification, optional companion speech, and
@@ -19,6 +21,43 @@ Each routine answers four questions:
 Every successful run is saved as a native HomePilot conversation. This is an
 intentional invariant: a notification is a pointer to a real conversation, not
 a disposable blob of text.
+
+### A routine is something HomePilot does, not something you said
+
+This is the load-bearing distinction, and it decides how a run is stored.
+
+A routine is a **standing task for the assistant**. When it comes due, HomePilot carries the
+task out on its own and leaves the answer in a new conversation you can open, read and
+continue — an Alexa routine that happens to also be a thread.
+
+What it is *not* is a saved message from you. Routines used to work that way: the prepared
+instruction was handed to the chat pipeline as the user's message, so every run opened its
+conversation with a first-person line — *"Prepare my morning news briefing for today."* —
+attributed to you, at 7am, while you were asleep. Three things were wrong with that:
+
+* **the record lied about who said what**, and nothing downstream could tell — not the
+  reader, not search, not memory, not a later summary of the thread;
+* **your first real message landed second**, in a conversation that already misrepresented
+  you, so the model's picture of you was wrong from its first turn;
+* it made a routine look like a macro that replays typing, which is the wrong mental model
+  for something that is supposed to act by itself.
+
+So a routine's opening turn is stored with `role="system"` and reads as what it is:
+
+```
+Scheduled routine "Morning news" ran automatically at 07:04 on Sep 24.
+Task: Prepare today's news briefing for the user from the current information supplied.
+```
+
+The chat surface renders that as a quiet marker line above the answer rather than as a chat
+bubble, so a conversation that appeared by itself explains why it exists. Nothing about the
+generated answer changes: conversation history is mapped role-for-role into the provider
+call, so the model reads the same words it always did. **Only the attribution changes, and
+the attribution was the bug.**
+
+The rule is one flag, `system_initiated`, carried on the chat payload and honoured by both
+persistence paths (`orchestrator.orchestrate` and `projects.run_project_chat`). It defaults
+to `False`, so an ordinary message is still the user's.
 
 ## Ownership boundary
 
@@ -216,7 +255,15 @@ Example event:
    chat pipeline
 6. store the human-readable response as the native conversation
 
-Raw tool JSON is not inserted as the visible user message.
+Raw tool JSON never reaches the conversation — it goes into hidden orchestration context,
+not into a visible turn.
+
+Each action returns an **`instruction`**: an imperative task addressed to the assistant
+("Prepare today's news briefing for the user"), never a first-person line in the user's
+voice ("Give me my daily briefing"). The phrasing is part of the contract rather than a
+style preference — a first-person instruction is what made the forged turn read as normal,
+and it also cues the model to answer as though someone had just spoken to it, which nobody
+had.
 
 `daily_briefing` reuses the existing Secretary Daily Briefing workflow hints
 and current-information tools, while avoiding claims of calendar/email access

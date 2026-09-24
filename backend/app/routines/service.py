@@ -3,6 +3,27 @@
 This module deliberately reuses HomePilot's native chat/project/persona session
 paths. A routine therefore produces the same kind of conversation the user can
 open and continue manually; it does not invent a parallel automation chat store.
+
+── A routine is a task HomePilot performs, not a message from the user ─────────────────
+
+The conversation a routine leaves behind is the product: it opens, the answer is there, and
+the user can carry on talking from it — an Alexa routine that also happens to be a thread.
+
+What makes that work is that the thread is **true**. It used to open with a fabricated user
+turn — ``"Prepare my morning news briefing for today."`` attributed to the person, who was
+probably asleep — because the prepared instruction was handed to the chat pipeline as
+``payload["message"]`` and both chat paths persist that as ``role="user"``. Three things
+went wrong at once:
+
+* the record lied about who said what, and nothing downstream could tell;
+* the user's first *real* message landed second, in a thread that already misrepresented
+  them, so the model's "history" of them was wrong from the first turn;
+* memory and later summaries ingested the fabrication as a genuine request.
+
+Now the instruction travels as ``system_initiated`` and is stored as a ``system`` turn that
+reads as what it is — *the routine ran, here is the task*. The model sees the same words,
+because history is mapped role-for-role into the provider call. Only the attribution
+changes, and the attribution was the whole bug.
 """
 
 from __future__ import annotations
@@ -44,6 +65,39 @@ def _local_title(routine: Dict[str, Any], scheduled_for: str) -> str:
         instant = datetime.now(timezone.utc)
     local = instant.astimezone(tz)
     return f"{routine.get('name') or 'Routine'} · {local.strftime('%b %d')}"
+
+
+def _local_time_label(routine: Dict[str, Any], scheduled_for: str) -> str:
+    """``07:04 on Sep 24``, in the routine's own timezone."""
+    tz_name = str(routine.get("timezone") or "UTC")
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+    try:
+        instant = datetime.fromisoformat(scheduled_for.replace("Z", "+00:00"))
+        if instant.tzinfo is None:
+            instant = instant.replace(tzinfo=timezone.utc)
+    except Exception:
+        instant = datetime.now(timezone.utc)
+    local = instant.astimezone(tz)
+    return f"{local.strftime('%H:%M')} on {local.strftime('%b %d')}"
+
+
+def opening_turn(routine: Dict[str, Any], instruction: str, scheduled_for: str) -> str:
+    """The turn a routine's conversation opens with.
+
+    One message doing two honest jobs. To the reader opening the chat it says what ran and
+    when, so a thread that appeared by itself explains itself. To the model it is the task,
+    arriving as the last turn in history exactly as an instruction should.
+
+    What it is *not* is the user talking. It is stored with ``role="system"``, so nothing —
+    the reader, search, memory, a later summary — can mistake it for a request somebody
+    made.
+    """
+    name = str(routine.get("name") or "Routine").strip() or "Routine"
+    when = _local_time_label(routine, scheduled_for)
+    return f"Scheduled routine “{name}” ran automatically at {when}.\nTask: {instruction}"
 
 
 def _provider_payload() -> Dict[str, Any]:
@@ -123,14 +177,23 @@ async def execute_routine(
             scheduled_for=scheduled,
         )
 
+        instruction = str(
+            material.get("instruction") or material.get("message") or ""
+        ).strip()
+        if not instruction:
+            raise RuntimeError("Routine action produced no task to perform")
+
         payload: Dict[str, Any] = {
-            "message": material["message"],
+            "message": opening_turn(routine, instruction, scheduled),
             "conversation_id": conversation_id,
             "project_id": project_id,
             "extra_system_context": material.get("extra_context") or "",
             "user_id": user_id,
             "memoryEngine": "v2",
             "persist_project_conversation": False,
+            # The turn above is HomePilot acting on a schedule, so it is stored as `system`
+            # rather than forged into the user's name. See this module's docstring.
+            "system_initiated": True,
             **_provider_payload(),
         }
         if mode == "project":

@@ -159,7 +159,14 @@ declare global {
 
 export type Msg = {
   id: string
-  role: 'user' | 'assistant'
+  /**
+   * `system` is HomePilot acting on its own — today, a scheduled routine that has come due.
+   *
+   * It is a third thing on purpose. Storing such a turn as `user` would forge a request the
+   * person never made, and storing it as `assistant` would bury *why* the thread exists. It
+   * renders as a quiet marker line, not a chat bubble.
+   */
+  role: 'user' | 'assistant' | 'system'
   text: string
   pending?: boolean
   animate?: boolean
@@ -2628,7 +2635,18 @@ function ChatState({
                 or VITE_CALL_ENTERPRISE_ROW='false') falls back to
                 the original PostCallCard so the swap is always
                 reversible without a rebuild. */}
-            {m.callMemory ? (
+            {/* A routine that ran by itself says so, once, in a quiet line above its
+                answer — so a conversation the user did not start explains why it exists.
+                Deliberately not a chat bubble: nobody spoke this turn, and dressing it as
+                either side of the conversation is how the fabricated-user-turn bug read as
+                normal in the first place. */}
+            {m.role === 'system' && m.text.trim() && !m.callMemory ? (
+              <div className="w-full flex justify-center" data-testid="routine-marker">
+                <div className="max-w-[85%] rounded-full border border-white/10 bg-white/[0.03] px-4 py-1.5 text-[11px] leading-5 text-white/40 text-center">
+                  {m.text.split('\n')[0]}
+                </div>
+              </div>
+            ) : m.callMemory ? (
               enterpriseCallRow ? (
                 <div className="w-full">
                   <CallEventRow
@@ -3338,7 +3356,7 @@ export default function App() {
               const h = hydratePersistedMessageMedia(m.media)
               return {
                 id: `restored-${idx}`,
-                role: m.role as 'user' | 'assistant',
+                role: m.role as 'user' | 'assistant' | 'system',
                 text: m.content,
                 animate: false,
                 media: h.media,
@@ -3992,7 +4010,7 @@ export default function App() {
             const h = hydratePersistedMessageMedia(m.media)
             return {
               id: `loaded-${idx}`,
-              role: m.role as 'user' | 'assistant',
+              role: m.role as 'user' | 'assistant' | 'system',
               text: m.content,
               animate: false,
               media: h.media,
@@ -4134,7 +4152,7 @@ export default function App() {
                       const h = hydratePersistedMessageMedia(m.media)
                       return {
                         id: `restored-${idx}`,
-                        role: m.role as 'user' | 'assistant',
+                        role: m.role as 'user' | 'assistant' | 'system',
                         text: m.content,
                         animate: false,
                         media: h.media,
@@ -6049,7 +6067,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                           const h = hydratePersistedMessageMedia(m.media)
                           return {
                             id: `restored-${idx}`,
-                            role: m.role as 'user' | 'assistant',
+                            role: m.role as 'user' | 'assistant' | 'system',
                             text: m.content,
                             animate: false,
                             media: h.media,
@@ -6112,7 +6130,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                         const h = hydratePersistedMessageMedia(m.media)
                         return {
                           id: `restored-${idx}`,
-                          role: m.role as 'user' | 'assistant',
+                          role: m.role as 'user' | 'assistant' | 'system',
                           text: m.content,
                           animate: false,
                           media: h.media,
@@ -6227,7 +6245,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                             const h = hydratePersistedMessageMedia(m.media)
                             return {
                               id: `restored-${idx}`,
-                              role: m.role as 'user' | 'assistant',
+                              role: m.role as 'user' | 'assistant' | 'system',
                               text: m.content,
                               animate: false,
                               media: h.media,
@@ -6287,7 +6305,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                               const h = hydratePersistedMessageMedia(m.media)
                               return {
                                 id: `restored-${idx}`,
-                                role: m.role as 'user' | 'assistant',
+                                role: m.role as 'user' | 'assistant' | 'system',
                                 text: m.content,
                                 animate: false,
                                 media: h.media,

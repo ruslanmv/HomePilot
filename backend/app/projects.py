@@ -823,8 +823,18 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
             "media": None
         }
 
-    # 1. Add user message to storage (tagged with project_id for history)
-    add_message(conversation_id, "user", message, project_id=project_id)
+    # 1. Add the opening turn to storage (tagged with project_id for history).
+    #
+    # A scheduled routine is HomePilot acting on its own, not the user typing, so its turn is
+    # stored as `system` — see the note in `orchestrator.orchestrate`. Attributing it to the
+    # user would forge a request they never made, in a project conversation they will later
+    # read, search and continue.
+    add_message(
+        conversation_id,
+        "system" if payload.get("system_initiated", False) else "user",
+        message,
+        project_id=project_id,
+    )
 
     # 2. Get recent conversation history. Keep project/persona chats responsive on
     # local models; the full transcript remains persisted in storage.

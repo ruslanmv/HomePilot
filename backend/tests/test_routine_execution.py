@@ -104,7 +104,7 @@ def test_run_now_creates_native_conversation_and_presentation(tmp_path: Path, mo
 
     async def fake_prepare(_routine):
         return {
-            "message": "Prepare my morning news briefing for today.",
+            "instruction": "Prepare today's news briefing for the user.",
             "extra_context": "trusted fresh context",
             "sources": [{"name": "Example", "url": "https://example.test/story"}],
             "provider": "hp-news",
@@ -114,6 +114,10 @@ def test_run_now_creates_native_conversation_and_presentation(tmp_path: Path, mo
         assert mode == "chat"
         assert payload["extra_system_context"] == "trusted fresh context"
         assert payload["persist_project_conversation"] is False
+        # The routine acts on its own, so its turn is never attributed to the user.
+        assert payload["system_initiated"] is True
+        assert "Scheduled routine" in payload["message"]
+        assert "Prepare today's news briefing" in payload["message"]
         return {
             "conversation_id": payload["conversation_id"],
             "text": "## Good morning\n\nHere is your briefing.",
@@ -194,6 +198,173 @@ def test_news_prefers_hp_news_then_falls_back_to_web(monkeypatch):
     )
 
     assert material["provider"] == "hp.web.search"
-    assert material["message"] == "Prepare my morning news briefing for today."
+    # A task addressed to the assistant, not a sentence attributed to the user.
+    assert material["instruction"].startswith("Prepare today's news briefing")
+    assert "message" not in material
     assert "CURRENT INFORMATION" in material["extra_context"]
     assert material["sources"][0]["url"] == "https://example.test/local"
+
+
+# ── a routine is something HomePilot does, not something the user said ──────
+
+
+def test_a_routine_never_writes_a_user_turn_into_its_conversation(tmp_path, monkeypatch):
+    """The bug this batch exists to remove.
+
+    A routine used to open its conversation with a fabricated first-person line — *"Prepare
+    my morning news briefing for today."* — attributed to the user, who was very possibly
+    asleep. The prepared instruction was handed to the chat pipeline as `payload["message"]`,
+    and both chat paths persist that with `role="user"`.
+
+    Nothing downstream could tell it from a real request: not the reader opening the thread,
+    not search, not memory, not a later summary. And the user's first genuine message landed
+    *second*, in a conversation that already misrepresented them.
+
+    So this drives the real `orchestrate` persistence path and asserts on what is in storage.
+    Asserting on the payload alone would pass for a routine that still forged the turn one
+    layer down, which is exactly where the bug lived.
+    """
+    from app import orchestrator
+    from app import storage
+
+    db = tmp_path / "routines.sqlite"
+    monkeypatch.setattr(store, "_db_path", lambda: str(db))
+
+    written: list[tuple[str, str, str]] = []
+
+    def fake_add_message(cid, role, content, **kwargs):
+        written.append((cid, role, content))
+
+    monkeypatch.setattr(orchestrator, "add_message", fake_add_message)
+    monkeypatch.setattr(storage, "add_message", fake_add_message, raising=False)
+
+    async def fake_prepare(_routine):
+        return {
+            "instruction": "Prepare today's news briefing for the user.",
+            "extra_context": "fresh context",
+            "sources": [],
+            "provider": "hp-news",
+        }
+
+    monkeypatch.setattr(service.actions, "prepare_action", fake_prepare)
+
+    async def fake_handle(mode, payload):
+        # Stand in for the chat pipeline's own persistence, using the real decision the
+        # orchestrator makes rather than a second copy of the rule.
+        role = "system" if payload.get("system_initiated") else "user"
+        fake_add_message(payload["conversation_id"], role, payload["message"])
+        fake_add_message(payload["conversation_id"], "assistant", "Here is your briefing.")
+        return {
+            "conversation_id": payload["conversation_id"],
+            "text": "Here is your briefing.",
+            "media": None,
+        }
+
+    monkeypatch.setattr(service, "handle_request", fake_handle)
+
+    routine = store.create_routine("user-a", {**_routine(), "action": {
+        "type": "news_digest", "parameters": {"max_items": 4},
+    }})
+    asyncio.run(service.run_now("user-a", routine))
+
+    roles = [role for _, role, _ in written]
+    assert "user" not in roles, f"a routine forged a user turn: {written}"
+    assert roles == ["system", "assistant"], roles
+
+    marker = written[0][2]
+    assert "Scheduled routine" in marker
+    assert "Morning news" in marker
+    # The marker doubles as the model's task, so the instruction has to survive in it.
+    assert "Prepare today's news briefing" in marker
+
+
+def test_the_opening_turn_says_what_ran_and_when_in_the_routines_timezone():
+    routine = _routine(name="Morning news", timezone="Europe/Rome")
+    # 05:43 UTC is 07:43 in Rome in September — the user's clock, not the server's.
+    turn = service.opening_turn(
+        routine, "Prepare today's news briefing.", "2026-09-24T05:43:00+00:00"
+    )
+    assert "Morning news" in turn
+    assert "07:43" in turn
+    assert "Sep 24" in turn
+    assert "Prepare today's news briefing." in turn
+
+
+def test_every_action_returns_a_task_rather_than_a_user_utterance():
+    """No action may phrase its instruction as the user speaking.
+
+    First person here is how the forged turn read as normal: "Give me my daily briefing"
+    looks like a request because it is written as one. The instruction is addressed *to*
+    the assistant, so it should never open in the user's voice.
+    """
+    import asyncio as _asyncio
+
+    material = _asyncio.run(
+        actions.prepare_action(
+            _routine(action={"type": "reminder", "parameters": {"message": "Leave now"}})
+        )
+    )
+    assert material["instruction"] == "Remind the user: Leave now"
+
+    material = _asyncio.run(
+        actions.prepare_action(
+            _routine(action={"type": "assistant_prompt", "parameters": {"prompt": "Check CI"}})
+        )
+    )
+    assert material["instruction"] == "Check CI"
+    assert "Nobody has just spoken to you" in material["extra_context"]
+
+
+def test_handle_request_forwards_system_initiated_to_both_chat_paths(monkeypatch):
+    """The wiring, not just the flag.
+
+    `orchestrate` grew a parameter and `handle_request` has two call sites into it. A new
+    parameter that one branch forwards and the other silently drops is the exact shape of
+    bug that makes a fix look applied while half the traffic still carries the old
+    behaviour — and `handle_request` picks the branch by inspecting the payload, so which
+    one a routine takes is not obvious from the call.
+    """
+    import asyncio as _asyncio
+
+    from app import orchestrator
+
+    seen: list[dict] = []
+
+    async def fake_orchestrate(*args, **kwargs):
+        seen.append(kwargs)
+        return {"conversation_id": kwargs.get("conversation_id") or "c", "text": "ok", "media": None}
+
+    monkeypatch.setattr(orchestrator, "orchestrate", fake_orchestrate)
+
+    _asyncio.run(
+        orchestrator.handle_request(
+            "chat",
+            {"message": "do the thing", "conversation_id": "c1", "system_initiated": True},
+        )
+    )
+    assert seen, "handle_request never reached orchestrate"
+    assert seen[-1]["system_initiated"] is True
+
+    # And the default stays false, so an ordinary message is still the user's.
+    _asyncio.run(
+        orchestrator.handle_request("chat", {"message": "hello", "conversation_id": "c2"})
+    )
+    assert seen[-1]["system_initiated"] is False
+
+    # The *other* call site: a project turn whose text reads as media intent is delegated
+    # to `orchestrate` from a different branch entirely. A routine phrased "create a
+    # picture of today's forecast" lands here, so forwarding has to hold on both paths —
+    # and this assertion is the one that fails if only the obvious branch was updated.
+    monkeypatch.setattr(orchestrator, "get_project_by_id", lambda _pid: {"id": "p1"})
+    _asyncio.run(
+        orchestrator.handle_request(
+            "project",
+            {
+                "message": "create a picture of today's forecast",
+                "conversation_id": "c3",
+                "project_id": "p1",
+                "system_initiated": True,
+            },
+        )
+    )
+    assert seen[-1]["system_initiated"] is True

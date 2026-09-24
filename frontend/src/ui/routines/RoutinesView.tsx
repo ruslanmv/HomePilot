@@ -66,13 +66,13 @@ const ACTIONS: Array<{
   {
     id: 'reminder',
     title: 'Reminder',
-    description: 'Surface a short message at the chosen time.',
+    description: 'Have HomePilot bring something to your attention at the chosen time.',
     icon: Bell,
   },
   {
     id: 'assistant_prompt',
-    title: 'Assistant prompt',
-    description: 'Keep a reusable informational prompt on a schedule.',
+    title: 'Assistant task',
+    description: 'Give HomePilot a standing task to carry out on a schedule.',
     icon: CalendarClock,
   },
 ]
@@ -326,7 +326,7 @@ function RoutineEditor({
                   }))
                 }
                 className="mt-3 min-h-24 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-white/25"
-                placeholder="What should HomePilot remind you about?"
+                placeholder="What should HomePilot bring to your attention?"
               />
             ) : null}
 
@@ -340,7 +340,7 @@ function RoutineEditor({
                   }))
                 }
                 className="mt-3 min-h-24 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-white/25"
-                placeholder="For example: Summarize my priorities for today."
+                placeholder="What should HomePilot do? For example: check my calendar and summarize today's priorities."
               />
             ) : null}
           </section>

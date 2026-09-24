@@ -1,9 +1,24 @@
 """Safe, read-only action preparation for HomePilot routines.
 
-Actions gather current information and build a prompt. The actual response is
-still generated through HomePilot's existing assistant/project/persona chat
-pipelines so routine output inherits the same identity and context as a normal
+Actions gather current information and build the **task the assistant performs**. The
+response is still generated through HomePilot's existing assistant/project/persona chat
+pipelines, so routine output inherits the same identity and context as a normal
 conversation.
+
+── A routine is something HomePilot does, not something the user said ──────────────────
+
+Each action returns an ``instruction``: an imperative task, addressed to the assistant.
+It is deliberately *not* phrased as the user speaking.
+
+That distinction used to be lost at the last step. These functions returned a first-person
+line — ``"Prepare my morning news briefing for today."`` — and the executor handed it to the
+chat pipeline as the user's message, so every routine opened its conversation with a
+sentence the user never typed, over their name. Nothing downstream could tell it from a real
+request: not the reader, not search, not memory, not a later summary of that thread.
+
+So the phrasing here is imperative ("Prepare today's news briefing…") and
+:mod:`..routines.service` stores it as a ``system`` turn. The model reads the same words
+either way; only the attribution changes, and the attribution is the part that was wrong.
 """
 
 from __future__ import annotations
@@ -168,7 +183,8 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
             news_query=f"{location} latest news today" if location else "",
         )
         extra_context = (
-            "This turn was triggered by the user's scheduled Morning News routine. "
+            "A scheduled Morning News routine has come due. Nobody has just spoken to you: "
+            "you are acting on your own, so do not open by answering a question. "
             "Prepare today's news briefing from the CURRENT INFORMATION below. "
             "Do not invent facts that are not present. Deduplicate repeated stories, "
             "prioritize fresh and important items, and sound natural rather than reading "
@@ -177,7 +193,10 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
             f"CURRENT INFORMATION ({current['provider']}):\n{current['raw'][:16000]}"
         )
         return {
-            "message": "Prepare my morning news briefing for today.",
+            "instruction": (
+                "Prepare today's news briefing for the user from the current information "
+                "supplied above."
+            ),
             "extra_context": extra_context,
             "sources": current["sources"],
             "provider": current["provider"],
@@ -194,7 +213,9 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
             f"- {step.prompt_hint}" for step in workflow.steps if step.prompt_hint
         )
         extra_context = (
-            f"This turn was triggered by the scheduled '{workflow.display_name}' routine. "
+            f"The scheduled '{workflow.display_name}' routine has come due. Nobody has just "
+            "spoken to you: you are acting on your own, so do not open by answering a "
+            "question or thanking the user for asking. "
             "Follow these existing Secretary workflow hints:\n"
             f"{step_hints}\n\n"
             "Use the current information below only where relevant. Keep the briefing concise, "
@@ -203,7 +224,7 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
             f"CURRENT INFORMATION ({current['provider']}):\n{current['raw'][:12000]}"
         )
         return {
-            "message": "Give me my daily briefing.",
+            "instruction": "Deliver the user's daily briefing.",
             "extra_context": extra_context,
             "sources": current["sources"],
             "provider": current["provider"],
@@ -214,10 +235,11 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
         if not message:
             raise RoutineActionError("Reminder routine has no message.")
         return {
-            "message": f"Reminder: {message}",
+            "instruction": f"Remind the user: {message}",
             "extra_context": (
-                "This message was triggered automatically by a scheduled reminder. "
-                "Acknowledge it briefly and naturally; do not invent extra tasks."
+                "A scheduled reminder has come due. Deliver it to the user briefly and "
+                "naturally, in your own voice. Do not invent extra tasks, and do not reply "
+                "as though the user had just asked you something — nobody spoke to you."
             ),
             "sources": [],
             "provider": "local",
@@ -228,10 +250,12 @@ async def prepare_action(routine: Dict[str, Any]) -> Dict[str, Any]:
         if not prompt:
             raise RoutineActionError("Assistant prompt routine has no prompt.")
         return {
-            "message": prompt,
+            "instruction": prompt,
             "extra_context": (
-                "This user prompt was triggered by a scheduled HomePilot routine. "
-                "Answer it normally in the selected assistant/persona/project context."
+                "A scheduled HomePilot routine has come due, and the task above is what it "
+                "asks you to do. Carry it out now in the selected assistant/persona/project "
+                "context and present the result to the user. Nobody has just spoken to you, "
+                "so do not open by answering a question or thanking them for asking."
             ),
             "sources": [],
             "provider": "local",

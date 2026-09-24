@@ -846,6 +846,7 @@ async def orchestrate(
     extra_system_context: Optional[str] = None,  # Smart topology: vision analysis or other context
     user_id: Optional[str] = None,  # Per-user isolation: scope memory reads/writes
     incognito: bool = False,  # Incognito mode: skip memory storage + profile injection
+    system_initiated: bool = False,  # This turn was started by HomePilot, not typed by the user
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -862,8 +863,20 @@ async def orchestrate(
     # Periodic GC: evict stale conversation memories (throttled to once/minute)
     _gc_stale_memories()
 
-    # Persist user message
-    add_message(cid, "user", text_in)
+    # Persist the opening turn.
+    #
+    # `system_initiated` is the difference between *the user asked for this* and *HomePilot
+    # did this by itself* — a scheduled routine, not somebody typing. It is stored as a
+    # `system` turn, never a `user` one, because a conversation's whole value is that the
+    # lines attributed to a person are lines that person actually wrote. A routine that
+    # opens its chat with "Prepare my morning news briefing for today." over the user's name
+    # has put words in their mouth: the reader cannot tell it from a real request, and
+    # neither can memory, search or a later summary.
+    #
+    # The model is unaffected — history is mapped role-for-role into the provider call, so a
+    # `system` turn still carries the instruction — which is the point: the prompt the model
+    # reads and the record the human reads are not the same artifact.
+    add_message(cid, "system" if system_initiated else "user", text_in)
 
     # Detect URL (for edit/animate)
     url_match = URL_RE.search(text_in)
@@ -2291,6 +2304,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 extra_system_context=payload.get("extra_system_context"),
                 user_id=payload.get("user_id"),
                 incognito=payload.get("incognito", False),
+                system_initiated=payload.get("system_initiated", False),
             )
             # Tag this conversation with the project for history persistence
             if _project_id and result.get("conversation_id"):
@@ -2376,4 +2390,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             extra_system_context=payload.get("extra_system_context"),
             user_id=payload.get("user_id"),
             incognito=payload.get("incognito", False),
+            system_initiated=payload.get("system_initiated", False),
         )
