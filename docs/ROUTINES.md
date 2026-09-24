@@ -114,6 +114,7 @@ and agent/persona context.
 
 The Routines tab supports:
 
+- **Start from a template** — ten ready-made routines (see below)
 - create/edit/remove
 - enable/pause
 - `Run with` selector grouped into HomePilot, Personas, and Projects
@@ -123,6 +124,50 @@ The Routines tab supports:
 - notification preference
 - optional companion speech
 - catch-up preference
+
+### Templates
+
+A blank routine form asks four questions at once, and the hardest is the last: *what should
+HomePilot do?* That is a writing task, and a good answer looks nothing like the one-line
+placeholder most people type. So creating a routine opens with worked examples
+(`frontend/src/ui/routines/presets.ts`).
+
+| Template | Action | Default schedule | Best run with |
+|---|---|---|---|
+| Morning news | `news_digest` | Daily 07:00 | HomePilot |
+| Start my day | `daily_briefing` | Weekdays 08:00 | HomePilot |
+| Evening wind-down | `assistant_prompt` | Daily 21:30 | HomePilot |
+| Stand-up prep | `assistant_prompt` | Weekdays 08:45 | a Project |
+| Sunday reset | `assistant_prompt` | Sundays 18:00 | a Project |
+| Field watch | `assistant_prompt` | Weekdays 17:00 | HomePilot |
+| Daily reminder | `reminder` | Daily 09:00 | HomePilot |
+| Move of the day | `assistant_prompt` | Daily 12:30 | HomePilot |
+| Bedtime story | `assistant_prompt` | Daily 19:45 | a Persona |
+| Language practice | `assistant_prompt` | Daily 08:15 | a Persona |
+
+Four rules hold the list together, and each is asserted by a test:
+
+* **Nothing in it can fail on a fresh install.** Every template uses an action HomePilot
+  ships with — the model itself, hp-news, or the default web search. The obvious missing
+  candidates are email triage and a calendar look-ahead, which the Secretary workflows
+  (`secretary_email_triage`, `secretary_meeting_prep`) already implement but which need
+  credentials. A picker whose first row errors because a connector is absent teaches people
+  that templates do not work, and they stop opening it.
+* **Every task is written as a task** — imperative, addressed to the assistant, never in the
+  user's voice. This is the same rule the executor enforces when it stores a routine's
+  opening turn as `system`. A first-person template would put the fabricated user turn back
+  into every routine created from it, typed in by the product rather than by the code.
+* **Each task says what to do when there is nothing to report.** Left unsaid, a small local
+  model fills the silence, and a stand-up that invents progress is worse than one that says
+  the notes were empty.
+* **A template fills in what it is entitled to decide** — name, schedule, task — and nothing
+  else. Timezone and delivery keep the form's values, so picking a template never quietly
+  undoes a preference set two fields above it. The target is never set either: a template
+  cannot know your project ids, so where it wants to run is shown as advice beside the
+  `Run with` picker.
+
+Templates are gated on the action types `/v1/routines/capabilities` reports, so a build that
+drops an action stops offering templates that need it.
 - **Run now**
 - latest-run status
 - **Open latest**

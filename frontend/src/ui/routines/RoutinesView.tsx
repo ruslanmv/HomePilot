@@ -34,6 +34,7 @@ import {
   type RoutineTargetProject,
 } from './api'
 import type { Routine, RoutineActionType, RoutineDraft, RoutineRun } from './types'
+import { applyPreset, availablePresets, type RoutinePreset } from './presets'
 
 const DAYS = [
   { id: 1, short: 'M', label: 'Monday' },
@@ -129,19 +130,89 @@ function actionLabel(type: RoutineActionType): string {
   return ACTIONS.find((action) => action.id === type)?.title || type
 }
 
+/**
+ * Worked examples, shown only when creating.
+ *
+ * The blank form asks four questions at once and the hardest is "what should HomePilot
+ * do?", which is a writing task most people will not do well from a placeholder. Picking a
+ * template answers three of the four and leaves a task text that is worth editing rather
+ * than worth replacing.
+ *
+ * Editing an existing routine shows nothing here: a template overwrites name, schedule and
+ * task in one click, which is a reasonable thing to offer on a blank form and a destructive
+ * surprise on a routine somebody has been running for a month.
+ */
+function PresetPicker({
+  presets,
+  selected,
+  onPick,
+}: {
+  presets: RoutinePreset[]
+  selected: string | null
+  onPick: (preset: RoutinePreset) => void
+}) {
+  if (!presets.length) return null
+  return (
+    <section data-testid="routine-presets">
+      <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-1">
+        Start from a template
+      </div>
+      <div className="text-xs text-white/35 mb-3">
+        Everything stays editable — a template only fills the form in.
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {presets.map((preset) => {
+          const Icon = preset.icon
+          const active = selected === preset.id
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => onPick(preset)}
+              data-testid={`routine-preset-${preset.id}`}
+              className={[
+                'rounded-2xl border p-3 text-left transition-colors',
+                active
+                  ? 'border-cyan-400/40 bg-cyan-400/[0.08]'
+                  : 'border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05]',
+              ].join(' ')}
+            >
+              <div className="flex items-start gap-3">
+                <div className={[
+                  'h-8 w-8 rounded-lg grid place-items-center shrink-0',
+                  active ? 'bg-cyan-400/10 text-cyan-300' : 'bg-white/[0.05] text-white/55',
+                ].join(' ')}>
+                  <Icon size={16} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-white/90">{preset.title}</div>
+                  <div className="text-[11px] leading-4 text-white/40 mt-0.5">{preset.blurb}</div>
+                </div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 function RoutineEditor({
   initial,
   targets,
+  presets,
   onClose,
   onSave,
   saving,
 }: {
   initial?: Routine
   targets: RoutineTargetProject[]
+  presets: RoutinePreset[]
   onClose: () => void
   onSave: (draft: RoutineDraft) => void
   saving: boolean
 }) {
+  const [pickedPreset, setPickedPreset] = useState<RoutinePreset | null>(null)
   const [draft, setDraft] = useState<RoutineDraft>(() => {
     if (!initial) return defaultDraft()
     return {
@@ -247,6 +318,34 @@ function RoutineEditor({
         </div>
 
         <div className="p-6 space-y-7">
+          {!initial ? (
+            <PresetPicker
+              presets={presets}
+              selected={pickedPreset?.id ?? null}
+              onPick={(preset) => {
+                setPickedPreset(preset)
+                setDraft((prev) => applyPreset(preset, prev))
+              }}
+            />
+          ) : null}
+
+          {/* A preset cannot know the user's project ids, so where it wants to run is
+              advice rather than a value it sets. Said here, next to the form it affects,
+              instead of silently leaving the target on HomePilot and producing a
+              stand-up drafted from no project at all. */}
+          {pickedPreset && pickedPreset.targetHint !== 'assistant' ? (
+            <div
+              className="rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] px-4 py-3 text-[11px] leading-5 text-amber-100/70"
+              role="status"
+              data-testid="routine-preset-target-hint"
+            >
+              {pickedPreset.title} works best run with{' '}
+              {pickedPreset.targetHint === 'persona' ? 'a persona' : 'a project'} — choose one
+              under <span className="font-semibold">Run with</span> below, so it can draw on
+              that context.
+            </div>
+          ) : null}
+
           <section>
             <label className="text-xs font-semibold uppercase tracking-wider text-white/40">Name</label>
             <input
@@ -902,6 +1001,10 @@ export default function RoutinesView({
         <RoutineEditor
           initial={editing || undefined}
           targets={targets}
+          /* Gated on what the server says it can run, so a template can never offer an
+             action this build does not implement. With no capability payload yet, all of
+             them show — they are all built on actions HomePilot ships with. */
+          presets={availablePresets(capabilities?.actions)}
           onClose={() => { setCreating(false); setEditing(null) }}
           onSave={(draft) => void save(draft)}
           saving={saving}
