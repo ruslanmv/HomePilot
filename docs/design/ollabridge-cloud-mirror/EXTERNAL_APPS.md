@@ -83,3 +83,31 @@ A `.hpersona` package may declare the app's MCP server in
 `dependencies/mcp_servers.json`; on import HomePilot pins the listed
 `tools_provided`. Declare them only once the tools are reachable — pinned but
 missing tools make persona chat fail.
+
+## 6. `images.edit` (AI try-on and other edits)
+
+Off by default (`HOMEPILOT_MIRROR_IMAGE_EDIT_ENABLED=true` to register it).
+Runs `ComputeRouter.edit_image`, so it uses whatever HomePilot is configured
+for: local ComfyUI (`edit` workflow) or OllaBridge Cloud.
+
+```jsonc
+// create
+{ "operation": "images.edit",
+  "params": { "prompt": "Dress the person in: a black silk slip dress. Keep face, hair, body, pose and background.",
+              "image": "data:image/jpeg;base64,…",   // or an artifact id "art_…"
+              "workflow": "edit" } }                  // optional
+
+// completed — outputs are short-lived node artifacts
+{ "status": "completed",
+  "output": { "artifacts": [ { "artifact_id": "art_…", "content_type": "image/png", "size_bytes": 812345 } ],
+              "provider": "local" } }
+```
+
+- Input is base64/data URL or an existing artifact; HomePilot never fetches a
+  URL for this job. It must really be JPEG, PNG or WebP (checked from the bytes)
+  and at most `HOMEPILOT_MIRROR_RESOURCE_MAX_MB` (default 10).
+- The input is staged under `UPLOAD_DIR/mirror-inputs/` and deleted when the job ends.
+- Fetch results with `GET /v1/node/artifacts/{artifact_id}` (same localhost guard;
+  a Docker sidecar is allowed through `NODE_MANIFEST_ALLOW_HOSTS`).
+- Errors: `RESOURCE_REJECTED` (bad input), `IMAGE_EDIT_FAILED` (no image produced),
+  `CAPABILITY_UNAVAILABLE` (flag off).
