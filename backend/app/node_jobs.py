@@ -218,6 +218,11 @@ register_operation("chat.completions", "chat:run", _op_chat_completions)
 register_operation("images.generate", "image:run", _op_images_generate)
 register_operation("videos.generate", "video:run", _op_images_generate)
 
+# Optional, flag-gated operations (not registered unless enabled).
+from .node_ops_agentic import register_if_enabled as _register_agentic  # noqa: E402
+
+_register_agentic(register_operation)
+
 
 # ── Endpoints (localhost only, feature-flagged) ──────────────────────────────
 

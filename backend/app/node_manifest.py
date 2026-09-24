@@ -203,6 +203,8 @@ def _capabilities(services: Dict[str, Dict[str, str]]) -> List[str]:
         caps.append("avatar.render")
     if services.get("mcp", {}).get("status") == "ready":
         caps.append("mcp.invoke")
+    from .node_ops_agentic import manifest_capabilities  # flag-gated, empty when off
+    caps += manifest_capabilities()
     return caps
 
 
