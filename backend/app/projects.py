@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 # Imports from your existing structure
 from .compute import route_chat
-from .storage import add_message, get_recent
+from .storage import add_message, ensure_conversation_owner, get_recent
 from .tracing import log_event
 from .config import UPLOAD_DIR, PUBLIC_BASE_URL
 
@@ -823,8 +823,25 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
             "media": None
         }
 
-    # 1. Add user message to storage (tagged with project_id for history)
-    add_message(conversation_id, "user", message, project_id=project_id)
+    # Claim the conversation for the caller before anything is written to it — see the note
+    # in `orchestrator.orchestrate`. Without this a routine's project conversation ends up
+    # owned by the default user, and `get_messages` (which inner-joins `conversation_owners`)
+    # hands the real user an empty chat.
+    if user_id:
+        ensure_conversation_owner(conversation_id, user_id)
+
+    # 1. Add the opening turn to storage (tagged with project_id for history).
+    #
+    # A scheduled routine is HomePilot acting on its own, not the user typing, so its turn is
+    # stored as `system` — see the note in `orchestrator.orchestrate`. Attributing it to the
+    # user would forge a request they never made, in a project conversation they will later
+    # read, search and continue.
+    add_message(
+        conversation_id,
+        "system" if payload.get("system_initiated", False) else "user",
+        message,
+        project_id=project_id,
+    )
 
     # 2. Get recent conversation history. Keep project/persona chats responsive on
     # local models; the full transcript remains persisted in storage.
@@ -1096,6 +1113,18 @@ You have access to the project's context. When relevant context from the knowled
         if _memory_block:
             system_instruction += f"\n\n--- PERSONA MEMORY ---\n{_memory_block}\n--- END MEMORY ---\n"
 
+    # Optional hidden context supplied by trusted HomePilot orchestration
+    # (for example, a routine's current news/tool results). It is never stored
+    # as the visible user message, so generated routine conversations remain
+    # readable while still grounding the response in fresh tool data.
+    extra_system_context = str(payload.get("extra_system_context") or "").strip()
+    if extra_system_context:
+        system_instruction += (
+            "\n\n--- HOMEPILOT ORCHESTRATION CONTEXT ---\n"
+            + extra_system_context
+            + "\n--- END ORCHESTRATION CONTEXT ---\n"
+        )
+
     # Voice mode: add brevity hint for natural spoken conversation
     is_voice = payload.get("mode", "").strip().lower() == "voice"
     if is_voice:
@@ -1103,7 +1132,20 @@ You have access to the project's context. When relevant context from the knowled
 
     # 5. Prepare messages for LLM
     messages = [{"role": "system", "content": system_instruction}]
-    for role, content in history:
+    # The routine's own turn is **stored** as `system`, so the record never attributes it to
+    # somebody who did not type it. The model is a different audience: it needs a user turn
+    # to answer, and a prompt whose every message is `system` is a shape many providers
+    # handle badly and some openai-compatible endpoints reject outright.
+    #
+    # So the turn is re-roled on its way to the model and nowhere else — the prompt the model
+    # reads and the record the human reads are not the same artifact, which is the whole
+    # point of storing it as `system` in the first place. Only the final entry is eligible,
+    # and only when it is the system turn this very call just wrote.
+    _system_initiated = bool(payload.get("system_initiated", False))
+    _last = len(history) - 1
+    for _index, (role, content) in enumerate(history):
+        if _system_initiated and _index == _last and role == "system":
+            role = "user"
         messages.append({"role": role, "content": content})
 
     # 5b. Hybrid intent detection — inject dynamic hint for photo-related messages
@@ -1595,8 +1637,11 @@ You have access to the project's context. When relevant context from the knowled
         print(f"[PROJECT CHAT {_trace_id}] assistant_final len={len(text or '')} preview={str(text or '')[:120]!r} media={bool(text_media)}")
         add_message(conversation_id, "assistant", text, media=text_media, project_id=project_id)
 
-        # 8. Save last conversation_id on the project so it can be restored
-        _save_project_conversation(project_id, conversation_id)
+        # 8. Save last conversation_id on the project so it can be restored.
+        # Background automation may explicitly suppress this pointer update so
+        # it never replaces the conversation the user was actively using.
+        if payload.get("persist_project_conversation", True):
+            _save_project_conversation(project_id, conversation_id)
 
         return {
             "type": "project",

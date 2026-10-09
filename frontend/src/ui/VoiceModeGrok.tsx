@@ -235,7 +235,13 @@ function parseInlineMarkdown(
 // Message type with stable ID for deduplication
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
+  /**
+   * `system` exists here only to stay assignable to the chat surface's `Msg`, which the
+   * parent shares with this component through one `useState`. Voice never produces one —
+   * routine markers belong to a chat thread, not a spoken turn — and nothing here reads
+   * it, but the two types have to agree for the shared setter to typecheck.
+   */
+  role: 'user' | 'assistant' | 'system';
   text: string;
   media?: {
     images?: string[];

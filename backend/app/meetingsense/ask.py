@@ -27,17 +27,99 @@ does not know, because the first is checkable only by someone who already has th
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import re
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
 from . import export, store
 
 log = logging.getLogger(__name__)
 
+#: Per-meeting compute target for the private Ask lane. Stored as an artifact so no schema
+#: migration is needed and deleting the meeting deletes this choice with it.
+PREFS_KIND = "ask_prefs"
+
+
+@dataclass(frozen=True)
+class ModelTarget:
+    provider: str = ""
+    model: str = ""
+    base_url: str = ""
+
+    def as_dict(self) -> Dict[str, str]:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "base_url": self.base_url,
+        }
+
+
+def target_from(raw: Any) -> ModelTarget:
+    body = raw if isinstance(raw, dict) else {}
+    return ModelTarget(
+        provider=str(body.get("provider") or "").strip().lower()[:64],
+        model=str(body.get("model") or "").strip()[:240],
+        base_url=str(body.get("base_url") or "").strip()[:600],
+    )
+
+
+def set_prefs(meeting_id: str, raw: Any) -> ModelTarget:
+    """Remember the model target used for this meeting's private conversation."""
+    target = target_from(raw)
+    try:
+        store.delete_artifacts(meeting_id, kind=PREFS_KIND)
+        store.add_artifact(
+            meeting_id,
+            kind=PREFS_KIND,
+            target=target.provider,
+            detail=json.dumps(target.as_dict()),
+        )
+    except Exception:  # noqa: BLE001 — model preference is never worth a recording
+        log.exception("meetingsense: could not store ask preferences for %s", meeting_id)
+    return target
+
+
+def prefs(meeting_id: str) -> ModelTarget:
+    try:
+        rows = store.artifacts_for_meeting(meeting_id, kind=PREFS_KIND)
+    except Exception:  # noqa: BLE001
+        return ModelTarget()
+    for row in reversed(rows):
+        try:
+            raw = json.loads(row.get("detail") or "")
+        except (TypeError, ValueError):
+            continue
+        return target_from(raw)
+    return ModelTarget()
+
+
+def target_for(meeting_id: str, raw: Any = None) -> ModelTarget:
+    """Request override when supplied, otherwise the target chosen at meeting setup."""
+    override = target_from(raw)
+    if override.provider or override.model or override.base_url:
+        return override
+    return prefs(meeting_id)
+
+
 #: The verbatim tier: what a question asked mid-meeting is usually about.
 VERBATIM_MS = 90_000
+
+#: Segments the verbatim tier falls back to when the time window is empty.
+#:
+#: The window is measured against the **session clock**, which is right — a question asked
+#: during a silence is still about now — and has one consequence that is not: after ninety
+#: seconds of nobody speaking, a window anchored to the clock contains no transcript at all.
+#: A broad question then has no evidence behind it, and "what are they talking about?" comes
+#: back as *that question could not be answered from this meeting*, about a meeting whose
+#: transcript is on screen beside the answer.
+#:
+#: So the window has a floor: whatever the clock says, the last few things that were actually
+#: said are always in the prompt. The tail is small on purpose — it is the difference between
+#: no context and some, not a second retrieval tier.
+MIN_VERBATIM_ROWS = 6
 
 #: The retrieval tier's ceiling. Twelve segments is roughly two minutes of speech spread across
 #: the meeting — enough to answer with, small enough that the budget below is reachable.
@@ -47,6 +129,15 @@ MAX_RETRIEVED = 12
 #: the verbatim tier second; the recap is never trimmed, because it is the only tier that
 #: represents the parts of the meeting nothing else can reach.
 TOKEN_BUDGET = 900
+
+#: The attachments tier's own budget, deliberately outside :data:`TOKEN_BUDGET`.
+#:
+#: Material the user attached to the session — a brief, an agenda, last week's minutes — is
+#: not part of the meeting, so it is not part of the meeting block D9 sizes. Giving it its
+#: own small allowance keeps both promises at once: the transcript block is still bounded at
+#: exactly what D9 says, and a question the attachment answers is not refused because the
+#: transcript filled the prompt.
+ATTACHMENT_BUDGET = 220
 
 #: Rough tokens-per-character. An estimate, and named as one: the alternative is importing a
 #: tokeniser to decide how much of a transcript to include, which costs more than the slack
@@ -195,10 +286,25 @@ def fuse(
     return out
 
 
-def verbatim(segments: Sequence[Dict[str, Any]], *, now_ms: int, window_ms: int = VERBATIM_MS) -> List[Dict[str, Any]]:
-    """The last ``window_ms`` of transcript — D9 tier 1."""
+def verbatim(
+    segments: Sequence[Dict[str, Any]],
+    *,
+    now_ms: int,
+    window_ms: int = VERBATIM_MS,
+    min_rows: int = MIN_VERBATIM_ROWS,
+) -> List[Dict[str, Any]]:
+    """The last ``window_ms`` of transcript — D9 tier 1 — but never nothing.
+
+    See :data:`MIN_VERBATIM_ROWS`. When the clock has run past the last thing anybody said,
+    the window is empty and the tail is what stands in for it: a question asked after a
+    silence is still a question about this meeting, and answering it from no transcript at
+    all is the one outcome that is never useful.
+    """
     floor = max(0, now_ms - window_ms)
-    return [s for s in segments if int(s.get("t0_ms") or 0) >= floor]
+    inside = [s for s in segments if int(s.get("t0_ms") or 0) >= floor]
+    if inside or min_rows <= 0:
+        return inside
+    return [s for s in segments if (s.get("text") or "").strip()][-min_rows:]
 
 
 def _render(rows: Sequence[Dict[str, Any]]) -> str:
@@ -213,12 +319,76 @@ def _render(rows: Sequence[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _extractive_fallback(
+    *,
+    recap: str,
+    verbatim_rows: Sequence[Dict[str, Any]],
+    retrieved_rows: Sequence[Dict[str, Any]],
+    attachments: Sequence[Dict[str, Any]] = (),
+) -> str:
+    """Return a useful grounded answer when generation is unavailable.
+
+    Meeting Q&A should degrade to evidence, not to a dead-end error. Prefer rows selected by
+    retrieval for specific questions; otherwise use the newest transcript lines, which makes
+    broad live questions such as "what are they talking about?" useful even before a recap
+    exists. This is deliberately extractive: without a language model we can quote the record,
+    but we must not pretend to have inferred more than it says.
+    """
+    preferred = list(retrieved_rows) or list(verbatim_rows)
+    if preferred:
+        rows = preferred[-3:]
+        rendered = _render(rows)
+        if rendered:
+            return f"From the meeting transcript:\n{rendered}"
+    if recap.strip():
+        return f"From the meeting recap: {recap.strip()}"
+    attached = _render_attachments(attachments, budget=ATTACHMENT_BUDGET // 2)
+    if attached:
+        return f"Nothing in the transcript covers this. From the material attached to this session:\n{attached}"
+    return ""
+
+
+#: What is said when a meeting genuinely has nothing to answer from.
+#:
+#: A sentence rather than an empty string, because empty is what every client turns into
+#: *"that question could not be answered from this meeting"* — a message that is indistinct
+#: from a bug, and that a user reads as the feature being broken while the transcript sits on
+#: screen beside it. These two say which of the two situations it actually is.
+NOTHING_TRANSCRIBED = (
+    "Nothing has been transcribed in this meeting yet, so there is nothing to answer from. "
+    "Check that an audio source is being received, and ask again once somebody has spoken."
+)
+NOTHING_MATCHED = (
+    "I could not find anything about that in what has been captured of this meeting so far."
+)
+
+
+def _attachments(meeting_id: str) -> List[Dict[str, Any]]:
+    """Material the user attached to this session, for grounding the answer.
+
+    The same rows Coach draws on, read through the same function, so "what did I attach" has
+    one answer rather than two. Failure is empty rather than an exception: an install with no
+    artifacts table has no attachments, and that is not a reason to lose an answer the
+    transcript could have given on its own.
+    """
+    try:
+        from .agent import coaching as coaching_mod
+
+        return list(coaching_mod.prep(meeting_id))
+    except Exception:  # noqa: BLE001
+        log.debug("meetingsense: no session attachments for %s", meeting_id, exc_info=True)
+        return []
+
+
 ASK_SYSTEM = """\
 You answer questions about a meeting, using only what you are given.
 
-You are given a recap of the meeting, the most recent part of the transcript, and the parts of \
-the transcript that best match the question. You are NOT given the full transcript, and you \
-must not ask for it.
+You are given a recap of the meeting, the most recent part of the transcript, the parts of \
+the transcript that best match the question, and anything attached to this session. You are \
+NOT given the full transcript, and you must not ask for it.
+
+The meeting may still be running. What you have is what has been said so far, and that is an \
+answer to "what are they talking about", not a reason to refuse one.
 
 Rules:
 - Answer in two or three sentences. No preamble.
@@ -226,7 +396,29 @@ Rules:
 exactly from what you were given.
 - Never invent a timestamp. If nothing you were given supports an answer, say that the \
 meeting does not appear to cover it — that is a useful answer, and a confident wrong one is not.
-- If the question is about something after the part you can see, say so."""
+- Say when something came from the attached material rather than from the meeting.
+- If the question is about a part you cannot see, say so."""
+
+
+def _render_attachments(rows: Sequence[Dict[str, Any]], *, budget: int = ATTACHMENT_BUDGET) -> str:
+    """Session material, trimmed to :data:`ATTACHMENT_BUDGET`.
+
+    Truncated rather than dropped, whole documents first, for the reason `coaching._trim`
+    gives: the first thing a user attaches is usually the brief, and half a brief is more use
+    than none of it.
+    """
+    out: List[str] = []
+    left = max(0, int(budget)) * CHARS_PER_TOKEN
+    for row in rows:
+        text = (row.get("text") or "").strip()
+        if not text or left <= 0:
+            continue
+        title = (row.get("title") or "Attachment").strip() or "Attachment"
+        if len(text) > left:
+            text = text[:left].rstrip() + "…"
+        left -= len(text)
+        out.append(f"— {title}\n{text}")
+    return "\n\n".join(out)
 
 
 def build_prompt(
@@ -235,15 +427,19 @@ def build_prompt(
     recap: str = "",
     verbatim_rows: Sequence[Dict[str, Any]] = (),
     retrieved_rows: Sequence[Dict[str, Any]] = (),
+    attachments: Sequence[Dict[str, Any]] = (),
     budget: int = TOKEN_BUDGET,
     mode: str = "",
 ) -> List[Dict[str, str]]:
-    """Assemble the three tiers, trimming to the budget.
+    """Assemble the tiers, trimming to the budget.
 
     The trim order is the whole of D9's priority, made executable: **retrieval first, verbatim
     second, the recap never.** The recap is the only tier that represents the parts of the
     meeting nothing else can reach, so dropping it to make room for a transcript fragment
     trades the summary of two hours for thirty seconds of detail.
+
+    ``attachments`` sit outside that budget and are bounded by their own — see
+    :data:`ATTACHMENT_BUDGET`. They are not the meeting, so they do not compete with it.
     """
     retrieved = list(retrieved_rows)
     verbatim_list = list(verbatim_rows)
@@ -269,6 +465,12 @@ def build_prompt(
         verbatim_list.pop(0)
         body = render(retrieved, verbatim_list)
 
+    # Prepended after the trim, so what the attachments cost is never taken out of the
+    # meeting — and so a prompt with no attachments is byte-identical to what MS13 shipped.
+    attached = _render_attachments(attachments)
+    if attached:
+        body = f"Material attached to this session:\n{attached}\n\n{body}"
+
     # MS26. A mode's framing is layered *above* `ASK_SYSTEM`, never in place of it: the base
     # carries "cite the timestamp" and "never invent one", and those are not a Participant's
     # to relax. With no mode, the system prompt is byte-identical to what MS13 shipped.
@@ -290,12 +492,15 @@ async def answer(
     limit: int = MAX_RETRIEVED,
     budget: int = TOKEN_BUDGET,
     vector_search: Optional[Callable[..., Sequence[Dict[str, Any]]]] = None,
+    attachments: Optional[Sequence[Dict[str, Any]]] = None,
     mode: str = "",
 ) -> Dict[str, Any]:
-    """Answer one question about one meeting.
+    """Answer one question about one meeting, live or ended.
 
-    Returns an ``answer`` frame. Never raises: a question that cannot be answered gets an
-    answer saying so, because the alternative on the WebSocket path is a dropped meeting.
+    Returns an ``answer`` frame. Never raises, and — past an empty question — never returns
+    empty ``text``: a question that cannot be answered gets an answer *saying so*, because
+    the alternative on the WebSocket path is a dropped meeting and on the HTTP path is a
+    client inventing its own error message about a meeting it can see the transcript of.
     """
     question = (question or "").strip()
     if not question:
@@ -334,22 +539,48 @@ async def answer(
         vector_rows = ()
 
     retrieved_rows = fuse(vector_rows, keyword_rows, limit=limit)
+    attached = attachments if attachments is not None else _attachments(meeting_id)
 
     messages = build_prompt(
         question,
         recap=recap,
         verbatim_rows=verbatim_rows,
         retrieved_rows=retrieved_rows,
+        attachments=attached,
         budget=budget,
         mode=mode,
     )
+    degraded = False
     try:
         text = await call(messages, temperature=0.2)
     except Exception:  # noqa: BLE001 — a failed answer is never worth the meeting
-        log.exception("meetingsense: ask failed for %s", meeting_id)
-        return {"type": "answer", "text": "", "error": "answer_failed", "cited": []}
+        log.exception("meetingsense: ask generation failed for %s; using transcript fallback", meeting_id)
+        text = _extractive_fallback(
+            recap=recap,
+            verbatim_rows=verbatim_rows,
+            retrieved_rows=retrieved_rows,
+            attachments=attached,
+        )
+        degraded = True
 
     text = (text or "").strip() if isinstance(text, str) else ""
+    if not text:
+        text = _extractive_fallback(
+            recap=recap,
+            verbatim_rows=verbatim_rows,
+            retrieved_rows=retrieved_rows,
+            attachments=attached,
+        )
+        degraded = bool(text)
+
+    # Still nothing. Say which kind of nothing it is, in a sentence the user can act on,
+    # rather than handing the client an empty string to guess about.
+    reason: Optional[str] = None
+    if not text:
+        spoken = any((s.get("text") or "").strip() for s in segments)
+        reason = "no_transcript" if not spoken else "no_meeting_context"
+        text = NOTHING_MATCHED if spoken else NOTHING_TRANSCRIBED
+
     offered = {export.clock(r.get("t0_ms")) for r in list(retrieved_rows) + list(verbatim_rows)}
     return {
         "type": "answer",
@@ -358,4 +589,10 @@ async def answer(
         # a test can check that nothing else was cited.
         "cited": sorted(stamp for stamp in offered if stamp in text),
         "sources": len(retrieved_rows) + len(verbatim_rows),
+        # How the answer was produced, so a client can label it honestly: `extractive` means
+        # the meeting's own words rather than a written answer, which is what an install with
+        # no reachable model gets.
+        "degraded": "extractive" if degraded else None,
+        "attachments": len(attached),
+        **({"error": reason} if reason else {}),
     }

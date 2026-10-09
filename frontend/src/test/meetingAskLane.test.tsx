@@ -56,15 +56,15 @@ const VIEW = {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-function renderWorkspace(view = VIEW) {
+function renderWorkspace(view = VIEW, record: unknown = null, capture = DEFAULT_CAPTURE) {
   return render(
     <MeetingWorkspace
       view={view as never}
-      capture={DEFAULT_CAPTURE}
+      capture={capture}
       captureStatus={CAPTURE_STATUS as never}
       conversationId="conv-meeting"
       screenStream={null}
-      record={null}
+      record={record as never}
       pendingNotes={false}
       onEnd={vi.fn()}
       onMute={vi.fn()}
@@ -89,6 +89,15 @@ beforeEach(() => {
     json: async () => ({ text: 'They announced tax cuts and grants [00:00:19].', cited: ['00:00:19'] }),
   }));
   vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => {
+    fn(0);
+    return 0;
+  });
+  vi.stubGlobal('CSS', {
+    ...((globalThis as { CSS?: Record<string, unknown> }).CSS || {}),
+    escape: (value: string) => value,
+  });
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -109,6 +118,25 @@ describe('asking a live meeting', () => {
     expect(String(url)).toContain('/v1/meetingsense/m-live/ask');
     expect(String(url)).not.toContain('/chat');
     expect(JSON.parse(String(init.body))).toEqual({ text: 'what did they say about tax cuts?' });
+  });
+
+  it('routes private Q&A through the model selected for this meeting', async () => {
+    renderWorkspace(VIEW, null, {
+      ...DEFAULT_CAPTURE,
+      conversationProvider: 'ollama',
+      conversationModel: 'qwen2.5:7b',
+      conversationBaseUrl: 'http://localhost:11434',
+    });
+    await ask('what are they talking about?');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(init.body))).toEqual({
+      text: 'what are they talking about?',
+      provider: 'ollama',
+      model: 'qwen2.5:7b',
+      base_url: 'http://localhost:11434',
+    });
   });
 
   it('never posts the question into the meeting conversation', async () => {
@@ -189,6 +217,62 @@ describe('asking a live meeting', () => {
     expect(screen.getByTestId('ms-ask-keep')).toHaveTextContent('Kept in meeting notes');
   });
 
+  it('labels an answer that was quoted rather than written', async () => {
+    // `degraded: "extractive"` means no model was reachable and the server quoted the
+    // transcript. Swallowing that leaves the reader unable to tell a written answer from a
+    // pasted one, and they will either distrust the first or over-trust the second.
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        text: 'From the meeting transcript:\n[00:00:19] them: including tax cuts',
+        cited: [],
+        degraded: 'extractive',
+      }),
+    }));
+    renderWorkspace();
+    await ask('what are they talking about?');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ms-ask-degraded')).toHaveTextContent('no language model was reachable');
+    });
+  });
+
+  it('does not print a dead end when the server says nothing came back', async () => {
+    /*
+     * The fault as reported: "what are they talking about" answered with *"that question
+     * could not be answered from this meeting"* — the client's own words for an empty
+     * `text` — printed beside a transcript the user could read on screen. The server now
+     * sends a sentence instead of an empty string; this covers the older-server path, and
+     * the wording has to read as "the meeting was quiet", not "this is broken".
+     */
+    fetchMock.mockImplementationOnce(async () => ({ ok: true, json: async () => ({ text: '' }) }));
+    renderWorkspace();
+    await ask('what are they talking about?');
+
+    await waitFor(() => {
+      const answer = screen.getByTestId('ms-ask-answer');
+      expect(answer).toHaveTextContent('Nothing in what has been captured');
+      expect(answer).not.toHaveTextContent('could not be answered from this meeting');
+    });
+  });
+
+  it('shows the sentence the server sent rather than inventing one', async () => {
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        text: 'Nothing has been transcribed in this meeting yet, so there is nothing to answer from.',
+        cited: [],
+        error: 'no_transcript',
+      }),
+    }));
+    renderWorkspace();
+    await ask('what are they saying?');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ms-ask-answer')).toHaveTextContent('Nothing has been transcribed');
+    });
+  });
+
   it('does not answer from nothing before the meeting id exists', async () => {
     // Falling back to the general model here is how a confident answer about no transcript
     // gets produced during the two seconds a meeting takes to connect.
@@ -199,5 +283,105 @@ describe('asking a live meeting', () => {
       expect(screen.getByTestId('ms-ask-answer')).toHaveTextContent('still connecting');
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('asking after the meeting ends', () => {
+  const endedView = {
+    ...VIEW,
+    phase: 'ended',
+    elapsedMs: 40_000,
+    segments: [
+      { id: 's30', t0: 30_000, t1: 32_000, speaker: 'them', text: "I'm girlfriend, your romantic partner." },
+      { id: 's32', t0: 32_000, t1: 37_000, speaker: 'them', text: 'I love to flirt, roleplay, and make you feel desired and appreciated.' },
+      { id: 's37', t0: 37_000, t1: 40_000, speaker: 'them', text: "I'm playful, passionate, and deeply caring." },
+    ],
+  };
+
+  const record = {
+    meeting: { id: 'm-live', title: 'Meeting recap', started_at: 1_700_000_000, ended_at: 1_700_000_040 },
+    notes: null,
+  };
+
+  it('lets the meeting’s own stored model answer once it has ended', async () => {
+    /*
+     * MS34-a. No compute override once the meeting is over.
+     *
+     * While it runs, `capture` is this meeting's setup and restating it costs nothing. On a
+     * meeting reopened from History it is not: it is whatever the app's chat settings say
+     * now, read when the provider mounted. Sending that would silently beat the model the
+     * meeting was actually set up with — which is the exact thing storing the preference
+     * per meeting exists to prevent, so the server's copy has to be allowed to win.
+     */
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({ text: 'They discussed the launch [00:00:30].', cited: [] }),
+    }));
+
+    renderWorkspace(endedView as never, record, {
+      ...DEFAULT_CAPTURE,
+      conversationProvider: 'ollama',
+      conversationModel: 'some-other-model:latest',
+      conversationBaseUrl: 'http://elsewhere:11434',
+    });
+    await ask('what did they decide?');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(init.body))).toEqual({ text: 'what did they decide?' });
+  });
+
+  it('keeps the private Q&A lane visible on the recap screen', async () => {
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        text: 'They are describing a romantic-partner persona [00:00:30].',
+        cited: ['00:00:30'],
+      }),
+    }));
+
+    renderWorkspace(endedView as never, record);
+    expect(await screen.findByTestId('ms-ended-ask')).toBeTruthy();
+
+    await ask('what are they talking about?');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ms-ask-answer')).toHaveTextContent('romantic-partner persona');
+    });
+    expect(screen.getByTestId('ms-ask-question')).toHaveTextContent('what are they talking about?');
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/v1/meetingsense/m-live/ask');
+    expect(String(url)).not.toContain('/chat');
+    expect(JSON.parse(String(init.body))).toEqual({ text: 'what are they talking about?' });
+  });
+
+  it('shows the full-summary panel beside the private lane', async () => {
+    // The two are different documents from the same meeting, and a reader who only sees the
+    // shorter one has no way to know the longer one exists.
+    renderWorkspace(endedView as never, record);
+    expect(await screen.findByTestId('ms-minutes')).toBeTruthy();
+    expect(screen.getByTestId('ms-ended-ask')).toBeTruthy();
+  });
+
+  it('opens the ended transcript when an answer citation is followed', async () => {
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        text: 'They describe a romantic-partner persona [00:00:30].',
+        cited: ['00:00:30'],
+      }),
+    }));
+
+    renderWorkspace(endedView as never, record);
+    const transcript = await screen.findByTestId('ms-ended-transcript');
+    expect((transcript as HTMLDetailsElement).open).toBe(false);
+
+    await ask('what are they talking about?');
+    const cite = await screen.findByTestId('ms-ask-cite');
+    fireEvent.click(cite);
+
+    expect((transcript as HTMLDetailsElement).open).toBe(true);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 });

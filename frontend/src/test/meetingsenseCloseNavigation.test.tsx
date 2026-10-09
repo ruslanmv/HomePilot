@@ -95,6 +95,9 @@ describe('closing an ended MeetingSense workspace', () => {
     // End the meeting; once finalization completes the recap exposes Close.
     fireEvent.click(screen.getByTestId('ms-record-button'));
     const close = await screen.findByTestId('ms-workspace-close');
+    // The meeting workspace shares the app chrome with persistent phone/settings controls.
+    // Close belongs at the leading edge of its own header, never over the app's top-right tools.
+    expect(close.parentElement?.firstElementChild).toBe(close);
     fireEvent.click(close);
 
     await waitFor(() => {
