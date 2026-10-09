@@ -1,19 +1,38 @@
 /**
- * SessionPanel — Companion-Grade Conversation Management
+ * SessionPanel — the project's Conversation Hub.
  *
  * Relationship-first UX: sessions are internal transport, users see
- * "Conversations" grouped by day with micro-session hiding.
+ * "Conversations".
  *
- * Key UX principles:
- *  - "Talk by Voice" / "Chat by Text" reuse the active conversation
- *  - "Start Fresh" explicitly creates a new conversation (secondary action)
- *  - Past conversations grouped by day, collapsed beyond yesterday
- *  - Micro-sessions (< 3 messages) hidden by default
+ * Layout, top to bottom:
+ *  - the project's identity: its saved picture (or type icon), name, type,
+ *    age, memories and description
+ *  - Continue Conversation — the primary action, reopens the latest one
+ *  - Talk by Voice / Chat by Text — reuse the active conversation
+ *  - Fresh voice / text chat — explicitly start a new one (secondary)
+ *  - Memories — the existing manager (forget one / forget all), opened in place
+ *  - Conversation history — newest first, type · messages · last activity;
+ *    micro-conversations (< 3 messages) hidden by default
  *  - No "session" language in user-facing copy
  */
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
-import { Trash2, ChevronDown, ChevronUp, Pin, RotateCcw } from 'lucide-react'
+import {
+  Brain,
+  CalendarDays,
+  ChevronRight,
+  Clock,
+  Database,
+  MessageCircle,
+  Mic,
+  Pin,
+  Play,
+  RotateCcw,
+  Trash2,
+} from 'lucide-react'
+import { ProjectAvatar } from '../components/ProjectAvatar'
+import { Collapsible } from '../motion'
+import { projectTypeLabel, relationshipAge, shortDate, timeAgo } from '../projectIdentity'
 import {
   PersonaSession,
   PersonaMemoryEntry,
@@ -34,16 +53,16 @@ interface SessionPanelProps {
   projectId: string
   projectName: string
   projectCreatedAt?: number
+  /** The project's saved picture (projectAvatarUrl); its type icon is shown without one. */
+  avatarUrl?: string | null
+  /** e.g. 'persona' — drives the type badge and the fallback icon. */
+  projectType?: string
+  /** Short project description, shown under the name. */
+  description?: string
   /** Called when user wants to open a session — parent handles navigation */
   onOpenSession: (session: PersonaSession) => void
   /** Called when user wants to open voice mode with a specific session */
   onOpenVoiceSession: (session: PersonaSession) => void
-}
-
-interface DayGroup {
-  label: string
-  sortKey: string
-  sessions: PersonaSession[]
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +73,9 @@ export default function SessionPanel({
   projectId,
   projectName,
   projectCreatedAt,
+  avatarUrl,
+  projectType,
+  description,
   onOpenSession,
   onOpenVoiceSession,
 }: SessionPanelProps) {
@@ -64,7 +86,7 @@ export default function SessionPanel({
   const [memoriesExpanded, setMemoriesExpanded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showMicro, setShowMicro] = useState(false)
-  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set())
+  const [historyExpanded, setHistoryExpanded] = useState(false)
 
   // Confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -192,27 +214,10 @@ export default function SessionPanel({
     [onOpenSession, onOpenVoiceSession]
   )
 
-  const toggleDay = useCallback((sortKey: string) => {
-    setExpandedDays((prev) => {
-      const next = new Set(prev)
-      if (next.has(sortKey)) next.delete(sortKey)
-      else next.add(sortKey)
-      return next
-    })
-  }, [])
-
   // ── Derived data ──────────────────────────────────────────────────────
 
   // Relationship age
-  const ageDays = projectCreatedAt
-    ? Math.max(0, Math.floor((Date.now() / 1000 - projectCreatedAt) / 86400))
-    : 0
-  const ageLabel =
-    ageDays === 0
-      ? 'Just created today'
-      : ageDays === 1
-      ? '1 day together'
-      : `${ageDays} days together`
+  const ageLabel = relationshipAge(projectCreatedAt)
 
   // Filter real sessions (> 0 messages)
   const realSessions = useMemo(
@@ -232,40 +237,30 @@ export default function SessionPanel({
     [realSessions]
   )
 
-  // Group by day
-  const dayGroups: DayGroup[] = useMemo(() => {
-    const visible = showMicro ? realSessions : meaningfulSessions
-    const grouped: Record<string, PersonaSession[]> = {}
-    for (const s of visible) {
-      const key = getDaySortKey(s.started_at)
-      if (!grouped[key]) grouped[key] = []
-      grouped[key].push(s)
-    }
-
-    const now = new Date()
-    const todayKey = formatSortKey(now)
-    const yesterday = new Date(now)
-    yesterday.setDate(yesterday.getDate() - 1)
-    const yesterdayKey = formatSortKey(yesterday)
-
-    return Object.entries(grouped)
-      .sort(([a], [b]) => b.localeCompare(a)) // newest first
-      .map(([sortKey, sess]) => ({
-        label: getDayLabel(sortKey, todayKey, yesterdayKey),
-        sortKey,
-        sessions: sess,
-      }))
-  }, [realSessions, meaningfulSessions, showMicro])
-
-  // Conversation history always starts collapsed — user toggles manually
-  // (no auto-expand)
-
   // ── Render ────────────────────────────────────────────────────────────
+
+  const identity = (
+    <HubIdentity
+      name={projectName}
+      avatarUrl={avatarUrl}
+      projectType={projectType}
+      description={description}
+      ageLabel={ageLabel}
+      memoryCount={memoryCount}
+      subtitle={isFirstTime && !loading ? 'Ready to meet you' : undefined}
+    />
+  )
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-8 text-gray-400">
-        <div className="animate-pulse">Loading...</div>
+      <div className="flex flex-col gap-4" role="status" aria-label="Loading conversations">
+        {identity}
+        <span className="hp-skeleton h-[76px] rounded-2xl" />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <span className="hp-skeleton h-16 rounded-2xl" />
+          <span className="hp-skeleton h-16 rounded-2xl" />
+        </div>
+        <span className="hp-skeleton h-40 rounded-2xl" />
       </div>
     )
   }
@@ -273,278 +268,200 @@ export default function SessionPanel({
   // ----- First-time welcome (brand new persona, no conversations yet) -----
   if (isFirstTime) {
     return (
-      <div className="flex flex-col gap-5 p-4 max-w-lg mx-auto">
-        {/* Welcome header */}
-        <div className="text-center mb-1">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-500/30 mb-3">
-            <span className="text-3xl">{'\u2728'}</span>
-          </div>
-          <h2 className="text-xl font-semibold text-white">{projectName}</h2>
-          <p className="text-sm text-purple-300/80 mt-1">Ready to meet you</p>
-        </div>
-
-        {/* First-time prompt */}
-        <p className="text-center text-gray-400 text-sm leading-relaxed px-4">
-          Start your first conversation — pick voice or text below.
-        </p>
-
-        {/* Primary action buttons */}
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={handleTalkVoice}
-            className="w-full flex items-center gap-3 px-4 py-4 rounded-xl bg-gradient-to-r from-purple-600/30 to-pink-600/30 border border-purple-500/40 hover:border-purple-400/60 transition-all text-left"
-          >
-            <span className="text-2xl">{'\uD83C\uDFA4'}</span>
-            <div className="flex-1 min-w-0">
-              <div className="text-white font-medium text-sm">Talk by Voice</div>
-              <div className="text-gray-400 text-xs">Talk to {projectName} out loud</div>
-            </div>
-          </button>
-
-          <button
-            onClick={handleTalkText}
-            className="w-full flex items-center gap-3 px-4 py-4 rounded-xl bg-gradient-to-r from-blue-600/30 to-purple-600/30 border border-blue-500/40 hover:border-blue-400/60 transition-all text-left"
-          >
-            <span className="text-2xl">{'\uD83D\uDCAC'}</span>
-            <div className="flex-1 min-w-0">
-              <div className="text-white font-medium text-sm">Chat by Text</div>
-              <div className="text-gray-400 text-xs">Chat with {projectName} via text</div>
-            </div>
-          </button>
+      <div className="flex flex-col gap-4">
+        {identity}
+        <p className="text-sm text-white/60">Start your first conversation — pick voice or text.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <HubAction kind="voice" title="Talk by Voice" subtitle={`Talk to ${projectName} out loud`} onClick={handleTalkVoice} />
+          <HubAction kind="text" title="Chat by Text" subtitle={`Chat with ${projectName} via text`} onClick={handleTalkText} />
         </div>
       </div>
     )
   }
 
   // ----- Returning user (has real conversation history) -----
+  const historyRows = showMicro ? realSessions : meaningfulSessions
+  const visibleHistory = historyExpanded ? historyRows : historyRows.slice(0, HISTORY_PREVIEW)
+  // Continue reopens the latest conversation, never a new one: the active one
+  // when it has messages, otherwise the most recent conversation that does
+  // (the active one can be empty, e.g. just opened by Voice).
+  const latest = hasRealActiveSession ? activeSession! : realSessions[0] ?? null
+  const continueLatest = () => (hasRealActiveSession ? handleContinue() : latest && handleOpenPast(latest))
+
   return (
-    <div className="flex flex-col gap-4 p-4 max-w-lg mx-auto">
-      {/* Header */}
-      <div className="text-center mb-2">
-        <h2 className="text-xl font-semibold text-white">{projectName}</h2>
-        <p className="text-sm text-gray-400">{ageLabel}</p>
-        {memoryCount > 0 && (
-          <p className="text-xs text-gray-500 mt-1">
-            {memoryCount} {memoryCount === 1 ? 'memory' : 'memories'} stored
-          </p>
-        )}
+    <div className="flex flex-col gap-4">
+      {identity}
+
+      {/* Continue Conversation — the primary action: reopens the latest conversation. */}
+      {latest ? (
+        <button
+          type="button"
+          onClick={continueLatest}
+          className="group relative w-full overflow-hidden rounded-2xl border border-indigo-300/30 bg-gradient-to-r from-violet-600/90 via-indigo-600/85 to-blue-600/85 px-4 py-4 sm:px-5 text-left shadow-[0_10px_40px_-12px_rgba(99,102,241,0.6)] hover:brightness-110"
+          aria-label={`Continue conversation: ${latest.mode === 'voice' ? 'voice' : 'text'}, ${plural(latest.message_count, 'message')}, ${timeAgo(latest.ended_at || latest.started_at)}`}
+        >
+          <span className="flex items-center gap-3 sm:gap-4">
+            <span className="grid h-11 w-11 sm:h-12 sm:w-12 shrink-0 place-items-center rounded-xl bg-white/90 text-indigo-600 shadow-inner">
+              <Play size={22} fill="currentColor" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block whitespace-nowrap text-base font-semibold text-white sm:text-lg">Continue Conversation</span>
+              <span className="block truncate text-sm text-white/80">
+                {latest.mode === 'voice' ? 'Voice' : 'Text'} · {plural(latest.message_count, 'message')} · {timeAgo(latest.ended_at || latest.started_at)}
+              </span>
+            </span>
+            <HubWave className="hidden sm:flex" />
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/30 text-white group-hover:bg-white/10">
+              <ChevronRight size={20} />
+            </span>
+          </span>
+        </button>
+      ) : null}
+
+      {/* Resume by voice or by text — equally important. */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <HubAction kind="voice" title="Talk by Voice" subtitle="Continue via voice" onClick={handleTalkVoice} />
+        <HubAction kind="text" title="Chat by Text" subtitle="Continue via text" onClick={handleTalkText} />
       </div>
 
-      {/* Primary Actions */}
-      <div className="flex flex-col gap-2">
-        {/* Continue Conversation — glowing primary action */}
-        {hasRealActiveSession && (
-          <button
-            onClick={handleContinue}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-purple-600/30 to-blue-600/30 border border-purple-500/40 hover:border-purple-400/60 shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:shadow-[0_0_20px_rgba(168,85,247,0.25)] transition-all text-left"
-          >
-            <span className="text-2xl">
-              {activeSession!.mode === 'voice' ? '\u25B6\uFE0F' : '\u25B6\uFE0F'}
-            </span>
-            <div className="flex-1 min-w-0">
-              <div className="text-white font-medium text-sm">Continue Conversation</div>
-              <div className="text-gray-400 text-xs truncate">
-                {activeSession!.mode === 'voice' ? 'Voice' : 'Text'} &middot;{' '}
-                {activeSession!.message_count} msgs &middot;{' '}
-                {formatTimeAgo(activeSession!.started_at)}
+      {/* Start fresh — secondary: ends the current conversation and opens a new one. */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <HubFresh title="Fresh voice chat" subtitle="Start a new voice conversation" onClick={() => handleStartFresh('voice')} />
+        <HubFresh title="Fresh text chat" subtitle="Start a new text conversation" onClick={() => handleStartFresh('text')} />
+      </div>
+
+      {/* Memories — the existing manager (view, forget one, forget all) opens in place. */}
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03]">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-violet-400/25 bg-violet-500/15 text-violet-200">
+            <Brain size={20} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-base font-semibold text-white">Memories</h3>
+            <p className="text-sm text-white/60">
+              {memoryCount > 0
+                ? <>{plural(memoryCount, 'memory', 'memories')} stored<span className="hidden sm:inline"> about your conversations</span></>
+                : 'Nothing remembered yet'}
+            </p>
+          </div>
+          {memoryCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setMemoriesExpanded(!memoriesExpanded)}
+              aria-expanded={memoriesExpanded}
+              aria-controls="hp-hub-memories"
+              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-white/15 bg-white/[0.04] px-3.5 text-sm font-medium text-white/90 hover:bg-white/10"
+            >
+              {memoriesExpanded ? 'Hide' : 'View All'}
+              <ChevronRight size={16} className={`transition-transform ${memoriesExpanded ? 'rotate-90' : ''}`} />
+            </button>
+          ) : null}
+        </div>
+        {memoryCount > 0 ? (
+          <Collapsible open={memoriesExpanded} id="hp-hub-memories">
+            <div className="border-t border-white/10">
+              <ul className="divide-y divide-white/5">
+                {memories.map((mem) => (
+                  <li key={mem.id} className="group/item flex items-start justify-between gap-3 px-4 py-2.5 hover:bg-white/[0.03]">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] leading-relaxed text-white/85">{mem.value}</div>
+                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-white/45">
+                        <span>{mem.category}</span>
+                        {mem.source_type === 'user_statement' ? (
+                          <>
+                            <span aria-hidden>·</span>
+                            <Pin size={10} aria-label="You told me this" />
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDialog({ mode: 'single', memory: mem })}
+                      className="hp-icon-btn mt-0.5 shrink-0 rounded-lg p-1.5 text-white/45 opacity-100 hover:bg-red-500/10 hover:text-red-400 sm:opacity-0 sm:group-hover/item:opacity-100 sm:focus-visible:opacity-100"
+                      title="Forget this memory"
+                      aria-label={`Forget: ${mem.value}`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex justify-end px-4 py-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDialog({ mode: 'all' })}
+                  className="min-h-[36px] rounded-lg px-2 text-xs text-red-300/80 hover:text-red-300"
+                >
+                  Forget all
+                </button>
               </div>
             </div>
-          </button>
-        )}
+          </Collapsible>
+        ) : null}
+      </section>
 
-        {/* Talk by Voice */}
-        <button
-          onClick={handleTalkVoice}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-800/60 border border-gray-700/50 hover:border-purple-500/40 transition-all text-left"
-        >
-          <span className="text-2xl">{'\uD83C\uDFA4'}</span>
-          <div className="flex-1 min-w-0">
-            <div className="text-white font-medium text-sm">Talk by Voice</div>
-            <div className="text-gray-400 text-xs">Continue via voice</div>
+      {/* Conversation history — newest first: type, messages, last activity. */}
+      {realSessions.length > 0 ? (
+        <section className="rounded-2xl border border-white/10 bg-white/[0.03]">
+          <div className="flex items-center gap-2 px-4 pt-3 pb-2">
+            <Clock size={18} className="text-white/60" aria-hidden />
+            <h3 className="flex-1 text-base font-semibold text-white">Conversation History</h3>
+            {historyRows.length > HISTORY_PREVIEW ? (
+              <button
+                type="button"
+                onClick={() => setHistoryExpanded((v) => !v)}
+                aria-expanded={historyExpanded}
+                className="inline-flex min-h-[44px] items-center gap-1 rounded-lg px-2 text-sm text-white/75 hover:text-white"
+              >
+                {historyExpanded ? 'Show less' : 'View All'}
+                <ChevronRight size={16} className={`transition-transform ${historyExpanded ? 'rotate-90' : ''}`} />
+              </button>
+            ) : null}
           </div>
-        </button>
-
-        {/* Chat by Text */}
-        <button
-          onClick={handleTalkText}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-800/60 border border-gray-700/50 hover:border-blue-500/40 transition-all text-left"
-        >
-          <span className="text-2xl">{'\uD83D\uDCAC'}</span>
-          <div className="flex-1 min-w-0">
-            <div className="text-white font-medium text-sm">Chat by Text</div>
-            <div className="text-gray-400 text-xs">Continue via text</div>
-          </div>
-        </button>
-
-        {/* Start Fresh — secondary action, subdued */}
-        <div className="flex gap-2 mt-1">
-          <button
-            onClick={() => handleStartFresh('voice')}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-gray-800/30 border border-gray-700/30 hover:border-gray-600/50 text-gray-500 hover:text-gray-300 transition-all text-xs"
-          >
-            <RotateCcw size={12} />
-            Fresh voice chat
-          </button>
-          <button
-            onClick={() => handleStartFresh('text')}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-gray-800/30 border border-gray-700/30 hover:border-gray-600/50 text-gray-500 hover:text-gray-300 transition-all text-xs"
-          >
-            <RotateCcw size={12} />
-            Fresh text chat
-          </button>
-        </div>
-      </div>
-
-      {/* Memories Section — expandable list with per-item delete + Forget All */}
-      {memoryCount > 0 && (
-        <div className="mt-2">
-          <button
-            type="button"
-            onClick={() => setMemoriesExpanded(!memoriesExpanded)}
-            className="w-full flex items-center justify-between px-1 mb-2 group"
-          >
-            <h3 className="text-xs uppercase tracking-wider text-gray-500">
-              Memories ({memoryCount})
-            </h3>
-            <div className="flex items-center gap-2">
-              {memoriesExpanded && memoryCount > 0 && (
-                <span
-                  role="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setConfirmDialog({ mode: 'all' })
-                  }}
-                  className="text-[11px] text-red-400/60 hover:text-red-400 transition-colors cursor-pointer"
-                >
-                  Forget All
-                </span>
-              )}
-              {memoriesExpanded ? (
-                <ChevronUp size={14} className="text-gray-500" />
-              ) : (
-                <ChevronDown size={14} className="text-gray-500" />
-              )}
-            </div>
-          </button>
-
-          {memoriesExpanded && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden divide-y divide-white/5">
-              {memories.map((mem) => (
-                <div
-                  key={mem.id}
-                  className="flex items-start justify-between gap-3 px-3 py-2.5 group/item hover:bg-white/[0.03] transition-colors"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13px] text-white/80 leading-relaxed">
-                      {mem.value}
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-[10px] text-white/30">{mem.category}</span>
-                      {mem.source_type === 'user_statement' && (
-                        <>
-                          <span className="text-[10px] text-white/15">&middot;</span>
-                          <Pin size={9} className="text-white/25" />
-                        </>
-                      )}
-                    </div>
-                  </div>
+          <ul className="px-2 pb-2">
+            {visibleHistory.map((session) => {
+              const voice = session.mode === 'voice'
+              const isActive = !session.ended_at
+              return (
+                <li key={session.id}>
                   <button
                     type="button"
-                    onClick={() => setConfirmDialog({ mode: 'single', memory: mem })}
-                    className="p-1.5 rounded-lg opacity-0 group-hover/item:opacity-100 hover:bg-red-500/10 text-white/30 hover:text-red-400 transition-all shrink-0 mt-0.5"
-                    title="Forget this memory"
+                    onClick={() => handleOpenPast(session)}
+                    className={`group flex w-full min-h-[48px] items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-white/[0.05] ${isActive ? 'bg-white/[0.04]' : ''}`}
                   >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Conversation History — grouped by day */}
-      {dayGroups.length > 0 && (
-        <div className="mt-2">
-          <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2 px-1">
-            Conversation History
-          </h3>
-          <div className="flex flex-col gap-1">
-            {dayGroups.map((group) => {
-              const isExpanded = expandedDays.has(group.sortKey)
-              return (
-                <div key={group.sortKey}>
-                  {/* Day header — clickable to toggle */}
-                  <button
-                    onClick={() => toggleDay(group.sortKey)}
-                    className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg hover:bg-gray-800/30 transition-colors"
-                  >
-                    <span className="text-xs font-medium text-gray-400">
-                      {group.label}
+                    <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-md ${voice ? 'bg-blue-500/80 text-white' : 'bg-white/10 text-white/80'}`} aria-hidden>
+                      {voice ? <Play size={13} fill="currentColor" /> : <MessageCircle size={14} />}
                     </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-gray-600">
-                        {group.sessions.length} {group.sessions.length === 1 ? 'chat' : 'chats'}
+                    <span className="w-16 shrink-0 text-sm font-semibold text-white">{shortDate(session.started_at)}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm text-white/70 sm:truncate">
+                        {voice ? 'Voice' : 'Text'} · {plural(session.message_count, 'message')} · {timeAgo(session.ended_at || session.started_at)}
+                        {isActive ? ' · active' : ''}
                       </span>
-                      {isExpanded ? (
-                        <ChevronUp size={12} className="text-gray-600" />
-                      ) : (
-                        <ChevronDown size={12} className="text-gray-600" />
-                      )}
-                    </div>
+                      {session.summary ? (
+                        <span className="block truncate text-xs text-white/50">{session.summary}</span>
+                      ) : null}
+                    </span>
+                    <ChevronRight size={16} className="shrink-0 text-white/40 group-hover:text-white/80" aria-hidden />
                   </button>
-
-                  {/* Expanded sessions */}
-                  {isExpanded && (
-                    <div className="flex flex-col gap-0.5 ml-2 mt-0.5 mb-1">
-                      {group.sessions.map((session) => (
-                        <button
-                          key={session.id}
-                          onClick={() => handleOpenPast(session)}
-                          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-800/40 transition-all text-left group"
-                        >
-                          <span className="text-sm text-gray-500 group-hover:text-gray-300">
-                            {session.mode === 'voice' ? '\uD83C\uDFA4' : '\uD83D\uDCAC'}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-gray-300 text-sm truncate">
-                              {session.summary ||
-                                `${session.mode === 'voice' ? 'Voice' : 'Text'} chat`}
-                            </div>
-                            <div className="text-gray-500 text-xs">
-                              {formatTime(session.started_at)} &middot;{' '}
-                              {session.message_count} msgs
-                              {session.ended_at ? '' : ' \u00B7 active'}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                </li>
               )
             })}
-          </div>
-
-          {/* Micro-session toggle */}
-          {!showMicro && microSessions.length > 0 && (
-            <button
-              onClick={() => setShowMicro(true)}
-              className="w-full mt-2 px-3 py-1.5 text-[11px] text-gray-600 hover:text-gray-400 transition-colors text-center"
-            >
-              Show short conversations ({microSessions.length})
-            </button>
-          )}
-          {showMicro && microSessions.length > 0 && (
-            <button
-              onClick={() => setShowMicro(false)}
-              className="w-full mt-2 px-3 py-1.5 text-[11px] text-gray-600 hover:text-gray-400 transition-colors text-center"
-            >
-              Hide short conversations
-            </button>
-          )}
-        </div>
-      )}
+          </ul>
+          {microSessions.length > 0 ? (
+            <div className="border-t border-white/5 px-4 py-1.5 text-center">
+              <button
+                type="button"
+                onClick={() => setShowMicro((v) => !v)}
+                className="min-h-[36px] text-xs text-white/55 hover:text-white/80"
+              >
+                {showMicro ? 'Hide short conversations' : `Show short conversations (${microSessions.length})`}
+              </button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Confirmation Dialog */}
       {confirmDialog && (
@@ -570,64 +487,107 @@ export default function SessionPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Pieces
 // ---------------------------------------------------------------------------
 
-function formatTimeAgo(dateStr: string): string {
-  try {
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffMin = Math.floor(diffMs / 60000)
+const HISTORY_PREVIEW = 5
 
-    if (diffMin < 1) return 'just now'
-    if (diffMin < 60) return `${diffMin}m ago`
-    const diffHr = Math.floor(diffMin / 60)
-    if (diffHr < 24) return `${diffHr}h ago`
-    const diffDay = Math.floor(diffHr / 24)
-    return `${diffDay}d ago`
-  } catch {
-    return dateStr
-  }
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`
 }
 
-function formatTime(dateStr: string): string {
-  try {
-    const date = new Date(dateStr)
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return dateStr
-  }
+/** Picture, name, type, age and memories — the project's identity at the top of the hub. */
+function HubIdentity({
+  name,
+  avatarUrl,
+  projectType,
+  description,
+  ageLabel,
+  memoryCount,
+  subtitle,
+}: {
+  name: string
+  avatarUrl?: string | null
+  projectType?: string
+  description?: string
+  ageLabel: string
+  memoryCount: number
+  subtitle?: string
+}) {
+  return (
+    <header className="flex flex-col items-center gap-4 pt-2 text-center sm:flex-row sm:items-center sm:gap-6 sm:pr-10 sm:text-left">
+      <ProjectAvatar url={avatarUrl} name={name} projectType={projectType || 'persona'} size={112} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 sm:justify-start">
+          <h2 className="min-w-0 break-words text-2xl font-semibold text-white sm:text-3xl">{name}</h2>
+          <span className="rounded-full border border-pink-400/30 bg-pink-500/15 px-2.5 py-0.5 text-xs font-medium text-pink-200">
+            {projectTypeLabel(projectType || 'persona')}
+          </span>
+        </div>
+        {subtitle ? <p className="mt-1 text-sm text-violet-200/90">{subtitle}</p> : null}
+        <p className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm text-white/65 sm:justify-start">
+          <span className="inline-flex items-center gap-1.5"><CalendarDays size={15} aria-hidden />{ageLabel}</span>
+          {memoryCount > 0 ? (
+            <>
+              <span className="hidden h-4 w-px bg-white/15 sm:inline-block" aria-hidden />
+              <span className="inline-flex items-center gap-1.5"><Database size={15} aria-hidden />{memoryCount === 1 ? '1 memory stored' : `${memoryCount} memories stored`}</span>
+            </>
+          ) : null}
+        </p>
+        {description ? <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-white/60">{description}</p> : null}
+      </div>
+    </header>
+  )
 }
 
-function formatSortKey(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
+/** "Talk by Voice" / "Chat by Text" — resume the current conversation in that mode. */
+function HubAction({ kind, title, subtitle, onClick }: { kind: 'voice' | 'text'; title: string; subtitle: string; onClick: () => void }) {
+  const voice = kind === 'voice'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group flex w-full min-h-[64px] items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-left hover:bg-white/[0.07] ${voice ? 'hover:border-violet-400/40' : 'hover:border-blue-400/40'}`}
+    >
+      <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border ${voice ? 'border-violet-400/25 bg-violet-500/15 text-violet-200' : 'border-blue-400/25 bg-blue-500/15 text-blue-200'}`}>
+        {voice ? <Mic size={20} /> : <MessageCircle size={20} />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-base font-semibold text-white">{title}</span>
+        <span className="block truncate text-sm text-white/60">{subtitle}</span>
+      </span>
+      <ChevronRight size={18} className="shrink-0 text-white/45 group-hover:text-white/80" aria-hidden />
+    </button>
+  )
 }
 
-function getDaySortKey(dateStr: string): string {
-  try {
-    return formatSortKey(new Date(dateStr))
-  } catch {
-    return '0000-00-00'
-  }
+/** "Fresh voice chat" / "Fresh text chat" — the secondary, start-over actions. */
+function HubFresh({ title, subtitle, onClick }: { title: string; subtitle: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full min-h-[56px] items-center gap-3 rounded-2xl border border-white/[0.08] bg-transparent px-4 py-2.5 text-left hover:bg-white/[0.04]"
+    >
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-violet-200">
+        <RotateCcw size={16} />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-white/90">{title}</span>
+        <span className="block truncate text-xs text-white/55">{subtitle}</span>
+      </span>
+    </button>
+  )
 }
 
-function getDayLabel(sortKey: string, todayKey: string, yesterdayKey: string): string {
-  if (sortKey === todayKey) return 'Today'
-  if (sortKey === yesterdayKey) return 'Yesterday'
-  try {
-    const [y, m, d] = sortKey.split('-').map(Number)
-    const date = new Date(y, m - 1, d)
-    const now = new Date()
-    const diffDays = Math.floor((now.getTime() - date.getTime()) / 86400000)
-    if (diffDays < 7) {
-      return date.toLocaleDateString(undefined, { weekday: 'long' })
-    }
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-  } catch {
-    return sortKey
-  }
+/** Decorative bars inside the Continue button. */
+function HubWave({ className = '' }: { className?: string }) {
+  const bars = [6, 10, 16, 22, 14, 26, 18, 12, 20, 9, 14, 7, 5, 4]
+  return (
+    <span className={`items-center gap-[3px] pr-1 ${className}`} aria-hidden>
+      {bars.map((h, i) => (
+        <span key={i} className="w-[3px] rounded-full bg-white/50" style={{ height: h }} />
+      ))}
+    </span>
+  )
 }

@@ -51,9 +51,15 @@ export function ModalSheet({
   children,
   zIndex = 200,
   bodyRef,
+  className = '',
+  label,
 }: {
   /** id of the element that names the dialog */
-  labelledBy: string
+  labelledBy?: string
+  /** accessible name when no visible element names the dialog */
+  label?: string
+  /** extra classes on the sheet (e.g. a themed surface) */
+  className?: string
   /** Escape or a backdrop click; the owner decides (e.g. confirm unsaved changes). */
   onRequestClose: () => void
   header: React.ReactNode
@@ -122,10 +128,11 @@ export function ModalSheet({
     >
       <div
         ref={sheetRef}
-        className="hp-sheet"
+        className={`hp-sheet ${className}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}
+        aria-label={labelledBy ? undefined : label}
         tabIndex={-1}
       >
         <div className="hp-sheet__header">{header}</div>
