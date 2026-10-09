@@ -39,6 +39,7 @@ import './voice/voiceMode.css';
 // Front/Left/Right/Back chips.
 import { ViewPackViewer, type ViewAngle } from './components/ViewPackViewer';
 import Starfield from './voice/Starfield';
+import { ProjectAvatar } from './components/ProjectAvatar';
 import VoiceSettingsPanel from './voice/VoiceSettingsPanel';
 import SettingsModal from './voice/SettingsModal';
 import { useVoiceController, VoiceState } from './voice/useVoiceController';
@@ -813,6 +814,12 @@ interface VoiceModeGrokProps {
   messages?: Message[];
   /** Parent-controlled setter so mutations propagate back to App. */
   setMessages?: React.Dispatch<React.SetStateAction<Message[]>>;
+  /**
+   * The open project, when there is one. Its saved picture (or, without one,
+   * its type icon) replaces nothing but is shown above the voice bars; with
+   * no project the screen is exactly the default.
+   */
+  projectIdentity?: { name: string; avatarUrl: string | null; projectType?: string } | null;
 }
 
 export default function VoiceModeGrok({
@@ -822,6 +829,7 @@ export default function VoiceModeGrok({
   onNewChat,
   messages: controlledMessages,
   setMessages: setControlledMessages,
+  projectIdentity = null,
 }: VoiceModeGrokProps) {
   // Messages state — use parent's if provided, fallback to internal
   const [internalMessages, setInternalMessages] = useState<Message[]>([]);
@@ -1222,8 +1230,20 @@ export default function VoiceModeGrok({
         {messages.length === 0 ? (
           /* Idle State */
           <div className="flex-1 flex flex-col items-center justify-center gap-4 text-white/50 hp-fade-in">
+            {/* The open project's picture (or icon), with a ring that follows the
+                microphone level. Without a project nothing is added. */}
+            {projectIdentity ? (
+              <ProjectAvatar
+                url={projectIdentity.avatarUrl}
+                name={projectIdentity.name}
+                projectType={projectIdentity.projectType}
+                size={projectIdentity.avatarUrl ? 168 : 112}
+                level={isSpeaking ? 0.35 : isListening || isIdle ? Math.min(1, voice.audioLevel * 8) : 0}
+                className="mb-6"
+              />
+            ) : null}
             {/* Waveform icon */}
-            <div className="flex gap-1 items-end h-6">
+            <div className={`flex gap-1 items-end h-6 ${projectIdentity?.avatarUrl ? 'hp-voice-bars--tinted' : ''}`}>
               <div
                 className="w-[3px] bg-white/60 rounded-full hp-pulse"
                 style={{ height: '8px', animationDelay: '0s' }}
@@ -1286,6 +1306,18 @@ export default function VoiceModeGrok({
         ) : (
           /* Conversation View */
           <div className="w-full max-w-3xl space-y-6 pt-16 hp-slide-up">
+            {projectIdentity ? (
+              <div className="flex flex-col items-center gap-2 pb-2">
+                <ProjectAvatar
+                  url={projectIdentity.avatarUrl}
+                  name={projectIdentity.name}
+                  projectType={projectIdentity.projectType}
+                  size={64}
+                  level={isSpeaking ? 0.35 : isListening ? Math.min(1, voice.audioLevel * 8) : 0}
+                />
+                <div className="text-sm font-medium text-white/80">{projectIdentity.name}</div>
+              </div>
+            ) : null}
             {messages.map((msg, idx) => {
               // Skip empty pending placeholders (App adds { text: '', pending: true })
               if (!msg.text && (msg as any).pending) return null;

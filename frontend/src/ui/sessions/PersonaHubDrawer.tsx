@@ -1,92 +1,50 @@
-import React, { useEffect } from 'react'
+/**
+ * PersonaHubDrawer — the frame of a project's Conversation Hub.
+ *
+ * The project's identity (picture, name, details) is drawn by the content,
+ * so the frame carries only a close button: the name is no longer shown twice.
+ * Built on ModalSheet: full-screen on phones, a centred card above, Escape /
+ * backdrop / the phone's Back gesture close it, focus is kept inside.
+ */
+import React from 'react'
 import { X } from 'lucide-react'
+import { ModalSheet } from '../components/ModalSheet'
 
 type Props = {
   open: boolean
+  /** The project's name — the dialog's accessible name. */
   title: string
+  /** Kept for compatibility; the hub content shows the project's details. */
   subtitle?: string
   metaRight?: React.ReactNode
   onClose: () => void
   children: React.ReactNode
 }
 
-export default function PersonaHubDrawer({
-  open,
-  title,
-  subtitle,
-  metaRight,
-  onClose,
-  children,
-}: Props) {
-  // ESC to close
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose])
-
-  // Lock background scroll
-  useEffect(() => {
-    if (!open) return
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = prev
-    }
-  }, [open])
-
+export default function PersonaHubDrawer({ open, title, metaRight, onClose, children }: Props) {
   if (!open) return null
-
   return (
-    <div className="fixed inset-0 z-50">
-      {/* Overlay (click to close) */}
-      <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onMouseDown={onClose}
-        aria-hidden
-      />
-
-      {/* Drawer — centered */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div
-          className="w-full max-w-md max-h-[90vh] bg-gray-950 border border-white/10 rounded-2xl shadow-2xl flex flex-col pointer-events-auto"
-          onMouseDown={(e) => e.stopPropagation()}
-          role="dialog"
-          aria-modal="true"
-        >
-          {/* Sticky header */}
-          <div className="sticky top-0 z-10 bg-gray-950/95 backdrop-blur border-b border-white/10">
-            <div className="px-4 py-3 flex items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-white font-semibold truncate">{title}</div>
-                {subtitle && <div className="text-xs text-gray-400 truncate">{subtitle}</div>}
-              </div>
-
-              {metaRight && <div className="shrink-0">{metaRight}</div>}
-
-              <button
-                onClick={onClose}
-                className="shrink-0 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition"
-                aria-label="Close"
-                title="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto px-4 py-4">
-            {children}
-          </div>
-
-          {/* Bottom safe area */}
-          <div className="h-4" />
+    <ModalSheet
+      label={`${title} — conversation hub`}
+      onRequestClose={onClose}
+      zIndex={60}
+      className="hp-hub-sheet"
+      header={
+        <div className="flex items-center justify-end gap-2 px-3 pt-3 -mb-14 relative z-10 pointer-events-none">
+          {metaRight ? <div className="pointer-events-auto">{metaRight}</div> : null}
+          <button
+            type="button"
+            onClick={onClose}
+            className="pointer-events-auto h-11 w-11 grid place-items-center rounded-full text-white/70 hover:text-white hover:bg-white/10"
+            aria-label="Close"
+            title="Close"
+          >
+            <X size={20} />
+          </button>
         </div>
-      </div>
-    </div>
+      }
+    >
+      <div className="px-4 sm:px-6 pt-4 pb-6">{children}</div>
+    </ModalSheet>
   )
 }

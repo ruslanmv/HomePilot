@@ -60,6 +60,7 @@ import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
 import { useBackToClose } from './lib/useBackToClose'
+import { projectAvatarUrl } from './projectIdentity'
 import { LoadingDots, StatusText, StreamReveal, motionAllowed, useMotionPrefs } from './motion'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
@@ -2533,6 +2534,7 @@ function ChatState({
   onChatReasoningModeChange,
   showChatReasoningSelector,
   allowPersonaMode,
+  assistantAvatarUrl,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -2558,6 +2560,8 @@ function ChatState({
   onChatReasoningModeChange: (mode: ChatReasoningMode) => void
   showChatReasoningSelector: boolean
   allowPersonaMode: boolean
+  /** The open project's picture, shown beside its replies instead of the default mark. */
+  assistantAvatarUrl?: string | null
 }) {
   const { copied, copy } = useCopyMessage()
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -2747,9 +2751,18 @@ function ChatState({
               )
             ) : (<>
             {m.role === 'assistant' ? (
-              <div className="hidden sm:flex w-8 h-8 rounded-full bg-white text-black items-center justify-center flex-shrink-0 font-bold text-sm mt-1" aria-hidden>
-                /
-              </div>
+              assistantAvatarUrl ? (
+                <img
+                  src={assistantAvatarUrl}
+                  alt=""
+                  aria-hidden
+                  className="hidden sm:block w-8 h-8 rounded-full object-cover flex-shrink-0 mt-1 ring-1 ring-white/20"
+                />
+              ) : (
+                <div className="hidden sm:flex w-8 h-8 rounded-full bg-white text-black items-center justify-center flex-shrink-0 font-bold text-sm mt-1" aria-hidden>
+                  /
+                </div>
+              )
             ) : null}
 
             {/* User: bubble | Assistant: bare text on background (Grok style) */}
@@ -3405,6 +3418,10 @@ export default function App() {
     }
     persona_agent?: Record<string, any>
     persona_appearance?: Record<string, any>
+    /** epoch seconds — the hub shows how long the relationship has lasted */
+    created_at?: number
+    /** epoch seconds — cache-buster for the saved picture */
+    updated_at?: number
   } | null>(null)
 
   useEffect(() => {
@@ -4208,6 +4225,8 @@ export default function App() {
             agentic: project.agentic,
             persona_agent: project.persona_agent,
             persona_appearance: project.persona_appearance,
+            created_at: project.created_at,
+            updated_at: project.updated_at,
           })
           setShowSessionPanel(false)
         }
@@ -4289,6 +4308,8 @@ export default function App() {
               agentic: project.agentic,
               persona_agent: project.persona_agent,
               persona_appearance: project.persona_appearance,
+              created_at: project.created_at,
+              updated_at: project.updated_at,
             })
 
             // Restore last conversation for this project
@@ -6099,7 +6120,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     ? 'bg-amber-600/20 text-amber-400 border-amber-600/30'
                     : 'bg-blue-600/20 text-blue-400 border-blue-600/30'
                 } text-xs font-semibold px-4 py-2 rounded-full border`}>
-                  <Folder size={12} />
+                  {projectAvatarUrl(currentProject) ? (
+                    // The project's own picture is its identity in the header too.
+                    <img
+                      src={projectAvatarUrl(currentProject) as string}
+                      alt=""
+                      className="-ml-2 h-6 w-6 rounded-full object-cover ring-1 ring-white/25"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                    />
+                  ) : (
+                    <Folder size={12} />
+                  )}
                   <span className="max-w-[120px] truncate">{projectName}</span>
                   {currentProject?.project_type === 'agent' && (
                     <span className="px-1.5 py-0.5 bg-amber-600/30 rounded text-[10px]">Agent</span>
@@ -6219,7 +6250,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               <SessionPanel
                 projectId={currentProject.id}
                 projectName={currentProject.name}
-                projectCreatedAt={(currentProject as any).created_at}
+                projectCreatedAt={currentProject.created_at}
+                avatarUrl={projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'full')}
+                projectType={currentProject.project_type}
+                description={currentProject.description}
                 onOpenSession={async (session) => {
                   // Open text session: set conversation_id and load messages
                   setChatConversationId(session.conversation_id)
@@ -6331,6 +6365,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         {mode === 'voice' ? (
           <VoiceMode
             activePersonalityId={currentProject?.project_type === 'persona' ? `persona:${currentProject.id}` : null}
+            projectIdentity={
+              currentProject
+                ? {
+                    name: currentProject.name,
+                    avatarUrl: projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'full'),
+                    projectType: currentProject.project_type,
+                  }
+                : null
+            }
             onSendText={(text) => sendTextOrIntent(text)}
             messages={voiceMessages}
             setMessages={setVoiceMessages}
@@ -6395,6 +6438,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     agentic: project.agentic,
                     persona_agent: project.persona_agent,
                     persona_appearance: project.persona_appearance,
+                    created_at: project.created_at,
+                    updated_at: project.updated_at,
                   })
 
                   // Restore last conversation or start fresh
@@ -6723,6 +6768,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           ) : (
             <ChatState
               messages={messages}
+              assistantAvatarUrl={projectAvatarUrl(currentProject)}
               setLightbox={setLightbox}
               endRef={endRef}
               mode={mode}
@@ -6814,6 +6860,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         ) : (
           <ChatState
             messages={messages}
+            assistantAvatarUrl={projectAvatarUrl(currentProject)}
             setLightbox={setLightbox}
             endRef={endRef}
             mode={mode}

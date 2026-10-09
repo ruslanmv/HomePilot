@@ -28,12 +28,15 @@
 This repository contains the **"Home Edition"**: a production-oriented stack designed to run on a local machine (ideally with an NVIDIA GPU) using Docker Compose.
 
 <p align="center">
-  <img src="assets/readme/homepilot-ui.jpg" alt="HomePilot chat on desktop, and on a phone revealing a new answer" width="900" />
+  <img src="assets/readme/homepilot-ui.jpg" alt="HomePilot chat on desktop, and Voice on a phone with the persona's picture" width="900" />
 </p>
 
 ---
 
 ## ✨ What's New
+
+### 💬 Conversation Hub — Every Persona Has a Face
+Open a persona and its Conversation Hub leads with the persona's own picture, name, age and memories. **Continue Conversation** reopens the latest chat in one tap, voice and text sit side by side, and memories and history are one click away. The same picture follows you into the chat header and into Voice, where a soft ring reacts to your voice. See [Conversation Hub](#conversation-hub).
 
 ### 📱 Phone-Ready Interface and Enterprise Motion
 HomePilot now works on a phone as well as it does on a desktop — full-screen settings, a proper off-canvas menu, Back-gesture support, a visible startup screen instead of a blank one — and chat and voice get a restrained motion system: shimmering status labels, answers revealed with a typing cursor, smooth dialogs and menus. Choose how much moves in **Settings → Motion**. See [On Your Phone](#on-your-phone) and [Motion](#motion).
@@ -320,9 +323,16 @@ A Grok-like dark minimal interface with:
 - Inline media rendering
 - Responsive design for desktop, tablet and phone — including inside the Hugging Face Space
 
+### Conversation Hub
+<p align="center">
+  <img src="assets/readme/homepilot-hub.jpg" alt="A persona's Conversation Hub on desktop and phone: picture, name and memories, Continue Conversation, voice and text, memories and history" width="900" />
+</p>
+
+Each persona opens on its own hub. Its saved picture is the project's identity — here, in the chat header, beside its replies and in Voice — with the persona's icon when it has no picture, and the default HomePilot look when no project is open. **Continue Conversation** reopens the latest conversation; **Talk by Voice** and **Chat by Text** resume it in either mode; **Fresh voice/text chat** starts over; **Memories** opens the memory manager in place; **Conversation History** lists each conversation's type, messages and last activity. See [docs/conversation-hub.md](docs/conversation-hub.md).
+
 ### On Your Phone
 <p align="center">
-  <img src="assets/readme/homepilot-mobile.jpg" alt="HomePilot on a phone: thinking, an answer being revealed, the menu, Account Settings and Voice" width="900" />
+  <img src="assets/readme/homepilot-mobile.jpg" alt="HomePilot on a phone: an answer being revealed, the menu, a persona's Conversation Hub, Voice with the persona's picture, and Account Settings" width="900" />
 </p>
 
 Built for one hand on a narrow screen: an off-canvas menu that closes with the phone's **Back** gesture, a full-screen **Account Settings** with **Save All** pinned above the keyboard, page headers that never sit under the menu button, 44 px touch targets, and a visible **Starting HomePilot…** screen (never a blank one) while the app loads or the Space wakes up. Tested from 320 px phones to desktop, in landscape, at 150 % zoom and on a slow 3G link. See [docs/mobile-web-ui.md](docs/mobile-web-ui.md).
@@ -332,7 +342,7 @@ Built for one hand on a narrow screen: an off-canvas menu that closes with the p
   <img src="assets/readme/homepilot-motion.jpg" alt="Settings → Motion: animation level, how new answers appear, and a live preview" width="760" />
 </p>
 
-A restrained, enterprise motion system for chat: a shimmering *Thinking* label with rippling dots, answers revealed word by word with a typing cursor (tap to show all), status changes that slide rather than jump, and smooth dialogs, menus and accordions. Voice mode keeps its familiar look. **Settings → Motion** chooses *Enterprise*, *Minimal* or *Off* and how new answers appear; the device's *reduce motion* setting always wins. See [docs/chat-motion.md](docs/chat-motion.md).
+A restrained, enterprise motion system for chat: a shimmering *Thinking* label with rippling dots, answers revealed word by word with a typing cursor (tap to show all), status changes that slide rather than jump, and smooth dialogs, menus and accordions. Voice keeps its familiar look, and shows the persona's picture when one is open. **Settings → Motion** chooses *Enterprise*, *Minimal* or *Off* and how new answers appear; the device's *reduce motion* setting always wins. See [docs/chat-motion.md](docs/chat-motion.md).
 
 ### Imagine Gallery
 <p align="center">
