@@ -58,20 +58,29 @@ The container uses a multi-stage build:
 
 1. **Stage 1** — Node 20 Alpine builds the React frontend (`npm run build`).
 2. **Stage 2** — Python 3.11-slim runtime copies the built frontend, installs backend dependencies, and runs:
-   - **nginx** on port `7860` — serves the static frontend and proxies `/api/` requests.
+   - **nginx** on port `7860` — serves the built frontend and forwards API requests to the backend.
    - **uvicorn** on port `8000` — runs the FastAPI backend.
    - **supervisord** manages both processes.
 
 ```
-                    ┌─────────────────────────────┐
-                    │       Port 7860 (nginx)      │
-                    │                              │
-  browser ────────► │   /         → static files   │
-                    │   /api/*    → uvicorn :8000   │
-                    │   /docs     → uvicorn :8000   │
-                    │   /health   → uvicorn :8000   │
-                    └─────────────────────────────┘
+                    ┌──────────────────────────────────────────────┐
+                    │              Port 7860 (nginx)               │
+                    │                                              │
+  browser ────────► │  /health, /api/health   → uvicorn /health    │
+                    │  /api/* /v1/* /files/* /docs …               │
+                    │                         → uvicorn :8000      │
+                    │  a built file (JS, CSS, images)              │
+                    │                         → static files       │
+                    │  a page load (Accept: text/html)             │
+                    │                         → index.html (SPA)   │
+                    │  anything else (/chat, /conversations, …)    │
+                    │                         → uvicorn :8000      │
+                    └──────────────────────────────────────────────┘
 ```
+
+The frontend calls most of the API at the site root (`/chat`, `/conversations`,
+`/projects`, …), so nginx tells the app's pages from API calls by what the
+request accepts rather than by a list of path prefixes.
 
 ---
 

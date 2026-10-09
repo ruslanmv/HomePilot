@@ -3,6 +3,7 @@
  *
  * Displays version, author, and project links in a centered modal overlay.
  */
+import { useBackToClose } from './lib/useBackToClose'
 import React, { useEffect, useRef } from 'react'
 import { X, ExternalLink, Github, Globe, Heart, Activity } from 'lucide-react'
 
@@ -22,6 +23,9 @@ export default function AboutDialog({ onClose, onOpenSystemStatus }: AboutDialog
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [onClose])
+
+  // The phone's Back gesture closes the dialog instead of leaving HomePilot.
+  useBackToClose(true, onClose)
 
   // Close on backdrop click
   const handleBackdropClick = (e: React.MouseEvent) => {

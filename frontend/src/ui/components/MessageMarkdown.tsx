@@ -36,8 +36,9 @@ function CodeBlock({ lang, raw }: { lang: string; raw: string }) {
         <button
           type="button"
           onClick={() => copy(raw)}
-          className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full bg-white/10 hover:bg-white/15 border border-white/10 hover:border-white/20 text-white/75 hover:text-white transition"
+          className="hp-icon-btn inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full bg-white/10 hover:bg-white/15 border border-white/10 hover:border-white/20 text-white/75 hover:text-white transition"
           title="Copy code"
+          aria-label={copied ? 'Code copied' : 'Copy code'}
         >
           {copied ? <Check size={13} /> : <Copy size={13} />}
           {copied ? 'Copied' : 'Copy'}

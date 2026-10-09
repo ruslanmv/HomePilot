@@ -1,3 +1,4 @@
+import { useBackToClose } from "./lib/useBackToClose";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings as SettingsIcon,
@@ -21,6 +22,7 @@ import {
   Loader2,
   Cloud,
   Cpu,
+  Sparkles,
 } from "lucide-react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
 import OllaBridgeLink from "./components/OllaBridgeLink";
@@ -34,6 +36,7 @@ import OllaBridgeModels from "./components/OllaBridgeModels";
 import ComputeSettingsTabs from "./components/compute/ComputeSettingsTabs";
 import ModelExecutionSelector from "./components/compute/ModelExecutionSelector";
 import ProfileSettingsModal from "./ProfileSettingsModal";
+import { MotionGallery } from "./motion/MotionGallery";
 import TtsEngineSection from "./components/TtsEngineSection";
 import VoiceAssistantSelfTest from "./components/VoiceAssistantSelfTest";
 import SpeechRecognitionSettings from "./components/SpeechRecognitionSettings";
@@ -331,6 +334,7 @@ const SECTIONS = [
   { id: "tools", label: "Tools & Agents", Icon: Wrench },
   { id: "matrixhub", label: "MatrixHub", Icon: Grid3x3 },
   { id: "ollabridge", label: "OllaBridge API", Icon: Code2 },
+  { id: "motion", label: "Motion", Icon: Sparkles },
   { id: "advanced", label: "Advanced", Icon: FlaskConical },
 ] as const;
 
@@ -686,6 +690,9 @@ export default function SettingsPanel({
   useEffect(() => {
     if (!dirty) baselineRef.current = JSON.stringify(value);
   }, [value, dirty]);
+
+  // The phone's Back gesture closes Settings (also respecting the guard).
+  useBackToClose(true, requestClose);
 
   // ESC closes the modal (respecting the unsaved-changes guard).
   useEffect(() => {
@@ -1589,6 +1596,15 @@ export default function SettingsPanel({
       case "tools": return renderTools();
       case "matrixhub": return renderMatrixHub();
       case "ollabridge": return renderOllaBridge();
+      case "motion": return (
+        <SettingsCard
+          title="Motion & animations"
+          description="How much HomePilot animates on this device. Applies right away — no need to Save."
+          icon={<Sparkles size={16} />}
+        >
+          <MotionGallery />
+        </SettingsCard>
+      );
       case "advanced": return renderAdvanced();
       default: return null;
     }

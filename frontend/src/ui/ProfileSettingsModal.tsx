@@ -6,8 +6,11 @@
  *   2. Preferences — personalization, companion, content prefs, memory
  *   3. Integrations — secrets vault
  */
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { X } from 'lucide-react'
 import { useAuth } from './components/AuthGate'
+import { ModalSheet } from './components/ModalSheet'
+import { PulseText, Spinner } from './motion'
 import type {
   UserProfile,
   SecretListItem,
@@ -205,6 +208,23 @@ export default function ProfileSettingsModal({
 
   const canUseBackend = useMemo(() => !!backendUrl, [backendUrl])
 
+  // What was last loaded or saved, to tell whether closing would lose edits.
+  const [baseline, setBaseline] = useState<string | null>(null)
+  const snapshot = JSON.stringify({ profile, memory })
+  const dirty = !loading && baseline !== null && snapshot !== baseline
+  const tabsRef = useRef<HTMLDivElement>(null)
+
+  function requestClose() {
+    if (dirty && !window.confirm('Discard your unsaved changes?')) return
+    onClose()
+  }
+
+  // Keep the active tab visible when the tab row scrolls sideways on phones.
+  useEffect(() => {
+    const el = tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')
+    el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [tab])
+
   async function refreshAll() {
     if (!canUseBackend) return
     setLoading(true)
@@ -232,6 +252,7 @@ export default function ProfileSettingsModal({
         ? await fetchUserMemory(backendUrl, authToken)
         : await fetchMemory(backendUrl, apiKey)
       setMemory(m)
+      setBaseline(JSON.stringify({ profile: merged, memory: m }))
 
       // Load avatar from stored user data (if available)
       try {
@@ -271,6 +292,7 @@ export default function ProfileSettingsModal({
         display_name: profile.display_name,
         email: profile.email,
       })
+      setBaseline(JSON.stringify({ profile, memory }))
       setSavedMsg(true)
       setTimeout(() => setSavedMsg(false), 2500)
     } catch (e: any) {
@@ -348,59 +370,100 @@ export default function ProfileSettingsModal({
     }
   }
 
+  const TABS: { key: TabKey; label: string }[] = [
+    { key: 'profile', label: 'Profile' },
+    { key: 'prefs', label: 'Preferences' },
+    { key: 'communication', label: 'Communication' },
+    { key: 'integrations', label: 'Integrations' },
+    { key: 'security', label: 'Security' },
+  ]
+
   return (
-    <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl rounded-3xl border border-white/10 bg-[#0b0b0b] shadow-2xl shadow-black/40 overflow-hidden">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-          <div>
-            <div className="text-white/90 font-semibold">Account Settings</div>
-            <div className="text-xs text-white/40">
-              Profile, preferences, integrations, and security for your account.
+    <ModalSheet
+      labelledBy="hp-account-settings-title"
+      onRequestClose={requestClose}
+      header={
+        <>
+          <div className="flex items-center gap-3 px-4 sm:px-6 py-2 sm:py-3 border-b border-white/10">
+            <div className="min-w-0 flex-1">
+              <h2 id="hp-account-settings-title" className="text-[17px] sm:text-base text-white/90 font-semibold leading-6">
+                Account Settings
+              </h2>
+              <p className="hidden sm:block text-xs text-white/50">
+                Profile, preferences, integrations, and security for your account.
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={requestClose}
+              aria-label="Close settings"
+              className="shrink-0 -mr-1 h-11 w-11 inline-flex items-center justify-center rounded-full text-white/70 hover:text-white hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60"
+            >
+              <X size={20} aria-hidden />
+            </button>
+          </div>
+          <div className="px-4 sm:px-6 pt-3 pb-2 border-b border-white/5">
+            <div ref={tabsRef} className="hp-tabs rounded-2xl bg-white/5 border border-white/10 p-1" role="tablist" aria-label="Settings sections">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === t.key}
+                  onClick={() => setTab(t.key)}
+                  className={[
+                    'px-4 rounded-xl text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60',
+                    tab === t.key ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white/80',
+                  ].join(' ')}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {/* Mode hint (helpful for enterprise debugging) */}
+            <div className="mt-1.5 text-[11px] text-white/45">
+              {usePerUser ? 'Per-user (Bearer)' : 'Instance-wide (API key)'}
+            </div>
+          </div>
+        </>
+      }
+      footer={
+        <div className="px-4 sm:px-6 pt-3 border-t border-white/10 bg-[#0b0b0b] flex items-center gap-3">
+          <div className="min-w-0 flex-1 text-xs text-white/50" aria-live="polite">
+            {saving ? <PulseText>Saving…</PulseText>
+              : savedMsg ? <span className="text-green-400/90 hp-enter-fade">Saved</span>
+              : dirty ? <span className="text-amber-300/90">Unsaved changes</span>
+              : <span className="hidden sm:inline">{usePerUser
+                  ? 'Profile, memory & secrets are scoped to your account.'
+                  : 'Profile stores preferences, memory, and integrations (instance-wide).'}</span>}
           </div>
           <button
             type="button"
-            onClick={onClose}
-            className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70"
+            onClick={onSaveAll}
+            disabled={saving || loading}
+            className="shrink-0 whitespace-nowrap min-h-[44px] px-5 rounded-full bg-blue-600 hover:bg-blue-500 text-sm text-white font-semibold disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/70"
           >
-            Close
+            {saving ? <span className="inline-flex items-center gap-2"><Spinner size={14} />Saving…</span> : 'Save All'}
           </button>
         </div>
-
-        {/* Tabs */}
-        <div className="px-6 pt-4">
-          <div className="inline-flex rounded-2xl bg-white/5 border border-white/10 p-1">
-            {[
-              { key: 'profile', label: 'Profile' },
-              { key: 'prefs', label: 'Preferences' },
-              { key: 'communication', label: 'Communication' },
-              { key: 'integrations', label: 'Integrations' },
-              { key: 'security', label: 'Security' },
-            ].map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setTab(t.key as TabKey)}
-                className={[
-                  'px-4 py-2 rounded-2xl text-sm transition-all',
-                  tab === t.key ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white/80',
-                ].join(' ')}
-              >
-                {t.label}
+      }
+    >
+        <div className="px-4 sm:px-6 py-5">
+          {loading ? (
+            <div role="status" className="space-y-3" aria-label="Loading your settings">
+              <span className="hp-skeleton h-16 w-16" style={{ borderRadius: 999 }} />
+              {[0, 1, 2, 3].map((i) => <span key={i} className="hp-skeleton h-12" style={{ borderRadius: 16 }} />)}
+              <span className="text-sm text-white/50">Loading your settings…</span>
+            </div>
+          ) : null}
+          {err ? (
+            <div role="alert" className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-start gap-3">
+              <span className="flex-1 min-w-0 break-words">{err}</span>
+              <button type="button" onClick={() => refreshAll()} className="shrink-0 min-h-[36px] px-3 rounded-full bg-white/10 hover:bg-white/15 text-white text-xs font-semibold">
+                Retry
               </button>
-            ))}
-          </div>
-          {/* Mode hint (helpful for enterprise debugging) */}
-          <div className="ml-auto text-[10px] text-white/40 self-center pr-1">
-            {usePerUser ? 'Per-user (Bearer)' : 'Instance-wide (API key)'}
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="px-6 py-5 max-h-[70vh] overflow-y-auto">
-          {loading ? <div className="text-sm text-white/50">Loading...</div> : null}
-          {err ? <div className="mb-4 text-sm text-red-400/80">{err}</div> : null}
+            </div>
+          ) : null}
           {savedMsg ? <div className="mb-4 text-sm text-green-400/80">Saved successfully.</div> : null}
 
           {/* ================================================================ */}
@@ -925,25 +988,7 @@ export default function ProfileSettingsModal({
             )
           ) : null}
         </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between">
-          <div className="text-xs text-white/35">
-            {usePerUser
-              ? 'Profile, memory & secrets are scoped to your account.'
-              : 'Profile stores preferences, memory, and integrations (instance-wide).'}
-          </div>
-          <button
-            type="button"
-            onClick={onSaveAll}
-            disabled={saving}
-            className="px-4 py-2 rounded-2xl bg-blue-600 hover:bg-blue-500 border border-white/10 text-sm text-white font-semibold disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : 'Save All'}
-          </button>
-        </div>
-      </div>
-    </div>
+    </ModalSheet>
   )
 }
 

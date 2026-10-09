@@ -1,0 +1,353 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   HomePilot motion system
+   ──────────────────────────────────────────────────────────────────────────
+   One restrained vocabulary of animations used by chat, voice, dialogs and
+   navigation. Everything here is additive: a class does nothing until a
+   component opts in, and the existing animations elsewhere are untouched.
+
+   <html data-hp-motion="enterprise|minimal|off"> (set from Settings → Motion)
+   chooses how much plays; the OS "reduce motion" setting always wins.
+
+   Numbers follow the catalogue in docs/chat-motion.md (1–22).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --hp-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --hp-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --hp-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --hp-dur-fast: 140ms;
+  --hp-dur: 220ms;
+  --hp-dur-slow: 320ms;
+  --hp-motion-ink: rgba(255, 255, 255, 0.5);      /* 5.3:1 on the app background */
+  --hp-motion-ink-peak: rgba(255, 255, 255, 0.95);
+}
+
+/* 1 — Text shimmer: a band of light sweeps across a working label. */
+.hp-shimmer-text {
+  color: var(--hp-motion-ink);
+  background-image: linear-gradient(
+    100deg,
+    var(--hp-motion-ink) 0%,
+    var(--hp-motion-ink) 42%,
+    var(--hp-motion-ink-peak) 50%,
+    var(--hp-motion-ink) 58%,
+    var(--hp-motion-ink) 100%
+  );
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: hp-shimmer 2.2s linear infinite;
+}
+@keyframes hp-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+
+/* 2 — Text opacity pulse: a label gently brightens and dims. */
+.hp-pulse-text { animation: hp-opacity-pulse 1.8s ease-in-out infinite; }
+@keyframes hp-opacity-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* 3 + 16 — Streaming text / message reveal: the cursor rides the end of the
+   last line while an answer is revealed (see StreamReveal.tsx). */
+[data-hp-caret]::after,
+.hp-caret {
+  content: '';
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-left: 0.3em;
+  vertical-align: 0.05em;
+  border-radius: 50%;
+  background: currentColor;
+  animation: hp-caret 1s ease-in-out infinite;
+}
+/* 4 — Typing cursor */
+@keyframes hp-caret {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+.hp-stream { cursor: default; }
+
+/* 5 — Loading dots */
+.hp-dots { display: inline-flex; align-items: center; gap: 4px; height: 1em; }
+.hp-dots > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.3;
+  animation: hp-dot 1.2s var(--hp-ease-out) infinite;
+}
+.hp-dots > span:nth-child(2) { animation-delay: 0.15s; }
+.hp-dots > span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes hp-dot {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* 6 — Loading spinner (inline size; the large one is .hp-spinner) */
+.hp-spin {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: var(--hp-spin-size, 16px);
+  height: var(--hp-spin-size, 16px);
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: currentColor;
+  animation: hp-spin 0.8s linear infinite;
+}
+
+/* 7 — Skeleton shimmer */
+.hp-skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+.hp-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  animation: hp-skeleton 1.4s ease-in-out infinite;
+}
+@keyframes hp-skeleton { to { transform: translateX(100%); } }
+
+/* 8 + 9 — Fade in / fade out */
+.hp-enter-fade { animation: hp-fade-in var(--hp-dur) var(--hp-ease-out) backwards; }
+.hp-exit-fade { animation: hp-fade-out var(--hp-dur-fast) var(--hp-ease-in) forwards; }
+@keyframes hp-fade-in { from { opacity: 0; } }
+@keyframes hp-fade-out { to { opacity: 0; } }
+
+/* 10 + 11 — Slide in / slide out */
+.hp-enter-slide-left { animation: hp-slide-from-left var(--hp-dur) var(--hp-ease-out) backwards; }
+.hp-exit-slide-left { animation: hp-slide-to-left var(--hp-dur-fast) var(--hp-ease-in) forwards; }
+.hp-enter-slide-up { animation: hp-slide-from-below var(--hp-dur) var(--hp-ease-out) backwards; }
+.hp-exit-slide-down { animation: hp-slide-to-below var(--hp-dur-fast) var(--hp-ease-in) forwards; }
+@keyframes hp-slide-from-left { from { opacity: 0; transform: translateX(-16px); } }
+@keyframes hp-slide-to-left { to { opacity: 0; transform: translateX(-16px); } }
+@keyframes hp-slide-from-below { from { opacity: 0; transform: translateY(16px); } }
+@keyframes hp-slide-to-below { to { opacity: 0; transform: translateY(16px); } }
+
+/* 12 + 13 — Accordion expand / collapse (Collapsible, and <details class="hp-accordion">) */
+.hp-collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition: grid-template-rows var(--hp-dur) var(--hp-ease-out), opacity var(--hp-dur) var(--hp-ease-out), visibility 0s linear var(--hp-dur);
+}
+.hp-collapsible[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition: grid-template-rows var(--hp-dur) var(--hp-ease-out), opacity var(--hp-dur) var(--hp-ease-out), visibility 0s;
+}
+.hp-collapsible > * { min-height: 0; overflow: hidden; }
+details.hp-accordion > summary { cursor: pointer; list-style: none; }
+details.hp-accordion > summary::-webkit-details-marker { display: none; }
+details.hp-accordion > summary::before {
+  content: '';
+  display: inline-block;
+  width: 0.45em;
+  height: 0.45em;
+  margin-right: 0.5em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--hp-dur) var(--hp-ease-out);
+}
+details.hp-accordion[open] > summary::before { transform: rotate(45deg); }
+@supports selector(::details-content) {
+  details.hp-accordion { interpolate-size: allow-keywords; }
+  details.hp-accordion::details-content {
+    block-size: 0;
+    overflow-y: clip;
+    opacity: 0;
+    transition: block-size var(--hp-dur) var(--hp-ease-out), opacity var(--hp-dur) var(--hp-ease-out),
+      content-visibility var(--hp-dur) allow-discrete;
+  }
+  details.hp-accordion[open]::details-content { block-size: auto; opacity: 1; }
+}
+
+/* 14 + 15 — Button hover transition and press feedback, for every button that
+   does not already declare its own. `scale` composes with any transform a
+   button already has, and :where() keeps this weaker than any utility class. */
+:where(button, [role='button'], a, summary) {
+  transition-property: background-color, border-color, color, box-shadow, opacity, scale;
+  transition-duration: var(--hp-dur-fast);
+  transition-timing-function: ease-out;
+}
+:where(button, [role='button']):not(:disabled, [aria-disabled='true'], [data-hp-press='off']):active { scale: 0.97; }
+
+/* 16 — Message reveal: new turns rise into place. */
+.hp-msg-in { animation: hp-msg-in var(--hp-dur-slow) var(--hp-ease-out) backwards; }
+.hp-msg-in--user { animation-name: hp-msg-in-user; transform-origin: 100% 100%; }
+@keyframes hp-msg-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes hp-msg-in-user { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
+
+/* 17 — Tool status transition: the old label leaves upward as the new one arrives. */
+.hp-status-swap { display: inline-grid; vertical-align: bottom; overflow: hidden; }
+.hp-status-swap > * { grid-area: 1 / 1; white-space: nowrap; }
+.hp-status-swap__in { animation: hp-status-in var(--hp-dur) var(--hp-ease-out) backwards; }
+.hp-status-swap__out { animation: hp-status-out var(--hp-dur) var(--hp-ease-in) forwards; }
+@keyframes hp-status-in { from { opacity: 0; transform: translateY(60%); } }
+@keyframes hp-status-out { to { opacity: 0; transform: translateY(-60%); } }
+
+/* 18 — Voice orb. --hp-level (0..1) is the live audio level. */
+.hp-orb {
+  --hp-level: 0;
+  position: relative;
+  width: var(--hp-orb-size, 128px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.95) 0%, rgba(232, 236, 248, 0.75) 18%, rgba(160, 172, 205, 0.45) 46%, rgba(70, 78, 102, 0.35) 72%, rgba(30, 32, 40, 0.6) 100%);
+  box-shadow:
+    inset 0 -10px 24px rgba(0, 0, 0, 0.35),
+    0 0 calc(18px + var(--hp-level) * 46px) rgba(200, 210, 240, calc(0.12 + var(--hp-level) * 0.28));
+  transform: scale(calc(1 + var(--hp-level) * 0.14));
+  transition: transform 90ms linear, box-shadow 120ms linear;
+}
+.hp-orb::before,
+.hp-orb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.hp-orb[data-state='idle'] { animation: hp-orb-breathe 4.5s ease-in-out infinite; }
+.hp-orb[data-state='thinking']::before {
+  background: conic-gradient(from 0deg, transparent 0 60%, rgba(255, 255, 255, 0.45) 75%, transparent 90%);
+  mask: radial-gradient(circle, transparent 58%, #000 60%, #000 70%, transparent 72%);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%, #000 70%, transparent 72%);
+  animation: hp-orb-orbit 1.6s linear infinite;
+}
+.hp-orb[data-state='speaking']::after {
+  border: 1.5px solid rgba(220, 228, 248, 0.5);
+  animation: hp-orb-ring 1.8s var(--hp-ease-out) infinite;
+}
+.hp-orb[data-state='listening']::after {
+  border: 1px solid rgba(220, 228, 248, calc(0.15 + var(--hp-level) * 0.6));
+  transform: scale(calc(1.08 + var(--hp-level) * 0.2));
+  transition: transform 90ms linear;
+}
+@keyframes hp-orb-breathe {
+  0%, 100% { scale: 1; }
+  50% { scale: 1.035; }
+}
+@keyframes hp-orb-orbit { to { transform: rotate(360deg); } }
+@keyframes hp-orb-ring {
+  from { opacity: 0.8; transform: scale(1); }
+  to { opacity: 0; transform: scale(1.45); }
+}
+
+/* 19 — Audio waveform. Each bar's height follows the level; a slow ripple
+   (on `scale`, which composes with the level transform) keeps it alive. */
+.hp-wave { display: inline-flex; align-items: center; gap: 3px; height: var(--hp-wave-h, 28px); }
+.hp-wave > span {
+  width: 3px;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: 50% 50%;
+  transition: transform 90ms linear;
+}
+.hp-wave[data-active='true'] > span { animation: hp-wave-ripple 1.1s ease-in-out infinite; }
+.hp-wave[data-active='false'] > span { opacity: 0.45; }
+@keyframes hp-wave-ripple {
+  0%, 100% { scale: 1 0.82; }
+  50% { scale: 1 1; }
+}
+
+/* 20 — Modal transition (ModalSheet): rises in; leaves as a fading copy. */
+.hp-sheet-backdrop { animation: hp-fade-in var(--hp-dur) var(--hp-ease-out) backwards; }
+.hp-sheet { animation: hp-sheet-in var(--hp-dur) var(--hp-ease-out) backwards; }
+.hp-sheet-backdrop[data-leaving] { animation: hp-fade-out 180ms var(--hp-ease-in) forwards; pointer-events: none; }
+.hp-sheet-backdrop[data-leaving] .hp-sheet { animation: hp-sheet-out 180ms var(--hp-ease-in) forwards; }
+@keyframes hp-sheet-in { from { opacity: 0; transform: translateY(10px) scale(0.985); } }
+@keyframes hp-sheet-out { to { opacity: 0; transform: translateY(6px) scale(0.985); } }
+@media (max-width: 639.98px) {
+  .hp-sheet { animation-name: hp-sheet-up; }
+  .hp-sheet-backdrop[data-leaving] .hp-sheet { animation-name: hp-sheet-down; }
+  @keyframes hp-sheet-up { from { transform: translateY(24px); opacity: 0; } }
+  @keyframes hp-sheet-down { to { transform: translateY(24px); opacity: 0; } }
+}
+
+/* 21 — Sidebar transition (mobile drawer and its backdrop) */
+.hp-drawer { transition: transform var(--hp-dur-slow) var(--hp-ease-drawer), visibility 0s linear var(--hp-dur-slow); }
+.hp-drawer[data-open='true'] { transition: transform var(--hp-dur-slow) var(--hp-ease-drawer), visibility 0s; }
+.hp-drawer[data-open='false'] { visibility: hidden; }
+.hp-drawer-backdrop {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--hp-dur-slow) var(--hp-ease-drawer);
+}
+.hp-drawer-backdrop[data-open='true'] { opacity: 1; pointer-events: auto; }
+
+/* 22 — Progress indicator */
+.hp-progress {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.hp-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--hp-color-text, #f5f5f5);
+  transition: width var(--hp-dur-slow) var(--hp-ease-out);
+}
+.hp-progress[data-indeterminate='true'] > span {
+  width: 38%;
+  animation: hp-progress-sweep 1.3s var(--hp-ease-out) infinite;
+}
+@keyframes hp-progress-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(265%); }
+}
+
+/* ── Levels ───────────────────────────────────────────────────────────────
+   minimal: no sweeps, slides, orbits or press scaling — fades and pulses only. */
+html[data-hp-motion='minimal'] .hp-shimmer-text {
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: hp-opacity-pulse 1.8s ease-in-out infinite;
+}
+html[data-hp-motion='minimal'] :is(.hp-enter-slide-left, .hp-enter-slide-up, .hp-msg-in, .hp-sheet) { animation-name: hp-fade-in; }
+html[data-hp-motion='minimal'] :is(.hp-exit-slide-left, .hp-exit-slide-down) { animation-name: hp-fade-out; }
+html[data-hp-motion='minimal'] .hp-sheet-backdrop[data-leaving] .hp-sheet { animation-name: hp-fade-out; }
+html[data-hp-motion='minimal'] :is(.hp-skeleton::after, .hp-orb::before, .hp-orb::after) { animation: none; }
+html[data-hp-motion='minimal'] :where(button, [role='button']):active { scale: none; }
+
+/* off (and the OS reduce-motion setting): nothing moves; working labels stay readable. */
+html[data-hp-motion='off'] *,
+html[data-hp-motion='off'] *::before,
+html[data-hp-motion='off'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+html[data-hp-motion='off'] :where(button, [role='button']):active { scale: none; }
+html[data-hp-motion='off'] .hp-shimmer-text { background: none; -webkit-text-fill-color: currentColor; }
+@media (prefers-reduced-motion: reduce) {
+  .hp-shimmer-text { background: none; -webkit-text-fill-color: currentColor; }
+  :where(button, [role='button']):active { scale: none; }
+}
+
+/* The orb at rest when voice is off: present, but clearly asleep. */
+.hp-orb[data-state='off'] { opacity: 0.55; filter: saturate(0.5); }

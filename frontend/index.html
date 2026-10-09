@@ -4,12 +4,44 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+    <!-- No maximum-scale: people must be able to pinch-zoom (inputs are 16px on touch, so iOS does not auto-zoom).
+         interactive-widget: the layout shrinks above the on-screen keyboard, keeping the composer and sticky actions visible. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>HomePilot</title>
+    <!-- Boot screen: visible from the first paint until the app mounts (React
+         replaces #root's contents). On a slow connection the app's script can
+         take many seconds to arrive; without this the page is plain black. -->
+    <style>
+      html, body { background: #090909; }
+      .hp-boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; color: #f5f5f5; font: 500 16px/1.45 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      .hp-boot__ring { width: 28px; height: 28px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.15); border-top-color: rgba(255, 255, 255, 0.85); animation: hp-boot-spin 0.9s linear infinite; }
+      .hp-boot__hint { max-width: 22rem; color: #b0b0b0; font-size: 14px; font-weight: 400; opacity: 0; animation: hp-boot-show 0.3s ease-out 6s forwards; }
+      .hp-boot__reload { display: none; min-height: 44px; padding: 0 18px; border-radius: 999px; border: 1px solid #303030; background: #171717; color: #f5f5f5; font: inherit; font-weight: 600; cursor: pointer; }
+      .hp-boot[data-slow] .hp-boot__reload { display: inline-block; }
+      @keyframes hp-boot-spin { to { transform: rotate(360deg); } }
+      @keyframes hp-boot-show { to { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { .hp-boot__ring { animation: none; } .hp-boot__hint { animation: none; opacity: 1; } }
+    </style>
   </head>
   <body class="bg-black text-white" data-new-gr-c-s-check-loaded="14.1217.0" data-gr-ext-installed="">
-    <div id="root" data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false"></div>
+    <div id="root" data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false"><div class="hp-boot" role="status" aria-live="polite">
+      <div class="hp-boot__ring" aria-hidden="true"></div>
+      <div>Starting HomePilot…</div>
+      <div class="hp-boot__hint">Loading the app. On a slow connection this can take a moment.</div>
+      <button type="button" class="hp-boot__reload" onclick="location.reload()">Reload</button>
+    </div></div>
+    <noscript><p style="color:#f5f5f5;font-family:system-ui,sans-serif;text-align:center;padding:24px">HomePilot needs JavaScript to run. Please enable it and reload.</p></noscript>
+    <script>
+      // Still not started after 40 s (script blocked or failed to load): say so and offer Reload.
+      setTimeout(function () {
+        var boot = document.querySelector('.hp-boot');
+        if (!boot) return;
+        boot.setAttribute('data-slow', '');
+        var hint = boot.querySelector('.hp-boot__hint');
+        if (hint) hint.textContent = 'This is taking longer than usual. Check your connection, then reload.';
+      }, 40000);
+    </script>
     <script src="/js/speech-service.js"></script>
     <!-- ScreenSense: additive screen-awareness addon (desktop native / cloud share-or-upload). Defines window.hpScreenSense; inert until invoked. -->
     <!-- Screen sharing is reached from the composer's `+` menu, so ScreenSense must not also

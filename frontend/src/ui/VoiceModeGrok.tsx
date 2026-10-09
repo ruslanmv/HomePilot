@@ -1197,14 +1197,16 @@ export default function VoiceModeGrok({
       <header className="absolute top-0 right-0 z-30 p-4 flex items-center gap-2 hp-fade-in">
         <button
           onClick={() => setShowSystemSettings(true)}
-          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+          className="hp-icon-btn w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
           title="System Settings"
+          aria-label="Voice settings"
         >
           <Settings size={18} />
         </button>
         <button
           onClick={clearConversation}
-          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+          aria-label="New voice chat"
+          className="hp-icon-btn w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
           title="New Chat"
         >
           <PenLine size={16} />
@@ -1514,6 +1516,8 @@ export default function VoiceModeGrok({
                   {/* Mic Button with Mini Level Meter */}
                   <button
                     onClick={toggleMic}
+                    aria-label={isListening ? 'Stop listening' : isSpeaking ? 'Stop speaking' : 'Start listening'}
+                    aria-pressed={isListening}
                     className={`h-10 px-4 rounded-full border flex items-center gap-2.5 transition-all ${
                       isListening
                         ? 'bg-[#97C4FF]/20 border-[#97C4FF]/40 text-white'
@@ -1531,7 +1535,9 @@ export default function VoiceModeGrok({
                   {/* Volume Toggle */}
                   <button
                     onClick={() => setIsMuted(!isMuted)}
-                    className="w-10 h-10 rounded-full border border-white/10 bg-white/5 flex items-center justify-center text-white/70 hover:bg-white/10 transition-colors"
+                    aria-label={isMuted ? 'Unmute replies' : 'Mute replies'}
+                    aria-pressed={isMuted}
+                    className="hp-icon-btn w-10 h-10 rounded-full border border-white/10 bg-white/5 flex items-center justify-center text-white/70 hover:bg-white/10 transition-colors"
                   >
                     {isMuted ? (
                       <VolumeX size={18} className="opacity-50" />
@@ -1543,6 +1549,8 @@ export default function VoiceModeGrok({
                   {/* Voice Settings Trigger */}
                   <button
                     onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+                    aria-expanded={showVoiceSettings}
+                    aria-label={`Voice: ${activeVoice.name}, ${activePersonality.label}`}
                     className={`h-10 px-3.5 rounded-full border flex items-center gap-2 transition-all text-sm ${
                       showVoiceSettings
                         ? 'bg-white/10 border-white/20'
@@ -1578,7 +1586,9 @@ export default function VoiceModeGrok({
                 {/* Hands-Free Toggle (Auto/Manual) - Replaces close button */}
                 <button
                   onClick={() => voice.setHandsFree(!voice.isHandsFree)}
-                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                  aria-label={voice.isHandsFree ? 'Hands-free on — switch to manual' : 'Manual — switch to hands-free'}
+                  aria-pressed={voice.isHandsFree}
+                  className={`hp-icon-btn w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-lg ${
                     voice.isHandsFree
                       ? 'bg-white text-black hover:bg-gray-200'
                       : 'bg-white/10 border border-white/20 text-white/80 hover:bg-white/20'

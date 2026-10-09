@@ -583,7 +583,7 @@ export default function RoutinesView({
       <div className="mx-auto max-w-6xl px-5 py-8 sm:px-8 sm:py-10">
         <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="flex items-center gap-2.5 text-white/40 text-sm">
+            <div className="hp-clear-nav -mt-4 sm:mt-0 flex items-center gap-2.5 text-white/55 text-sm">
               <CalendarClock size={17} />
               Personal automation
             </div>

@@ -23,6 +23,15 @@ export type RoutineTargetProject = {
 function headers(apiKey?: string): HeadersInit {
   const out: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) out['X-API-Key'] = apiKey
+  // Routines belong to the signed-in user. Without the session token a
+  // multi-user install answers "Authentication required" even when signed in
+  // (the same Bearer convention as personaApi / profileApi).
+  try {
+    const token = localStorage.getItem('homepilot_auth_token')
+    if (token) out['Authorization'] = `Bearer ${token}`
+  } catch {
+    /* storage unavailable — the session cookie still applies same-origin */
+  }
   return out
 }
 

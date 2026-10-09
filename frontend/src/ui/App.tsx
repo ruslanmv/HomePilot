@@ -59,6 +59,8 @@ import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
+import { useBackToClose } from './lib/useBackToClose'
+import { LoadingDots, StatusText, StreamReveal, motionAllowed, useMotionPrefs } from './motion'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
 import { ComputerStatusPill } from './account/ComputerStatusPill'
@@ -513,6 +515,9 @@ function NavItem({
     <button
       onClick={disabled ? undefined : onClick}
       aria-disabled={disabled || undefined}
+      aria-current={active ? 'page' : undefined}
+      aria-label={collapsed ? label : undefined}
+      aria-keyshortcuts={shortcut ? shortcut.replace('Ctrl', 'Control') : undefined}
       className={[
         // hp-nav-item: min 44px tall on coarse pointers (see styles.css) —
         // WCAG touch target — while desktop keeps the dense 36px rows.
@@ -534,7 +539,7 @@ function NavItem({
       </span>
       {!collapsed && <span className="truncate">{label}</span>}
       {!collapsed && shortcut ? (
-        <span className="absolute top-1/2 right-2 -translate-y-1/2 text-xs text-white/40 opacity-0 group-hover/menu-item:opacity-100 transition-opacity duration-100">
+        <span aria-hidden className="hp-kbd-hint absolute top-1/2 right-2 -translate-y-1/2 text-xs text-white/40 opacity-0 group-hover/menu-item:opacity-100 transition-opacity duration-100">
           {shortcut}
         </span>
       ) : null}
@@ -1080,6 +1085,16 @@ function cleanConversationTitle(raw: string): string {
       // Not valid JSON — use the raw string.
     }
   }
+  // A title is plain text: drop Markdown markers (**bold**, `code`, # headings,
+  // > quotes, list bullets, link targets) that would otherwise show literally.
+  text = text
+    .replace(/```[a-z0-9_-]*\n?/gi, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // Only paired markers, so snake_case names and arithmetic stay intact.
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(\S(?:[^*]*\S)?)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s*(#{1,6}|>|[-*+]|\d+\.)\s+/gm, '')
   return text.replace(/\s+/g, ' ').trim() || 'Conversation'
 }
 
@@ -1133,8 +1148,9 @@ function SidebarRecents({
       <button
         key={c.conversation_id}
         type="button"
+        aria-current={isActive ? 'true' : undefined}
         className={[
-          'block w-full text-left px-3 py-1.5 text-[13px] rounded-lg transition-colors whitespace-nowrap overflow-hidden text-ellipsis',
+          'hp-touch-row block w-full text-left px-3 py-1.5 text-[13px] rounded-lg transition-colors whitespace-nowrap overflow-hidden text-ellipsis',
           isActive
             ? 'bg-white/10 text-white'
             : 'text-white/70 hover:bg-white/5 hover:text-white',
@@ -1188,7 +1204,7 @@ function SidebarRecents({
       <div className="px-3 pt-1">
         <button
           type="button"
-          className="text-[12px] text-white/40 hover:text-white transition-colors"
+          className="hp-touch-row text-[12px] text-white/55 hover:text-white transition-colors"
           onClick={onViewAll}
         >
           View all history →
@@ -1218,6 +1234,7 @@ function Sidebar({
   onToggleCollapse,
   chatReasoningMode,
   showMeetingsNav = false,
+  drawer = false,
 }: {
   mode: Mode
   setMode: (m: Mode) => void
@@ -1241,6 +1258,8 @@ function Sidebar({
   chatReasoningMode: ChatReasoningMode
   /** MS28 `_CATALOG`, default off. Absent renders the sidebar unchanged. */
   showMeetingsNav?: boolean
+  /** Rendered as the phone's off-canvas drawer: the collapse control closes it. */
+  drawer?: boolean
 }) {
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
@@ -1343,8 +1362,19 @@ function Sidebar({
             </span>
           )}
         </div>
-        {/* Collapse toggle */}
-        {!collapsed && (
+        {/* Collapse toggle — on phones it closes the drawer */}
+        {!collapsed && drawer && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            aria-label="Close menu"
+            title="Close menu"
+            className="-mr-1.5 h-11 w-11 rounded-xl grid place-items-center text-white/60 hover:text-white hover:bg-white/[0.06]"
+          >
+            <X size={20} strokeWidth={1.8} />
+          </button>
+        )}
+        {!collapsed && !drawer && (
           <button
             type="button"
             onClick={onToggleCollapse}
@@ -1388,7 +1418,7 @@ function Sidebar({
           >
             <Search size={16} className="group-hover:text-white/80 transition-colors" />
             <span className="group-hover:text-white/80 transition-colors">Search chats</span>
-            <span className="ml-auto text-xs opacity-40 bg-white/5 px-1.5 py-0.5 rounded border border-white/10">
+            <span aria-hidden className="hp-kbd-hint ml-auto text-xs opacity-40 bg-white/5 px-1.5 py-0.5 rounded border border-white/10">
               Ctrl+K
             </span>
           </button>
@@ -1459,7 +1489,7 @@ function Sidebar({
         <div className="px-1.5 pt-1">
           <button
             type="button"
-            className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
+            className="hp-touch-row w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
             onClick={onNewConversation}
           >
             New conversation
@@ -1530,40 +1560,50 @@ function Sidebar({
         />
       )}
 
-      {/* Profile & Personalization modal (opened from account menu) */}
-      {showProfileModal && (
-        <ProfileSettingsModal
-          backendUrl={settingsDraft.backendUrl}
-          apiKey={settingsDraft.apiKey}
-          nsfwMode={!!settingsDraft.nsfwMode}
-          onClose={() => setShowProfileModal(false)}
-        />
-      )}
+      {/* Dialogs opened from the sidebar render at <body>. On phones the sidebar
+          is a drawer that slides in with a CSS transform, and a transformed
+          ancestor becomes the containing block for `position: fixed` — so a
+          "full-screen" dialog rendered here was squeezed into the drawer's
+          width. Portalling makes the drawer irrelevant to their layout. */}
+      {createPortal(
+        <>
+          {/* Profile & Personalization modal (opened from account menu) */}
+          {showProfileModal && (
+            <ProfileSettingsModal
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              nsfwMode={!!settingsDraft.nsfwMode}
+              onClose={() => setShowProfileModal(false)}
+            />
+          )}
 
-      {showSettings ? (
-        <SettingsPanel
-          value={settingsDraft}
-          onChangeDraft={(next) => setSettingsDraft(next)}
-          onSave={onSaveSettings}
-          onClose={() => setShowSettings(false)}
-        />
-      ) : null}
+          {showSettings ? (
+            <SettingsPanel
+              value={settingsDraft}
+              onChangeDraft={(next) => setSettingsDraft(next)}
+              onSave={onSaveSettings}
+              onClose={() => setShowSettings(false)}
+            />
+          ) : null}
 
-      {/* About HomePilot dialog */}
-      {showAboutDialog && (
-        <AboutDialog
-          onClose={() => setShowAboutDialog(false)}
-          onOpenSystemStatus={() => setShowSystemStatus(true)}
-        />
-      )}
+          {/* About HomePilot dialog */}
+          {showAboutDialog && (
+            <AboutDialog
+              onClose={() => setShowAboutDialog(false)}
+              onOpenSystemStatus={() => setShowSystemStatus(true)}
+            />
+          )}
 
-      {/* System Status dashboard */}
-      {showSystemStatus && (
-        <SystemStatusDialog
-          backendUrl={settingsDraft.backendUrl}
-          apiKey={settingsDraft.apiKey}
-          onClose={() => setShowSystemStatus(false)}
-        />
+          {/* System Status dashboard */}
+          {showSystemStatus && (
+            <SystemStatusDialog
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              onClose={() => setShowSystemStatus(false)}
+            />
+          )}
+        </>,
+        document.body,
       )}
     </aside>
   )
@@ -1623,6 +1663,30 @@ function QueryBar({
   // ---- Drag-and-drop image support ----
   const [isDragging, setIsDragging] = useState(false)
   const dragCounterRef = useRef(0)
+  // Composer grows with what is typed (up to the 400px cap) instead of
+  // scrolling inside a one-line box; resets when the message is sent.
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  // The short hint is chosen by the field's own width, not the window's: in a
+  // landscape phone frame the sidebar is showing and the field is narrow even
+  // though the window is wide. Window width is the fallback without ResizeObserver.
+  const [compactHint, setCompactHint] = useState(() => typeof window !== 'undefined' && window.innerWidth < 480)
+  useEffect(() => {
+    const el = composerRef.current
+    if (el && typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => setCompactHint(el.clientWidth > 0 && el.clientWidth < 280))
+      ro.observe(el)
+      return () => ro.disconnect()
+    }
+    const onResize = () => setCompactHint(window.innerWidth < 480)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  React.useLayoutEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 400)}px`
+  }, [input])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -2150,9 +2214,10 @@ function QueryBar({
                 ref={modeButtonRef}
                 type="button"
                 onClick={() => setModeMenuOpen((v) => !v)}
-                className="h-10 px-3 rounded-full bg-white/5 border border-white/10 text-white/90 text-sm font-medium inline-flex items-center gap-1.5 hover:bg-white/10 transition-colors"
+                className="hp-icon-btn h-10 px-3 rounded-full bg-white/5 border border-white/10 text-white/90 text-sm font-medium inline-flex items-center gap-1.5 hover:bg-white/10 transition-colors"
                 aria-haspopup="menu"
                 aria-expanded={modeMenuOpen}
+                aria-label={`Response mode: ${CHAT_REASONING_OPTIONS.find((m) => m.id === chatReasoningMode)?.label ?? 'Persona'}`}
                 title="Expert mode selector"
               >
                 <span className="hidden sm:inline">{CHAT_REASONING_OPTIONS.find((m) => m.id === chatReasoningMode)?.label ?? 'Persona'}</span>
@@ -2226,7 +2291,7 @@ function QueryBar({
               type="button"
               disabled
               data-testid="composer-mic"
-              className="h-10 w-10 rounded-full grid place-items-center bg-white/10 text-white/60 cursor-wait"
+              className="hp-icon-btn h-10 w-10 rounded-full grid place-items-center bg-white/10 text-white/60 cursor-wait"
               aria-label="Transcribing"
               title="Transcribing…"
             >
@@ -2238,8 +2303,8 @@ function QueryBar({
               data-testid="composer-mic"
               className={
                 isListening
-                  ? 'h-10 w-10 rounded-full grid place-items-center bg-red-500/20 text-red-400 ring-2 ring-red-500/60 animate-pulse transition-colors'
-                  : 'h-10 w-10 rounded-full bg-white/5 text-white/60 grid place-items-center hover:bg-white/10 hover:text-white transition-colors'
+                  ? 'hp-icon-btn h-10 w-10 rounded-full grid place-items-center bg-red-500/20 text-red-400 ring-2 ring-red-500/60 animate-pulse transition-colors'
+                  : 'hp-icon-btn h-10 w-10 rounded-full bg-white/5 text-white/60 grid place-items-center hover:bg-white/10 hover:text-white transition-colors'
               }
               aria-label={isListening ? 'Stop recording' : 'Voice input'}
               title={isListening ? 'Stop recording' : 'Voice input'}
@@ -2252,7 +2317,7 @@ function QueryBar({
             <button
               type="button"
               onClick={onSend}
-              className="h-10 w-10 rounded-full bg-white text-black grid place-items-center hover:opacity-90 transition-opacity"
+              className="hp-icon-btn h-10 w-10 rounded-full bg-white text-black grid place-items-center hover:opacity-90 transition-opacity"
               aria-label="Submit"
               title="Submit"
             >
@@ -2311,6 +2376,7 @@ function QueryBar({
             screens and the full amount from `sm:` up. */}
         <div className="ps-12 pe-24 sm:pe-72">
           <textarea
+            ref={composerRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onPaste={handlePaste}
@@ -2329,9 +2395,9 @@ function QueryBar({
               }
             }}
             rows={1}
-            placeholder={pendingPreviewUrl ? 'Describe what you want to do with this image…' : (placeholderOverride ?? modeHint(mode))}
+            placeholder={pendingPreviewUrl ? (compactHint ? 'What should I do with it?' : 'Describe what you want to do with this image…') : (placeholderOverride ?? modeHint(mode, compactHint))}
             className={[
-              'w-full bg-transparent text-white placeholder:text-white/55',
+              'hp-composer-input w-full bg-transparent text-white placeholder:text-white/55',
               'focus:outline-none resize-none',
               'min-h-14 py-4 px-2',
               'max-h-[400px] overflow-y-auto',
@@ -2413,26 +2479,14 @@ function EmptyState({
 }
 
 function AssistantSkeleton({ label }: { label?: string }) {
-  // Grok-style "thinking" indicator: three dots that bounce in sequence.
-  // Used for every pending assistant turn (legacy chat, Expert, Agent).
-  // Staggered animationDelay gives the wave effect without custom keyframes.
+  // "Thinking" indicator for every pending assistant turn (legacy chat, Expert,
+  // Agent): rippling dots beside a working label that shimmers, and changes
+  // ("Thinking…" → "Searching…" → "Retrying…") slide over each other instead
+  // of jumping (motion system, animations 1, 5 and 17).
   return (
-    <div className="flex items-center gap-3">
-      <div className="flex items-end gap-1.5 h-4" aria-label="Thinking">
-        <span
-          className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce"
-          style={{ animationDelay: '0ms', animationDuration: '1.2s' }}
-        />
-        <span
-          className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce"
-          style={{ animationDelay: '150ms', animationDuration: '1.2s' }}
-        />
-        <span
-          className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce"
-          style={{ animationDelay: '300ms', animationDuration: '1.2s' }}
-        />
-      </div>
-      <span className="text-sm text-white/60">{label ?? 'Thinking'}</span>
+    <div className="flex items-center gap-3" aria-label="Thinking">
+      <LoadingDots label="Thinking" className="text-white/70" />
+      <StatusText text={label ?? 'Thinking'} className="text-sm" />
     </div>
   )
 }
@@ -2506,7 +2560,27 @@ function ChatState({
   allowPersonaMode: boolean
 }) {
   const { copied, copy } = useCopyMessage()
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
+  // New answers are revealed progressively (Settings → Motion). Only a turn that
+  // was seen waiting in this view, or that the send flow marked `animate`, is
+  // revealed; history loads as it is.
+  const motionPrefs = useMotionPrefs()
+  const canAnimate = motionAllowed(motionPrefs)
+  const seenPendingRef = useRef<Set<string>>(new Set())
+  const revealedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    for (const m of messages) if (m.pending) seenPendingRef.current.add(m.id)
+  }, [messages])
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const keepPinned = useCallback(() => {
+    const el = scrollerRef.current
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight
+  }, [])
+  const markRevealed = useCallback((id: string) => {
+    revealedRef.current.add(id)
+    window.dispatchEvent(new CustomEvent('hp:messageAnimated', { detail: { id } }))
+  }, [])
   const enterpriseCallRow = useEnterpriseCallRow()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
   const handleStartCall = useCallback(() => {
@@ -2554,7 +2628,10 @@ function ChatState({
           with the other utility icons and only opens a dedicated call
           overlay (see CallOverlay). Call mode is a distinct session,
           not a styling of the header. */}
-      <div className="fixed top-3 right-5 z-50">
+      {/* Phones: a soft scrim under the menu button and header icons so text
+          scrolling past never runs underneath them. */}
+      <div className="md:hidden pointer-events-none fixed inset-x-0 top-0 z-30 h-16 hp-top-scrim" aria-hidden />
+      <div className="fixed top-3 right-3 sm:right-5 z-50">
         <div className="relative flex items-center gap-2">
           {/* Live computer/presence pill (Batch 4). Null unless the Account &
               Computers flag is on and a computer exists. */}
@@ -2565,7 +2642,7 @@ function ChatState({
                 type="button"
                 onClick={handleStartCall}
                 className={[
-                  'w-9 h-9 flex items-center justify-center rounded-full border',
+                  'hp-icon-btn w-9 h-9 flex items-center justify-center rounded-full border',
                   'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors',
                 ].join(' ')}
                 title="Start call"
@@ -2583,7 +2660,7 @@ function ChatState({
           <button
             type="button"
             onClick={() => setChatSettingsOpen((v) => !v)}
-            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            className="hp-icon-btn w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
             title="Chat settings"
             aria-label="Chat settings"
           >
@@ -2592,7 +2669,7 @@ function ChatState({
           <button
             type="button"
             onClick={onNewConversation}
-            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            className="hp-icon-btn w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
             title="New Chat"
             aria-label="New Chat"
           >
@@ -2622,11 +2699,11 @@ function ChatState({
         </div>
       )}
 
-      <div className={`flex-1 overflow-y-auto px-4 ${chatSettings.incognito ? 'pt-3' : 'pt-14'} pb-8 space-y-8`}>
+      <div ref={scrollerRef} className={`flex-1 overflow-y-auto px-4 ${chatSettings.incognito ? 'pt-3' : 'pt-14'} pb-8 space-y-8`}>
         {displayMessages.map((m) => (
           <div
             key={m.id}
-            className={`flex gap-5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            className={`flex gap-3 sm:gap-5 hp-msg-in ${m.role === 'user' ? 'hp-msg-in--user justify-end' : 'justify-start'}`}
           >
             {/* Inline call-event render. Enterprise mode (default)
                 uses the thin CallEventRow — a centered timeline
@@ -2670,14 +2747,14 @@ function ChatState({
               )
             ) : (<>
             {m.role === 'assistant' ? (
-              <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center flex-shrink-0 font-bold text-sm mt-1">
+              <div className="hidden sm:flex w-8 h-8 rounded-full bg-white text-black items-center justify-center flex-shrink-0 font-bold text-sm mt-1" aria-hidden>
                 /
               </div>
             ) : null}
 
             {/* User: bubble | Assistant: bare text on background (Grok style) */}
             {m.role === 'user' ? (
-              <div className="max-w-[85%] bg-white/10 border border-white/10 rounded-3xl px-5 py-4">
+              <div className="max-w-[85%] min-w-0 bg-white/10 border border-white/10 rounded-3xl px-4 py-3 sm:px-5 sm:py-4">
                 {m.media?.images?.length ? (
                   <div className="flex gap-2 mb-2">
                     {m.media.images.map((src: string, i: number) => {
@@ -2699,18 +2776,28 @@ function ChatState({
                 </div>
               </div>
             ) : (
-              <div className="max-w-[85%]">
+              <div className="min-w-0 max-w-full sm:max-w-[85%]">
                 <div className="text-[16px] leading-relaxed text-[#EEE] font-normal tracking-wide">
                   {m.pending ? (
                     <AssistantSkeleton label={m.text?.trim() ? m.text : undefined} />
                   ) : (
-                    <div className="animate-fadeIn">
-                      <MessageMarkdown
+                    <div className={motionPrefs.reveal === 'instant' ? undefined : 'animate-fadeIn'}>
+                      <StreamReveal
                         text={m.media?.images?.length
                           ? (m.text || '').replace(/!\[[^\]]*\]\(media:\/\/[^)]+\)\s*/g, '').trim()
                           : m.text}
-                        onImageClick={setLightbox}
-                        backendUrl={backendUrl}
+                        active={
+                          canAnimate &&
+                          motionPrefs.reveal === 'stream' &&
+                          !m.error &&
+                          (m.animate === true || seenPendingRef.current.has(m.id)) &&
+                          !revealedRef.current.has(m.id)
+                        }
+                        onProgress={keepPinned}
+                        onDone={() => markRevealed(m.id)}
+                        render={(visible) => (
+                          <MessageMarkdown text={visible} onImageClick={setLightbox} backendUrl={backendUrl} />
+                        )}
                       />
                     </div>
                   )}
@@ -2718,22 +2805,24 @@ function ChatState({
 
                 {/* Grok-style icon action row */}
                 {!m.pending ? (
-                  <div className="mt-2 flex items-center gap-1 text-white/40">
+                  <div className="mt-2 flex items-center gap-1 text-white/55">
                     <button
                       type="button"
-                      onClick={() => copy(m.text || '')}
-                      className="p-1.5 rounded-full hover:bg-white/10 hover:text-white transition-colors"
-                      title={copied ? 'Copied!' : 'Copy'}
+                      onClick={() => { void copy(m.text || ''); setCopiedId(m.id) }}
+                      className="hp-icon-btn p-1.5 rounded-full hover:bg-white/10 hover:text-white transition-colors"
+                      title={copied && copiedId === m.id ? 'Copied!' : 'Copy'}
+                      aria-label={copied && copiedId === m.id ? 'Copied' : 'Copy message'}
                     >
-                      <Copy size={16} />
+                      {copied && copiedId === m.id ? <Check size={16} className="hp-enter-fade" /> : <Copy size={16} />}
                     </button>
 
                     {m.error && m.retry ? (
                       <button
                         type="button"
                         onClick={() => onRetryMessage(m.id)}
-                        className="p-1.5 rounded-full hover:bg-white/10 hover:text-white transition-colors"
+                        className="hp-icon-btn p-1.5 rounded-full hover:bg-white/10 hover:text-white transition-colors"
                         title="Retry"
+                        aria-label="Retry"
                       >
                         <RotateCw size={16} />
                       </button>
@@ -2835,7 +2924,7 @@ function ChatState({
         <div ref={endRef} className="h-6" />
       </div>
 
-      <div className="bg-black/95 backdrop-blur-sm pb-4">
+      <div className="hp-composer-dock pb-4">
         <div className="px-4">
           <QueryBar
             centered={false}
@@ -2857,7 +2946,7 @@ function ChatState({
         {/* MS32. Nothing but the disclaimer lives under the composer. The meeting control
             moved to the header cluster above; its setup copy is contextual now and its
             configuration lives in Settings → Voice Assistant. Chat first. */}
-        <div className="text-center text-[11px] text-white/25 pt-4 pb-0.5">
+        <div className="text-center text-[11px] text-white/50 pt-3 pb-[max(0.125rem,env(safe-area-inset-bottom))]">
           HomePilot can make mistakes. Verify important information.
         </div>
       </div>
@@ -2871,18 +2960,20 @@ function uuid() {
   return crypto.randomUUID()
 }
 
-function modeHint(mode: Mode) {
+/** Composer placeholder. `compact` is for narrow phones, where the full hint
+ * would be cut off mid-word inside the one-line field. */
+function modeHint(mode: Mode, compact = false) {
   switch (mode) {
     case 'chat':
-      return 'What do you want to know?'
+      return compact ? 'Ask anything' : 'What do you want to know?'
     case 'imagine':
-      return 'Describe an image to generate...'
+      return compact ? 'Describe an image…' : 'Describe an image to generate...'
     case 'edit':
-      return 'Upload an image or describe edits...'
+      return compact ? 'Describe an edit…' : 'Upload an image or describe edits...'
     case 'animate':
-      return 'Upload an image or describe motion...'
+      return compact ? 'Describe motion…' : 'Upload an image or describe motion...'
     default:
-      return 'What do you want to know?'
+      return compact ? 'Ask anything' : 'What do you want to know?'
   }
 }
 
@@ -3204,7 +3295,8 @@ export default function App() {
   })
 
   // ── Mobile sidebar: auto-hide on small screens, show as overlay ──
-  const [isMobile, setIsMobile] = useState(false)
+  // Start from the real width so phones never render one desktop frame first.
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   useEffect(() => {
@@ -3218,6 +3310,67 @@ export default function App() {
   useEffect(() => {
     if (isMobile) setMobileSidebarOpen(false)
   }, [mode, isMobile])
+
+  // The open drawer is a modal: Escape closes it, Tab stays inside it, the page
+  // behind is inert, and focus returns to the menu button when it closes.
+  const drawerRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const drawerWasOpen = useRef(false)
+  const drawerOpen = isMobile && mobileSidebarOpen
+  useEffect(() => {
+    const main = mainRef.current
+    if (!drawerOpen) {
+      main?.removeAttribute('inert')
+      if (drawerWasOpen.current) {
+        drawerWasOpen.current = false
+        // The menu button re-mounts when the drawer closes; focus it next frame
+        // unless something else (a dialog opened from the drawer) took focus.
+        requestAnimationFrame(() => {
+          const active = document.activeElement
+          if (!active || active === document.body || drawerRef.current?.contains(active)) menuButtonRef.current?.focus({ preventScroll: true })
+        })
+      }
+      return
+    }
+    drawerWasOpen.current = true
+    main?.setAttribute('inert', '')
+    const focusables = () =>
+      Array.from(
+        drawerRef.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [],
+      ).filter((el) => el.offsetParent !== null || el === document.activeElement)
+    requestAnimationFrame(() => focusables()[0]?.focus({ preventScroll: true }))
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // A dialog opened from the drawer handles its own Escape first.
+        if (document.querySelector('[role="dialog"][aria-modal="true"]:not(.hp-drawer)') && !drawerRef.current?.contains(document.activeElement)) return
+        setMobileSidebarOpen(false)
+        return
+      }
+      if (e.key !== 'Tab' || !drawerRef.current?.contains(document.activeElement)) return
+      const items = focusables()
+      if (!items.length) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      main?.removeAttribute('inert')
+    }
+  }, [drawerOpen])
+  // The phone's Back gesture closes the drawer instead of leaving HomePilot.
+  useBackToClose(drawerOpen, () => setMobileSidebarOpen(false))
+  // Wraps a drawer action so it also closes the drawer (phones).
+  const closeDrawerAnd = useCallback(
+    <T,>(fn: (v: T) => void) => (v: T) => {
+      setMobileSidebarOpen(false)
+      fn(v)
+    },
+    [],
+  )
 
 
   const toggleSidebar = useCallback(() => {
@@ -5843,20 +5996,31 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       onOpenConversation={(cid) => { void loadConversation(cid); setMode('chat') }}
     >
     <div className="hp-app-shell flex bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
-      {/* ── Mobile sidebar overlay ── */}
-      {isMobile && mobileSidebarOpen && (
+      {/* ── Mobile drawer ──
+          On phones the sidebar is an off-canvas drawer over a fading backdrop
+          (motion system, animation 21). While open it is a modal: focus moves
+          in and stays in, the page behind is inert, Escape / the backdrop /
+          the close button / the phone's Back gesture close it, and focus goes
+          back to the menu button. Picking anything in it closes it. */}
+      {isMobile && (
         <div
-          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+          className="hp-drawer-backdrop fixed inset-0 z-[55] bg-black/60 backdrop-blur-sm"
+          data-open={mobileSidebarOpen ? 'true' : 'false'}
           onClick={() => setMobileSidebarOpen(false)}
           aria-hidden
         />
       )}
       <div
+        ref={drawerRef}
         className={
           isMobile
-            ? `fixed inset-y-0 left-0 z-50 transition-transform duration-200 pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
+            ? `hp-drawer fixed inset-y-0 left-0 z-[60] max-w-[88vw] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
             : ''
         }
+        data-open={isMobile ? (mobileSidebarOpen ? 'true' : 'false') : undefined}
+        role={isMobile ? 'dialog' : undefined}
+        aria-modal={isMobile && mobileSidebarOpen ? true : undefined}
+        aria-label={isMobile ? 'Menu' : undefined}
       >
         <Sidebar
           mode={mode}
@@ -5864,8 +6028,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           messages={messages}
           conversations={conversations}
           activeConversationId={conversationId}
-          onLoadConversation={loadConversation}
-          onNewConversation={onNewConversation}
+          onLoadConversation={isMobile ? (id) => { setMobileSidebarOpen(false); loadConversation(id) } : loadConversation}
+          onNewConversation={isMobile ? () => { setMobileSidebarOpen(false); onNewConversation() } : onNewConversation}
           onScrollToBottom={onScrollToBottom}
           showSettings={showSettings}
           setShowSettings={setShowSettings}
@@ -5873,11 +6037,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           setSettingsDraft={setSettingsDraft}
           onSaveSettings={onSaveSettings}
           showHistory={showHistory}
-          setShowHistory={setShowHistory}
+          setShowHistory={isMobile ? closeDrawerAnd(setShowHistory) : setShowHistory}
           collapsed={isMobile ? false : sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
           chatReasoningMode={chatReasoningMode}
           showMeetingsNav={meetingsNavEnabled}
+          drawer={isMobile}
         />
       </div>
 
@@ -5889,10 +6054,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           the top-right gear/pencil actions. */}
       {isMobile && !mobileSidebarOpen && (
         <button
+          ref={menuButtonRef}
           type="button"
           onClick={() => setMobileSidebarOpen(true)}
-          className="fixed top-[max(0.6rem,env(safe-area-inset-top))] left-[max(0.6rem,env(safe-area-inset-left))] z-40 flex h-10 w-10 items-center justify-center rounded-xl bg-black/45 backdrop-blur-md border border-white/15 text-white/85 shadow-lg shadow-black/40 hover:bg-black/60 active:scale-95 transition-all"
+          className="fixed top-[max(0.6rem,env(safe-area-inset-top))] left-[max(0.6rem,env(safe-area-inset-left))] z-40 flex h-11 w-11 items-center justify-center rounded-xl bg-black/45 backdrop-blur-md border border-white/15 text-white/85 shadow-lg shadow-black/40 hover:bg-black/60 active:scale-95 transition-all"
           aria-label="Open menu"
+          aria-expanded={false}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <line x1="3" y1="6" x2="21" y2="6" />
@@ -5902,7 +6069,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         </button>
       )}
 
-      <main className="flex-1 flex flex-col relative min-w-0">
+      <main ref={mainRef} className="flex-1 flex flex-col relative min-w-0">
         {/* History Panel */}
         {showHistory && (
           <HistoryPanel
