@@ -14,7 +14,7 @@ from .llm import is_thinking_model, strip_think_tags, _is_reasoning_text, recove
 from .compute import route_chat
 from .compute.router import build_diagnostics as _compute_diag
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
-from .storage import add_message, get_recent
+from .storage import add_message, ensure_conversation_owner, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
 from .defaults import DEFAULT_NEGATIVE_PROMPT, enhance_negative_prompt
 from .model_config import get_model_settings, get_architecture, MODEL_ARCHITECTURES
@@ -846,6 +846,7 @@ async def orchestrate(
     extra_system_context: Optional[str] = None,  # Smart topology: vision analysis or other context
     user_id: Optional[str] = None,  # Per-user isolation: scope memory reads/writes
     incognito: bool = False,  # Incognito mode: skip memory storage + profile injection
+    system_initiated: bool = False,  # This turn was started by HomePilot, not typed by the user
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -859,11 +860,39 @@ async def orchestrate(
     cid = conversation_id or str(uuid.uuid4())
     text_in = (user_text or "").strip()
 
+    # Claim the conversation for the caller **before the first message is written**.
+    #
+    # `add_message` infers an owner when none is passed, and its last resort is the *default*
+    # user — fine for a single-user install typing into the app, wrong for anything that
+    # creates a conversation on somebody's behalf. `get_messages` inner-joins
+    # `conversation_owners`, so a conversation owned by the wrong user returns **zero rows**
+    # to the person it was made for: the chat opens completely empty.
+    #
+    # That is what happened to every scheduled routine. It knew the user id, passed it in the
+    # payload, and then wrote fourteen messages through `add_message` calls that did not
+    # forward it. Claiming ownership once here fixes all of them at once and keeps working
+    # for whatever writes the next message — threading `user_id=` through every call site
+    # would leave the next one to be added silently broken again.
+    if user_id:
+        ensure_conversation_owner(cid, user_id)
+
     # Periodic GC: evict stale conversation memories (throttled to once/minute)
     _gc_stale_memories()
 
-    # Persist user message
-    add_message(cid, "user", text_in)
+    # Persist the opening turn.
+    #
+    # `system_initiated` is the difference between *the user asked for this* and *HomePilot
+    # did this by itself* — a scheduled routine, not somebody typing. It is stored as a
+    # `system` turn, never a `user` one, because a conversation's whole value is that the
+    # lines attributed to a person are lines that person actually wrote. A routine that
+    # opens its chat with "Prepare my morning news briefing for today." over the user's name
+    # has put words in their mouth: the reader cannot tell it from a real request, and
+    # neither can memory, search or a later summary.
+    #
+    # The model is unaffected — history is mapped role-for-role into the provider call, so a
+    # `system` turn still carries the instruction — which is the point: the prompt the model
+    # reads and the record the human reads are not the same artifact.
+    add_message(cid, "system" if system_initiated else "user", text_in)
 
     # Detect URL (for edit/animate)
     url_match = URL_RE.search(text_in)
@@ -2009,7 +2038,19 @@ async def orchestrate(
         system = system + "\n\n" + extra_system_context.strip()
 
     messages = [{"role": "system", "content": system}]
-    for role, content in history:
+    # The routine's own turn is **stored** as `system`, so the record never attributes it to
+    # somebody who did not type it. The model is a different audience: it needs a user turn
+    # to answer, and a prompt whose every message is `system` is a shape many providers
+    # handle badly and some openai-compatible endpoints reject outright.
+    #
+    # So the turn is re-roled on its way to the model and nowhere else — the prompt the model
+    # reads and the record the human reads are not the same artifact, which is the whole
+    # point of storing it as `system` in the first place. Only the final entry is eligible,
+    # and only when it is the system turn this very call just wrote.
+    _last = len(history) - 1
+    for _index, (role, content) in enumerate(history):
+        if system_initiated and _index == _last and role == "system":
+            role = "user"
         messages.append({"role": role, "content": content})
 
     prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
@@ -2291,6 +2332,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 extra_system_context=payload.get("extra_system_context"),
                 user_id=payload.get("user_id"),
                 incognito=payload.get("incognito", False),
+                system_initiated=payload.get("system_initiated", False),
             )
             # Tag this conversation with the project for history persistence
             if _project_id and result.get("conversation_id"):
@@ -2376,4 +2418,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             extra_system_context=payload.get("extra_system_context"),
             user_id=payload.get("user_id"),
             incognito=payload.get("incognito", False),
+            system_initiated=payload.get("system_initiated", False),
         )

@@ -95,8 +95,15 @@ jobs:
           src/test/meetingsenseCloseNavigation.test.tsx
           src/test/meetingAudioOnly.test.tsx
           src/test/meetingAskLane.test.tsx
+          src/test/meetingMinutes.test.tsx
+          src/test/meetingStartDialog.test.tsx
           src/test/meetingMenuItem.test.tsx
           src/test/composerPlusMenu.test.tsx
+          src/test/meetingsenseAddon.test.js
+          src/test/meetingsenseEnded.test.tsx
+          src/test/routinePresets.test.tsx
+          src/test/routineEditorControls.test.tsx
+          src/test/modeGroups.test.ts
         working-directory: frontend
       - run: npm run build
         working-directory: frontend

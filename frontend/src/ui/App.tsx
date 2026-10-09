@@ -12,6 +12,7 @@ import {
   Loader2,
   Folder,
   Clock,
+  CalendarClock,
   Settings,
   Lock,
   Server,
@@ -57,6 +58,7 @@ import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeech
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
+import { modeGroup, resetsConversation } from './lib/modeGroups'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
 import { ComputerStatusPill } from './account/ComputerStatusPill'
@@ -104,6 +106,9 @@ import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { AvatarStudio } from './avatar'
 import { TeamsView, useTeamsMcpAvailable } from './teams'
+import RoutinesView from './routines'
+import { listUnreadRoutineRuns, markRoutineRunSeen } from './routines/api'
+import type { RoutineRun } from './routines/types'
 import type { GalleryItem } from './avatar/galleryTypes'
 import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
 import { PersonaWizard } from './PersonaWizard'
@@ -155,7 +160,14 @@ declare global {
 
 export type Msg = {
   id: string
-  role: 'user' | 'assistant'
+  /**
+   * `system` is HomePilot acting on its own — today, a scheduled routine that has come due.
+   *
+   * It is a third thing on purpose. Storing such a turn as `user` would forge a request the
+   * person never made, and storing it as `assistant` would bury *why* the thread exists. It
+   * renders as a quiet marker line, not a chat bubble.
+   */
+  role: 'user' | 'assistant' | 'system'
   text: string
   pending?: boolean
   animate?: boolean
@@ -337,7 +349,7 @@ function useEnterpriseCallRow(): boolean {
   return String(envVal ?? 'true') !== 'false'
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams' | 'meetings'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams' | 'routines' | 'meetings'
 
 /**
  * OllaBridge GPU-node routing: when the chat provider points at an OllaBridge
@@ -1423,6 +1435,7 @@ function Sidebar({
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} collapsed={collapsed} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} />
           <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} collapsed={collapsed} />
+          <NavItem icon={CalendarClock} label="Routines" active={mode === 'routines'} onClick={() => setMode('routines')} collapsed={collapsed} />
           {/* MS28, behind `_CATALOG` (default off). D5 put the catalog in History and said a
               sidebar tab is for "only if History gets crowded" — this flag is that condition
               made operable. With it off there is no extra node here at all, which is the
@@ -2623,7 +2636,18 @@ function ChatState({
                 or VITE_CALL_ENTERPRISE_ROW='false') falls back to
                 the original PostCallCard so the swap is always
                 reversible without a rebuild. */}
-            {m.callMemory ? (
+            {/* A routine that ran by itself says so, once, in a quiet line above its
+                answer — so a conversation the user did not start explains why it exists.
+                Deliberately not a chat bubble: nobody spoke this turn, and dressing it as
+                either side of the conversation is how the fabricated-user-turn bug read as
+                normal in the first place. */}
+            {m.role === 'system' && m.text.trim() && !m.callMemory ? (
+              <div className="w-full flex justify-center" data-testid="routine-marker">
+                <div className="max-w-[85%] rounded-full border border-white/10 bg-white/[0.03] px-4 py-1.5 text-[11px] leading-5 text-white/40 text-center">
+                  {m.text.split('\n')[0]}
+                </div>
+              </div>
+            ) : m.callMemory ? (
               enterpriseCallRow ? (
                 <div className="w-full">
                   <CallEventRow
@@ -3333,7 +3357,7 @@ export default function App() {
               const h = hydratePersistedMessageMedia(m.media)
               return {
                 id: `restored-${idx}`,
-                role: m.role as 'user' | 'assistant',
+                role: m.role as 'user' | 'assistant' | 'system',
                 text: m.content,
                 animate: false,
                 media: h.media,
@@ -3616,24 +3640,13 @@ export default function App() {
     const prevMode = prevModeRef.current
     const currentMode = mode
 
-    // Define mode groups
-    const chatLikeModes: Mode[] = ['chat', 'voice', 'project', 'search', 'imagine']
-    const editMode: Mode[] = ['edit']
-    const animateMode: Mode[] = ['animate']
-
-    const getModeGroup = (m: Mode): 'chat' | 'edit' | 'animate' | 'other' => {
-      if (chatLikeModes.includes(m)) return 'chat'
-      if (editMode.includes(m)) return 'edit'
-      if (animateMode.includes(m)) return 'animate'
-      return 'other'
-    }
-
-    const prevGroup = getModeGroup(prevMode)
-    const currentGroup = getModeGroup(currentMode)
-
-    // Reset conversation when switching between different mode groups
-    if (prevGroup !== currentGroup && currentGroup !== 'other') {
-      console.log(`Mode switched from ${prevMode} (${prevGroup}) to ${currentMode} (${currentGroup}) - resetting conversation`)
+    // The rule lives in `lib/modeGroups` so it can be read and tested on its own — see the
+    // note there about why opening a conversation has to switch mode *before* it loads.
+    if (resetsConversation(prevMode, currentMode)) {
+      console.log(
+        `Mode switched from ${prevMode} (${modeGroup(prevMode)}) to `
+        + `${currentMode} (${modeGroup(currentMode)}) - resetting conversation`,
+      )
       setConversationId(uuid())
       setMessages([])
     }
@@ -3963,6 +3976,28 @@ export default function App() {
   }, [settings.backendUrl, authHeaders])
 
   const loadConversation = useCallback(async (convId: string) => {
+    /*
+     * Switch the mode **first**, then fetch.
+     *
+     * The mode-group effect above resets the conversation whenever the group changes, and
+     * it runs after the commit that changed the mode. Switching after the fetch put
+     * `setMode`, `setConversationId` and `setMessages` in one commit — so the reset ran
+     * next and wiped the messages that had just arrived. Opening a routine's conversation
+     * landed on an empty chat every time, which is exactly what it looked like from the
+     * outside: "it only opens a new chat with no information".
+     *
+     * Switching first lets that reset happen while there is nothing yet to lose, and the
+     * loaded messages land last. A fetch can never resolve before React has flushed the
+     * effect, so the ordering is deterministic rather than a race.
+     *
+     * The History list already worked only because it happened to call `setMode('chat')`
+     * itself before the load; every other caller relied on this function, and every other
+     * caller was broken.
+     */
+    setMode('chat')
+    setShowSettings(false)
+    setShowHistory(false)
+
     try {
       const data = await getJson<{
         ok: boolean
@@ -3974,20 +4009,13 @@ export default function App() {
         authHeaders
       )
       if (data.ok && data.messages) {
-        // Always switch to chat mode when loading a conversation.
-        // Without this, if user is in Voice/Imagine/Models/etc, messages
-        // load into state but the UI keeps rendering the current mode screen.
-        setMode('chat')
-        setShowSettings(false)
-        setShowHistory(false)
-
         setConversationId(convId)
         setMessages(
           data.messages.map((m, idx) => {
             const h = hydratePersistedMessageMedia(m.media)
             return {
               id: `loaded-${idx}`,
-              role: m.role as 'user' | 'assistant',
+              role: m.role as 'user' | 'assistant' | 'system',
               text: m.content,
               animate: false,
               media: h.media,
@@ -4000,6 +4028,52 @@ export default function App() {
       console.error('Failed to load conversation:', err)
     }
   }, [settings.backendUrl, authHeaders])
+
+  const openRoutineConversation = useCallback(async (run: RoutineRun) => {
+    const convId = run.conversation_id
+    if (!convId) return
+
+    const projectId = run.project_id || run.result?.target?.project_id || null
+    if (projectId) {
+      try {
+        const response = await fetch(
+          `${settings.backendUrl.replace(/\/+$/, '')}/projects/${encodeURIComponent(projectId)}`,
+          { headers: authHeaders, credentials: 'include' },
+        )
+        if (response.ok) {
+          const data = await response.json()
+          const project = data.project
+          localStorage.setItem('homepilot_current_project', projectId)
+          setCurrentProject({
+            id: projectId,
+            name: project.name,
+            document_count: project.document_count || 0,
+            project_type: project.project_type,
+            description: project.description,
+            instructions: project.instructions,
+            files: project.files,
+            agentic: project.agentic,
+            persona_agent: project.persona_agent,
+            persona_appearance: project.persona_appearance,
+          })
+          setShowSessionPanel(false)
+        }
+      } catch (err) {
+        console.warn('[Routines] Could not restore target project before opening run:', err)
+        localStorage.setItem('homepilot_current_project', projectId)
+      }
+    } else {
+      localStorage.removeItem('homepilot_current_project')
+      setCurrentProject(null)
+    }
+
+    try {
+      await markRoutineRunSeen(settings.backendUrl, run.id, settings.apiKey, true)
+    } catch {
+      // Conversation opening is more important than notification bookkeeping.
+    }
+    await loadConversation(convId)
+  }, [authHeaders, loadConversation, settings.apiKey, settings.backendUrl])
 
   const deleteConversation = useCallback(async (convId: string) => {
     // Confirm deletion
@@ -4083,7 +4157,7 @@ export default function App() {
                       const h = hydratePersistedMessageMedia(m.media)
                       return {
                         id: `restored-${idx}`,
-                        role: m.role as 'user' | 'assistant',
+                        role: m.role as 'user' | 'assistant' | 'system',
                         text: m.content,
                         animate: false,
                         media: h.media,
@@ -4104,6 +4178,37 @@ export default function App() {
     }
     loadProjectInfo()
   }, [mode, settings.backendUrl, authHeaders, currentProject?.id])
+
+  const [routineNotifications, setRoutineNotifications] = useState<RoutineRun[]>([])
+
+  const refreshRoutineNotifications = useCallback(async () => {
+    try {
+      const rows = await listUnreadRoutineRuns(settings.backendUrl, settings.apiKey)
+      setRoutineNotifications(
+        rows.filter((run) => run.result?.notification !== false).slice(0, 5),
+      )
+    } catch {
+      // Older backends simply do not expose Routines notifications.
+      setRoutineNotifications([])
+    }
+  }, [settings.apiKey, settings.backendUrl])
+
+  useEffect(() => {
+    void refreshRoutineNotifications()
+    const timer = window.setInterval(() => {
+      void refreshRoutineNotifications()
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [refreshRoutineNotifications])
+
+  const dismissRoutineNotification = useCallback(async (run: RoutineRun) => {
+    setRoutineNotifications((items) => items.filter((item) => item.id !== run.id))
+    try {
+      await markRoutineRunSeen(settings.backendUrl, run.id, settings.apiKey, false)
+    } catch {
+      // Optimistic dismiss; it can reappear after refresh if the backend rejected it.
+    }
+  }, [settings.apiKey, settings.backendUrl])
 
   // Fetch conversations on mount so sidebar recents are always populated
   useEffect(() => {
@@ -5967,7 +6072,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                           const h = hydratePersistedMessageMedia(m.media)
                           return {
                             id: `restored-${idx}`,
-                            role: m.role as 'user' | 'assistant',
+                            role: m.role as 'user' | 'assistant' | 'system',
                             text: m.content,
                             animate: false,
                             media: h.media,
@@ -6030,7 +6135,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                         const h = hydratePersistedMessageMedia(m.media)
                         return {
                           id: `restored-${idx}`,
-                          role: m.role as 'user' | 'assistant',
+                          role: m.role as 'user' | 'assistant' | 'system',
                           text: m.content,
                           animate: false,
                           media: h.media,
@@ -6145,7 +6250,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                             const h = hydratePersistedMessageMedia(m.media)
                             return {
                               id: `restored-${idx}`,
-                              role: m.role as 'user' | 'assistant',
+                              role: m.role as 'user' | 'assistant' | 'system',
                               text: m.content,
                               animate: false,
                               media: h.media,
@@ -6205,7 +6310,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                               const h = hydratePersistedMessageMedia(m.media)
                               return {
                                 id: `restored-${idx}`,
-                                role: m.role as 'user' | 'assistant',
+                                role: m.role as 'user' | 'assistant' | 'system',
                                 text: m.content,
                                 animate: false,
                                 media: h.media,
@@ -6351,6 +6456,16 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
             teamsMcpAvailable={teamsMcpAvailable}
+          />
+        ) : mode === 'routines' ? (
+          // Routines: user-owned schedule definitions. Execution remains a separate capability.
+          <RoutinesView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            onOpenConversation={(run) => {
+              setRoutineNotifications((items) => items.filter((item) => item.id !== run.id))
+              void openRoutineConversation(run)
+            }}
           />
         ) : mode === 'meetings' ? (
           // MS28, only reachable when `_CATALOG` is on — `mode` cannot be set to this without
@@ -6682,6 +6797,49 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             : null,
         }}
       />
+
+      {routineNotifications.length > 0 ? (
+        <div className="fixed bottom-5 right-5 z-[82] w-[min(390px,calc(100vw-2rem))] space-y-3">
+          {routineNotifications.slice(0, 3).map((run) => (
+            <div key={run.id} className="rounded-2xl border border-white/10 bg-[#171717]/95 p-4 shadow-2xl backdrop-blur-xl">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 h-9 w-9 shrink-0 rounded-xl bg-cyan-300/[0.08] grid place-items-center text-cyan-200/80">
+                  <CalendarClock size={17} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-white/90">
+                    {run.result?.routine_name || 'Routine ready'}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-white/50 line-clamp-3">
+                    {run.result_preview || 'Your routine result is ready.'}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    {run.conversation_id ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRoutineNotifications((items) => items.filter((item) => item.id !== run.id))
+                          void openRoutineConversation(run)
+                        }}
+                        className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black hover:bg-white/90"
+                      >
+                        Open conversation
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void dismissRoutineNotification(run)}
+                      className="rounded-lg px-2.5 py-1.5 text-xs text-white/45 hover:bg-white/[0.05] hover:text-white/70"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* Previous floating "call ended" toast has been replaced by an
           inline CallMemoryCard rendered directly in the chat stream

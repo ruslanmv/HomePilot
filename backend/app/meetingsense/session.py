@@ -212,6 +212,10 @@ class MeetingSession:
         #: and a question naming one of those is the user's — and drafting a reply to a
         #: question that was never theirs is how an assistant starts speaking for people.
         self.assistant_names: List[str] = []
+        #: MS34. How this meeting is to be summarised when it ends — declared by `start`,
+        #: persisted beside the meeting so a stop that happens after a reconnect (or after
+        #: the tab was closed) still produces the document the user asked for.
+        self.summary_options: Any = None
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
@@ -261,6 +265,12 @@ class MeetingSession:
         except Exception:  # noqa: BLE001 — a missing link is a card that does not hydrate
             log.exception("meetingsense: could not record the thread for %s", self.meeting_id)
 
+        # The compute targets are recorded before the notes engine is built. The rolling recap
+        # is part of the same summary experience as the final document, so it must use the
+        # summary model selected in setup instead of silently falling back to another provider.
+        self._remember_summary_prefs(message.get("summary"))
+        self._remember_ask_prefs(message.get("conversation"))
+
         # MS12-a. The engine is built here rather than in the constructor because whether
         # notes are wanted arrives in this frame — and because it was built *nowhere* until
         # this batch: `start` echoed `notes: true` back to clients and nothing ever produced
@@ -282,6 +292,13 @@ class MeetingSession:
         assistant = message.get("assistant_names")
         self.assistant_names = [str(n).strip() for n in assistant if str(n).strip()] \
             if isinstance(assistant, (list, tuple)) else []
+
+        # MS34. How this meeting wants to be summarised when it ends — the style, the length
+        # and any standing instruction ("in Spanish", "for the board"). Recorded at `start`
+        # rather than asked for at `stop`, because the moment a meeting ends is the moment
+        # the user is least willing to answer a dialog, and because a preference set here
+        # survives the browser being closed before the recap is read.
+        # Preferences were recorded before the notes engine was built above.
 
         # The helper mode the wizard offered. Applied here rather than left to a second
         # request: the mode decides whether the assistant may answer or draft at all, so a
@@ -305,8 +322,35 @@ class MeetingSession:
                 # every client was told notes were on.
                 "notes": self.notes is not None,
                 "watch": bool(message.get("watch")),
+                # Again: what the server will actually do. A client that asked for a recap
+                # email and is told `"minutes"` knows the setting did not take, which is
+                # better than finding out when the meeting ends.
+                "summary": self.summary_options.as_dict() if self.summary_options else None,
             }
         )
+
+    def _remember_summary_prefs(self, raw: Any) -> None:
+        """Store how this meeting should be summarised. Never raises, never blocks a start."""
+        try:
+            from . import minutes as minutes_mod
+
+            defaults = getattr(self.config, "summary", None)
+            body = dict(raw) if isinstance(raw, dict) else {}
+            body.setdefault("style", getattr(defaults, "style", "") or "")
+            body.setdefault("length", getattr(defaults, "length", "") or "")
+            options = minutes_mod.options_from(body)
+            self.summary_options = minutes_mod.set_prefs(self.meeting_id, options)
+        except Exception:  # noqa: BLE001 — a preference is never worth a recording
+            log.exception("meetingsense: could not record summary preferences for %s", self.meeting_id)
+
+    def _remember_ask_prefs(self, raw: Any) -> None:
+        """Store the private meeting-conversation model target chosen in setup."""
+        try:
+            from . import ask as ask_mod
+
+            ask_mod.set_prefs(self.meeting_id, raw)
+        except Exception:  # noqa: BLE001 — a preference is never worth a recording
+            log.exception("meetingsense: could not record ask preferences for %s", self.meeting_id)
 
     # ── suspend and resume (D10) ────────────────────────────────────────────
 
@@ -420,6 +464,15 @@ class MeetingSession:
             "slides": self.keyframe_count,
         }
         await self.transport.send(final)
+
+        # MS34, and deliberately before `finalize`: the summary message a meeting leaves in
+        # its conversation should carry the real document rather than the rolling recap when
+        # both exist, and `finalize` reads what is stored. The client already has `final`, so
+        # nobody is waiting on this — and `autogenerate` swallows everything, because a
+        # meeting that recorded a perfectly good transcript must end cleanly whatever the
+        # summariser does.
+        await self._write_summary()
+
         # The meeting lands in its conversation here rather than in the route, so both
         # transports get it: MS7's avatar session ends a meeting through this same method.
         # Best-effort by construction — see finalize.finalize_meeting.
@@ -435,6 +488,48 @@ class MeetingSession:
 
         retrieval.index_meeting(self.meeting_id)
         return final
+
+    async def _write_summary(self) -> Optional[Dict[str, Any]]:
+        """Write the end-of-meeting document (MS34). Returns it, or ``None``.
+
+        Additive: a new artifact beside the notes, never over them. Skipped entirely when the
+        operator turned it off, and silent when the meeting has no transcript to summarise —
+        a meeting of pure silence deserves no document and no error either.
+
+        **No frame is sent.** The card fetches the meeting record when it ends — already,
+        already retrying while the last notes window lands — and that response carries the
+        summaries. A new frame type after `final` would be a second delivery path for the
+        same bytes, and the two transports would have to agree about where in the sequence it
+        goes; the hydrate they both already use costs nothing and cannot drift.
+        """
+        summary_cfg = getattr(self.config, "summary", None)
+        if summary_cfg is not None and not getattr(summary_cfg, "auto", True):
+            return None
+        try:
+            from . import minutes as minutes_mod
+            from .notes_engine import call_model
+
+            options = self.summary_options or minutes_mod.prefs(self.meeting_id)
+            model = options.model or getattr(summary_cfg, "model", "") or ""
+            provider = options.provider
+            base_url = options.base_url
+
+            async def call(messages, **kw):
+                return await call_model(
+                    messages,
+                    model=model,
+                    provider=provider,
+                    base_url=base_url,
+                    **kw,
+                )
+
+            document = await minutes_mod.autogenerate(
+                self.meeting_id, call=call, options=options
+            )
+        except Exception:  # noqa: BLE001 — the summary is never worth the meeting
+            log.exception("meetingsense: could not write the summary for %s", self.meeting_id)
+            return None
+        return document
 
     # ── audio in, segments out ──────────────────────────────────────────────
 
