@@ -32,4 +32,18 @@ describe('resolveBackendUrl', () => {
 
     expect(resolveBackendUrl()).toBe('http://localhost:8010')
   })
+
+  it('keeps a stored Vite dev address when the build is configured to use it (proxying dev server)', () => {
+    vi.stubGlobal('location', {
+      hostname: '127.0.0.1',
+      origin: 'http://127.0.0.1:3000',
+      port: '3000',
+      protocol: 'http:',
+    })
+    vi.stubEnv('VITE_API_URL', 'http://127.0.0.1:3000/')
+    window.localStorage.setItem('homepilot_backend_url', 'http://127.0.0.1:3000')
+
+    expect(resolveBackendUrl()).toBe('http://127.0.0.1:3000')
+    vi.unstubAllEnvs()
+  })
 })

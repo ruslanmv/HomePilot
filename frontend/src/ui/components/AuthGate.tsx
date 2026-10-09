@@ -93,8 +93,16 @@ interface AuthGateProps {
   children: React.ReactNode
 }
 
+/** How long the first auth check may take before we stop waiting silently. A
+ * sleeping Hugging Face Space can take tens of seconds to answer. */
+export const AUTH_CHECK_TIMEOUT_MS = 25000
+/** After this long, the startup screen explains the wait. */
+export const SLOW_START_HINT_MS = 5000
+
 export default function AuthGate({ children }: AuthGateProps) {
-  const [state, setState] = useState<'loading' | 'login' | 'onboarding' | 'ready'>('loading')
+  const [state, setState] = useState<'loading' | 'login' | 'onboarding' | 'ready' | 'unreachable'>('loading')
+  const [slowStart, setSlowStart] = useState(false)
+  const [failure, setFailure] = useState<string>('')
   const [user, setUser] = useState<AuthUser | null>(null)
   const [token, setToken] = useState<string>('')
   const [loggedOutMessage, setLoggedOutMessage] = useState<string>('')
@@ -107,11 +115,18 @@ export default function AuthGate({ children }: AuthGateProps) {
 
   async function checkAuth() {
     const savedToken = localStorage.getItem(LS_TOKEN_KEY) || ''
+    setState('loading')
+    setSlowStart(false)
+    setFailure('')
+    const slowTimer = setTimeout(() => setSlowStart(true), SLOW_START_HINT_MS)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), AUTH_CHECK_TIMEOUT_MS)
 
     try {
       const res = await fetch(`${backendUrl}/v1/auth/me`, {
         headers: savedToken ? { 'Authorization': `Bearer ${savedToken}` } : {},
         credentials: 'include',
+        signal: controller.signal,
       })
 
       if (!res.ok) {
@@ -155,9 +170,20 @@ export default function AuthGate({ children }: AuthGateProps) {
 
       // Fallback: let through
       setState('ready')
-    } catch {
-      // Backend unreachable — skip auth (backward compatible with pre-auth setups)
-      setState('ready')
+    } catch (e) {
+      // The server didn't answer (still waking up, offline, or blocked). Say so
+      // and offer Retry, instead of mounting an app that can't load anything —
+      // which is how a phone ended up showing a blank black screen. "Continue
+      // anyway" keeps the old pre-auth behaviour available.
+      const aborted = (e as { name?: string } | null)?.name === 'AbortError'
+      setFailure(aborted
+        ? `The server didn't answer within ${Math.round(AUTH_CHECK_TIMEOUT_MS / 1000)} seconds.`
+        : 'The server could not be reached.')
+      console.error('[HomePilot] startup check failed', { backendUrl, aborted, error: String(e) })
+      setState('unreachable')
+    } finally {
+      clearTimeout(slowTimer)
+      clearTimeout(timeout)
     }
   }
 
@@ -229,20 +255,35 @@ export default function AuthGate({ children }: AuthGateProps) {
     setState('login')
   }, [user, backendUrl])
 
-  // Loading spinner — uses same neutral bg as login page
+  // Startup screen — clearly visible (the old one was 30%-opacity text on
+  // near-black, which read as a blank black screen on phones), and honest
+  // about a slow start.
   if (state === 'loading') {
     return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#050506',
-        color: 'rgba(255, 255, 255, 0.30)',
-        fontFamily: 'Inter, system-ui, sans-serif',
-        fontSize: 14,
-      }}>
-        Loading...
+      <div className="hp-status-screen" role="status" aria-live="polite">
+        <div className="hp-status-card">
+          <div className="hp-spinner" aria-hidden />
+          <h1>Starting HomePilot…</h1>
+          <p>{slowStart
+            ? 'The server is waking up. On a sleeping Hugging Face Space this can take up to a minute.'
+            : 'Connecting to your HomePilot server.'}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (state === 'unreachable') {
+    return (
+      <div className="hp-status-screen" role="alert">
+        <div className="hp-status-card">
+          <div aria-hidden style={{ fontSize: 28 }}>📡</div>
+          <h1>Can’t reach HomePilot</h1>
+          <p>{failure} Check your connection, or wait a moment if the Space is starting, then try again.</p>
+          <div className="hp-status-actions">
+            <button type="button" className="hp-primary" onClick={() => { void checkAuth() }}>Retry</button>
+            <button type="button" onClick={() => setState('ready')}>Continue anyway</button>
+          </div>
+        </div>
       </div>
     )
   }

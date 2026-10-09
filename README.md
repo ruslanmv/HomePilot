@@ -28,12 +28,15 @@
 This repository contains the **"Home Edition"**: a production-oriented stack designed to run on a local machine (ideally with an NVIDIA GPU) using Docker Compose.
 
 <p align="center">
-  <img src="assets/2026-01-25-09-38-39.png" alt="HomePilot UI" width="800" />
+  <img src="assets/readme/homepilot-ui.jpg" alt="HomePilot chat on desktop, and on a phone revealing a new answer" width="900" />
 </p>
 
 ---
 
 ## ✨ What's New
+
+### 📱 Phone-Ready Interface and Enterprise Motion
+HomePilot now works on a phone as well as it does on a desktop — full-screen settings, a proper off-canvas menu, Back-gesture support, a visible startup screen instead of a blank one — and chat and voice get a restrained motion system: shimmering status labels, answers revealed with a typing cursor, smooth dialogs and menus. Choose how much moves in **Settings → Motion**. See [On Your Phone](#on-your-phone) and [Motion](#motion).
 
 ### 🎭 Avatar Director — Your Persona With a Body (opt-in)
 Pair HomePilot with [3D-Avatar-Chatbot](https://github.com/ruslanmv/3D-Avatar-Chatbot) and your persona gets gestures, presence and shared activities: a morning brief on a virtual screen, focus sessions with streaks in her long-term memory, a hands-busy copilot that looks at your camera *only when you ask*, and rep counting from a coach.
@@ -315,7 +318,26 @@ A Grok-like dark minimal interface with:
 - Sidebar navigation with mode switching
 - Context-aware input with media upload
 - Inline media rendering
-- Responsive design for desktop and tablet
+- Responsive design for desktop, tablet and phone — including inside the Hugging Face Space
+
+### On Your Phone
+<p align="center">
+  <img src="assets/readme/homepilot-mobile.jpg" alt="HomePilot on a phone: thinking, an answer being revealed, the menu, Account Settings and Voice" width="900" />
+</p>
+
+Built for one hand on a narrow screen: an off-canvas menu that closes with the phone's **Back** gesture, a full-screen **Account Settings** with **Save All** pinned above the keyboard, page headers that never sit under the menu button, 44 px touch targets, and a visible **Starting HomePilot…** screen (never a blank one) while the app loads or the Space wakes up. Tested from 320 px phones to desktop, in landscape, at 150 % zoom and on a slow 3G link. See [docs/mobile-web-ui.md](docs/mobile-web-ui.md).
+
+### Motion
+<p align="center">
+  <img src="assets/readme/homepilot-motion.jpg" alt="Settings → Motion: animation level, how new answers appear, and a live preview" width="760" />
+</p>
+
+A restrained, enterprise motion system for chat: a shimmering *Thinking* label with rippling dots, answers revealed word by word with a typing cursor (tap to show all), status changes that slide rather than jump, and smooth dialogs, menus and accordions. Voice mode keeps its familiar look. **Settings → Motion** chooses *Enterprise*, *Minimal* or *Off* and how new answers appear; the device's *reduce motion* setting always wins. See [docs/chat-motion.md](docs/chat-motion.md).
+
+### Imagine Gallery
+<p align="center">
+  <img src="assets/2026-01-25-09-38-39.png" alt="Imagine — a gallery of generated images" width="800" />
+</p>
 
 ### TV Mode
 ![](assets/2026-01-25-02-26-36.png)

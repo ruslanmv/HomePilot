@@ -229,7 +229,7 @@ export function ComposerPlusMenu({ onAddFile, onScreenshot }: ComposerPlusMenuPr
                 title="Add files, screen or a meeting"
                 data-testid="composer-plus-button"
                 className={[
-                    'h-10 w-10 rounded-full grid place-items-center transition-colors',
+                    'hp-icon-btn h-10 w-10 rounded-full grid place-items-center transition-colors',
                     open ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/5',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25',
                 ].join(' ')}

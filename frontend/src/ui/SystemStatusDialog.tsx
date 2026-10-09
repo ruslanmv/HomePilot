@@ -4,6 +4,7 @@
  * Shows a donut chart (pure CSS conic-gradient), service health cards,
  * and architecture overview.  No chart library needed.
  */
+import { useBackToClose } from './lib/useBackToClose'
 import React, { useEffect, useMemo, useState } from 'react'
 import { X, Activity, Database, Cpu, Server, Bot, PlugZap } from 'lucide-react'
 import { fetchSystemOverview, type SystemOverviewResponse } from './systemApi'
@@ -52,6 +53,9 @@ export default function SystemStatusDialog({
     document.addEventListener('keydown', onEsc)
     return () => document.removeEventListener('keydown', onEsc)
   }, [onClose])
+
+  /* The phone's Back gesture closes the dialog instead of leaving HomePilot. */
+  useBackToClose(true, onClose)
 
   /* Fetch data */
   useEffect(() => {

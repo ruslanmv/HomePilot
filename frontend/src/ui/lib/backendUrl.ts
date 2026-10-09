@@ -91,7 +91,11 @@ export function resolveBackendUrl(override?: string | null): string {
         // chat-REST fallback. Redirect to :8000 (the default backend port)
         // so the stored preference doesn't silently break voice-call
         // session creation.
-        if (storedIsLocal && DEV_VITE_PORTS.has(storedPort)) {
+        // …unless the build itself names that address (VITE_API_URL pointing
+        // at a Vite dev server that proxies the API): a configured value is
+        // not stale, and rewriting it made every reload unreachable.
+        const configured = (import.meta.env?.VITE_API_URL as string | undefined)?.trim();
+        if (storedIsLocal && DEV_VITE_PORTS.has(storedPort) && clean !== stripTrailingSlash(configured || "")) {
           return "http://localhost:8000";
         }
         return clean;

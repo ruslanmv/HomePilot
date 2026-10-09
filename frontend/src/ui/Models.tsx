@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import { ProgressBar, Skeleton } from './motion'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink } from 'lucide-react'
 import OllaBridgeModels from './components/OllaBridgeModels'
 import { isAccountsUxEnabled } from './account/featureFlags'
@@ -1235,20 +1236,23 @@ export default function ModelsView(props: ModelsParams) {
   }, [toast])
 
   return (
-    <div className="h-full w-full bg-black text-white overflow-hidden flex flex-col">
+    // Phones: the whole page is one scroller (controls + list). Tablet/desktop
+    // keep the fixed controls with the list scrolling under them.
+    <div className="h-full w-full bg-black text-white overflow-y-auto overscroll-contain md:overflow-hidden flex flex-col">
       {/* Header */}
-      <div className="px-8 py-6 border-b border-white/10 flex items-center justify-between bg-gradient-to-b from-white/[0.02] to-transparent">
-        <div>
-          <div className="text-2xl font-bold text-white tracking-tight">Model Management</div>
-          <div className="text-sm text-white/40 mt-1">Configure and deploy AI models across providers</div>
+      <div className="hp-page-header relative px-8 py-6 border-b border-white/10 bg-gradient-to-b from-white/[0.02] to-transparent">
+        <div className="hp-page-header__titles">
+          <h1 className="text-xl md:text-2xl font-bold text-white tracking-tight leading-tight">Model Management</h1>
+          <div className="text-sm text-white/55 mt-1">Configure and deploy AI models across providers</div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="hp-page-header__actions items-center md:gap-3">
           <button
             type="button"
             onClick={() => refreshCatalog()}
             disabled={catalogLoading}
-            className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold flex items-center gap-2.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-busy={catalogLoading || undefined}
+            className="hp-grow-action px-3 md:px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold flex items-center justify-center gap-2 md:gap-2.5 whitespace-nowrap transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RefreshCw size={15} className={catalogLoading ? 'animate-spin' : ''} />
             Refresh Catalog
@@ -1258,7 +1262,8 @@ export default function ModelsView(props: ModelsParams) {
             type="button"
             onClick={() => refreshInstalled()}
             disabled={installedLoading}
-            className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold flex items-center gap-2.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-busy={installedLoading || undefined}
+            className="hp-grow-action px-3 md:px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold flex items-center justify-center gap-2 md:gap-2.5 whitespace-nowrap transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RefreshCw size={15} className={installedLoading ? 'animate-spin' : ''} />
             Refresh Installed
@@ -1268,12 +1273,20 @@ export default function ModelsView(props: ModelsParams) {
           <button
             type="button"
             onClick={() => setApiKeysExpanded(true)}
-            className="p-2.5 rounded-xl bg-transparent hover:bg-white/5 border border-transparent hover:border-white/10 text-white/40 hover:text-white/70 transition-all"
+            className="hp-header-corner p-2.5 rounded-xl bg-transparent hover:bg-white/5 border border-transparent hover:border-white/10 text-white/55 hover:text-white/80 transition-all"
             title="API Keys (for gated models)"
+            aria-label="API keys for gated models"
           >
             <Key size={16} />
           </button>
         </div>
+        {/* While either refresh runs, a thin sweep along the header's lower edge (motion system, animation 22). */}
+        {catalogLoading || installedLoading ? (
+          <ProgressBar
+            label={catalogLoading ? 'Refreshing the model catalog' : 'Refreshing installed models'}
+            className="!absolute left-0 right-0 bottom-0 !h-[2px] !rounded-none"
+          />
+        ) : null}
       </div>
 
       {/* API Keys Modal */}
@@ -1477,17 +1490,19 @@ export default function ModelsView(props: ModelsParams) {
       )}
 
       {/* Controls */}
-      <div className="px-8 py-5 border-b border-white/10 bg-white/[0.01]">
+      <div className="px-4 md:px-8 py-4 md:py-5 border-b border-white/10 bg-white/[0.01]">
         <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr_1fr] gap-4 max-w-7xl">
-          <div>
-            <label className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-2.5">Model Type</label>
-            <div className="flex flex-col gap-1.5">
+          <div className="hp-cq min-w-0">
+            <div id="hp-model-type-label" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Model Type</div>
+            <div className="hp-choice-grid lg:!flex lg:flex-col lg:!gap-1.5" role="radiogroup" aria-labelledby="hp-model-type-label">
               {(['chat', 'multimodal', 'image', 'edit', 'video', 'enhance', 'lora', 'addons'] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
+                  role="radio"
+                  aria-checked={modelType === t}
                   onClick={() => setModelType(t)}
-                  className={`px-4 py-2.5 rounded-lg border text-xs font-bold uppercase tracking-wide transition-all ${
+                  className={`px-3 md:px-4 py-2.5 rounded-xl lg:rounded-lg border text-xs font-bold uppercase tracking-wide transition-all truncate ${
                     modelType === t
                       ? 'bg-white text-black border-white shadow-lg shadow-white/20'
                       : 'bg-transparent border-white/10 text-white/60 hover:bg-white/5 hover:border-white/20 hover:text-white/80'
@@ -1500,8 +1515,9 @@ export default function ModelsView(props: ModelsParams) {
           </div>
 
           <div>
-            <label className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-2.5">Provider</label>
+            <label htmlFor="hp-models-provider" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Provider</label>
             <select
+              id="hp-models-provider"
               value={provider}
               onChange={(e) => setProvider(e.target.value)}
               className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:border-white/30 focus:bg-white/10 transition-all"
@@ -1531,8 +1547,9 @@ export default function ModelsView(props: ModelsParams) {
           </div>
 
           <div>
-            <label className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-2.5">Base URL Override</label>
+            <label htmlFor="hp-models-base-url" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Base URL Override</label>
             <input
+              id="hp-models-base-url"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder={modelType === 'chat' ? 'http://localhost:11434' : 'http://localhost:8188'}
@@ -1547,7 +1564,7 @@ export default function ModelsView(props: ModelsParams) {
 
       {/* Civitai Input Section (only when provider is civitai) */}
       {provider === 'civitai' && (
-        <div className="px-8 py-4 border-b border-white/10 bg-gradient-to-br from-blue-500/5 to-blue-500/0">
+        <div className="px-4 md:px-8 py-4 border-b border-white/10 bg-gradient-to-br from-blue-500/5 to-blue-500/0">
           <div className="max-w-7xl">
             {/* Search Bar */}
             <div className="mb-6">
@@ -1805,7 +1822,7 @@ export default function ModelsView(props: ModelsParams) {
       )}
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 scrollbar-hide">
+      <div className="shrink-0 md:shrink md:flex-1 md:min-h-0 md:overflow-y-auto px-4 sm:px-8 py-6 scrollbar-hide">
         <div className="flex flex-col gap-4 max-w-7xl mx-auto">
           {/* OllaBridge provider class — a special provider whose models are
               synced from the user's linked HomePilot / GPU nodes (relay), shown
@@ -1852,7 +1869,7 @@ export default function ModelsView(props: ModelsParams) {
 
           {/* Models table */}
           <div className="rounded-2xl border border-white/10 overflow-hidden bg-gradient-to-b from-white/[0.02] to-transparent">
-            <div className="bg-white/5 px-6 py-4 flex items-center justify-between border-b border-white/10">
+            <div className="bg-white/5 px-4 md:px-6 py-4 flex items-center justify-between gap-3 border-b border-white/10">
               <div className="text-xs font-bold text-white uppercase tracking-wider">Available Models</div>
               <div className="text-xs text-white/50 font-semibold">
                 {(() => {
@@ -1870,7 +1887,17 @@ export default function ModelsView(props: ModelsParams) {
             </div>
 
             <div className="divide-y divide-white/5">
-              {merged.length === 0 ? (
+              {merged.length === 0 && installedLoading ? (
+                // Loading, not empty: placeholder rows instead of "No models found".
+                <div className="p-4 md:p-6 space-y-4" role="status" aria-label="Loading models">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="flex items-center gap-4">
+                      <Skeleton lines={2} height={10} className="flex-1" />
+                      <span className="hp-skeleton h-8 w-20 shrink-0" style={{ borderRadius: 10 }} />
+                    </div>
+                  ))}
+                </div>
+              ) : merged.length === 0 ? (
                 <div className="p-12 text-white/50 text-sm text-center font-medium">
                   {provider === 'civitai' ? (
                     <div className="space-y-2">

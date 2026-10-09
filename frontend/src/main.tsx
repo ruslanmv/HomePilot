@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './ui/App'
 import AuthGate from './ui/components/AuthGate'
+import { AppErrorBoundary } from './ui/components/AppErrorBoundary'
 import LegalPage from './ui/components/LegalPage'
 // Account & Computers spine (Batch 2) — ADDITIVE. The providers render children
 // unchanged and do NO network unless the feature flag is on; the dev panel
@@ -11,6 +12,11 @@ import { ComputerProvider } from './ui/account/ComputerContext'
 import { MirrorDevPanel } from './ui/account/MirrorDevPanel'
 import { RemoteOfflineBanner } from './ui/account/RemoteOfflineBanner'
 import './ui/styles.css'
+import './ui/motion/motion.css'
+import { applyMotionPrefs } from './ui/motion/prefs'
+
+// Mirror the device's motion preference onto <html> before the first paint.
+applyMotionPrefs()
 
 // Public, pre-auth legal pages. These are reached by full navigation (the login
 // footer links, and direct URLs); on the SPA host the server returns index.html
@@ -21,6 +27,8 @@ const legalKind =
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
+    {/* Never fail to a blank screen: a render error shows what happened and how to recover. */}
+    <AppErrorBoundary label="root">
     {legalKind ? (
       <LegalPage kind={legalKind} />
     ) : (
@@ -34,5 +42,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         </HomePilotAccountProvider>
       </AuthGate>
     )}
+    </AppErrorBoundary>
   </React.StrictMode>,
 )

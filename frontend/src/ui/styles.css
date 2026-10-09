@@ -462,3 +462,292 @@ select option:hover {
 .ms-cap__mode-name { font-weight: 500; }
 .ms-cap__mode-note { font-size: 11px; color: rgba(255, 255, 255, 0.4); line-height: 1.45; }
 .ms-cap__done { justify-content: center; margin-top: 2px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Mobile design system — tokens and layout primitives
+   ──────────────────────────────────────────────────────────────────────────
+   A restrained, near-black palette with lighter surfaces and quiet borders.
+   These are HomePilot's own tokens (not copied from any other product).
+   Primitives here fix layout at the root so individual screens don't need
+   one-off overrides:
+     .hp-page-header   — a page header that always clears the floating mobile
+                         menu button, with title, description and actions rows
+     .hp-sheet         — a dialog that is full-screen on phones and a centred
+                         card on larger screens, with ONE scrolling body and a
+                         sticky footer above the home indicator
+     .hp-tabs          — tab row that scrolls sideways instead of clipping
+     .hp-choice-grid   — compact category grid (2 columns on phones)
+   ══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --hp-color-bg: #090909;
+  --hp-color-surface: #171717;
+  --hp-color-input: #202020;
+  --hp-color-text: #f5f5f5;
+  --hp-color-text-2: #b0b0b0;      /* 9.1:1 on --hp-color-bg */
+  --hp-color-border: #303030;
+  --hp-space: 4px;
+  --hp-pad-x: 16px;
+  --hp-control-h: 44px;
+  --hp-radius-card: 14px;
+  --hp-radius-sheet: 20px;
+  /* The floating menu button (40px at a 0.6rem inset) needs this much room. */
+  --hp-nav-clear: 3.75rem;
+}
+
+/* Page header: on phones the title row starts after the menu button and is
+   vertically aligned with it; actions wrap onto their own row. */
+.hp-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  min-width: 0;
+}
+.hp-page-header__titles { min-width: 0; flex: 1 1 16rem; }
+.hp-page-header__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; min-width: 0; }
+@media (max-width: 767.98px) {
+  .hp-page-header {
+    padding-left: max(var(--hp-pad-x), calc(env(safe-area-inset-left) + var(--hp-nav-clear))) !important;
+    padding-right: var(--hp-pad-x) !important;
+    padding-top: max(0.6rem, env(safe-area-inset-top)) !important;
+    padding-bottom: 0.875rem !important;
+  }
+  .hp-page-header__titles { flex-basis: 100%; min-height: 2.5rem; display: flex; flex-direction: column; justify-content: center; }
+  /* Actions get the full width (no longer squeezed beside the title). */
+  .hp-page-header__actions {
+    flex-basis: 100%;
+    margin-left: calc(-1 * (var(--hp-nav-clear) - var(--hp-pad-x)));
+  }
+  .hp-page-header__actions > * { min-height: var(--hp-control-h); }
+}
+
+/* Sheet: full-screen on phones, centred card above. Exactly one scroller. */
+.hp-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.hp-sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 48rem;
+  max-height: min(90vh, 52rem);
+  max-height: min(90dvh, 52rem);
+  min-height: 0;
+  overflow: hidden;
+  background: var(--hp-color-bg);
+  border: 1px solid var(--hp-color-border);
+  border-radius: var(--hp-radius-sheet);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.hp-sheet__header, .hp-sheet__footer { flex: 0 0 auto; }
+.hp-sheet__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.hp-sheet__footer { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+@media (max-width: 639.98px) {
+  .hp-sheet-backdrop { padding: 0; align-items: stretch; }
+  .hp-sheet {
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* Tabs scroll sideways rather than clipping; the active tab is scrolled into view. */
+.hp-tabs {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  max-width: 100%;
+}
+.hp-tabs::-webkit-scrollbar { display: none; }
+.hp-tabs > * { flex: 0 0 auto; scroll-snap-align: start; white-space: nowrap; min-height: 2.5rem; }
+
+/* Compact category choices: two columns on phones, four on tablets. */
+.hp-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+.hp-choice-grid > * { min-height: var(--hp-control-h); min-width: 0; }
+@media (min-width: 640px) { .hp-choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+/* Where the grid sits in a measured container (.hp-cq), its own width decides —
+   so a narrow column inside a wide window (or a narrow embedded frame) still
+   gets two columns. The viewport rule above is the fallback. */
+.hp-cq { container-type: inline-size; }
+@container (max-width: 29.99rem) { .hp-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (min-width: 30rem) { .hp-choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* Startup and error screens share one calm, legible layout. */
+.hp-status-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: var(--hp-color-bg);
+  color: var(--hp-color-text);
+  font-family: Inter, system-ui, sans-serif;
+}
+.hp-status-card { width: 100%; max-width: 26rem; text-align: center; }
+.hp-status-card h1 { font-size: 1.25rem; font-weight: 600; margin: 0.75rem 0 0.5rem; }
+.hp-status-card p { color: var(--hp-color-text-2); font-size: 0.95rem; line-height: 1.5; margin: 0 0 1rem; }
+.hp-status-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; }
+.hp-status-actions button {
+  min-height: var(--hp-control-h);
+  padding: 0 1.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--hp-color-border);
+  background: var(--hp-color-surface);
+  color: var(--hp-color-text);
+  font-weight: 600;
+}
+.hp-status-actions button.hp-primary { background: var(--hp-color-text); color: #000; border-color: transparent; }
+.hp-spinner {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: rgba(255, 255, 255, 0.85);
+  animation: hp-spin 0.9s linear infinite;
+}
+@keyframes hp-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Any header row that sits under the floating mobile menu button. */
+@media (max-width: 767.98px) {
+  .hp-clear-nav {
+    padding-left: max(var(--hp-pad-x), calc(env(safe-area-inset-left) + var(--hp-nav-clear))) !important;
+    min-height: 2.75rem;
+  }
+}
+
+/* The composer placeholder stays on one line (it used to wrap inside the
+   one-line field on phones and get cut off mid-word). */
+.hp-composer-input::placeholder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Header actions share a row when they fit and stack on very narrow phones. */
+@media (max-width: 767.98px) {
+  .hp-grow-action { flex: 1 1 9.5rem; }
+}
+
+/* A small icon action pinned to the header's top-right corner on phones, so it
+   doesn't wrap onto a row of its own under the main actions. */
+@media (max-width: 767.98px) {
+  .hp-page-header:has(.hp-header-corner) .hp-page-header__titles { padding-right: 2.75rem; }
+  .hp-header-corner {
+    position: absolute;
+    top: max(0.6rem, env(safe-area-inset-top));
+    right: max(0.5rem, env(safe-area-inset-right));
+    min-width: var(--hp-control-h);
+    min-height: var(--hp-control-h) !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* ── Touch targets ────────────────────────────────────────────────────────
+   Small icon buttons keep their look but get a 44×44 hit area on touch
+   screens: an invisible ::before grows the target to at least 44px each way. */
+.hp-icon-btn:not(.absolute, .fixed, .sticky) { position: relative; }
+@media (pointer: coarse) {
+  .hp-icon-btn::before {
+    content: '';
+    position: absolute;
+    inset: min(0px, calc((100% - 44px) / 2));
+  }
+  /* List rows in the drawer (recent chats, "New conversation", "View all"). */
+  .hp-touch-row { padding-top: 0.75rem !important; padding-bottom: 0.75rem !important; }
+  /* Keyboard shortcut hints mean nothing on a phone. */
+  .hp-kbd-hint { display: none !important; }
+  /* iOS zooms into any focused field under 16px — selects and untyped inputs too. */
+  input:not([type]), input[type="tel"], select { font-size: max(16px, 1em); }
+}
+
+/* ── Keyboard focus ───────────────────────────────────────────────────────
+   Every control shows a clear ring when reached by keyboard (never on mouse
+   or touch). Stronger than `outline-none` utilities. Text fields keep their
+   own focus styling — they match :focus-visible on every click. */
+:is(a, button, summary, [tabindex]:not(input, textarea, select), [role="button"], [role="tab"], [role="radio"], [role="menuitem"], [role="switch"]):focus-visible {
+  outline: 2px solid rgba(245, 245, 245, 0.85);
+  outline-offset: 2px;
+}
+
+/* ── Secondary text contrast ──────────────────────────────────────────────
+   Muted labels used to go as low as 25–40 % white (2–3.6:1 on the app
+   background). These floors keep the same hierarchy while meeting the 4.5:1
+   WCAG AA minimum for text; hover variants and decorative 10–20 % tints are
+   untouched. */
+.text-white\/25 { color: rgb(255 255 255 / 0.47); }
+.text-white\/30 { color: rgb(255 255 255 / 0.5); }
+.text-white\/35 { color: rgb(255 255 255 / 0.52); }
+.text-white\/40 { color: rgb(255 255 255 / 0.55); }
+.placeholder\:text-white\/20::placeholder,
+.placeholder\:text-white\/25::placeholder,
+.placeholder\:text-white\/30::placeholder,
+.placeholder\:text-white\/35::placeholder,
+.placeholder\:text-white\/40::placeholder { color: rgb(255 255 255 / 0.5); }
+
+/* The shell sits on the shared background token. */
+.hp-app-shell { background-color: var(--hp-color-bg); }
+
+/* Short screens (a phone on its side, or any phone with the keyboard open):
+   the sheet goes full-screen and scrolls as one page — header and tabs move
+   away so the field being edited has room — while Save stays pinned above the
+   keyboard. scroll-padding keeps a focused field clear of the pinned footer. */
+@media (max-height: 500px) {
+  .hp-sheet-backdrop { padding: 0; align-items: stretch; }
+  .hp-sheet {
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-bottom: 5.5rem;
+  }
+  .hp-sheet__body { flex: 0 0 auto; overflow: visible; min-height: auto; }
+  .hp-sheet__footer { position: sticky; bottom: 0; z-index: 1; }
+}
+
+/* Chat: the composer dock and the phone header scrim blend into the page
+   background instead of drawing a slightly darker box. */
+.hp-composer-dock {
+  background: linear-gradient(to top, var(--hp-color-bg) 78%, rgba(9, 9, 9, 0));
+}
+.hp-top-scrim {
+  background: linear-gradient(to bottom, var(--hp-color-bg) 0%, rgba(9, 9, 9, 0.85) 55%, rgba(9, 9, 9, 0) 100%);
+}

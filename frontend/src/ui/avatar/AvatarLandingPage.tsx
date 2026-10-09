@@ -129,7 +129,7 @@ export function AvatarLandingPage({
     <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col relative">
 
       {/* ═══════════════ HEADER ═══════════════ */}
-      <div className="absolute top-0 left-0 right-0 z-20 flex justify-between items-center px-6 py-4 bg-gradient-to-b from-black/90 via-black/60 to-transparent pointer-events-none">
+      <div className="hp-clear-nav absolute top-0 left-0 right-0 z-20 flex justify-between items-center px-6 py-4 bg-gradient-to-b from-black/90 via-black/60 to-transparent pointer-events-none">
         <div className="pointer-events-auto flex items-center gap-3">
           <div className="flex items-center gap-2.5">
             <Sparkles size={18} className="text-purple-400" />
