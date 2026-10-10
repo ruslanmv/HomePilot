@@ -123,7 +123,7 @@ export function ChatAppearanceSettings({
   previewName?: string
   previewAvatarUrls?: Array<string | null | undefined>
 }) {
-  const { thumbnails, compact } = useChatAppearance()
+  const { thumbnails, compact, faceZoom } = useChatAppearance()
   return (
     <div className="space-y-6">
       <section aria-labelledby="hp-ca-thumbs" className="space-y-3">
@@ -176,6 +176,17 @@ export function ChatAppearanceSettings({
           <p id="hp-ca-compact-desc" className="mt-0.5 text-xs text-white/55">Reduces vertical spacing between messages for easier reading.</p>
         </div>
         <Switch checked={compact} onChange={(v) => writeChatAppearance({ compact: v })} labelledBy="hp-ca-compact" describedBy="hp-ca-compact-desc" />
+      </section>
+
+      <section className="flex items-start justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-3">
+        <div className="min-w-0">
+          <h3 id="hp-ca-face" className="text-sm font-semibold text-white">Zoom pictures to the face</h3>
+          <p id="hp-ca-face-desc" className="mt-0.5 text-xs text-white/55">
+            Round pictures in the chat, the Conversation Hub and Voice show an automatic crop around the face.
+            Off: the original picture, as it was saved.
+          </p>
+        </div>
+        <Switch checked={faceZoom} onChange={(v) => writeChatAppearance({ faceZoom: v })} labelledBy="hp-ca-face" describedBy="hp-ca-face-desc" />
       </section>
 
       <ChatAppearancePreview name={previewName} avatarUrls={previewAvatarUrls} />

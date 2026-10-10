@@ -1,11 +1,24 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { ProgressBar, Skeleton } from './motion'
-import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink } from 'lucide-react'
+import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink,
+  MessageSquare, ScanEye, Image as ImageIcon, Pencil, Video, Sparkles, Layers, Puzzle } from 'lucide-react'
 import OllaBridgeModels from './components/OllaBridgeModels'
 import { isAccountsUxEnabled } from './account/featureFlags'
 import { GENERATED_CATALOGS } from '../generated/modelCatalog'
 import { ModelAdvisorCard } from './components/ModelAdvisorCard'
 import { useAdvisorEnabled, type AdvisorKind, type CurrentModels } from './modelAdvisor'
+
+/** The Model Type choices, in order, with the icon and label shown for each. */
+const MODEL_TYPES = [
+  { id: 'chat', label: 'Chat', Icon: MessageSquare },
+  { id: 'multimodal', label: 'Multimodal', Icon: ScanEye },
+  { id: 'image', label: 'Image', Icon: ImageIcon },
+  { id: 'edit', label: 'Edit', Icon: Pencil },
+  { id: 'video', label: 'Video', Icon: Video },
+  { id: 'enhance', label: 'Enhance', Icon: Sparkles },
+  { id: 'lora', label: 'LoRA', Icon: Layers },
+  { id: 'addons', label: 'Add-ons', Icon: Puzzle },
+] as const
 
 // -----------------------------------------------------------------------------
 // Types
@@ -1250,7 +1263,7 @@ export default function ModelsView(props: ModelsParams) {
   return (
     // Phones: the whole page is one scroller (controls + list). Tablet/desktop
     // keep the fixed controls with the list scrolling under them.
-    <div className="h-full w-full bg-black text-white overflow-y-auto overscroll-contain md:overflow-hidden flex flex-col">
+    <div className="hp-models-page h-full w-full bg-black text-white overflow-y-auto overscroll-contain md:overflow-hidden flex flex-col">
       {/* Header */}
       <div className="hp-page-header relative px-8 py-6 border-b border-white/10 bg-gradient-to-b from-white/[0.02] to-transparent">
         <div className="hp-page-header__titles">
@@ -1501,32 +1514,39 @@ export default function ModelsView(props: ModelsParams) {
         </div>
       )}
 
-      {/* Controls */}
-      <div className="px-4 md:px-8 py-4 md:py-5 border-b border-white/10 bg-white/[0.01]">
-        <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr_1fr] gap-4 max-w-7xl">
-          <div className="hp-cq min-w-0">
-            <div id="hp-model-type-label" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Model Type</div>
-            <div className="hp-choice-grid lg:!flex lg:flex-col lg:!gap-1.5" role="radiogroup" aria-labelledby="hp-model-type-label">
-              {(['chat', 'multimodal', 'image', 'edit', 'video', 'enhance', 'lora', 'addons'] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  role="radio"
-                  aria-checked={modelType === t}
-                  onClick={() => setModelType(t)}
-                  className={`px-3 md:px-4 py-2.5 rounded-xl lg:rounded-lg border text-xs font-bold uppercase tracking-wide transition-all truncate ${
-                    modelType === t
-                      ? 'bg-white text-black border-white shadow-lg shadow-white/20'
-                      : 'bg-transparent border-white/10 text-white/60 hover:bg-white/5 hover:border-white/20 hover:text-white/80'
-                  }`}
-                >
-                  {t === 'addons' ? '🧩 Add-ons' : t === 'lora' ? 'LoRA' : t}
-                </button>
-              ))}
-            </div>
+      {/* Workspace — Model Type on the left (a scrolling tab bar on phones); the
+          connection settings and the models on the right, so the model list starts
+          right under Provider and Base URL instead of below the whole column of
+          types. One scroll area: the right column on tablet/desktop, the page on phones. */}
+      <div className="hp-models-workspace flex flex-col md:flex-1 md:min-h-0">
+        <div className="hp-models-types min-w-0 border-b border-white/10 px-4 pt-4 pb-3 scrollbar-hide">
+          <div id="hp-model-type-label" className="text-[11px] text-white/55 font-bold uppercase tracking-wider mb-2.5">Model Type</div>
+          <div className="hp-models-typelist scrollbar-hide" role="radiogroup" aria-labelledby="hp-model-type-label">
+            {MODEL_TYPES.map(({ id: t, label, Icon }) => (
+              <button
+                key={t}
+                type="button"
+                role="radio"
+                aria-checked={modelType === t}
+                onClick={() => setModelType(t)}
+                className={`shrink-0 min-h-[42px] inline-flex items-center gap-3 px-3.5 py-2.5 rounded-xl border text-sm font-semibold transition-all whitespace-nowrap ${
+                  modelType === t
+                    ? 'bg-white text-black border-white shadow-lg shadow-white/10'
+                    : 'bg-white/[0.02] border-white/10 text-white/70 hover:bg-white/5 hover:border-white/20 hover:text-white'
+                }`}
+              >
+                <Icon size={18} strokeWidth={1.8} aria-hidden className={t === 'addons' && modelType !== t ? 'text-emerald-400' : undefined} />
+                <span className="truncate">{label}</span>
+              </button>
+            ))}
           </div>
+        </div>
 
-          <div>
+        <div className="hp-models-main hp-cq min-w-0 md:flex-1 md:min-h-0 md:overflow-y-auto overscroll-contain scrollbar-hide">
+      {/* Connection — Provider and Base URL side by side when there is room */}
+      <div className="px-4 md:px-6 lg:px-8 pt-4 md:pt-5">
+        <div className="hp-models-connection max-w-7xl mx-auto rounded-2xl border border-white/10 bg-white/[0.02] p-4 md:p-5">
+          <div className="min-w-0">
             <label htmlFor="hp-models-provider" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Provider</label>
             <select
               id="hp-models-provider"
@@ -1558,7 +1578,7 @@ export default function ModelsView(props: ModelsParams) {
             {providersError ? <div className="mt-2 text-xs text-rose-400/80">{providersError}</div> : null}
           </div>
 
-          <div>
+          <div className="min-w-0">
             <label htmlFor="hp-models-base-url" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Base URL Override</label>
             <input
               id="hp-models-base-url"
@@ -1576,8 +1596,8 @@ export default function ModelsView(props: ModelsParams) {
 
       {/* Civitai Input Section (only when provider is civitai) */}
       {provider === 'civitai' && (
-        <div className="px-4 md:px-8 py-4 border-b border-white/10 bg-gradient-to-br from-blue-500/5 to-blue-500/0">
-          <div className="max-w-7xl">
+        <div className="mt-5 px-4 md:px-6 lg:px-8 py-4 border-y border-white/10 bg-gradient-to-br from-blue-500/5 to-blue-500/0">
+          <div className="max-w-7xl mx-auto">
             {/* Search Bar */}
             <div className="mb-6">
               <label className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider block mb-2.5">
@@ -1833,8 +1853,8 @@ export default function ModelsView(props: ModelsParams) {
         </div>
       )}
 
-      {/* Body */}
-      <div className="shrink-0 md:shrink md:flex-1 md:min-h-0 md:overflow-y-auto px-4 sm:px-8 py-6 scrollbar-hide">
+      {/* Body — Available Models directly under the connection settings */}
+      <div className="px-4 md:px-6 lg:px-8 pt-5 pb-6">
         <div className="flex flex-col gap-4 max-w-7xl mx-auto">
           {/* OllaBridge provider class — a special provider whose models are
               synced from the user's linked HomePilot / GPU nodes (relay), shown
@@ -1844,6 +1864,8 @@ export default function ModelsView(props: ModelsParams) {
             <OllaBridgeModels filterType={modelType} />
           ) : (
           <>
+          {/* FitLab suggestions — one line (the best fit for this computer) until expanded,
+              so the recommendation stays in view and the model list starts right below. */}
           {advisorOn && ADVISOR_KIND_FOR[modelType] ? (
             <ModelAdvisorCard
               backendUrl={backendUrl}
@@ -1852,6 +1874,7 @@ export default function ModelsView(props: ModelsParams) {
               current={props.currentModels}
               onToast={setToast}
               onInstalled={() => { void refreshInstalled() }}
+              defaultCollapsed
             />
           ) : null}
           {/* Error messages - hide for Civitai since it's download-only */}
@@ -2869,6 +2892,8 @@ export default function ModelsView(props: ModelsParams) {
           )}
           </>
           )}
+        </div>
+      </div>
         </div>
       </div>
 

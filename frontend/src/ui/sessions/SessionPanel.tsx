@@ -29,6 +29,7 @@ import {
   Play,
   RotateCcw,
   Trash2,
+  Pencil,
 } from 'lucide-react'
 import { ProjectAvatar } from '../components/ProjectAvatar'
 import { Collapsible } from '../motion'
@@ -65,6 +66,8 @@ interface SessionPanelProps {
   onOpenSession: (session: PersonaSession) => void
   /** Called when user wants to open voice mode with a specific session */
   onOpenVoiceSession: (session: PersonaSession) => void
+  /** Opens "Edit profile picture"; the avatar shows a pencil and becomes a button. */
+  onEditPicture?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +84,7 @@ export default function SessionPanel({
   description,
   onOpenSession,
   onOpenVoiceSession,
+  onEditPicture,
 }: SessionPanelProps) {
   const [sessions, setSessions] = useState<PersonaSession[]>([])
   const [activeSession, setActiveSession] = useState<PersonaSession | null>(null)
@@ -252,6 +256,7 @@ export default function SessionPanel({
       ageLabel={ageLabel}
       memoryCount={memoryCount}
       subtitle={isFirstTime && !loading ? 'Ready to meet you' : undefined}
+      onEditPicture={onEditPicture}
     />
   )
 
@@ -510,6 +515,7 @@ function HubIdentity({
   ageLabel,
   memoryCount,
   subtitle,
+  onEditPicture,
 }: {
   name: string
   avatarUrl?: string | null
@@ -519,10 +525,26 @@ function HubIdentity({
   ageLabel: string
   memoryCount: number
   subtitle?: string
+  onEditPicture?: () => void
 }) {
+  const avatar = <ProjectAvatar url={avatarUrl} fallbackUrl={avatarFallbackUrl} name={name} projectType={projectType || 'persona'} size={112} />
   return (
     <header className="flex flex-col items-center gap-4 pt-2 text-center sm:flex-row sm:items-center sm:gap-6 sm:pr-10 sm:text-left">
-      <ProjectAvatar url={avatarUrl} fallbackUrl={avatarFallbackUrl} name={name} projectType={projectType || 'persona'} size={112} />
+      {onEditPicture ? (
+        // The picture is the button: tap it (or its pencil) to frame it. The pencil shows on
+        // hover with a mouse and stays visible on touch screens.
+        <button
+          type="button"
+          onClick={onEditPicture}
+          aria-label={`Edit ${name}'s profile picture`}
+          className="hp-avatar-edit relative isolate shrink-0 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-violet-400"
+        >
+          {avatar}
+          <span aria-hidden className="hp-avatar-edit__pencil absolute bottom-0.5 right-0.5 z-10 grid h-9 w-9 place-items-center rounded-full bg-violet-600 text-white shadow-lg ring-[3px] ring-[#12101c]">
+            <Pencil size={16} strokeWidth={2.2} />
+          </span>
+        </button>
+      ) : avatar}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 sm:justify-start">
           <h2 className="min-w-0 break-words text-2xl font-semibold text-white sm:text-3xl">{name}</h2>

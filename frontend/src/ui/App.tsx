@@ -62,6 +62,8 @@ import { modeGroup, resetsConversation } from './lib/modeGroups'
 import { useBackToClose } from './lib/useBackToClose'
 import { projectAvatarUrl } from './projectIdentity'
 import { AvatarImage } from './components/ProjectAvatar'
+import { AvatarCropEditor } from './components/AvatarCropEditor'
+import { activeAvatarCrop, resetAvatarCrop, saveAvatarCrop, type SaveResult as AvatarSaveResult } from './avatarCrop'
 import { assistantAvatarSlot, messageGapClass, useChatAppearance } from './chatAppearance'
 import { requestFocus, useAdvisorUpdates, type CurrentModels } from './modelAdvisor'
 import { AdvisorUpdateNotice } from './components/AdvisorUpdateNotice'
@@ -6043,9 +6045,27 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     []
   )
 
-  // The project's picture in round frames: cropped to the face by the backend,
-  // with the regular thumbnail if the crop can't be served.
-  const projectFaceUrl = projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'face')
+  // The project's picture in round frames. A framing the user saved with "Edit
+  // profile picture" is the thumbnail and wins everywhere. Otherwise the original
+  // picture: the thumbnail in small frames, the full picture in the Hub and Voice;
+  // with Settings → Chat → "Zoom pictures to the face" on, the backend's face crop
+  // is tried first.
+  const { faceZoom } = useChatAppearance()
+  const projectCrop = activeAvatarCrop(currentProject)
+  const projectFaceUrl = faceZoom && !projectCrop ? projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'face') : null
+  const projectFullUrl = projectCrop ? null : projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'full')
+  const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
+  // A saved crop (or a return to the automatic thumbnail) updates the open project at
+  // once, so the header, replies, Hub and Voice show it without a reload.
+  const applyAvatarResult = useCallback((res: AvatarSaveResult) => {
+    if (!res.ok) return res
+    setCurrentProject((prev) => prev ? {
+      ...prev,
+      persona_appearance: res.persona_appearance,
+      updated_at: (res.project && res.project.updated_at) || Date.now() / 1000,
+    } : prev)
+    return res
+  }, [])
 
   // Model Advisor (FitLab): the models in use, so a clearly better one that fits this
   // computer can be suggested. Only ids FitLab can rank are passed (Ollama / ComfyUI).
@@ -6290,6 +6310,23 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           )
         )}
 
+        {/* Edit profile picture — frame the persona's picture for its round avatar */}
+        {currentProject?.project_type === 'persona' ? (
+          <AvatarCropEditor
+            open={avatarEditorOpen}
+            name={currentProject.name}
+            imageUrl={projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'full')}
+            savedCrop={projectCrop}
+            onClose={() => setAvatarEditorOpen(false)}
+            onSave={async ({ area, zoom, file }) => applyAvatarResult(await saveAvatarCrop({
+              backendUrl: settingsDraft.backendUrl, projectId: currentProject.id, area, zoom, file, headers: authHeaders,
+            }))}
+            onRestoreAutomatic={async () => applyAvatarResult(await resetAvatarCrop({
+              backendUrl: settingsDraft.backendUrl, projectId: currentProject.id, headers: authHeaders,
+            }))}
+          />
+        ) : null}
+
         {/* Companion-grade: Session Hub for persona projects */}
         {currentProject?.project_type === 'persona' && (
           <PersonaHubDrawer
@@ -6302,10 +6339,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 projectId={currentProject.id}
                 projectName={currentProject.name}
                 projectCreatedAt={currentProject.created_at}
-                avatarUrl={projectFaceUrl}
+                avatarUrl={projectFaceUrl || projectFullUrl || projectThumbUrl}
                 avatarFallbackUrl={projectThumbUrl}
                 projectType={currentProject.project_type}
                 description={currentProject.description}
+                onEditPicture={() => setAvatarEditorOpen(true)}
                 onOpenSession={async (session) => {
                   // Open text session: set conversation_id and load messages
                   setChatConversationId(session.conversation_id)
@@ -6421,7 +6459,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               currentProject
                 ? {
                     name: currentProject.name,
-                    avatarUrl: projectFaceUrl,
+                    avatarUrl: projectFaceUrl || projectFullUrl || projectThumbUrl,
                     avatarFallbackUrl: projectThumbUrl,
                     projectType: currentProject.project_type,
                   }
