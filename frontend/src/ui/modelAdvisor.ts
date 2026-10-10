@@ -1,13 +1,14 @@
 /**
  * Model Advisor — FitLab suggestions for the computer HomePilot runs on.
  *
- * Optional and additive. Three choices, all on by default and kept per device
- * (Settings → Models → Model suggestions):
- *   enabled    show "Suggested for your GPU" on the Models page
+ * Optional and additive. Three choices, kept per device (Settings → Models →
+ * Model suggestions):
+ *   enabled    show "Suggested for your GPU" on the Models page (on by default)
  *   autoCheck  check FitLab for new definitions at most once a day while HomePilot is
- *              open (a conditional request: an unchanged feed downloads nothing)
+ *              open (a conditional request: an unchanged feed downloads nothing; on)
  *   notify     tell me when a clearly better model than the one I use fits this
- *              computer, or when the suggestions changed (e.g. after an update)
+ *              computer, or when the suggestions changed (e.g. after an update).
+ *              Off by default: no notice and no "New" badge until it is turned on.
  *
  * Without autoCheck, FitLab is contacted only when "Fetch definitions" is pressed.
  * Nothing is installed or changed unless the user presses Install. Admins can turn
@@ -101,7 +102,13 @@ export async function loadAdvisor(
 // ── preferences (this device) ────────────────────────────────────────────────
 
 export type AdvisorPrefs = { enabled: boolean; autoCheck: boolean; notify: boolean }
-export const DEFAULT_ADVISOR_PREFS: AdvisorPrefs = { enabled: true, autoCheck: true, notify: true }
+export const DEFAULT_ADVISOR_PREFS: AdvisorPrefs = { enabled: true, autoCheck: true, notify: false }
+/**
+ * Version of the stored preferences. Version 1 saved every key whenever any one
+ * changed, so its `notify: true` was usually the old default rather than a choice;
+ * such a value is read as the current default (off). An explicit off stays off.
+ */
+const ADVISOR_PREFS_VERSION = 2
 export const ADVISOR_PREFS_KEY = 'homepilot_model_advisor_prefs'
 export const ADVISOR_EVENT = 'hp:model-advisor-change'
 
@@ -123,14 +130,15 @@ function writeJson(key: string, value: unknown): void {
 }
 
 export function readAdvisorPrefs(): AdvisorPrefs {
-  const p = readJson<Partial<AdvisorPrefs>>(ADVISOR_PREFS_KEY) || {}
+  const p = readJson<Partial<AdvisorPrefs> & { v?: number }>(ADVISOR_PREFS_KEY) || {}
   const pick = (k: keyof AdvisorPrefs) => (typeof p[k] === 'boolean' ? (p[k] as boolean) : DEFAULT_ADVISOR_PREFS[k])
-  return { enabled: pick('enabled'), autoCheck: pick('autoCheck'), notify: pick('notify') }
+  const notify = p.v === ADVISOR_PREFS_VERSION ? pick('notify') : p.notify === false ? false : DEFAULT_ADVISOR_PREFS.notify
+  return { enabled: pick('enabled'), autoCheck: pick('autoCheck'), notify }
 }
 
 export function writeAdvisorPrefs(next: Partial<AdvisorPrefs>): AdvisorPrefs {
   const merged = { ...readAdvisorPrefs(), ...next }
-  writeJson(ADVISOR_PREFS_KEY, merged)
+  writeJson(ADVISOR_PREFS_KEY, { ...merged, v: ADVISOR_PREFS_VERSION })
   window.dispatchEvent(new CustomEvent(ADVISOR_EVENT))
   return merged
 }

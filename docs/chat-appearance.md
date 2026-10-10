@@ -33,6 +33,13 @@ for yours — so it is identifiable with or without the picture.
 
 Halves the gap between messages (32 px → 16 px) for long conversations.
 
+## Zoom pictures to the face
+
+Off by default. When on, the round pictures in the chat header, beside replies, in the
+Conversation Hub and in Voice use an automatic crop around the face (made by the backend,
+`GET /projects/{id}/persona/avatar/face`). When off, they show the original picture as it was
+saved — the full picture in the Hub and Voice, its thumbnail in small frames.
+
 ## Live preview
 
 ![Settings → Chat with the live preview, and the chat popover](assets/chat-appearance/settings-and-popover.jpg)

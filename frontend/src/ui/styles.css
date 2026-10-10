@@ -593,6 +593,26 @@ select option:hover {
 .hp-cq { container-type: inline-size; }
 @container (max-width: 29.99rem) { .hp-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container (min-width: 30rem) { .hp-choice-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+/* Models page: Provider and Base URL stacked in a narrow column, side by side
+   once the right-hand column (.hp-models-main, a .hp-cq) has room for both. */
+.hp-models-connection { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+@container (min-width: 34rem) { .hp-models-connection { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Models page workspace. The Model Type list is a scrolling tab bar above the
+   content until the page itself (not the window — the app sidebar takes room)
+   is wide enough for a side column; then it becomes the left column and the
+   connection settings and model list fill the right one, which scrolls. */
+.hp-models-page { container-type: inline-size; container-name: hp-models; }
+.hp-models-typelist { display: flex; gap: 0.5rem; overflow-x: auto; margin: 0 -1rem; padding: 0 1rem 0.25rem; }
+@container hp-models (min-width: 56rem) {
+  .hp-models-workspace { display: grid; grid-template-columns: 208px minmax(0, 1fr); }
+  .hp-models-types { border-bottom: 0; border-right: 1px solid rgba(255, 255, 255, 0.1); padding: 1.25rem 0.875rem; overflow-y: auto; }
+  .hp-models-typelist { flex-direction: column; gap: 0.375rem; overflow: visible; margin: 0; padding: 0; }
+  .hp-models-typelist > button { width: 100%; }
+}
+@container hp-models (min-width: 72rem) {
+  .hp-models-workspace { grid-template-columns: 236px minmax(0, 1fr); }
+  .hp-models-types { padding: 1.25rem 1rem; }
+}
 
 /* Startup and error screens share one calm, legible layout. */
 .hp-status-screen {

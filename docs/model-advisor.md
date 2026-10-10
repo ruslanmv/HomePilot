@@ -37,7 +37,8 @@ when it was last checked. If FitLab cannot be reached, the current list stays an
 while HomePilot is open, the same conditional request runs in the background; after a failure it
 retries in 6 hours. Off: FitLab is contacted only when you press **Fetch definitions**.
 
-**Notifications** (on by default): one quiet, non-modal notice at a time —
+**Notifications** (off by default — turn on *Notify me about better models* in Settings → Models →
+Model suggestions): one quiet, non-modal notice at a time —
 
 - *Better chat / vision / image / video model for this computer* — when FitLab ranks a model
   clearly above the one you have selected;
@@ -56,7 +57,7 @@ open the suggestions. Turning notifications off silences both; suggestions stay 
 |---|---|---|
 | Settings → Models (this device) | Suggested for your GPU | Hide the card, the notices and every request |
 | | Check for new definitions automatically | Daily background check on/off |
-| | Notify me about better models | Notices and the New badge on/off |
+| | Notify me about better models | Notices and the New badge on/off (off by default) |
 | Server environment | `FITLAB_ENABLED=false` | Feature off for everyone (the UI hides it) |
 | | `FITLAB_OFFLINE=true` | Never contact FitLab; cached / bundled data only |
 | | `FITLAB_REGISTRY_URL`, `FITLAB_MEDIA_URL` | An internal mirror (`https://` or `file://`) |

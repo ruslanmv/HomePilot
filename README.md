@@ -338,8 +338,8 @@ In round frames the picture is cropped to the face, so even a full-body persona 
 computer HomePilot runs on, using [FitLab](https://github.com/ruslanmv/fitlab)'s weekly definitions:
 whether each fits, how much memory it needs, how fast it should run, and one-click install.
 **Fetch definitions** gets FitLab's latest (without internet, the copy bundled with the release is
-used); an optional daily check and quiet notices tell you when a clearly better model than yours
-fits — each can be turned off. See [docs/model-advisor.md](docs/model-advisor.md).
+used); an optional daily check keeps them current, and quiet notices (off by default) can tell you
+when a clearly better model than yours fits. See [docs/model-advisor.md](docs/model-advisor.md).
 
 <p align="center">
   <img src="docs/assets/model-advisor/card.jpg" alt="Suggested for your GPU: top chat and video models for a 12 GB GPU, with fit, speed and install" width="900" />

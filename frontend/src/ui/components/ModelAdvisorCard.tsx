@@ -8,6 +8,8 @@
  *   list and says which one it is showing.
  * - Marks the model in use per kind, and the one FitLab ranks clearly higher.
  * - Install is explicit and confirmed, through the existing POST /models/install.
+ * - Collapsed, it still shows the best fit for this computer in one line, so the
+ *   recommendation stays visible above the model list (`defaultCollapsed`).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, Copy, Cpu, Download, ExternalLink, Loader2, RefreshCw, Sparkles } from 'lucide-react'
@@ -76,6 +78,7 @@ export function ModelAdvisorCard({
   current,
   onToast,
   onInstalled,
+  defaultCollapsed = false,
 }: {
   backendUrl: string
   apiKey?: string
@@ -85,19 +88,25 @@ export function ModelAdvisorCard({
   onToast?: (message: string) => void
   /** Called after an install succeeds, so the page can refresh its installed list. */
   onInstalled?: () => void
+  /** Start as the one-line summary until the user expands it (the choice is remembered). */
+  defaultCollapsed?: boolean
 }) {
   const [data, setData] = useState<AdvisorResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [fetching, setFetching] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // A notice's "View" asks for a tab; otherwise follow the Models page.
-  const [kind, setKind] = useState<AdvisorKind>(() => takeFocus() || initialKind)
+  // A notice's "View" asks for a tab (and opens the full list); otherwise follow the Models page.
+  const [focusKind] = useState<AdvisorKind | null>(() => takeFocus())
+  const [kind, setKind] = useState<AdvisorKind>(() => focusKind || initialKind)
   const [plan, setPlan] = useState('')
   const [confirm, setConfirm] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem(COLLAPSE_KEY) === '1' } catch { return false }
+    if (focusKind) return false
+    let stored: string | null = null
+    try { stored = localStorage.getItem(COLLAPSE_KEY) } catch { /* ignore */ }
+    return stored === '1' ? true : stored === '0' ? false : defaultCollapsed
   })
   const [fresh, setFresh] = useState<Set<string>>(new Set())
   const seenOnce = useRef(false)
@@ -239,6 +248,33 @@ export function ModelAdvisorCard({
           {fetching ? 'Fetching…' : 'Fetch definitions'}
         </button>
       </header>
+
+      {collapsed ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-white/[0.06] px-4 py-2.5 text-xs sm:px-5" data-testid="advisor-summary">
+          {list[0] ? (
+            <>
+              <span className="text-white/50">Best {KIND_LABEL[kind].toLowerCase()} fit for this computer</span>
+              <span className="font-semibold text-white">{list[0].name}</span>
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${VERDICT[list[0].verdict].cls}`}>{VERDICT[list[0].verdict].label}</span>
+              {list[0].installed ? <span className="inline-flex items-center gap-1 font-medium text-emerald-300"><Check size={13} /> Installed</span> : null}
+              {upgrade && upgrade.better.id === list[0].id ? <span className="rounded-full bg-violet-500/30 px-2 py-0.5 text-[10px] font-semibold text-violet-100">Upgrade</span> : null}
+              <span className="hidden min-w-0 flex-1 truncate text-white/45 md:block">{list[0].reasons[0]}</span>
+            </>
+          ) : (
+            <span className="min-w-0 flex-1 text-white/50">
+              {loading && !data ? 'Ranking models for this machine…' : error || emptyText}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-controls="hp-advisor-body"
+            className="ml-auto inline-flex h-8 items-center rounded-lg border border-violet-400/30 bg-violet-500/10 px-3 font-semibold text-violet-100 hover:bg-violet-500/20"
+          >
+            {list.length > 1 ? `Show all ${list.length}` : 'Show details'}
+          </button>
+        </div>
+      ) : null}
 
       {!collapsed ? (
         <div id="hp-advisor-body" className="border-t border-white/[0.06] px-4 pb-4 pt-3 sm:px-5">

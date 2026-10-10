@@ -12,12 +12,14 @@ import {
   ADVISOR_SEEN_KEY,
   CHECK_INTERVAL_MS,
   type AdvisorResponse,
+  ADVISOR_PREFS_KEY,
   advisorEnabled,
   advisorSignature,
   checkDue,
   lastCheck,
   markSeen,
   pickNotice,
+  readAdvisorPrefs,
   recordCheck,
   setAdvisorEnabled,
   snooze,
@@ -102,6 +104,21 @@ describe('ModelAdvisorCard', () => {
       "Couldn't reach FitLab — showing the bundled with HomePilot 2026-10-07 list.")
     const post = spy.mock.calls.find(([u]) => String(u).includes('/v1/model-advisor/fetch'))
     expect(post?.[1]?.method).toBe('POST')
+  })
+
+  it('on the Models page it starts as one line with the best fit, and expands to the full list', async () => {
+    mockServer()
+    const { unmount } = render(<ModelAdvisorCard backendUrl="http://hp" defaultCollapsed />)
+    const summary = await screen.findByTestId('advisor-summary')
+    await within(summary).findByText('qwen3-14b')
+    expect(screen.queryByRole('tabpanel')).toBeNull()
+    fireEvent.click(within(summary).getByRole('button', { name: /Show all/ }))
+    expect(within(screen.getByRole('tabpanel')).getAllByRole('listitem').length).toBeGreaterThan(1)
+    expect(screen.queryByTestId('advisor-summary')).toBeNull()
+    unmount()
+    // Expanding is remembered on this device.
+    render(<ModelAdvisorCard backendUrl="http://hp" defaultCollapsed />)
+    expect(await screen.findByRole('tabpanel')).toBeInTheDocument()
   })
 
   it('reports a successful fetch with the new data dates', async () => {
@@ -201,8 +218,31 @@ describe('automatic checks and notices', () => {
     expect(posts(spy)).toBe(0)
   })
 
-  it('after an update the Models entry says New until the suggestions are opened', async () => {
+  it('notifications are off by default: no notice and no New badge', async () => {
     writeAdvisorPrefs({ autoCheck: false })
+    expect(readAdvisorPrefs().notify).toBe(false)
+    const spy = mockServer()
+    const { result } = run()
+    await waitFor(() => expect(spy).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 30))
+    expect(result.current.notice).toBeNull()
+    expect(result.current.badge).toBe(false)
+  })
+
+  it('a notify value saved by the old default is read as off; a later choice is kept', () => {
+    // Version 1 wrote every key whenever one changed, so notify: true was the old default.
+    localStorage.setItem(ADVISOR_PREFS_KEY, JSON.stringify({ enabled: true, autoCheck: false, notify: true }))
+    expect(readAdvisorPrefs()).toEqual({ enabled: true, autoCheck: false, notify: false })
+    localStorage.setItem(ADVISOR_PREFS_KEY, JSON.stringify({ enabled: true, autoCheck: true, notify: false }))
+    expect(readAdvisorPrefs().notify).toBe(false)
+    writeAdvisorPrefs({ notify: true })
+    expect(readAdvisorPrefs().notify).toBe(true)
+    writeAdvisorPrefs({ autoCheck: false })
+    expect(readAdvisorPrefs()).toEqual({ enabled: true, autoCheck: false, notify: true })
+  })
+
+  it('after an update the Models entry says New until the suggestions are opened', async () => {
+    writeAdvisorPrefs({ autoCheck: false, notify: true })
     mockServer()
     const { result } = run()
     await waitFor(() => expect(result.current.badge).toBe(true))
@@ -212,7 +252,7 @@ describe('automatic checks and notices', () => {
   })
 
   it('an upgrade is the notice, and "Not now" keeps it quiet', async () => {
-    writeAdvisorPrefs({ autoCheck: false })
+    writeAdvisorPrefs({ autoCheck: false, notify: true })
     markSeen(PAYLOAD)
     const withUpgrade = { ...PAYLOAD, upgrades: { chat: { kind: 'chat', current: { id: 'q', name: 'Qwen 2.5 7B', model_id: 'qwen2.5-7b:tag', score: 0.7, rank: 3 }, better: PAYLOAD.suggestions!.chat![0] } } }
     mockServer({ get: withUpgrade })
@@ -228,7 +268,7 @@ describe('automatic checks and notices', () => {
   })
 
   it('notifications can be turned off without turning suggestions off', async () => {
-    writeAdvisorPrefs({ autoCheck: false })
+    writeAdvisorPrefs({ autoCheck: false, notify: true })
     mockServer()
     const { result } = run()
     await waitFor(() => expect(result.current.notice).not.toBeNull())

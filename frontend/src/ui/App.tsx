@@ -6043,9 +6043,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     []
   )
 
-  // The project's picture in round frames: cropped to the face by the backend,
-  // with the regular thumbnail if the crop can't be served.
-  const projectFaceUrl = projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'face')
+  // The project's picture in round frames. By default the original picture: the
+  // thumbnail in small frames, the full picture in the Hub and Voice. With
+  // Settings → Chat → "Zoom pictures to the face" on, the backend's face crop is
+  // tried first, falling back to those.
+  const { faceZoom } = useChatAppearance()
+  const projectFaceUrl = faceZoom ? projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'face') : null
+  const projectFullUrl = projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'full')
 
   // Model Advisor (FitLab): the models in use, so a clearly better one that fits this
   // computer can be suggested. Only ids FitLab can rank are passed (Ollama / ComfyUI).
@@ -6302,7 +6306,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 projectId={currentProject.id}
                 projectName={currentProject.name}
                 projectCreatedAt={currentProject.created_at}
-                avatarUrl={projectFaceUrl}
+                avatarUrl={projectFaceUrl || projectFullUrl}
                 avatarFallbackUrl={projectThumbUrl}
                 projectType={currentProject.project_type}
                 description={currentProject.description}
@@ -6421,7 +6425,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               currentProject
                 ? {
                     name: currentProject.name,
-                    avatarUrl: projectFaceUrl,
+                    avatarUrl: projectFaceUrl || projectFullUrl,
                     avatarFallbackUrl: projectThumbUrl,
                     projectType: currentProject.project_type,
                   }
