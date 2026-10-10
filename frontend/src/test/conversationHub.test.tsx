@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SessionPanel from '../ui/sessions/SessionPanel'
 import PersonaHubDrawer from '../ui/sessions/PersonaHubDrawer'
-import { ProjectAvatar } from '../ui/components/ProjectAvatar'
+import { AvatarImage, ProjectAvatar } from '../ui/components/ProjectAvatar'
 import {
   parseServerTime,
   projectAvatarUrl,
@@ -77,6 +77,10 @@ describe('project identity helpers', () => {
     }
     expect(projectAvatarUrl(project, 'http://hp')).toBe('http://hp/files/projects/p1/persona/appearance/thumb_avatar_a.webp?v=1700000000500&token=tok')
     expect(projectAvatarUrl(project, 'http://hp', 'full')).toContain('/avatar_a.png?')
+    // The face crop is served by the backend for the project, cache-busted the same way.
+    expect(projectAvatarUrl({ ...project, id: 'p 1' }, 'http://hp', 'face')).toBe('http://hp/projects/p%201/persona/avatar/face?v=1700000000500')
+    expect(projectAvatarUrl(project, 'http://hp', 'face')).toBeNull() // no id
+    expect(projectAvatarUrl({ id: 'p1', persona_appearance: {} }, 'http://hp', 'face')).toBeNull()
     expect(projectAvatarUrl({ persona_appearance: {} }, 'http://hp')).toBeNull()
     expect(projectAvatarUrl(null, 'http://hp')).toBeNull()
   })
@@ -105,6 +109,24 @@ describe('ProjectAvatar', () => {
     expect(screen.getByRole('img', { name: 'Angel' }).tagName).toBe('DIV')
     rerender(<ProjectAvatar url={null} name="Sunny" projectType="persona" />)
     expect(document.querySelector('.hp-project-avatar')).toHaveAttribute('data-kind', 'icon')
+  })
+
+  it('falls back from the face crop to the thumbnail, then to the icon', () => {
+    render(<ProjectAvatar url="http://hp/face" fallbackUrl="http://hp/thumb.webp" name="Angel" projectType="persona" />)
+    expect(screen.getByRole('img', { name: 'Angel' })).toHaveAttribute('src', 'http://hp/face')
+    fireEvent.error(screen.getByRole('img', { name: 'Angel' }))
+    expect(screen.getByRole('img', { name: 'Angel' })).toHaveAttribute('src', 'http://hp/thumb.webp')
+    fireEvent.error(screen.getByRole('img', { name: 'Angel' }))
+    expect(screen.getByRole('img', { name: 'Angel' }).tagName).toBe('DIV')
+  })
+
+  it('a small avatar shows its fallback mark when no picture loads', () => {
+    const { container } = render(<AvatarImage urls={['http://hp/face', null]} className="a" fallback={<span>mark</span>} />)
+    const img = container.querySelector('img') as HTMLImageElement
+    expect(img).toHaveAttribute('src', 'http://hp/face')
+    fireEvent.error(img)
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('mark')).toBeInTheDocument()
   })
 })
 

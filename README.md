@@ -330,6 +330,21 @@ A Grok-like dark minimal interface with:
 
 Each persona opens on its own hub. Its saved picture is the project's identity — here, in the chat header, beside its replies and in Voice — with the persona's icon when it has no picture, and the default HomePilot look when no project is open. **Continue Conversation** reopens the latest conversation; **Talk by Voice** and **Chat by Text** resume it in either mode; **Fresh voice/text chat** starts over; **Memories** opens the memory manager in place; **Conversation History** lists each conversation's type, messages and last activity. See [docs/conversation-hub.md](docs/conversation-hub.md).
 
+In round frames the picture is cropped to the face, so even a full-body persona is recognisable at 32 px. **Settings → Chat** chooses whether it appears beside every reply, only at the start of each run of replies (the default), or not at all, and offers compact message spacing — the header, hub and Voice keep the picture either way. See [docs/chat-appearance.md](docs/chat-appearance.md).
+
+### Suggested models for your GPU
+
+**Models → Suggested for your GPU** ranks the top 5 chat, vision, image and video models for the
+computer HomePilot runs on, using [FitLab](https://github.com/ruslanmv/fitlab)'s weekly definitions:
+whether each fits, how much memory it needs, how fast it should run, and one-click install.
+**Fetch definitions** gets FitLab's latest (without internet, the copy bundled with the release is
+used); an optional daily check and quiet notices tell you when a clearly better model than yours
+fits — each can be turned off. See [docs/model-advisor.md](docs/model-advisor.md).
+
+<p align="center">
+  <img src="docs/assets/model-advisor/card.jpg" alt="Suggested for your GPU: top chat and video models for a 12 GB GPU, with fit, speed and install" width="900" />
+</p>
+
 ### On Your Phone
 <p align="center">
   <img src="assets/readme/homepilot-mobile.jpg" alt="HomePilot on a phone: an answer being revealed, the menu, a persona's Conversation Hub, Voice with the persona's picture, and Account Settings" width="900" />

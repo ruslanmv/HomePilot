@@ -23,6 +23,7 @@ import {
   Cloud,
   Cpu,
   Sparkles,
+  MessageSquare,
 } from "lucide-react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
 import OllaBridgeLink from "./components/OllaBridgeLink";
@@ -37,6 +38,75 @@ import ComputeSettingsTabs from "./components/compute/ComputeSettingsTabs";
 import ModelExecutionSelector from "./components/compute/ModelExecutionSelector";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import { MotionGallery } from "./motion/MotionGallery";
+import { ChatAppearanceSettings } from "./components/ChatAppearanceSettings";
+import { lastCheck, useAdvisorPrefs, writeAdvisorPrefs, type AdvisorPrefs } from "./modelAdvisor";
+
+function AdvisorSwitch({ id, label, hint, checked, disabled, onChange }: {
+  id: string; label: string; hint: string; checked: boolean; disabled?: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className={`flex items-start justify-between gap-4 ${disabled ? "opacity-50" : ""}`}>
+      <div className="min-w-0">
+        <div id={id} className="text-sm text-white/90">{label}</div>
+        <p className="mt-0.5 text-xs text-white/50">{hint}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-labelledby={id}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className={[
+          "relative h-6 w-10 shrink-0 rounded-full border transition-colors",
+          checked ? "border-violet-400/60 bg-violet-500/70" : "border-white/15 bg-white/[0.06]",
+        ].join(" ")}
+      >
+        <span className={["absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white transition-all", checked ? "left-[20px]" : "left-[3px] opacity-60"].join(" ")} />
+      </button>
+    </div>
+  );
+}
+
+/** Settings → Models: the optional FitLab Model Advisor (this device). */
+function ModelAdvisorToggle() {
+  const prefs = useAdvisorPrefs();
+  const set = (next: Partial<AdvisorPrefs>) => writeAdvisorPrefs(next);
+  const check = lastCheck();
+  const checked = check
+    ? `${new Date(check.at).toLocaleString()}${check.ok ? "" : " — FitLab could not be reached, will retry in a few hours"}`
+    : "not yet";
+  return (
+    <div className="space-y-4">
+      <AdvisorSwitch
+        id="hp-advisor-toggle"
+        label="Suggested for your GPU"
+        hint="Show the top chat, vision, image and video models for this computer on the Models page."
+        checked={prefs.enabled}
+        onChange={(v) => set({ enabled: v })}
+      />
+      <AdvisorSwitch
+        id="hp-advisor-auto"
+        label="Check for new definitions automatically"
+        hint="At most once a day while HomePilot is open, ask FitLab whether its definitions changed. Off: only when you press Fetch definitions."
+        checked={prefs.autoCheck}
+        disabled={!prefs.enabled}
+        onChange={(v) => set({ autoCheck: v })}
+      />
+      <AdvisorSwitch
+        id="hp-advisor-notify"
+        label="Notify me about better models"
+        hint="A small notice when a clearly better model than the one you use fits this computer, or after an update changes the suggestions."
+        checked={prefs.notify}
+        disabled={!prefs.enabled}
+        onChange={(v) => set({ notify: v })}
+      />
+      <p className="text-[11px] text-white/40">
+        Last automatic check: {checked}. Nothing is installed or changed unless you press Install. Data: FitLab, CC BY 4.0.
+      </p>
+    </div>
+  );
+}
 import TtsEngineSection from "./components/TtsEngineSection";
 import VoiceAssistantSelfTest from "./components/VoiceAssistantSelfTest";
 import SpeechRecognitionSettings from "./components/SpeechRecognitionSettings";
@@ -334,6 +404,7 @@ const SECTIONS = [
   { id: "tools", label: "Tools & Agents", Icon: Wrench },
   { id: "matrixhub", label: "MatrixHub", Icon: Grid3x3 },
   { id: "ollabridge", label: "OllaBridge API", Icon: Code2 },
+  { id: "chat", label: "Chat", Icon: MessageSquare },
   { id: "motion", label: "Motion", Icon: Sparkles },
   { id: "advanced", label: "Advanced", Icon: FlaskConical },
 ] as const;
@@ -423,11 +494,14 @@ export default function SettingsPanel({
   onChangeDraft,
   onSave,
   onClose,
+  chatPreview,
 }: {
   value: SettingsModelV2;
   onChangeDraft: (next: SettingsModelV2) => void;
   onSave: () => void;
   onClose: () => void;
+  /** The open persona's name and picture, for the Chat → Appearance preview. */
+  chatPreview?: { name: string; avatarUrls: Array<string | null | undefined> } | null;
 }) {
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
   const [loadingProviders, setLoadingProviders] = useState(false);
@@ -1080,6 +1154,13 @@ export default function SettingsPanel({
           Self-gates on the Account & Computers flag (null when off). */}
       <UnifiedModelCatalog />
       <SettingsCard
+        title="Model suggestions"
+        description="Show the top models for this computer's GPU on the Models page, ranked by FitLab. Applies right away — no need to Save."
+        icon={<Sparkles size={16} />}
+      >
+        <ModelAdvisorToggle />
+      </SettingsCard>
+      <SettingsCard
         title="Model Endpoints"
         description="Optional base URLs and the specific model for each provider."
         icon={<Boxes size={16} />}
@@ -1596,6 +1677,18 @@ export default function SettingsPanel({
       case "tools": return renderTools();
       case "matrixhub": return renderMatrixHub();
       case "ollabridge": return renderOllaBridge();
+      case "chat": return (
+        <SettingsCard
+          title="Chat Appearance"
+          description="Customize how conversations are displayed. Applies right away — no need to Save."
+          icon={<MessageSquare size={16} />}
+        >
+          <ChatAppearanceSettings
+            previewName={chatPreview?.name || "Persona"}
+            previewAvatarUrls={chatPreview?.avatarUrls || []}
+          />
+        </SettingsCard>
+      );
       case "motion": return (
         <SettingsCard
           title="Motion & animations"

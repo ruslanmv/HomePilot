@@ -12,6 +12,7 @@ type SettingsPanelProps = {
   onChangeDraft: (next: any) => void;
   onSave: () => void;
   onClose: () => void;
+  chatPreview?: { name: string; avatarUrls: Array<string | null | undefined> } | null;
 };
 
 type NavHost = {

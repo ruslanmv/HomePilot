@@ -1,0 +1,926 @@
+{
+ "categories": {
+  "image-12gb": {
+   "reference_gpu": "rtx3060-12",
+   "task": "image",
+   "title": "Top image models — 12 GB GPU",
+   "top": [
+    {
+     "id": "sdxl-base-1.0",
+     "score": 0.8195
+    },
+    {
+     "id": "sd15",
+     "score": 0.7633
+    },
+    {
+     "id": "realistic-vision-5.1",
+     "score": 0.7459
+    },
+    {
+     "id": "sd3.5-medium",
+     "score": 0.7384
+    },
+    {
+     "id": "flux1-schnell",
+     "score": 0.6155
+    },
+    {
+     "id": "flux1-dev",
+     "score": 0.5926
+    },
+    {
+     "id": "sd3.5-large",
+     "score": 0.5348
+    }
+   ]
+  },
+  "image-16gb": {
+   "reference_gpu": "rtx4060ti-16",
+   "task": "image",
+   "title": "Top image models — 16 GB GPU",
+   "top": [
+    {
+     "id": "sdxl-base-1.0",
+     "score": 0.8195
+    },
+    {
+     "id": "flux1-schnell",
+     "score": 0.7755
+    },
+    {
+     "id": "sd15",
+     "score": 0.7633
+    },
+    {
+     "id": "flux1-dev",
+     "score": 0.7526
+    },
+    {
+     "id": "realistic-vision-5.1",
+     "score": 0.7459
+    },
+    {
+     "id": "sd3.5-medium",
+     "score": 0.7384
+    },
+    {
+     "id": "sd3.5-large",
+     "score": 0.6948
+    }
+   ]
+  },
+  "image-24gb": {
+   "reference_gpu": "rtx4090-24",
+   "task": "image",
+   "title": "Top image models — 24 GB GPU",
+   "top": [
+    {
+     "id": "flux1-schnell",
+     "score": 0.8955
+    },
+    {
+     "id": "flux1-dev",
+     "score": 0.8726
+    },
+    {
+     "id": "sdxl-base-1.0",
+     "score": 0.8195
+    },
+    {
+     "id": "sd3.5-large",
+     "score": 0.8148
+    },
+    {
+     "id": "sd15",
+     "score": 0.7633
+    },
+    {
+     "id": "realistic-vision-5.1",
+     "score": 0.7459
+    },
+    {
+     "id": "sd3.5-medium",
+     "score": 0.7384
+    }
+   ]
+  },
+  "video-12gb": {
+   "reference_gpu": "rtx3060-12",
+   "task": "video",
+   "title": "Top video models — 12 GB GPU",
+   "top": [
+    {
+     "id": "ltx-video-2b-0.9.1",
+     "score": 0.7417
+    },
+    {
+     "id": "wan2.1-t2v-1.3b",
+     "score": 0.6902
+    },
+    {
+     "id": "svd-xt-1.1",
+     "score": 0.6649
+    },
+    {
+     "id": "hunyuanvideo-q4",
+     "score": 0.6412
+    },
+    {
+     "id": "wan2.2-ti2v-5b",
+     "score": 0.6153
+    }
+   ]
+  },
+  "video-16gb": {
+   "reference_gpu": "rtx4060ti-16",
+   "task": "video",
+   "title": "Top video models — 16 GB GPU",
+   "top": [
+    {
+     "id": "hunyuanvideo-q4",
+     "score": 0.7612
+    },
+    {
+     "id": "ltx-video-2b-0.9.1",
+     "score": 0.7417
+    },
+    {
+     "id": "wan2.2-ti2v-5b",
+     "score": 0.7353
+    },
+    {
+     "id": "wan2.1-t2v-1.3b",
+     "score": 0.6902
+    },
+    {
+     "id": "svd-xt-1.1",
+     "score": 0.6649
+    },
+    {
+     "id": "mochi-1-preview",
+     "score": 0.4876
+    },
+    {
+     "id": "cogvideox-1.5-5b-i2v",
+     "score": 0.4106
+    }
+   ]
+  },
+  "video-24gb": {
+   "reference_gpu": "rtx4090-24",
+   "task": "video",
+   "title": "Top video models — 24 GB GPU",
+   "top": [
+    {
+     "id": "mochi-1-preview",
+     "score": 0.7676
+    },
+    {
+     "id": "hunyuanvideo-q4",
+     "score": 0.7612
+    },
+    {
+     "id": "ltx-video-2b-0.9.1",
+     "score": 0.7417
+    },
+    {
+     "id": "wan2.2-ti2v-5b",
+     "score": 0.7353
+    },
+    {
+     "id": "cogvideox-1.5-5b-i2v",
+     "score": 0.6906
+    },
+    {
+     "id": "wan2.1-t2v-1.3b",
+     "score": 0.6902
+    },
+    {
+     "id": "svd-xt-1.1",
+     "score": 0.6649
+    }
+   ]
+  }
+ },
+ "generated_at": "2026-10-09",
+ "media_ranking_version": "1.0",
+ "models": {
+  "cogvideox-1.5-5b-i2v": {
+   "components": {
+    "capability": 0.6616,
+    "momentum": 0.4575,
+    "speed": 0.1087
+   },
+   "cost": {
+    "frames": 81,
+    "megapixels": 1.04,
+    "steps": 50
+   },
+   "download_gb": 20.0,
+   "family": "cogvideo",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "no"
+    },
+    "rtx4060ti-16": {
+     "verdict": "offload"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "THUDM/CogVideoX1.5-5B-I2V",
+   "hf_stats": {
+    "downloads_30d": 1593,
+    "fetched_at": "2026-10-09",
+    "likes": 123
+   },
+   "homepilot": {
+    "model_id": "cogvideox1.5_5b_i2v_snapshot",
+    "model_type": "video",
+    "provider": "comfyui"
+   },
+   "id": "cogvideox-1.5-5b-i2v",
+   "license": "cogvideox",
+   "name": "CogVideoX 1.5 5B I2V",
+   "params_b": 5.0,
+   "scores": {
+    "rtx3060-12": 0.2906,
+    "rtx4060ti-16": 0.4106,
+    "rtx4090-24": 0.6906
+   },
+   "task": "image-to-video",
+   "vram_gb": {
+    "min": 18,
+    "recommended": 24,
+    "source": "homepilot-presets"
+   }
+  },
+  "flux1-dev": {
+   "components": {
+    "capability": 0.9472,
+    "momentum": 0.8343,
+    "speed": 0.2718
+   },
+   "cost": {
+    "megapixels": 1.05,
+    "steps": 28
+   },
+   "download_gb": 23.8,
+   "family": "flux",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "offload"
+    },
+    "rtx4060ti-16": {
+     "verdict": "tight"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "black-forest-labs/FLUX.1-dev",
+   "hf_stats": {
+    "downloads_30d": 692175,
+    "fetched_at": "2026-10-09",
+    "likes": 15464
+   },
+   "homepilot": {
+    "model_id": "flux1-dev.safetensors",
+    "model_type": "image",
+    "provider": "comfyui"
+   },
+   "id": "flux1-dev",
+   "license": "flux-1-dev-non-commercial-license",
+   "name": "FLUX.1 dev",
+   "params_b": 12.0,
+   "scores": {
+    "rtx3060-12": 0.5926,
+    "rtx4060ti-16": 0.7526,
+    "rtx4090-24": 0.8726
+   },
+   "task": "text-to-image",
+   "vram_gb": {
+    "min": 16,
+    "recommended": 24,
+    "source": "editorial"
+   }
+  },
+  "flux1-schnell": {
+   "components": {
+    "capability": 0.9472,
+    "momentum": 0.8305,
+    "speed": 0.5112
+   },
+   "cost": {
+    "megapixels": 1.05,
+    "steps": 4
+   },
+   "download_gb": 23.8,
+   "family": "flux",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "offload"
+    },
+    "rtx4060ti-16": {
+     "verdict": "tight"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "black-forest-labs/FLUX.1-schnell",
+   "hf_stats": {
+    "downloads_30d": 650951,
+    "fetched_at": "2026-10-09",
+    "likes": 6181
+   },
+   "homepilot": {
+    "model_id": "flux1-schnell.safetensors",
+    "model_type": "image",
+    "provider": "comfyui"
+   },
+   "id": "flux1-schnell",
+   "license": "apache-2.0",
+   "name": "FLUX.1 schnell",
+   "params_b": 12.0,
+   "scores": {
+    "rtx3060-12": 0.6155,
+    "rtx4060ti-16": 0.7755,
+    "rtx4090-24": 0.8955
+   },
+   "task": "text-to-image",
+   "vram_gb": {
+    "min": 16,
+    "recommended": 24,
+    "source": "editorial"
+   }
+  },
+  "hunyuanvideo-q4": {
+   "components": {
+    "capability": 0.9745,
+    "momentum": 0.4659,
+    "speed": 0.011
+   },
+   "cost": {
+    "frames": 129,
+    "megapixels": 0.92,
+    "steps": 30
+   },
+   "download_gb": 9.5,
+   "family": "hunyuan",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "tight"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "tencent/HunyuanVideo",
+   "hf_stats": {
+    "downloads_30d": 1825,
+    "fetched_at": "2026-10-09",
+    "likes": 2320
+   },
+   "homepilot": {
+    "model_id": "hunyuanvideo_t2v_720p_gguf_q4_k_m_pack",
+    "model_type": "video",
+    "provider": "comfyui"
+   },
+   "id": "hunyuanvideo-q4",
+   "license": "tencent-hunyuan-community",
+   "name": "HunyuanVideo 720p (GGUF Q4_K_M)",
+   "params_b": 13.0,
+   "scores": {
+    "rtx3060-12": 0.6412,
+    "rtx4060ti-16": 0.7612,
+    "rtx4090-24": 0.7612
+   },
+   "task": "text-to-video",
+   "vram_gb": {
+    "min": 12,
+    "recommended": 16,
+    "source": "homepilot-presets"
+   }
+  },
+  "ltx-video-2b-0.9.1": {
+   "components": {
+    "capability": 0.4057,
+    "momentum": 0.8288,
+    "speed": 0.3312
+   },
+   "cost": {
+    "frames": 97,
+    "megapixels": 0.6,
+    "steps": 30
+   },
+   "download_gb": 10.5,
+   "family": "ltx",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "fits"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "Lightricks/LTX-Video",
+   "hf_stats": {
+    "downloads_30d": 633640,
+    "fetched_at": "2026-10-09",
+    "likes": 2333
+   },
+   "homepilot": {
+    "model_id": "ltx-video-2b-v0.9.1.safetensors",
+    "model_type": "video",
+    "provider": "comfyui"
+   },
+   "id": "ltx-video-2b-0.9.1",
+   "license": "ltx-video-open-weights",
+   "name": "LTX-Video 2B 0.9.1",
+   "params_b": 2.0,
+   "scores": {
+    "rtx3060-12": 0.7417,
+    "rtx4060ti-16": 0.7417,
+    "rtx4090-24": 0.7417
+   },
+   "task": "text-to-video",
+   "vram_gb": {
+    "min": 8,
+    "recommended": 12,
+    "source": "homepilot-presets"
+   }
+  },
+  "mochi-1-preview": {
+   "components": {
+    "capability": 0.8855,
+    "momentum": 0.5643,
+    "speed": 0.0514
+   },
+   "cost": {
+    "frames": 163,
+    "megapixels": 0.41,
+    "steps": 50
+   },
+   "download_gb": 28.0,
+   "family": "mochi",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "no"
+    },
+    "rtx4060ti-16": {
+     "verdict": "offload"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "genmo/mochi-1-preview",
+   "hf_stats": {
+    "downloads_30d": 8911,
+    "fetched_at": "2026-10-09",
+    "likes": 1361
+   },
+   "homepilot": {
+    "model_id": "mochi_preview_fp8_pack",
+    "model_type": "video",
+    "provider": "comfyui"
+   },
+   "id": "mochi-1-preview",
+   "license": "apache-2.0",
+   "name": "Mochi 1 Preview (FP8)",
+   "params_b": 10.0,
+   "scores": {
+    "rtx3060-12": 0.3676,
+    "rtx4060ti-16": 0.4876,
+    "rtx4090-24": 0.7676
+   },
+   "task": "text-to-video",
+   "vram_gb": {
+    "min": 18,
+    "recommended": 24,
+    "source": "homepilot-presets"
+   }
+  },
+  "realistic-vision-5.1": {
+   "components": {
+    "capability": 0.2687,
+    "momentum": 0.818,
+    "speed": 0.7427
+   },
+   "cost": {
+    "megapixels": 0.26,
+    "steps": 25
+   },
+   "download_gb": 2.13,
+   "family": "sd15",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "fits"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "SG161222/Realistic_Vision_V5.1_noVAE",
+   "hf_stats": {
+    "downloads_30d": 532021,
+    "fetched_at": "2026-10-09",
+    "likes": 269
+   },
+   "homepilot": {
+    "model_id": "realisticVisionV51.safetensors",
+    "model_type": "image",
+    "provider": "comfyui"
+   },
+   "id": "realistic-vision-5.1",
+   "license": "creativeml-openrail-m",
+   "name": "Realistic Vision 5.1",
+   "params_b": 1.07,
+   "scores": {
+    "rtx3060-12": 0.7459,
+    "rtx4060ti-16": 0.7459,
+    "rtx4090-24": 0.7459
+   },
+   "task": "text-to-image",
+   "vram_gb": {
+    "min": 4,
+    "recommended": 6,
+    "source": "editorial"
+   }
+  },
+  "sd15": {
+   "components": {
+    "capability": 0.2687,
+    "momentum": 0.8875,
+    "speed": 0.7427
+   },
+   "cost": {
+    "megapixels": 0.26,
+    "steps": 25
+   },
+   "download_gb": 4.27,
+   "family": "sd15",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "fits"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+   "hf_stats": {
+    "downloads_30d": 1630014,
+    "fetched_at": "2026-10-09",
+    "likes": 1307
+   },
+   "homepilot": {
+    "model_id": "sd15.safetensors",
+    "model_type": "image",
+    "provider": "comfyui"
+   },
+   "id": "sd15",
+   "license": "creativeml-openrail-m",
+   "name": "Stable Diffusion 1.5",
+   "params_b": 1.07,
+   "scores": {
+    "rtx3060-12": 0.7633,
+    "rtx4060ti-16": 0.7633,
+    "rtx4090-24": 0.7633
+   },
+   "task": "text-to-image",
+   "vram_gb": {
+    "min": 4,
+    "recommended": 6,
+    "source": "editorial"
+   }
+  },
+  "sd3.5-large": {
+   "components": {
+    "capability": 0.8154,
+    "momentum": 0.7155,
+    "speed": 0.3204
+   },
+   "cost": {
+    "megapixels": 1.05,
+    "steps": 28
+   },
+   "download_gb": 16.5,
+   "family": "sd3",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "offload"
+    },
+    "rtx4060ti-16": {
+     "verdict": "tight"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "stabilityai/stable-diffusion-3.5-large",
+   "hf_stats": {
+    "downloads_30d": 101997,
+    "fetched_at": "2026-10-09",
+    "likes": 4109
+   },
+   "homepilot": null,
+   "id": "sd3.5-large",
+   "license": "stabilityai-ai-community",
+   "name": "Stable Diffusion 3.5 Large",
+   "params_b": 8.1,
+   "scores": {
+    "rtx3060-12": 0.5348,
+    "rtx4060ti-16": 0.6948,
+    "rtx4090-24": 0.8148
+   },
+   "task": "text-to-image",
+   "vram_gb": {
+    "min": 16,
+    "recommended": 24,
+    "source": "editorial"
+   }
+  },
+  "sd3.5-medium": {
+   "components": {
+    "capability": 0.4626,
+    "momentum": 0.7049,
+    "speed": 0.4651
+   },
+   "cost": {
+    "megapixels": 1.05,
+    "steps": 28
+   },
+   "download_gb": 5.1,
+   "family": "sd3",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "fits"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "stabilityai/stable-diffusion-3.5-medium",
+   "hf_stats": {
+    "downloads_30d": 85931,
+    "fetched_at": "2026-10-09",
+    "likes": 1189
+   },
+   "homepilot": null,
+   "id": "sd3.5-medium",
+   "license": "stabilityai-ai-community",
+   "name": "Stable Diffusion 3.5 Medium",
+   "params_b": 2.5,
+   "scores": {
+    "rtx3060-12": 0.7384,
+    "rtx4060ti-16": 0.7384,
+    "rtx4090-24": 0.7384
+   },
+   "task": "text-to-image",
+   "vram_gb": {
+    "min": 10,
+    "recommended": 12,
+    "source": "editorial"
+   }
+  },
+  "sdxl-base-1.0": {
+   "components": {
+    "capability": 0.5554,
+    "momentum": 0.9476,
+    "speed": 0.4377
+   },
+   "cost": {
+    "megapixels": 1.05,
+    "steps": 25
+   },
+   "download_gb": 6.94,
+   "family": "sdxl",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "fits"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "stabilityai/stable-diffusion-xl-base-1.0",
+   "hf_stats": {
+    "downloads_30d": 4300354,
+    "fetched_at": "2026-10-09",
+    "likes": 8287
+   },
+   "homepilot": {
+    "model_id": "sd_xl_base_1.0.safetensors",
+    "model_type": "image",
+    "provider": "comfyui"
+   },
+   "id": "sdxl-base-1.0",
+   "license": "openrail++",
+   "name": "SDXL Base 1.0",
+   "params_b": 3.5,
+   "scores": {
+    "rtx3060-12": 0.8195,
+    "rtx4060ti-16": 0.8195,
+    "rtx4090-24": 0.8195
+   },
+   "task": "text-to-image",
+   "vram_gb": {
+    "min": 8,
+    "recommended": 12,
+    "source": "editorial"
+   }
+  },
+  "svd-xt-1.1": {
+   "components": {
+    "capability": 0.3384,
+    "momentum": 0.4983,
+    "speed": 0.5568
+   },
+   "cost": {
+    "frames": 25,
+    "megapixels": 0.59,
+    "steps": 25
+   },
+   "download_gb": 9.56,
+   "family": "svd",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "fits"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "stabilityai/stable-video-diffusion-img2vid-xt-1-1",
+   "hf_stats": {
+    "downloads_30d": 3077,
+    "fetched_at": "2026-10-09",
+    "likes": 1176
+   },
+   "homepilot": {
+    "model_id": "svd_xt_1_1.safetensors",
+    "model_type": "video",
+    "provider": "comfyui"
+   },
+   "id": "svd-xt-1.1",
+   "license": "stable-video-diffusion-community",
+   "name": "Stable Video Diffusion XT 1.1",
+   "params_b": 1.5,
+   "scores": {
+    "rtx3060-12": 0.6649,
+    "rtx4060ti-16": 0.6649,
+    "rtx4090-24": 0.6649
+   },
+   "task": "image-to-video",
+   "vram_gb": {
+    "min": 6,
+    "recommended": 12,
+    "source": "homepilot-presets"
+   }
+  },
+  "wan2.1-t2v-1.3b": {
+   "components": {
+    "capability": 0.3076,
+    "momentum": 0.672,
+    "speed": 0.4533
+   },
+   "cost": {
+    "frames": 81,
+    "megapixels": 0.41,
+    "steps": 30
+   },
+   "download_gb": 8.2,
+   "family": "wan",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "fits"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "Wan-AI/Wan2.1-T2V-1.3B",
+   "hf_stats": {
+    "downloads_30d": 50605,
+    "fetched_at": "2026-10-09",
+    "likes": 617
+   },
+   "homepilot": null,
+   "id": "wan2.1-t2v-1.3b",
+   "license": "apache-2.0",
+   "name": "Wan 2.1 T2V 1.3B",
+   "params_b": 1.3,
+   "scores": {
+    "rtx3060-12": 0.6902,
+    "rtx4060ti-16": 0.6902,
+    "rtx4090-24": 0.6902
+   },
+   "task": "text-to-video",
+   "vram_gb": {
+    "min": 8,
+    "recommended": 10,
+    "source": "editorial"
+   }
+  },
+  "wan2.2-ti2v-5b": {
+   "components": {
+    "capability": 0.6616,
+    "momentum": 0.6248,
+    "speed": 0.1374
+   },
+   "cost": {
+    "frames": 121,
+    "megapixels": 0.92,
+    "steps": 30
+   },
+   "download_gb": 21.5,
+   "family": "wan",
+   "fits": {
+    "rtx3060-12": {
+     "verdict": "tight"
+    },
+    "rtx4060ti-16": {
+     "verdict": "fits"
+    },
+    "rtx4090-24": {
+     "verdict": "fits"
+    }
+   },
+   "hf_id": "Wan-AI/Wan2.2-TI2V-5B",
+   "hf_stats": {
+    "downloads_30d": 23646,
+    "fetched_at": "2026-10-09",
+    "likes": 811
+   },
+   "homepilot": {
+    "model_id": "wan2.2_5b_fp16_pack",
+    "model_type": "video",
+    "provider": "comfyui"
+   },
+   "id": "wan2.2-ti2v-5b",
+   "license": "apache-2.0",
+   "name": "Wan 2.2 TI2V 5B",
+   "params_b": 5.0,
+   "scores": {
+    "rtx3060-12": 0.6153,
+    "rtx4060ti-16": 0.7353,
+    "rtx4090-24": 0.7353
+   },
+   "task": "text-to-video",
+   "vram_gb": {
+    "min": 10,
+    "recommended": 16,
+    "source": "homepilot-presets"
+   }
+  }
+ },
+ "schema_version": "1.0",
+ "scoring": {
+  "fit_score": {
+   "fits": 1.0,
+   "no": 0.0,
+   "offload": 0.3,
+   "tight": 0.7
+  },
+  "thresholds": {
+   "fits": "vram >= vram_gb.recommended",
+   "no": "otherwise",
+   "offload": "vram >= 0.7 * vram_gb.min",
+   "tight": "vram >= vram_gb.min"
+  },
+  "weights": {
+   "capability": 0.25,
+   "fit": 0.4,
+   "momentum": 0.25,
+   "speed": 0.1
+  }
+ }
+}

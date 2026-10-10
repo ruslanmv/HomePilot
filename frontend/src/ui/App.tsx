@@ -61,6 +61,10 @@ import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
 import { useBackToClose } from './lib/useBackToClose'
 import { projectAvatarUrl } from './projectIdentity'
+import { AvatarImage } from './components/ProjectAvatar'
+import { assistantAvatarSlot, messageGapClass, useChatAppearance } from './chatAppearance'
+import { requestFocus, useAdvisorUpdates, type CurrentModels } from './modelAdvisor'
+import { AdvisorUpdateNotice } from './components/AdvisorUpdateNotice'
 import { LoadingDots, StatusText, StreamReveal, motionAllowed, useMotionPrefs } from './motion'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
@@ -499,10 +503,13 @@ function NavItem({
   collapsed,
   disabled,
   disabledReason,
+  badge,
 }: {
   icon: any
   label: string
   active?: boolean
+  /** A short marker such as "New" (a dot when the sidebar is collapsed). */
+  badge?: string
   shortcut?: string
   onClick?: () => void
   collapsed?: boolean
@@ -517,7 +524,7 @@ function NavItem({
       onClick={disabled ? undefined : onClick}
       aria-disabled={disabled || undefined}
       aria-current={active ? 'page' : undefined}
-      aria-label={collapsed ? label : undefined}
+      aria-label={collapsed ? (badge ? `${label} (${badge})` : label) : undefined}
       aria-keyshortcuts={shortcut ? shortcut.replace('Ctrl', 'Control') : undefined}
       className={[
         // hp-nav-item: min 44px tall on coarse pointers (see styles.css) —
@@ -535,10 +542,14 @@ function NavItem({
       type="button"
       title={disabled ? (disabledReason || `${label} unavailable`) : (collapsed ? label : undefined)}
     >
-      <span className="size-6 flex items-center justify-center shrink-0">
+      <span className="size-6 flex items-center justify-center shrink-0 relative">
         <Icon size={18} strokeWidth={2} />
+        {badge && collapsed ? <span aria-hidden className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-violet-400" /> : null}
       </span>
       {!collapsed && <span className="truncate">{label}</span>}
+      {!collapsed && badge ? (
+        <span className="ml-auto rounded-full bg-violet-500/25 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-violet-100">{badge}</span>
+      ) : null}
       {!collapsed && shortcut ? (
         <span aria-hidden className="hp-kbd-hint absolute top-1/2 right-2 -translate-y-1/2 text-xs text-white/40 opacity-0 group-hover/menu-item:opacity-100 transition-opacity duration-100">
           {shortcut}
@@ -1234,6 +1245,8 @@ function Sidebar({
   collapsed,
   onToggleCollapse,
   chatReasoningMode,
+  chatPreview,
+  advisorBadge = false,
   showMeetingsNav = false,
   drawer = false,
 }: {
@@ -1248,6 +1261,10 @@ function Sidebar({
   showSettings: boolean
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>
   settingsDraft: SettingsModelV2
+  /** The open persona's name and picture, for Settings → Chat's preview. */
+  chatPreview?: { name: string; avatarUrls: Array<string | null | undefined> } | null
+  /** "New" on Models: suggestions changed or a better model fits (Model Advisor). */
+  advisorBadge?: boolean
   setSettingsDraft: React.Dispatch<React.SetStateAction<SettingsModelV2>>
   onSaveSettings: () => void
   showHistory: boolean
@@ -1464,7 +1481,7 @@ function Sidebar({
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} collapsed={collapsed} />
           <NavItem icon={PenLine} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} collapsed={collapsed} />
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} collapsed={collapsed} />
-          <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} />
+          <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} badge={advisorBadge ? 'New' : undefined} />
           <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} collapsed={collapsed} />
           <NavItem icon={CalendarClock} label="Routines" active={mode === 'routines'} onClick={() => setMode('routines')} collapsed={collapsed} />
           {/* MS28, behind `_CATALOG` (default off). D5 put the catalog in History and said a
@@ -1584,6 +1601,7 @@ function Sidebar({
               onChangeDraft={(next) => setSettingsDraft(next)}
               onSave={onSaveSettings}
               onClose={() => setShowSettings(false)}
+              chatPreview={chatPreview}
             />
           ) : null}
 
@@ -2534,7 +2552,8 @@ function ChatState({
   onChatReasoningModeChange,
   showChatReasoningSelector,
   allowPersonaMode,
-  assistantAvatarUrl,
+  assistantAvatarUrls,
+  assistantName = 'HomePilot',
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -2560,10 +2579,14 @@ function ChatState({
   onChatReasoningModeChange: (mode: ChatReasoningMode) => void
   showChatReasoningSelector: boolean
   allowPersonaMode: boolean
-  /** The open project's picture, shown beside its replies instead of the default mark. */
-  assistantAvatarUrl?: string | null
+  /** The open project's picture (face crop, then thumbnail), shown beside its replies instead of the default mark. */
+  assistantAvatarUrls?: Array<string | null | undefined>
+  /** Who answers — each reply's accessible name, so it is identifiable without the picture. */
+  assistantName?: string
 }) {
   const { copied, copy } = useCopyMessage()
+  // Settings → Chat → Appearance: the picture beside replies, and message spacing.
+  const chatAppearance = useChatAppearance()
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
   // New answers are revealed progressively (Settings → Motion). Only a turn that
@@ -2703,11 +2726,16 @@ function ChatState({
         </div>
       )}
 
-      <div ref={scrollerRef} className={`flex-1 overflow-y-auto px-4 ${chatSettings.incognito ? 'pt-3' : 'pt-14'} pb-8 space-y-8`}>
-        {displayMessages.map((m) => (
+      <div ref={scrollerRef} className={`flex-1 overflow-y-auto px-4 ${chatSettings.incognito ? 'pt-3' : 'pt-14'} pb-8 ${messageGapClass(chatAppearance.compact)}`}>
+        {displayMessages.map((m, i) => {
+          const isTurn = (m.role === 'user' || m.role === 'assistant') && !m.callMemory
+          const avatarSlot = m.role === 'assistant' ? assistantAvatarSlot(chatAppearance.thumbnails, displayMessages[i - 1]) : 'none'
+          return (
           <div
             key={m.id}
             className={`flex gap-3 sm:gap-5 hp-msg-in ${m.role === 'user' ? 'hp-msg-in--user justify-end' : 'justify-start'}`}
+            {...(isTurn ? { role: 'article', 'aria-label': m.role === 'user' ? 'You' : assistantName } : {})}
+            data-avatar-slot={m.role === 'assistant' ? avatarSlot : undefined}
           >
             {/* Inline call-event render. Enterprise mode (default)
                 uses the thin CallEventRow — a centered timeline
@@ -2750,19 +2778,19 @@ function ChatState({
                 />
               )
             ) : (<>
-            {m.role === 'assistant' ? (
-              assistantAvatarUrl ? (
-                <img
-                  src={assistantAvatarUrl}
-                  alt=""
-                  aria-hidden
-                  className="hidden sm:block w-8 h-8 rounded-full object-cover flex-shrink-0 mt-1 ring-1 ring-white/20"
-                />
-              ) : (
-                <div className="hidden sm:flex w-8 h-8 rounded-full bg-white text-black items-center justify-center flex-shrink-0 font-bold text-sm mt-1" aria-hidden>
-                  /
-                </div>
-              )
+            {avatarSlot === 'avatar' ? (
+              <AvatarImage
+                urls={assistantAvatarUrls || []}
+                className="hidden sm:block w-8 h-8 rounded-full object-cover flex-shrink-0 mt-1 ring-1 ring-white/20"
+                fallback={
+                  <div className="hidden sm:flex w-8 h-8 rounded-full bg-white text-black items-center justify-center flex-shrink-0 font-bold text-sm mt-1" aria-hidden>
+                    /
+                  </div>
+                }
+              />
+            ) : avatarSlot === 'spacer' ? (
+              // A later reply in the same run: keep its text under the first one's.
+              <div className="hidden sm:block w-8 flex-shrink-0" aria-hidden />
             ) : null}
 
             {/* User: bubble | Assistant: bare text on background (Grok style) */}
@@ -2933,7 +2961,8 @@ function ChatState({
             )}
             </>)}
           </div>
-        ))}
+          )
+        })}
         <div ref={endRef} className="h-6" />
       </div>
 
@@ -4284,11 +4313,17 @@ export default function App() {
     }
   }, [settings.backendUrl, authHeaders, conversationId])
 
-  // Load project info on mount if project mode is active
+  // Load project info on mount if project mode is active — once per project.
+  // Opening a project already loads it (and, for personas, picks the session's
+  // conversation), so re-fetching here on every switch back to Chat repeated
+  // the slow project request and could swap the persona session's messages for
+  // an older conversation's.
+  const projectInfoLoadedRef = useRef<string | null>(null)
   useEffect(() => {
     const loadProjectInfo = async () => {
       const projectId = localStorage.getItem('homepilot_current_project')
-      if (projectId && mode === 'chat' && currentProject?.id === projectId) {
+      if (projectId && mode === 'chat' && currentProject?.id === projectId && projectInfoLoadedRef.current !== projectId) {
+        projectInfoLoadedRef.current = projectId
         try {
           const response = await fetch(
             `${settings.backendUrl.replace(/\/+$/, '')}/projects/${projectId}`,
@@ -6008,6 +6043,22 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     []
   )
 
+  // The project's picture in round frames: cropped to the face by the backend,
+  // with the regular thumbnail if the crop can't be served.
+  const projectFaceUrl = projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'face')
+
+  // Model Advisor (FitLab): the models in use, so a clearly better one that fits this
+  // computer can be suggested. Only ids FitLab can rank are passed (Ollama / ComfyUI).
+  const advisorCurrent = useMemo<CurrentModels>(() => ({
+    chat: settingsDraft.providerChat === 'ollama' ? settingsDraft.modelChat : undefined,
+    vision: (settingsDraft.providerMultimodal || settingsDraft.providerChat) === 'ollama' ? settingsDraft.modelMultimodal : undefined,
+    image: settingsDraft.providerImages === 'comfyui' ? settingsDraft.modelImages : undefined,
+    video: settingsDraft.providerVideo === 'comfyui' ? settingsDraft.modelVideo : undefined,
+  }), [settingsDraft.providerChat, settingsDraft.modelChat, settingsDraft.providerMultimodal, settingsDraft.modelMultimodal,
+       settingsDraft.providerImages, settingsDraft.modelImages, settingsDraft.providerVideo, settingsDraft.modelVideo])
+  const advisor = useAdvisorUpdates(settingsDraft.backendUrl, advisorCurrent, settingsDraft.apiKey)
+  const projectThumbUrl = projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'thumb')
+
   return (
     <MeetingSenseProvider
       conversationId={conversationId}
@@ -6062,6 +6113,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           collapsed={isMobile ? false : sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
           chatReasoningMode={chatReasoningMode}
+          chatPreview={currentProject ? { name: currentProject.name, avatarUrls: [projectFaceUrl, projectThumbUrl] } : null}
+          advisorBadge={advisor.badge}
           showMeetingsNav={meetingsNavEnabled}
           drawer={isMobile}
         />
@@ -6120,13 +6173,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     ? 'bg-amber-600/20 text-amber-400 border-amber-600/30'
                     : 'bg-blue-600/20 text-blue-400 border-blue-600/30'
                 } text-xs font-semibold px-4 py-2 rounded-full border`}>
-                  {projectAvatarUrl(currentProject) ? (
+                  {projectThumbUrl ? (
                     // The project's own picture is its identity in the header too.
-                    <img
-                      src={projectAvatarUrl(currentProject) as string}
-                      alt=""
+                    <AvatarImage
+                      urls={[projectFaceUrl, projectThumbUrl]}
                       className="-ml-2 h-6 w-6 rounded-full object-cover ring-1 ring-white/25"
-                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
                     />
                   ) : (
                     <Folder size={12} />
@@ -6251,7 +6302,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 projectId={currentProject.id}
                 projectName={currentProject.name}
                 projectCreatedAt={currentProject.created_at}
-                avatarUrl={projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'full')}
+                avatarUrl={projectFaceUrl}
+                avatarFallbackUrl={projectThumbUrl}
                 projectType={currentProject.project_type}
                 description={currentProject.description}
                 onOpenSession={async (session) => {
@@ -6369,7 +6421,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               currentProject
                 ? {
                     name: currentProject.name,
-                    avatarUrl: projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'full'),
+                    avatarUrl: projectFaceUrl,
+                    avatarFallbackUrl: projectThumbUrl,
                     projectType: currentProject.project_type,
                   }
                 : null
@@ -6442,34 +6495,66 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     updated_at: project.updated_at,
                   })
 
-                  // Restore last conversation or start fresh
+                  projectInfoLoadedRef.current = projectId
                   const lastConvId = project.last_conversation_id
-                  if (lastConvId) {
+                  const loadMessages = async (convId: string) => {
+                    const convData = await getJson<{
+                      ok: boolean
+                      messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
+                    }>(settingsDraft.backendUrl, `/conversations/${convId}/messages`, authHeaders)
+                    return convData.ok && convData.messages ? convData.messages : []
+                  }
+                  const toMsgs = (rows: Array<{ role: string; content: string; media?: any }>) =>
+                    rows.map((m, idx) => {
+                      const h = hydratePersistedMessageMedia(m.media)
+                      return {
+                        id: `restored-${idx}`,
+                        role: m.role as 'user' | 'assistant' | 'system',
+                        text: m.content,
+                        animate: false,
+                        media: h.media,
+                        ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+                      }
+                    })
+
+                  if (project.project_type === 'persona') {
+                    // Companion-grade: the Session Hub opens right away. The persistent
+                    // session and its messages load behind it, in parallel with the last
+                    // conversation (the fallback when the session is still empty) —
+                    // previously four requests ran one after another before the hub showed.
+                    void (async () => {
+                      const lastPromise = lastConvId ? loadMessages(lastConvId).catch(() => []) : Promise.resolve([])
+                      try {
+                        const session = await resolveSession(projectId, 'text')
+                        console.log('[Project] Resolved persona session:', session.id)
+                        localStorage.setItem('homepilot_active_voice_session', JSON.stringify(session))
+                        const sessionRows = session.conversation_id === lastConvId
+                          ? await lastPromise
+                          : await loadMessages(session.conversation_id).catch(() => [])
+                        const rows = sessionRows.length > 0 ? sessionRows : await lastPromise
+                        // Nothing to show: clear the chat first — it assigns a fresh
+                        // conversation id, so the session's own id must be set after it.
+                        if (rows.length === 0) onNewConversation()
+                        setConversationId(session.conversation_id)
+                        if (rows.length > 0) setMessages(toMsgs(rows))
+                      } catch (err) {
+                        console.warn('[Project] Session resolution failed:', err)
+                        const rows = await lastPromise
+                        if (lastConvId && rows.length > 0) {
+                          setConversationId(lastConvId)
+                          setMessages(toMsgs(rows))
+                        } else {
+                          onNewConversation()
+                        }
+                      }
+                    })()
+                  } else if (lastConvId) {
                     // Restore previous conversation for this project
                     try {
-                      const convData = await getJson<{
-                        ok: boolean
-                        messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
-                      }>(
-                        settingsDraft.backendUrl,
-                        `/conversations/${lastConvId}/messages`,
-                        authHeaders
-                      )
-                      if (convData.ok && convData.messages && convData.messages.length > 0) {
+                      const rows = await loadMessages(lastConvId)
+                      if (rows.length > 0) {
                         setConversationId(lastConvId)
-                        setMessages(
-                          convData.messages.map((m, idx) => {
-                            const h = hydratePersistedMessageMedia(m.media)
-                            return {
-                              id: `restored-${idx}`,
-                              role: m.role as 'user' | 'assistant' | 'system',
-                              text: m.content,
-                              animate: false,
-                              media: h.media,
-                              ...(h.callMemory ? { callMemory: h.callMemory } : {}),
-                            }
-                          })
-                        )
+                        setMessages(toMsgs(rows))
                       } else {
                         // Conversation was empty/deleted — start fresh
                         onNewConversation()
@@ -6496,47 +6581,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       incognito: false,
                     }
                     updateChatSettings(agentSettings)
-                  }
-
-                  // Companion-grade: for persona projects, resolve a session
-                  // This ensures we use the persistent session conversation_id
-                  if (project.project_type === 'persona') {
-                    try {
-                      const session = await resolveSession(projectId, 'text')
-                      console.log('[Project] Resolved persona session:', session.id)
-                      setConversationId(session.conversation_id)
-                      localStorage.setItem('homepilot_active_voice_session', JSON.stringify(session))
-                      // Load session messages if they exist
-                      try {
-                        const convData = await getJson<{
-                          ok: boolean
-                          messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
-                        }>(
-                          settingsDraft.backendUrl,
-                          `/conversations/${session.conversation_id}/messages`,
-                          authHeaders
-                        )
-                        if (convData.ok && convData.messages && convData.messages.length > 0) {
-                          setMessages(
-                            convData.messages.map((m, idx) => {
-                              const h = hydratePersistedMessageMedia(m.media)
-                              return {
-                                id: `restored-${idx}`,
-                                role: m.role as 'user' | 'assistant' | 'system',
-                                text: m.content,
-                                animate: false,
-                                media: h.media,
-                                ...(h.callMemory ? { callMemory: h.callMemory } : {}),
-                              }
-                            })
-                          )
-                        }
-                      } catch {
-                        // No messages yet — that's fine
-                      }
-                    } catch (err) {
-                      console.warn('[Project] Session resolution failed:', err)
-                    }
                   }
 
                   // Route to the correct mode based on project type
@@ -6598,6 +6642,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             experimentalCivitai={settingsDraft.experimentalCivitai}
             civitaiApiKey={settingsDraft.civitaiApiKey}
             nsfwMode={settingsDraft.nsfwMode}
+            currentModels={advisorCurrent}
           />
         ) : mode === 'studio' ? (
           studioVariant === 'creator' ? (
@@ -6768,7 +6813,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           ) : (
             <ChatState
               messages={messages}
-              assistantAvatarUrl={projectAvatarUrl(currentProject)}
+              assistantAvatarUrls={[projectFaceUrl, projectThumbUrl]}
+              assistantName={currentProject?.name || 'HomePilot'}
               setLightbox={setLightbox}
               endRef={endRef}
               mode={mode}
@@ -6860,7 +6906,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         ) : (
           <ChatState
             messages={messages}
-            assistantAvatarUrl={projectAvatarUrl(currentProject)}
+            assistantAvatarUrls={[projectFaceUrl, projectThumbUrl]}
+              assistantName={currentProject?.name || 'HomePilot'}
             setLightbox={setLightbox}
             endRef={endRef}
             mode={mode}
@@ -7107,6 +7154,21 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
        * rationale. Renders nothing when the store isn't active.
        */}
       <WizardProgressOverlay />
+
+      {/* Model Advisor: a better model fits this computer, or suggestions changed.
+          Not shown on the Models page, where the suggestions themselves are. */}
+      {advisor.notice && mode !== 'models' ? (
+        <AdvisorUpdateNotice
+          notice={advisor.notice}
+          onView={() => {
+            if (advisor.notice?.type === 'upgrade') requestFocus(advisor.notice.kind)
+            advisor.dismiss()
+            setMode('models')
+          }}
+          onDismiss={advisor.dismiss}
+          onTurnOff={advisor.turnOffNotifications}
+        />
+      ) : null}
     </div>
     </MeetingSenseProvider>
   )

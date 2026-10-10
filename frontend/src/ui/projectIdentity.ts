@@ -21,13 +21,15 @@ export type ProjectLike = {
 
 /**
  * URL of the project's saved picture, or null when it has none.
- * `thumb` is the small committed thumbnail (lists, headers); `full` prefers
- * the full-size image for large displays and falls back to the thumbnail.
+ * `thumb` is the small committed thumbnail (a square from the top of the
+ * picture); `full` prefers the full-size image and falls back to the
+ * thumbnail; `face` is the picture cropped to the face by the backend — what
+ * every small round avatar shows (fall back to `thumb` if it fails to load).
  */
 export function projectAvatarUrl(
   project: ProjectLike | null | undefined,
   backendUrl?: string,
-  variant: 'thumb' | 'full' = 'thumb',
+  variant: 'thumb' | 'full' | 'face' = 'thumb',
 ): string | null {
   if (!project) return null
   const pap = project.persona_appearance || {}
@@ -35,11 +37,15 @@ export function projectAvatarUrl(
   const full = pap.selected_filename as string | undefined
   const rel = variant === 'full' ? full || thumb : thumb || full
   if (!rel || typeof rel !== 'string') return null
-  if (/^(https?:|data:|blob:)/.test(rel)) return rel
+  if (/^(https?:|data:|blob:)/.test(rel)) return variant === 'face' ? null : rel
   const base = resolveBackendUrl(backendUrl).replace(/\/+$/, '')
   // Cache-buster: a re-committed avatar overwrites the same file name.
   const updated = Number(project.updated_at)
   const v = Number.isFinite(updated) && updated > 0 ? Math.floor(updated * 1000) : 0
+  if (variant === 'face') {
+    if (!project.id) return null
+    return `${base}/projects/${encodeURIComponent(project.id)}/persona/avatar/face?v=${v}`
+  }
   let token = ''
   try {
     token = localStorage.getItem('homepilot_auth_token') || ''
