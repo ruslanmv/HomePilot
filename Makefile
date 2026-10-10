@@ -373,6 +373,13 @@ preflight: ## Verify install is complete + every critical dep is reachable (no s
 	check_fs backend/.venv/bin/python    "backend venv"; \
 	check_fs edit-session/.venv/bin/uvicorn "edit-session venv"; \
 	check_fs frontend/node_modules       "frontend node_modules"; \
+	if [ -d frontend/node_modules ] && command -v node >/dev/null 2>&1; then \
+		if (cd frontend && node scripts/ensure-deps.mjs); then \
+			echo "  ✓ frontend packages match package-lock.json"; \
+		else \
+			echo "  ✗ frontend packages out of date (run: cd frontend && npm install)"; fail=1; \
+		fi; \
+	fi; \
 	check_fs ComfyUI/main.py             "ComfyUI checkout"; \
 	check_fs ComfyUI/.venv/bin/python    "ComfyUI venv"; \
 	echo "- Backend Python modules that have drifted before (pyproject.toml must ship them)"; \

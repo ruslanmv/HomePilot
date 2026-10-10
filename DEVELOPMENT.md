@@ -12,6 +12,12 @@ make install
 make start
 ```
 
+After a `git pull` there is nothing to reinstall for the frontend: `make start`
+(its preflight) and `npm run dev` first compare `frontend/node_modules` with
+`package-lock.json` and run `npm install` only when a package is missing or at
+another version (`frontend/scripts/ensure-deps.mjs`; set
+`HOMEPILOT_SKIP_DEPS_CHECK=1` to skip it).
+
 ## Testing
 
 ```bash

@@ -4,6 +4,7 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/ensure-deps.mjs",
     "dev": "vite --host 0.0.0.0 --port 3000",
     "prebuild": "node scripts/generate-model-catalog.mjs",
     "build": "tsc -b && vite build",
