@@ -26,7 +26,7 @@ afterEach(() => {
 
 describe('preference', () => {
   it('defaults to thumbnails at the start of message groups, normal spacing', () => {
-    expect(DEFAULT_CHAT_APPEARANCE).toEqual({ thumbnails: 'grouped', compact: false })
+    expect(DEFAULT_CHAT_APPEARANCE).toEqual({ thumbnails: 'grouped', compact: false, faceZoom: false })
     expect(readChatAppearance()).toEqual(DEFAULT_CHAT_APPEARANCE)
   })
 
@@ -43,7 +43,7 @@ describe('preference', () => {
     writeChatAppearance({ thumbnails: 'hidden' })
     writeChatAppearance({ compact: true })
     window.removeEventListener(CHAT_APPEARANCE_EVENT, seen)
-    expect(readChatAppearance()).toEqual({ thumbnails: 'hidden', compact: true })
+    expect(readChatAppearance()).toEqual({ thumbnails: 'hidden', compact: true, faceZoom: false })
     expect(seen).toHaveBeenCalledTimes(2)
   })
 })
@@ -136,6 +136,31 @@ describe('Settings → Chat → Appearance', () => {
       writeChatAppearance({ thumbnails: 'always' })
     })
     expect(screen.getByRole('radio', { name: /Always show/ })).toHaveAttribute('aria-checked', 'true')
+  })
+})
+
+describe('Zoom pictures to the face', () => {
+  it('is off by default, so the original picture is shown', () => {
+    expect(readChatAppearance().faceZoom).toBe(false)
+    // A preference saved before the switch existed keeps the original picture too.
+    localStorage.setItem(CHAT_APPEARANCE_STORAGE_KEY, JSON.stringify({ thumbnails: 'always', compact: true }))
+    expect(readChatAppearance()).toEqual({ thumbnails: 'always', compact: true, faceZoom: false })
+  })
+
+  it('is a switch in Settings → Chat → Appearance, saved and announced at once', () => {
+    const heard = vi.fn()
+    window.addEventListener(CHAT_APPEARANCE_EVENT, heard)
+    render(<ChatAppearanceSettings />)
+    const sw = screen.getByRole('switch', { name: 'Zoom pictures to the face' })
+    expect(sw).toHaveAttribute('aria-checked', 'false')
+    expect(sw).toHaveAccessibleDescription(/original picture/)
+    fireEvent.click(sw)
+    expect(sw).toHaveAttribute('aria-checked', 'true')
+    expect(readChatAppearance().faceZoom).toBe(true)
+    expect(heard).toHaveBeenCalled()
+    fireEvent.click(sw)
+    expect(readChatAppearance().faceZoom).toBe(false)
+    window.removeEventListener(CHAT_APPEARANCE_EVENT, heard)
   })
 })
 

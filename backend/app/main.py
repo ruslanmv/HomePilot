@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
-from fastapi import Body, Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -6365,6 +6365,162 @@ def persona_avatar_face(project_id: str):
         media_type="image/webp",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Edit profile picture — manual crop (additive; the original is never changed)
+# ---------------------------------------------------------------------------
+
+_CROP_UPLOAD_EXT = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+@app.post("/projects/{project_id}/persona/avatar/crop", dependencies=[Depends(require_api_key)])
+async def persona_avatar_crop(
+    project_id: str,
+    area: str = Form(...),
+    zoom: Optional[str] = Form(default=None),
+    file: Optional[UploadFile] = File(default=None),
+) -> JSONResponse:
+    """
+    Frame the persona's picture: cut a square from the original at full
+    resolution and make it the persona's thumbnail (512 x 512 WebP), so every
+    round avatar shows it.
+
+    Form fields:
+      area  JSON {"x","y","width","height"} in percent of the picture as shown
+            (EXIF orientation applied), from the crop editor
+      zoom  the editor's zoom, kept so it can reopen at the same framing
+      file  optional replacement photo (PNG, JPEG or WebP). It becomes the new
+            original; the previous picture stays in avatar history.
+
+    The original picture is untouched; the area, zoom and source are kept in
+    persona_appearance.avatar_crop so the crop can be refined later.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from .personas.avatar_crop import (
+        CropError,
+        active_crop,
+        crop_record,
+        crop_to_thumb,
+        open_oriented,
+        parse_area,
+    )
+    from .personas.avatar_history import append_previous_avatar_if_needed
+
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if p.get("project_type") != "persona":
+        raise HTTPException(status_code=400, detail="Not a persona project")
+
+    try:
+        area_d = parse_area(json.loads(area))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="area must be JSON")
+    except CropError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    zoom_v: Optional[float] = None
+    if zoom not in (None, ""):
+        try:
+            zoom_v = float(zoom)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="zoom must be a number")
+
+    appearance = dict(p.get("persona_appearance") or {})
+
+    if file is not None and (file.filename or "").strip():
+        # A replacement photo: stream it in with the usual size limit, check it
+        # is a real picture, then commit it as the new original.
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in _CROP_UPLOAD_EXT:
+            raise HTTPException(status_code=400, detail="Use a PNG, JPEG or WebP picture")
+        tmp_name = f"crop_upload_{uuidlib.uuid4().hex}{ext}"
+        tmp_path = UPLOAD_PATH / tmp_name
+        max_bytes = int(MAX_UPLOAD_MB) * 1024 * 1024
+        written = 0
+        try:
+            with tmp_path.open("wb") as f:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > max_bytes:
+                        raise HTTPException(status_code=413, detail=f"File too large. Max {MAX_UPLOAD_MB}MB.")
+                    f.write(chunk)
+            try:
+                await run_in_threadpool(lambda: open_oriented(tmp_path).close())
+            except CropError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            project_root = UPLOAD_PATH / "projects" / project_id
+            committed = commit_persona_avatar(UPLOAD_PATH, project_root, tmp_name)
+        finally:
+            await file.close()
+            tmp_path.unlink(missing_ok=True)
+        append_previous_avatar_if_needed(
+            appearance, note="replaced in Edit profile picture", replaced_by=committed.selected_filename,
+        )
+        appearance["selected_filename"] = committed.selected_filename
+        appearance["selected_thumb_filename"] = committed.thumb_filename
+
+    source_rel = appearance.get("selected_filename") or appearance.get("selected_thumb_filename")
+    if not source_rel or not isinstance(source_rel, str):
+        raise HTTPException(status_code=400, detail="This persona has no picture yet. Choose a photo first.")
+
+    # The automatic thumbnail the crop replaces — kept across re-crops of the same picture.
+    previous = active_crop(appearance)
+    if previous and previous.get("source") == source_rel:
+        auto_thumb = previous.get("auto_thumb")
+    else:
+        auto_thumb = appearance.get("selected_thumb_filename")
+
+    try:
+        result = await run_in_threadpool(crop_to_thumb, UPLOAD_PATH, source_rel, area_d)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CropError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    appearance["avatar_crop"] = crop_record(
+        source_rel=source_rel, area=area_d, zoom=zoom_v, result=result, auto_thumb=auto_thumb,
+    )
+    appearance["selected_thumb_filename"] = result.thumb_rel
+    updated = projects.update_project(project_id, {"persona_appearance": appearance})
+    return JSONResponse({
+        "ok": True,
+        "project": updated,
+        "persona_appearance": appearance,
+        "avatar_crop": appearance["avatar_crop"],
+    })
+
+
+@app.delete("/projects/{project_id}/persona/avatar/crop", dependencies=[Depends(require_api_key)])
+async def persona_avatar_crop_reset(project_id: str) -> JSONResponse:
+    """Go back to the automatic thumbnail. The crop record is kept, so nothing
+    the user framed is lost; it simply stops being shown."""
+    from .personas.avatar_assets import ensure_thumb_for_selected
+    from .personas.avatar_crop import active_crop
+
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if p.get("project_type") != "persona":
+        raise HTTPException(status_code=400, detail="Not a persona project")
+    appearance = dict(p.get("persona_appearance") or {})
+    crop = active_crop(appearance)
+    if not crop:
+        return JSONResponse({"ok": True, "project": p, "persona_appearance": appearance, "changed": False})
+
+    auto = crop.get("auto_thumb")
+    if not (isinstance(auto, str) and auto and (UPLOAD_PATH / auto).is_file()):
+        source = appearance.get("selected_filename")
+        if not source:
+            raise HTTPException(status_code=409, detail="No automatic thumbnail to go back to")
+        auto = ensure_thumb_for_selected(UPLOAD_PATH, source)
+    appearance["selected_thumb_filename"] = auto
+    updated = projects.update_project(project_id, {"persona_appearance": appearance})
+    return JSONResponse({"ok": True, "project": updated, "persona_appearance": appearance, "changed": True})
 
 
 @app.post("/projects/{project_id}/persona/avatar/revert", dependencies=[Depends(require_api_key)])

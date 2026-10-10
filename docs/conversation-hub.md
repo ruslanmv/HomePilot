@@ -3,7 +3,7 @@
 Opening a persona project shows its Conversation Hub: the persona's identity
 first, then the ways to talk to it. It is a visual and interaction upgrade
 only — projects, sessions, memories and voice behave exactly as before. The
-one API addition is the face crop below (additive, read-only).
+API additions are the face crop and the profile-picture framing below (both additive).
 
 ![Conversation Hub on desktop and phone](../assets/readme/homepilot-hub.jpg)
 
@@ -24,6 +24,9 @@ you*, and the two ways to start.
 The hub is a `ModalSheet`: full-screen on phones, a centred card above;
 Escape, the backdrop, the close button or the phone's Back gesture close it.
 
+Clicking the persona's picture (the pencil at its corner) opens
+[Edit Profile Picture](edit-profile-picture.md) on top of the hub.
+
 ## The project's picture across the app
 
 | Situation | Shown |
@@ -43,8 +46,17 @@ animated-avatar projects today, so no project switches to an animated face.
 
 Persona pictures are usually full-body (512×768, head to toe), and the stored
 thumbnail is a square from the top — head to waist. In a 24–32 px circle that
-left a face a few pixels wide. Every round frame (chat header, beside replies,
-hub, Voice) now shows the picture cropped to the face:
+can leave a face a few pixels wide. Two ways to fix that, both optional:
+
+- **Frame it yourself** — click the picture in the hub (the pencil at its
+  corner) to open **Edit Profile Picture**: drag, zoom, save. The framing
+  becomes the persona's thumbnail everywhere and can be refined later. See
+  [Edit Profile Picture](edit-profile-picture.md).
+- **Automatic face zoom** — **Settings → Chat → Zoom pictures to the face**
+  (off by default, so round frames show the original picture as it was
+  saved). A framing you saved always wins over it.
+
+The automatic face zoom works like this:
 
 `GET /projects/{id}/persona/avatar/face` returns a 320 px WebP square around
 the face, written once next to the picture as `thumb_face_<stem>.webp` and

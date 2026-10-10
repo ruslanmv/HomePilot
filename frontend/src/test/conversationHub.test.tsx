@@ -157,6 +157,21 @@ describe('Conversation Hub', () => {
     expect(within(hub).getByText('Fashion stylist')).toBeInTheDocument()
   })
 
+  it("the picture opens Edit Profile Picture; without the handler it is just a picture", async () => {
+    mockApi([session('s1', 'voice', 4, 14 * MIN, false)])
+    const onEdit = vi.fn()
+    const { unmount } = render(<SessionPanel {...props} onOpenSession={() => {}} onOpenVoiceSession={() => {}} onEditPicture={onEdit} />)
+    const edit = await screen.findByRole('button', { name: "Edit Angel's profile picture" })
+    expect(edit.querySelector('.hp-avatar-edit__pencil')).not.toBeNull()
+    fireEvent.click(edit)
+    expect(onEdit).toHaveBeenCalledTimes(1)
+    unmount()
+    mockApi([session('s1', 'voice', 4, 14 * MIN, false)])
+    render(<SessionPanel {...props} onOpenSession={() => {}} onOpenVoiceSession={() => {}} />)
+    await screen.findByRole('button', { name: /Continue conversation/ })
+    expect(screen.queryByRole('button', { name: /profile picture/ })).toBeNull()
+  })
+
   it('Continue shows the latest conversation and reopens it; voice and text sit side by side', async () => {
     mockApi([session('s1', 'voice', 4, 14 * MIN, false), session('s2', 'text', 12, 3 * DAY, true, 'Spring palette')])
     const onVoice = vi.fn()

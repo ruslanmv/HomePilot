@@ -6,6 +6,9 @@
  *               grouped   only on the first reply of a run (the default)
  *               hidden    no picture beside replies; text starts at the edge
  *   compact     tighter vertical spacing between messages
+ *   faceZoom    small round pictures (chat header, replies, Conversation Hub,
+ *               Voice) use the backend's crop around the face. Off by default:
+ *               the original picture is shown, as it was saved.
  *
  * Only the avatar beside chat messages follows `thumbnails`: the project's
  * picture in the chat header, on its card, in the Conversation Hub and in
@@ -17,11 +20,11 @@
 import { useEffect, useState } from 'react'
 
 export type PersonaThumbnails = 'always' | 'grouped' | 'hidden'
-export type ChatAppearance = { thumbnails: PersonaThumbnails; compact: boolean }
+export type ChatAppearance = { thumbnails: PersonaThumbnails; compact: boolean; faceZoom: boolean }
 
 export const CHAT_APPEARANCE_STORAGE_KEY = 'homepilot_chat_appearance'
 export const CHAT_APPEARANCE_EVENT = 'hp:chat-appearance-change'
-export const DEFAULT_CHAT_APPEARANCE: ChatAppearance = { thumbnails: 'grouped', compact: false }
+export const DEFAULT_CHAT_APPEARANCE: ChatAppearance = { thumbnails: 'grouped', compact: false, faceZoom: false }
 
 const THUMBNAILS: readonly PersonaThumbnails[] = ['always', 'grouped', 'hidden']
 
@@ -39,6 +42,7 @@ export function readChatAppearance(): ChatAppearance {
     return {
       thumbnails: THUMBNAILS.includes(parsed.thumbnails) ? parsed.thumbnails : DEFAULT_CHAT_APPEARANCE.thumbnails,
       compact: typeof parsed.compact === 'boolean' ? parsed.compact : DEFAULT_CHAT_APPEARANCE.compact,
+      faceZoom: typeof parsed.faceZoom === 'boolean' ? parsed.faceZoom : DEFAULT_CHAT_APPEARANCE.faceZoom,
     }
   } catch {
     return { ...DEFAULT_CHAT_APPEARANCE }
