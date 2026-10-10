@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import { EyeOff } from 'lucide-react'
+import { ChatAppearanceQuick } from './ChatAppearanceSettings'
 
 export type ChatScopedSettings = {
   advancedHelpEnabled: boolean
@@ -77,7 +78,7 @@ export function ChatSettingsPopover({
   return (
     <div
       ref={panelRef}
-      className="absolute right-0 mt-2 w-[320px] rounded-2xl border border-white/10 bg-black/80 backdrop-blur-xl shadow-2xl overflow-hidden"
+      className="absolute right-0 top-full mt-2 w-[320px] max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-5rem)] flex flex-col rounded-2xl border border-white/10 bg-black/80 backdrop-blur-xl shadow-2xl overflow-hidden"
     >
       <div className="px-4 py-3 border-b border-white/10">
         <div className="text-sm font-semibold text-white/90">Chat settings</div>
@@ -86,7 +87,7 @@ export function ChatSettingsPopover({
         </div>
       </div>
 
-      <div className="px-4 py-3 space-y-4">
+      <div className="px-4 py-3 space-y-4 min-h-0 overflow-y-auto">
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-sm text-white/90">Advanced help</div>
@@ -162,6 +163,11 @@ export function ChatSettingsPopover({
               )
             })}
           </div>
+        </div>
+
+        {/* Appearance applies to every chat (Settings → Chat holds the same choices). */}
+        <div className="border-t border-white/5 pt-4">
+          <ChatAppearanceQuick />
         </div>
       </div>
 

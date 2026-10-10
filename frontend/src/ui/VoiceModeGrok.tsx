@@ -819,7 +819,7 @@ interface VoiceModeGrokProps {
    * its type icon) replaces nothing but is shown above the voice bars; with
    * no project the screen is exactly the default.
    */
-  projectIdentity?: { name: string; avatarUrl: string | null; projectType?: string } | null;
+  projectIdentity?: { name: string; avatarUrl: string | null; avatarFallbackUrl?: string | null; projectType?: string } | null;
 }
 
 export default function VoiceModeGrok({
@@ -1235,6 +1235,7 @@ export default function VoiceModeGrok({
             {projectIdentity ? (
               <ProjectAvatar
                 url={projectIdentity.avatarUrl}
+                fallbackUrl={projectIdentity.avatarFallbackUrl}
                 name={projectIdentity.name}
                 projectType={projectIdentity.projectType}
                 size={projectIdentity.avatarUrl ? 168 : 112}
@@ -1310,6 +1311,7 @@ export default function VoiceModeGrok({
               <div className="flex flex-col items-center gap-2 pb-2">
                 <ProjectAvatar
                   url={projectIdentity.avatarUrl}
+                  fallbackUrl={projectIdentity.avatarFallbackUrl}
                   name={projectIdentity.name}
                   projectType={projectIdentity.projectType}
                   size={64}

@@ -518,6 +518,11 @@ app.include_router(system_dashboard_router)
 from .system_resources import router as system_resources_router
 app.include_router(system_resources_router)
 
+# Model Advisor — optional FitLab suggestions (/v1/model-advisor). Additive and read-only:
+# FITLAB_ENABLED=false turns it off; network only when the user presses "Fetch suggestions".
+from .model_advisor import router as model_advisor_router
+app.include_router(model_advisor_router)
+
 
 # ── Runtime config (shell-sourceable env for the launcher) ─────
 #
@@ -1308,6 +1313,24 @@ def _startup() -> None:
         logging.getLogger("homepilot.startup").warning(
             "ComfyUI node metadata warmup couldn't start: %s", exc,
         )
+
+    # Knowledge-base client warmup: opening a project reads its document
+    # count, and building the Chroma client on that first request is the
+    # slowest step of the open. Same thread pattern as above.
+    if projects.RAG_ENABLED:
+        try:
+            import threading as _threading
+
+            from .vectordb import warm_chroma_client  # late import
+            _threading.Thread(
+                target=warm_chroma_client,
+                name="chroma-client-warmup",
+                daemon=True,
+            ).start()
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger("homepilot.startup").warning(
+                "Knowledge-base warmup couldn't start: %s", exc,
+            )
 
 
 async def _start_agentic_servers() -> None:
@@ -6307,6 +6330,41 @@ async def persona_avatar_history(project_id: str) -> JSONResponse:
     appearance = dict(p.get("persona_appearance") or {})
     hist = list_avatar_history(appearance)
     return JSONResponse({"ok": True, "history": hist, "count": len(hist)})
+
+
+@app.get("/projects/{project_id}/persona/avatar/face")
+def persona_avatar_face(project_id: str):
+    """The project's picture cropped to the face, for small round avatars.
+
+    Written next to the picture on first request (thumb_face_<stem>.webp) and
+    reused until the picture changes. Public like the picture itself (files.py
+    serves persona appearance images without auth). Synchronous on purpose:
+    the image work runs in the thread pool, off the event loop.
+    """
+    from .personas.avatar_face import ensure_face_thumb
+
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    appearance = p.get("persona_appearance") or {}
+    rel = appearance.get("selected_filename") or appearance.get("selected_thumb_filename")
+    if not rel or not isinstance(rel, str):
+        raise HTTPException(status_code=404, detail="No picture")
+
+    root = UPLOAD_PATH.resolve()
+    src = (root / rel.lstrip("/")).resolve()
+    if root not in src.parents or not src.is_file():
+        raise HTTPException(status_code=404, detail="No picture")
+    try:
+        face = ensure_face_thumb(src)
+    except Exception as e:
+        print(f"[AVATAR] face crop failed for {project_id}: {e}")
+        raise HTTPException(status_code=404, detail="No picture")
+    return FileResponse(
+        path=str(face),
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.post("/projects/{project_id}/persona/avatar/revert", dependencies=[Depends(require_api_key)])

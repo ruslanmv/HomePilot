@@ -4,6 +4,8 @@ import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settin
 import OllaBridgeModels from './components/OllaBridgeModels'
 import { isAccountsUxEnabled } from './account/featureFlags'
 import { GENERATED_CATALOGS } from '../generated/modelCatalog'
+import { ModelAdvisorCard } from './components/ModelAdvisorCard'
+import { useAdvisorEnabled, type AdvisorKind, type CurrentModels } from './modelAdvisor'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -87,6 +89,9 @@ type InstallResponse = {
 export type ModelsParams = {
   backendUrl: string
   apiKey?: string
+
+  /** Models in use per kind — the suggestions card marks them and compares against them. */
+  currentModels?: CurrentModels
 
   // Defaults from Enterprise Settings
   providerChat?: string
@@ -236,6 +241,11 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> =
 // Helpers
 // -----------------------------------------------------------------------------
 
+// Which Model Advisor list belongs to each Models tab (the other tabs show none).
+const ADVISOR_KIND_FOR: Record<string, AdvisorKind | undefined> = {
+  chat: 'chat', multimodal: 'vision', image: 'image', video: 'video',
+}
+
 function cleanBase(url: string) {
   return (url || '').trim().replace(/\/+$/, '')
 }
@@ -311,6 +321,8 @@ function formatBytes(bytes: number): string {
 export default function ModelsView(props: ModelsParams) {
   const authKey = (props.apiKey || '').trim()
   const backendUrl = cleanBase(props.backendUrl)
+  // FitLab suggestions (optional — Settings → Models → Model suggestions).
+  const advisorOn = useAdvisorEnabled()
 
   const [providers, setProviders] = useState<Provider[]>([])
   const [providersError, setProvidersError] = useState<string | null>(null)
@@ -1832,6 +1844,16 @@ export default function ModelsView(props: ModelsParams) {
             <OllaBridgeModels filterType={modelType} />
           ) : (
           <>
+          {advisorOn && ADVISOR_KIND_FOR[modelType] ? (
+            <ModelAdvisorCard
+              backendUrl={backendUrl}
+              apiKey={authKey}
+              initialKind={ADVISOR_KIND_FOR[modelType] as AdvisorKind}
+              current={props.currentModels}
+              onToast={setToast}
+              onInstalled={() => { void refreshInstalled() }}
+            />
+          ) : null}
           {/* Error messages - hide for Civitai since it's download-only */}
           {installedError && provider !== 'civitai' ? (
             <div className={`rounded-xl border p-5 ${

@@ -1,0 +1,919 @@
+{
+ "benchmarks_latest": {
+  "qwen3-0.6b|cpu-only": {
+   "date": "2026-09-07",
+   "gen_tps": 34.84
+  },
+  "qwen3-8b|p100-16": {
+   "date": "2026-09-12",
+   "gen_tps": 37.28
+  }
+ },
+ "calibration": {
+  "estimate_over_measured": 2.45,
+  "measured_pairs": 2,
+  "ratios": [
+   2.397,
+   2.505
+  ]
+ },
+ "compat": {},
+ "generated_at": "2026-10-07",
+ "models": {
+  "deepseek-r1-14b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 48
+   },
+   "capabilities": [
+    "reasoning"
+   ],
+   "category": "text-generation",
+   "hf_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "deepseek-r1-14b",
+   "license": "mit",
+   "ollama_tag": "deepseek-r1:14b",
+   "params_b": 14.8,
+   "status": "seed"
+  },
+  "gemma-3-12b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 8,
+    "n_layers": 48
+   },
+   "capabilities": [
+    "vision",
+    "multilingual"
+   ],
+   "category": "text-generation",
+   "hf_id": "google/gemma-3-12b-it",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "gemma-3-12b",
+   "license": "gemma",
+   "ollama_tag": "gemma3:12b",
+   "params_b": 12.2,
+   "status": "seed"
+  },
+  "gemma-4-26b-a4b-it": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 8,
+    "n_layers": 30
+   },
+   "capabilities": [
+    "chat",
+    "moe",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "google/gemma-4-26B-A4B-it",
+   "hf_stats": {
+    "downloads_30d": 12473185
+   },
+   "id": "gemma-4-26b-a4b-it",
+   "license": "apache-2.0",
+   "ollama_tag": "gemma4:26b",
+   "params_b": 26.0,
+   "status": "auto"
+  },
+  "gpt-oss-20b": {
+   "active_params_b": 3.6,
+   "arch": {
+    "head_dim": 64,
+    "n_kv_heads": 8,
+    "n_layers": 24
+   },
+   "capabilities": [
+    "chat",
+    "moe",
+    "reasoning",
+    "tools"
+   ],
+   "category": "text-generation",
+   "hf_id": "openai/gpt-oss-20b",
+   "hf_stats": {
+    "downloads_30d": 6192993
+   },
+   "id": "gpt-oss-20b",
+   "license": "apache-2.0",
+   "ollama_tag": "gpt-oss:20b",
+   "params_b": 20.0,
+   "status": "seed"
+  },
+  "granite-33-8b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 40
+   },
+   "capabilities": [
+    "tools",
+    "enterprise"
+   ],
+   "category": "text-generation",
+   "hf_id": "ibm-granite/granite-3.3-8b-instruct",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "granite-33-8b",
+   "license": "apache-2.0",
+   "ollama_tag": "granite3.3:8b",
+   "params_b": 8.1,
+   "status": "seed"
+  },
+  "llama-31-8b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 32
+   },
+   "capabilities": [
+    "tools",
+    "multilingual"
+   ],
+   "category": "text-generation",
+   "hf_id": "meta-llama/Llama-3.1-8B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "llama-31-8b",
+   "license": "llama3.1",
+   "ollama_tag": "llama3.1:8b",
+   "params_b": 8.0,
+   "status": "seed"
+  },
+  "llama-32-11b-vision": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 40
+   },
+   "capabilities": [
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "meta-llama/Llama-3.2-11B-Vision-Instruct",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "llama-32-11b-vision",
+   "license": "llama3.2",
+   "ollama_tag": "llama3.2-vision:11b",
+   "params_b": 10.7,
+   "status": "seed"
+  },
+  "minicpm-v": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 4,
+    "n_layers": 28
+   },
+   "capabilities": [
+    "vision",
+    "ocr"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "openbmb/MiniCPM-V-2_6",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "minicpm-v",
+   "license": "minicpm",
+   "ollama_tag": "minicpm-v",
+   "params_b": 8.1,
+   "status": "seed"
+  },
+  "mistral-small-24b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 40
+   },
+   "capabilities": [
+    "tools",
+    "vision"
+   ],
+   "category": "text-generation",
+   "hf_id": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "mistral-small-24b",
+   "license": "apache-2.0",
+   "ollama_tag": "mistral-small3.2",
+   "params_b": 24.0,
+   "status": "seed"
+  },
+  "moondream2": {
+   "arch": {
+    "head_dim": 64,
+    "n_kv_heads": 8,
+    "n_layers": 24
+   },
+   "capabilities": [
+    "vision",
+    "tiny"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "vikhyatk/moondream2",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "moondream2",
+   "license": "apache-2.0",
+   "ollama_tag": "moondream",
+   "params_b": 1.9,
+   "status": "seed"
+  },
+  "ornith-1.5-35b-a3b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 2,
+    "n_layers": 40
+   },
+   "capabilities": [
+    "chat",
+    "moe"
+   ],
+   "category": "text-generation",
+   "hf_id": "ornith-ai/Ornith-1.5-35B-A3B",
+   "hf_stats": {
+    "downloads_30d": 254221
+   },
+   "id": "ornith-1.5-35b-a3b",
+   "license": "mit",
+   "ollama_tag": "ornith-1.5:35b",
+   "params_b": 35.0,
+   "status": "auto"
+  },
+  "ornith-1.5-9b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 4,
+    "n_layers": 32
+   },
+   "capabilities": [
+    "chat"
+   ],
+   "category": "text-generation",
+   "hf_id": "ornith-ai/Ornith-1.5-9B",
+   "hf_stats": {
+    "downloads_30d": 449256
+   },
+   "id": "ornith-1.5-9b",
+   "license": "mit",
+   "ollama_tag": "ornith-1.5:9b",
+   "params_b": 9.0,
+   "status": "auto"
+  },
+  "phi-4": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 10,
+    "n_layers": 40
+   },
+   "capabilities": [
+    "reasoning",
+    "stem"
+   ],
+   "category": "text-generation",
+   "hf_id": "microsoft/phi-4",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "phi-4",
+   "license": "mit",
+   "ollama_tag": "phi4:14b",
+   "params_b": 14.7,
+   "status": "seed"
+  },
+  "qwen2.5-0.5b": {
+   "arch": {
+    "head_dim": 64,
+    "n_kv_heads": 2,
+    "n_layers": 24
+   },
+   "capabilities": [
+    "chat",
+    "small"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen2.5-0.5B",
+   "hf_stats": {
+    "downloads_30d": 1472970
+   },
+   "id": "qwen2.5-0.5b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen2.5:0.5b",
+   "params_b": 0.5,
+   "status": "auto"
+  },
+  "qwen2.5-1.5b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 2,
+    "n_layers": 28
+   },
+   "capabilities": [
+    "chat",
+    "small"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen2.5-1.5B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 6858498
+   },
+   "id": "qwen2.5-1.5b-instruct",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen2.5:1.5b",
+   "params_b": 1.5,
+   "status": "auto"
+  },
+  "qwen2.5-14b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 48
+   },
+   "capabilities": [
+    "chat"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen2.5-14B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 1412806
+   },
+   "id": "qwen2.5-14b-instruct",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen2.5:14b",
+   "params_b": 14.0,
+   "status": "auto"
+  },
+  "qwen2.5-32b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 64
+   },
+   "capabilities": [
+    "chat"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen2.5-32B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 1835507
+   },
+   "id": "qwen2.5-32b-instruct",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen2.5:32b",
+   "params_b": 32.0,
+   "status": "auto"
+  },
+  "qwen2.5-3b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 2,
+    "n_layers": 36
+   },
+   "capabilities": [
+    "chat",
+    "small"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen2.5-3B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 4318365
+   },
+   "id": "qwen2.5-3b-instruct",
+   "license": "other",
+   "ollama_tag": "qwen2.5:3b",
+   "params_b": 3.0,
+   "status": "auto"
+  },
+  "qwen2.5-7b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 4,
+    "n_layers": 28
+   },
+   "capabilities": [
+    "chat"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen2.5-7B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 8158141
+   },
+   "id": "qwen2.5-7b-instruct",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen2.5:7b",
+   "params_b": 7.0,
+   "status": "auto"
+  },
+  "qwen2.5-coder-7b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 4,
+    "n_layers": 28
+   },
+   "capabilities": [
+    "chat",
+    "coding"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 2314516
+   },
+   "id": "qwen2.5-coder-7b-instruct",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen2.5-coder:7b",
+   "params_b": 7.0,
+   "status": "auto"
+  },
+  "qwen2.5-vl-3b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 2,
+    "n_layers": 36
+   },
+   "capabilities": [
+    "chat",
+    "small",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen2.5-VL-3B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 2275380
+   },
+   "id": "qwen2.5-vl-3b-instruct",
+   "license": "",
+   "ollama_tag": "qwen2.5vl:3b",
+   "params_b": 3.0,
+   "status": "auto"
+  },
+  "qwen25-coder-14b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 48
+   },
+   "capabilities": [
+    "coding",
+    "tools"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen2.5-Coder-14B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "qwen25-coder-14b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen2.5-coder:14b",
+   "params_b": 14.8,
+   "status": "seed"
+  },
+  "qwen25-vl-7b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 4,
+    "n_layers": 28
+   },
+   "capabilities": [
+    "vision",
+    "ocr",
+    "video"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 0
+   },
+   "id": "qwen25-vl-7b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen2.5vl:7b",
+   "params_b": 8.3,
+   "status": "seed"
+  },
+  "qwen3-0.6b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 28
+   },
+   "capabilities": [
+    "chat",
+    "small"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen3-0.6B",
+   "hf_stats": {
+    "downloads_30d": 31121660
+   },
+   "id": "qwen3-0.6b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3:0.6b",
+   "params_b": 0.6,
+   "status": "auto"
+  },
+  "qwen3-1.7b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 28
+   },
+   "capabilities": [
+    "chat",
+    "small"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen3-1.7B",
+   "hf_stats": {
+    "downloads_30d": 3035229
+   },
+   "id": "qwen3-1.7b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3:1.7b",
+   "params_b": 1.7,
+   "status": "auto"
+  },
+  "qwen3-14b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 40
+   },
+   "capabilities": [
+    "chat",
+    "coding",
+    "multilingual",
+    "reasoning",
+    "tools"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen3-14B",
+   "hf_stats": {
+    "downloads_30d": 4356418
+   },
+   "id": "qwen3-14b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3:14b",
+   "params_b": 14.0,
+   "status": "seed"
+  },
+  "qwen3-30b-a3b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 4,
+    "n_layers": 48
+   },
+   "capabilities": [
+    "chat",
+    "moe"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen3-30B-A3B",
+   "hf_stats": {
+    "downloads_30d": 1457705
+   },
+   "id": "qwen3-30b-a3b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3:30b",
+   "params_b": 30.0,
+   "status": "auto"
+  },
+  "qwen3-32b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 64
+   },
+   "capabilities": [
+    "chat"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen3-32B",
+   "hf_stats": {
+    "downloads_30d": 3683467
+   },
+   "id": "qwen3-32b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3:32b",
+   "params_b": 32.0,
+   "status": "auto"
+  },
+  "qwen3-4b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 36
+   },
+   "capabilities": [
+    "chat",
+    "small"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen3-4B",
+   "hf_stats": {
+    "downloads_30d": 8896913
+   },
+   "id": "qwen3-4b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3:4b",
+   "params_b": 4.0,
+   "status": "auto"
+  },
+  "qwen3-8b": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 36
+   },
+   "capabilities": [
+    "chat",
+    "multilingual",
+    "reasoning",
+    "tools"
+   ],
+   "category": "text-generation",
+   "hf_id": "Qwen/Qwen3-8B",
+   "hf_stats": {
+    "downloads_30d": 10146765
+   },
+   "id": "qwen3-8b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3:8b",
+   "params_b": 8.0,
+   "status": "seed"
+  },
+  "qwen3-vl-2b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 28
+   },
+   "capabilities": [
+    "chat",
+    "small",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3-VL-2B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 2717318
+   },
+   "id": "qwen3-vl-2b-instruct",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3-vl:2b",
+   "params_b": 2.0,
+   "status": "auto"
+  },
+  "qwen3-vl-4b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 36
+   },
+   "capabilities": [
+    "chat",
+    "small",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3-VL-4B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 3264758
+   },
+   "id": "qwen3-vl-4b-instruct",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3-vl:4b",
+   "params_b": 4.0,
+   "status": "auto"
+  },
+  "qwen3-vl-8b-instruct": {
+   "arch": {
+    "head_dim": 128,
+    "n_kv_heads": 8,
+    "n_layers": 36
+   },
+   "capabilities": [
+    "chat",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3-VL-8B-Instruct",
+   "hf_stats": {
+    "downloads_30d": 10420686
+   },
+   "id": "qwen3-vl-8b-instruct",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3-vl:8b",
+   "params_b": 8.0,
+   "status": "auto"
+  },
+  "qwen3.5-0.8b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 2,
+    "n_layers": 24
+   },
+   "capabilities": [
+    "chat",
+    "small",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.5-0.8B",
+   "hf_stats": {
+    "downloads_30d": 2538229
+   },
+   "id": "qwen3.5-0.8b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.5:0.8b",
+   "params_b": 0.8,
+   "status": "auto"
+  },
+  "qwen3.5-27b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 4,
+    "n_layers": 64
+   },
+   "capabilities": [
+    "chat",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.5-27B",
+   "hf_stats": {
+    "downloads_30d": 1917392
+   },
+   "id": "qwen3.5-27b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.5:27b",
+   "params_b": 27.0,
+   "status": "auto"
+  },
+  "qwen3.5-2b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 2,
+    "n_layers": 24
+   },
+   "capabilities": [
+    "chat",
+    "small",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.5-2B",
+   "hf_stats": {
+    "downloads_30d": 4286670
+   },
+   "id": "qwen3.5-2b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.5:2b",
+   "params_b": 2.0,
+   "status": "auto"
+  },
+  "qwen3.5-35b-a3b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 2,
+    "n_layers": 40
+   },
+   "capabilities": [
+    "chat",
+    "moe",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.5-35B-A3B",
+   "hf_stats": {
+    "downloads_30d": 1516082
+   },
+   "id": "qwen3.5-35b-a3b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.5:35b",
+   "params_b": 35.0,
+   "status": "auto"
+  },
+  "qwen3.5-4b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 4,
+    "n_layers": 32
+   },
+   "capabilities": [
+    "chat",
+    "small",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.5-4B",
+   "hf_stats": {
+    "downloads_30d": 7999244
+   },
+   "id": "qwen3.5-4b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.5:4b",
+   "params_b": 4.0,
+   "status": "auto"
+  },
+  "qwen3.5-9b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 4,
+    "n_layers": 32
+   },
+   "capabilities": [
+    "chat",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.5-9B",
+   "hf_stats": {
+    "downloads_30d": 8700580
+   },
+   "id": "qwen3.5-9b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.5:9b",
+   "params_b": 9.0,
+   "status": "auto"
+  },
+  "qwen3.6-27b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 4,
+    "n_layers": 64
+   },
+   "capabilities": [
+    "chat",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.6-27B",
+   "hf_stats": {
+    "downloads_30d": 2347299
+   },
+   "id": "qwen3.6-27b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.6:27b",
+   "params_b": 27.0,
+   "status": "auto"
+  },
+  "qwen3.6-35b-a3b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 2,
+    "n_layers": 40
+   },
+   "capabilities": [
+    "chat",
+    "moe",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.6-35B-A3B",
+   "hf_stats": {
+    "downloads_30d": 3524086
+   },
+   "id": "qwen3.6-35b-a3b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.6:35b",
+   "params_b": 35.0,
+   "status": "auto"
+  },
+  "qwen3.8-27b": {
+   "arch": {
+    "head_dim": 256,
+    "n_kv_heads": 4,
+    "n_layers": 64
+   },
+   "capabilities": [
+    "chat",
+    "vision"
+   ],
+   "category": "image-text-to-text",
+   "hf_id": "Qwen/Qwen3.8-27B",
+   "hf_stats": {
+    "downloads_30d": 6758993
+   },
+   "id": "qwen3.8-27b",
+   "license": "apache-2.0",
+   "ollama_tag": "qwen3.8:27b",
+   "params_b": 27.0,
+   "status": "auto"
+  }
+ },
+ "ranking_version": "1.1",
+ "schema_version": "1.0"
+}

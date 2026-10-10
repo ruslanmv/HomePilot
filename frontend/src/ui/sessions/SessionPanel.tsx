@@ -55,6 +55,8 @@ interface SessionPanelProps {
   projectCreatedAt?: number
   /** The project's saved picture (projectAvatarUrl); its type icon is shown without one. */
   avatarUrl?: string | null
+  /** Tried when avatarUrl fails to load (the face crop → the regular thumbnail). */
+  avatarFallbackUrl?: string | null
   /** e.g. 'persona' — drives the type badge and the fallback icon. */
   projectType?: string
   /** Short project description, shown under the name. */
@@ -74,6 +76,7 @@ export default function SessionPanel({
   projectName,
   projectCreatedAt,
   avatarUrl,
+  avatarFallbackUrl,
   projectType,
   description,
   onOpenSession,
@@ -243,6 +246,7 @@ export default function SessionPanel({
     <HubIdentity
       name={projectName}
       avatarUrl={avatarUrl}
+      avatarFallbackUrl={avatarFallbackUrl}
       projectType={projectType}
       description={description}
       ageLabel={ageLabel}
@@ -500,6 +504,7 @@ function plural(n: number, one: string, many = `${one}s`): string {
 function HubIdentity({
   name,
   avatarUrl,
+  avatarFallbackUrl,
   projectType,
   description,
   ageLabel,
@@ -508,6 +513,7 @@ function HubIdentity({
 }: {
   name: string
   avatarUrl?: string | null
+  avatarFallbackUrl?: string | null
   projectType?: string
   description?: string
   ageLabel: string
@@ -516,7 +522,7 @@ function HubIdentity({
 }) {
   return (
     <header className="flex flex-col items-center gap-4 pt-2 text-center sm:flex-row sm:items-center sm:gap-6 sm:pr-10 sm:text-left">
-      <ProjectAvatar url={avatarUrl} name={name} projectType={projectType || 'persona'} size={112} />
+      <ProjectAvatar url={avatarUrl} fallbackUrl={avatarFallbackUrl} name={name} projectType={projectType || 'persona'} size={112} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 sm:justify-start">
           <h2 className="min-w-0 break-words text-2xl font-semibold text-white sm:text-3xl">{name}</h2>

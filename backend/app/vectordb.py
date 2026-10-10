@@ -4,6 +4,7 @@ Provides RAG (Retrieval Augmented Generation) capabilities for project knowledge
 """
 import os
 import hashlib
+import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -38,22 +39,47 @@ __all__ = ['CHROMADB_AVAILABLE', 'get_chroma_client', 'query_project_knowledge',
 # ChromaDB persistent storage location
 CHROMA_DB_PATH = Path(UPLOAD_DIR) / "chroma_db"
 
+# One client per storage path. Building a PersistentClient costs tens of
+# milliseconds and opening a project asks for one on every request; keyed by
+# path so a test that points CHROMA_DB_PATH elsewhere still gets its own.
+_clients: Dict[str, Any] = {}
+_clients_lock = threading.Lock()
+
+
 # Initialize ChromaDB client
 def get_chroma_client():
     """Get or create ChromaDB client with persistent storage"""
     if not CHROMADB_AVAILABLE:
         raise ImportError("ChromaDB is not installed. Install with: pip install chromadb")
 
-    CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
+    path = str(CHROMA_DB_PATH)
+    client = _clients.get(path)
+    if client is not None:
+        return client
 
-    client = chromadb.PersistentClient(
-        path=str(CHROMA_DB_PATH),
-        settings=Settings(
-            anonymized_telemetry=False,
-            allow_reset=True
-        )
-    )
+    with _clients_lock:
+        client = _clients.get(path)
+        if client is None:
+            CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
+            client = chromadb.PersistentClient(
+                path=path,
+                settings=Settings(
+                    anonymized_telemetry=False,
+                    allow_reset=True
+                )
+            )
+            _clients[path] = client
     return client
+
+
+def warm_chroma_client() -> None:
+    """Build the client ahead of the first project open. Best-effort."""
+    if not CHROMADB_AVAILABLE:
+        return
+    try:
+        get_chroma_client()
+    except BaseException as e:  # Rust panics surface as BaseException
+        print(f"Warning: ChromaDB warmup failed: {e}")
 
 #: The namespace every existing caller uses. Named rather than inlined so that the one place
 #: the collection name is built is also the one place this default is stated.
@@ -222,7 +248,13 @@ def get_project_document_count(project_id: str) -> int:
         Number of documents
     """
     try:
-        collection = get_or_create_collection(project_id)
+        # Read-only: a project with no knowledge base has no collection, and
+        # counting it must not create one (a write on every project open).
+        client = get_chroma_client()
+        try:
+            collection = client.get_collection(name=collection_name(project_id))
+        except Exception:
+            return 0
         return collection.count()
     except BaseException:
         # BaseException catches pyo3_runtime.PanicException from ChromaDB's

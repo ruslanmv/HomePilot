@@ -1,0 +1,771 @@
+{
+ "gpus": [
+  {
+   "bandwidth_gbs": 120,
+   "form_factor": "unified",
+   "id": "apple-m-16",
+   "model": "Apple Silicon 16GB unified",
+   "name": "Apple Silicon 16GB unified",
+   "vendor": "apple",
+   "vram_gb": 11.0
+  },
+  {
+   "bandwidth_gbs": 50,
+   "form_factor": "cpu",
+   "id": "cpu-only",
+   "model": "CPU only (any)",
+   "name": "CPU only (any)",
+   "vendor": "generic",
+   "vram_gb": 0
+  },
+  {
+   "bandwidth_gbs": 112,
+   "form_factor": "desktop",
+   "id": "gtx1050ti-4",
+   "model": "GTX 1050 Ti",
+   "name": "GeForce GTX 1050 Ti · 4 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 4
+  },
+  {
+   "bandwidth_gbs": 192,
+   "form_factor": "desktop",
+   "id": "gtx1060-3",
+   "model": "GTX 1060",
+   "name": "GeForce GTX 1060 · 3 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 3
+  },
+  {
+   "bandwidth_gbs": 192,
+   "form_factor": "desktop",
+   "id": "gtx1060-6",
+   "model": "GTX 1060",
+   "name": "GeForce GTX 1060 · 6 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 6
+  },
+  {
+   "bandwidth_gbs": 256,
+   "form_factor": "desktop",
+   "id": "gtx1070-8",
+   "model": "GTX 1070",
+   "name": "GeForce GTX 1070 · 8 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 8
+  },
+  {
+   "bandwidth_gbs": 256,
+   "form_factor": "desktop",
+   "id": "gtx1070ti-8",
+   "model": "GTX 1070 Ti",
+   "name": "GeForce GTX 1070 Ti · 8 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 8
+  },
+  {
+   "bandwidth_gbs": 320,
+   "form_factor": "desktop",
+   "id": "gtx1080-8",
+   "model": "GTX 1080",
+   "name": "GeForce GTX 1080 · 8 GB GDDR5X",
+   "vendor": "nvidia",
+   "vram_gb": 8
+  },
+  {
+   "bandwidth_gbs": 484,
+   "form_factor": "desktop",
+   "id": "gtx1080ti-11",
+   "model": "GTX 1080 Ti",
+   "name": "GeForce GTX 1080 Ti · 11 GB GDDR5X",
+   "vendor": "nvidia",
+   "vram_gb": 11
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "gtx1630-4",
+   "model": "GTX 1630",
+   "name": "GeForce GTX 1630 · 4 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 4.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "gtx1650-4-gddr5",
+   "model": "GTX 1650",
+   "name": "GeForce GTX 1650 · 4 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 4.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "gtx1650-4-gddr6",
+   "model": "GTX 1650",
+   "name": "GeForce GTX 1650 · 4 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 4.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "gtx1650super-4",
+   "model": "GTX 1650 SUPER",
+   "name": "GeForce GTX 1650 SUPER · 4 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 4.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "gtx1660-6",
+   "model": "GTX 1660",
+   "name": "GeForce GTX 1660 · 6 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 6.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "gtx1660super-6",
+   "model": "GTX 1660 SUPER",
+   "name": "GeForce GTX 1660 SUPER · 6 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 6.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "gtx1660ti-6",
+   "model": "GTX 1660 Ti",
+   "name": "GeForce GTX 1660 Ti · 6 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 6.0
+  },
+  {
+   "bandwidth_gbs": 105.6,
+   "form_factor": "desktop",
+   "id": "gtx950-2",
+   "model": "GTX 950",
+   "name": "GeForce GTX 950 · 2 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 2
+  },
+  {
+   "bandwidth_gbs": 112.0,
+   "form_factor": "desktop",
+   "id": "gtx960-2",
+   "model": "GTX 960",
+   "name": "GeForce GTX 960 · 2 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 2
+  },
+  {
+   "bandwidth_gbs": 224.0,
+   "form_factor": "desktop",
+   "id": "gtx970-4",
+   "model": "GTX 970",
+   "name": "GeForce GTX 970 · 4 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 4
+  },
+  {
+   "bandwidth_gbs": 224.0,
+   "form_factor": "desktop",
+   "id": "gtx980-4",
+   "model": "GTX 980",
+   "name": "GeForce GTX 980 · 4 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 4
+  },
+  {
+   "bandwidth_gbs": 336.0,
+   "form_factor": "desktop",
+   "id": "gtx980ti-6",
+   "model": "GTX 980 Ti",
+   "name": "GeForce GTX 980 Ti · 6 GB GDDR5",
+   "vendor": "nvidia",
+   "vram_gb": 6
+  },
+  {
+   "bandwidth_gbs": 300,
+   "form_factor": "cloud",
+   "id": "l4-24",
+   "model": "NVIDIA L4 24GB (Colab paid ref)",
+   "name": "NVIDIA L4 24GB (Colab paid ref)",
+   "vendor": "nvidia",
+   "vram_gb": 22.5
+  },
+  {
+   "bandwidth_gbs": 732,
+   "form_factor": "cloud",
+   "id": "p100-16",
+   "model": "NVIDIA P100 16GB (Kaggle alt)",
+   "name": "NVIDIA P100 16GB (Kaggle alt)",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx2060-12",
+   "model": "RTX 2060",
+   "name": "GeForce RTX 2060 · 12 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx2060-6",
+   "model": "RTX 2060",
+   "name": "GeForce RTX 2060 · 6 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 6.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx2060super-8",
+   "model": "RTX 2060 SUPER",
+   "name": "GeForce RTX 2060 SUPER · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx2070-8",
+   "model": "RTX 2070",
+   "name": "GeForce RTX 2070 · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx2070super-8",
+   "model": "RTX 2070 SUPER",
+   "name": "GeForce RTX 2070 SUPER · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx2080-8",
+   "model": "RTX 2080",
+   "name": "GeForce RTX 2080 · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx2080super-8",
+   "model": "RTX 2080 SUPER",
+   "name": "GeForce RTX 2080 SUPER · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx2080ti-11",
+   "model": "RTX 2080 Ti",
+   "name": "GeForce RTX 2080 Ti · 11 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 11.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3050-6",
+   "model": "RTX 3050",
+   "name": "GeForce RTX 3050 · 6 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 6.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3050-8",
+   "model": "RTX 3050",
+   "name": "GeForce RTX 3050 · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3050-laptop-4",
+   "model": "RTX 3050 Laptop",
+   "name": "GeForce RTX 3050 Laptop · 4 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 4.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3050-laptop-6",
+   "model": "RTX 3050 Laptop",
+   "name": "GeForce RTX 3050 Laptop · 6 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 6.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3050ti-laptop-4",
+   "model": "RTX 3050 Ti Laptop",
+   "name": "GeForce RTX 3050 Ti Laptop · 4 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 4.0
+  },
+  {
+   "bandwidth_gbs": 360,
+   "form_factor": "desktop",
+   "id": "rtx3060-12",
+   "model": "RTX 3060",
+   "name": "GeForce RTX 3060 · 12 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3060-8",
+   "model": "RTX 3060",
+   "name": "GeForce RTX 3060 · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3060-laptop-6",
+   "model": "RTX 3060 Laptop",
+   "name": "GeForce RTX 3060 Laptop · 6 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 6.0
+  },
+  {
+   "bandwidth_gbs": 448.0,
+   "form_factor": "desktop",
+   "id": "rtx3060ti-8",
+   "model": "RTX 3060 Ti",
+   "name": "GeForce RTX 3060 Ti · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": 608.0,
+   "form_factor": "desktop",
+   "id": "rtx3060ti-8-gddr6x",
+   "model": "RTX 3060 Ti",
+   "name": "GeForce RTX 3060 Ti · 8 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3070-8",
+   "model": "RTX 3070",
+   "name": "GeForce RTX 3070 · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3070-laptop-8",
+   "model": "RTX 3070 Laptop",
+   "name": "GeForce RTX 3070 Laptop · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3070ti-8",
+   "model": "RTX 3070 Ti",
+   "name": "GeForce RTX 3070 Ti · 8 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3070ti-laptop-8",
+   "model": "RTX 3070 Ti Laptop",
+   "name": "GeForce RTX 3070 Ti Laptop · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3080-10",
+   "model": "RTX 3080",
+   "name": "GeForce RTX 3080 · 10 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 10.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3080-12",
+   "model": "RTX 3080",
+   "name": "GeForce RTX 3080 · 12 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3080-laptop-16",
+   "model": "RTX 3080 Laptop",
+   "name": "GeForce RTX 3080 Laptop · 16 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3080-laptop-8",
+   "model": "RTX 3080 Laptop",
+   "name": "GeForce RTX 3080 Laptop · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3080ti-12",
+   "model": "RTX 3080 Ti",
+   "name": "GeForce RTX 3080 Ti · 12 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx3080ti-laptop-16",
+   "model": "RTX 3080 Ti Laptop",
+   "name": "GeForce RTX 3080 Ti Laptop · 16 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3090-24",
+   "model": "RTX 3090",
+   "name": "GeForce RTX 3090 · 24 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 24.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx3090ti-24",
+   "model": "RTX 3090 Ti",
+   "name": "GeForce RTX 3090 Ti · 24 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 24.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx4050-laptop-6",
+   "model": "RTX 4050 Laptop",
+   "name": "GeForce RTX 4050 Laptop · 6 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 6.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx4060-8",
+   "model": "RTX 4060",
+   "name": "GeForce RTX 4060 · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx4060-laptop-8",
+   "model": "RTX 4060 Laptop",
+   "name": "GeForce RTX 4060 Laptop · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": 288,
+   "form_factor": "desktop",
+   "id": "rtx4060ti-16",
+   "model": "RTX 4060 Ti",
+   "name": "GeForce RTX 4060 Ti · 16 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": 288,
+   "form_factor": "desktop",
+   "id": "rtx4060ti-8",
+   "model": "RTX 4060 Ti",
+   "name": "GeForce RTX 4060 Ti · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": 504,
+   "form_factor": "desktop",
+   "id": "rtx4070-12",
+   "model": "RTX 4070",
+   "name": "GeForce RTX 4070 · 12 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx4070-12-gddr6",
+   "model": "RTX 4070",
+   "name": "GeForce RTX 4070 · 12 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx4070-laptop-8",
+   "model": "RTX 4070 Laptop",
+   "name": "GeForce RTX 4070 Laptop · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx4070super-12",
+   "model": "RTX 4070 SUPER",
+   "name": "GeForce RTX 4070 SUPER · 12 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx4070ti-12",
+   "model": "RTX 4070 Ti",
+   "name": "GeForce RTX 4070 Ti · 12 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx4070tisuper-16",
+   "model": "RTX 4070 Ti SUPER",
+   "name": "GeForce RTX 4070 Ti SUPER · 16 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": 716.8,
+   "form_factor": "desktop",
+   "id": "rtx4080-16",
+   "model": "RTX 4080",
+   "name": "GeForce RTX 4080 · 16 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx4080-laptop-12",
+   "model": "RTX 4080 Laptop",
+   "name": "GeForce RTX 4080 Laptop · 12 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "desktop",
+   "id": "rtx4080super-16",
+   "model": "RTX 4080 SUPER",
+   "name": "GeForce RTX 4080 SUPER · 16 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": 1008.0,
+   "form_factor": "desktop",
+   "id": "rtx4090-24",
+   "model": "RTX 4090",
+   "name": "GeForce RTX 4090 · 24 GB GDDR6X",
+   "vendor": "nvidia",
+   "vram_gb": 24.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx4090-laptop-16",
+   "model": "RTX 4090 Laptop",
+   "name": "GeForce RTX 4090 Laptop · 16 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": 320.0,
+   "form_factor": "desktop",
+   "id": "rtx5050-8",
+   "model": "RTX 5050",
+   "name": "GeForce RTX 5050 · 8 GB GDDR6",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx5050-laptop-8",
+   "model": "RTX 5050 Laptop",
+   "name": "GeForce RTX 5050 Laptop · 8 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": 448.0,
+   "form_factor": "desktop",
+   "id": "rtx5060-8",
+   "model": "RTX 5060",
+   "name": "GeForce RTX 5060 · 8 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx5060-laptop-8",
+   "model": "RTX 5060 Laptop",
+   "name": "GeForce RTX 5060 Laptop · 8 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": 448.0,
+   "form_factor": "desktop",
+   "id": "rtx5060ti-16",
+   "model": "RTX 5060 Ti",
+   "name": "GeForce RTX 5060 Ti · 16 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": 448.0,
+   "form_factor": "desktop",
+   "id": "rtx5060ti-8",
+   "model": "RTX 5060 Ti",
+   "name": "GeForce RTX 5060 Ti · 8 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": 672.0,
+   "form_factor": "desktop",
+   "id": "rtx5070-12",
+   "model": "RTX 5070",
+   "name": "GeForce RTX 5070 · 12 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx5070-laptop-12",
+   "model": "RTX 5070 Laptop",
+   "name": "GeForce RTX 5070 Laptop · 12 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx5070-laptop-8",
+   "model": "RTX 5070 Laptop",
+   "name": "GeForce RTX 5070 Laptop · 8 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 8.0
+  },
+  {
+   "bandwidth_gbs": 896.0,
+   "form_factor": "desktop",
+   "id": "rtx5070ti-16",
+   "model": "RTX 5070 Ti",
+   "name": "GeForce RTX 5070 Ti · 16 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx5070ti-laptop-12",
+   "model": "RTX 5070 Ti Laptop",
+   "name": "GeForce RTX 5070 Ti Laptop · 12 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 12.0
+  },
+  {
+   "bandwidth_gbs": 960.0,
+   "form_factor": "desktop",
+   "id": "rtx5080-16",
+   "model": "RTX 5080",
+   "name": "GeForce RTX 5080 · 16 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx5080-laptop-16",
+   "model": "RTX 5080 Laptop",
+   "name": "GeForce RTX 5080 Laptop · 16 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 16.0
+  },
+  {
+   "bandwidth_gbs": 1792.0,
+   "form_factor": "desktop",
+   "id": "rtx5090-32",
+   "model": "RTX 5090",
+   "name": "GeForce RTX 5090 · 32 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 32.0
+  },
+  {
+   "bandwidth_gbs": null,
+   "form_factor": "laptop",
+   "id": "rtx5090-laptop-24",
+   "model": "RTX 5090 Laptop",
+   "name": "GeForce RTX 5090 Laptop · 24 GB GDDR7",
+   "vendor": "nvidia",
+   "vram_gb": 24.0
+  },
+  {
+   "bandwidth_gbs": 320,
+   "form_factor": "cloud",
+   "id": "t4-16",
+   "model": "NVIDIA T4 16GB (Colab free / Kaggle)",
+   "name": "NVIDIA T4 16GB (Colab free / Kaggle)",
+   "vendor": "nvidia",
+   "vram_gb": 15.0
+  }
+ ],
+ "schema_version": "1.0",
+ "updated_at": "2026-10-02"
+}
