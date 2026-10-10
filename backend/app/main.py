@@ -3861,6 +3861,19 @@ async def update_project(project_id: str, request: Request) -> JSONResponse:
     """Update project details."""
     try:
         data = await request.json()
+
+        # A picture framed in Edit Profile Picture stays until the user picks
+        # another look: settings panels echo the appearance they loaded, which
+        # may predate the crop (see personas/avatar_crop.keep_manual_picture).
+        from .personas.avatar_crop import keep_manual_picture, keeps_manual_picture
+
+        before = projects.get_project_by_id(project_id) or {}
+        before_pap = dict(before.get("persona_appearance") or {})
+        if isinstance(data, dict) and isinstance(data.get("persona_appearance"), dict):
+            merged_pap = {**before_pap, **data["persona_appearance"]}
+            data = {**data, "persona_appearance": keep_manual_picture(
+                before_pap, merged_pap, _resolve_selected_image_url(merged_pap))}
+
         result = projects.update_project(project_id, data)
 
         if not result:
@@ -3911,7 +3924,11 @@ async def update_project(project_id: str, request: Request) -> JSONResponse:
                 # selected_filename was missing → changing Active Look left
                 # the project mini-thumbnail stale.
                 # -----------------------------------------------------------
+                # ...except while the user's own picture from Edit Profile Picture
+                # is in use and they have not picked another look.
                 selected_url = _resolve_selected_image_url(appearance)
+                if keeps_manual_picture(before_pap, appearance, selected_url):
+                    selected_url = None
                 if selected_url:
                     # Extract the rel_path for already-committed /files/ URLs
                     sel_rel = None
@@ -6158,9 +6175,19 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
     source_url = body.get("source_url")
     auto_mode = body.get("auto", False)
 
+    # A picture framed in Edit Profile Picture is the persona's picture until
+    # the user picks another look — and the project save applies a new look
+    # (dropping the framing) before this repair runs. Re-committing the look
+    # here would replace the framing with a fresh automatic thumbnail.
+    from .personas.avatar_crop import active_crop as _active_crop
+
+    keep_framed = bool(auto_mode) and _active_crop(p.get("persona_appearance") or {}) is not None
+
     # ── Resolve the source file ──────────────────────────────────────────
     try:
-        if auto_mode:
+        if keep_framed:
+            source_filename = None
+        elif auto_mode:
             # Auto-resolve: walk persona_appearance.sets to find selected URL
             appearance_data = p.get("persona_appearance") or {}
             resolved_url = _resolve_selected_image_url(appearance_data)
@@ -6207,17 +6234,18 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
         raise HTTPException(status_code=502, detail=f"Failed to download image: {e}")
 
     # ── Commit into project-owned storage ────────────────────────────────
-    try:
-        project_root = UPLOAD_PATH / "projects" / project_id
-        result = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
+    project_root = UPLOAD_PATH / "projects" / project_id
     appearance = dict(p.get("persona_appearance") or {})
-    appearance["selected_filename"] = result.selected_filename
-    appearance["selected_thumb_filename"] = result.thumb_filename
+    if not keep_framed:
+        try:
+            result = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        appearance["selected_filename"] = result.selected_filename
+        appearance["selected_thumb_filename"] = result.thumb_filename
 
     # ----- Commit ALL remaining /comfy/view/ images in sets[] + outfits[] -----
     # Same logic as project creation (POST /projects) — download ephemeral

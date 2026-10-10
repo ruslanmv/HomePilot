@@ -36,6 +36,12 @@ Clicking the persona's picture (the pencil at its corner) opens
 | Project with a picture | Its saved picture — project card, hub, chat header, beside its replies, and Voice |
 | Project closed | The default look returns |
 
+While a picture loads (a full-size original can take a moment), the circle
+shows a soft shimmer with its ring and the picture fades in once it has
+arrived — never an empty black disc; small avatars pulse gently. A picture
+already in the browser's cache shows at once, and Reduced motion or
+Motion → Off keep the placeholder still.
+
 The picture always comes from the project's saved configuration
 (`persona_appearance.selected_filename` / `selected_thumb_filename`), never a
 generated stand-in. In Voice a static picture gets a ring that follows the
