@@ -94,10 +94,10 @@ def authorize(user_path: str) -> Tuple[str, Path]:
         if _WIN_DRIVE.match(user_path.strip()) and os.name != "nt" and not _is_wsl():
             hint = ("This HomePilot server is not running on that Windows computer, so it cannot see its "
                     "drives. Upload the recordings instead, or run HomePilot on that computer.")
-        raise SyncRefused(f"The folder {user_path!r} was not found on the HomePilot server.",
+        raise SyncRefused(f"The folder “{user_path}” was not found on the HomePilot server.",
                           code="not_found", hint=hint)
     if not resolved.is_dir():
-        raise SyncRefused(f"{user_path!r} is not a folder.", code="not_a_folder")
+        raise SyncRefused(f"“{user_path}” is not a folder.", code="not_a_folder")
     allowed = []
     for root in cfg.sync_roots:
         try:

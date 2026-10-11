@@ -3,13 +3,26 @@
  * speed and volume. The waveform comes from the server (peaks of the stored copy); the audio
  * streams with byte ranges, so seeking an hour-long file does not download it first.
  */
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Download, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from 'lucide-react';
 import { clock } from './format';
 
 export interface PlayerHandle { seek: (ms: number, play?: boolean) => void }
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
+
+/** Max-pool `values` into `count` buckets (never more buckets than values). */
+export function resample(values: number[], count: number): number[] {
+    if (values.length <= count) return values;
+    const out: number[] = [];
+    const step = values.length / count;
+    for (let i = 0; i < count; i += 1) {
+        let peak = 0;
+        for (let j = Math.floor(i * step); j < Math.floor((i + 1) * step); j += 1) peak = Math.max(peak, values[j] || 0);
+        out.push(peak);
+    }
+    return out;
+}
 
 export const WaveformPlayer = forwardRef<PlayerHandle, {
     src: string; peaks: number[]; durationMs: number | null; downloadUrl?: string; onTime?: (ms: number) => void; title?: string;
@@ -49,7 +62,20 @@ export const WaveformPlayer = forwardRef<PlayerHandle, {
         el.currentTime = Math.min(Math.max(0, el.currentTime + delta), duration || el.duration || 0);
     };
 
-    const bars = peaks.length ? peaks : Array.from({ length: 120 }, () => 0.05);
+    // As many bars as fit (one per 4 px): the server sends a fixed number of peaks, and drawing
+    // all of them with gaps on a narrow screen leaves bars too thin to see.
+    const strip = useRef<HTMLDivElement>(null);
+    const [fit, setFit] = useState(120);
+    useEffect(() => {
+        const el = strip.current;
+        if (!el || typeof ResizeObserver === 'undefined') return undefined;
+        const measure = () => setFit(Math.max(24, Math.floor(el.clientWidth / 4)));
+        measure();
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+    const bars = useMemo(() => (peaks.length ? resample(peaks, fit) : Array.from({ length: fit }, () => 0.05)), [peaks, fit]);
     const fraction = duration ? time / duration : 0;
 
     const seekFromEvent = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -92,7 +118,7 @@ export const WaveformPlayer = forwardRef<PlayerHandle, {
                     if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); }
                 }}
             >
-                <div className="flex h-full items-center gap-[2px]">
+                <div ref={strip} className="flex h-full items-center gap-px">
                     {bars.map((v, i) => {
                         const played = i / bars.length < fraction;
                         return (

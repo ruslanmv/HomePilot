@@ -575,7 +575,7 @@ async def sync_delete(
 
 @router.get("/v1/meetingsense/jobs")
 async def jobs_list(
-    meeting_id: str = Query(""), active: int = Query(0), limit: int = Query(50),
+    meeting_id: str = Query(""), active: bool = Query(False), limit: int = Query(50),
     authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
 ) -> Dict[str, Any]:
     _require_enabled()
@@ -648,6 +648,44 @@ async def transcribe_again(
     db.update_entry(meeting_id, transcript_state="queued")
     jobs.wake()
     return JSONResponse(status_code=202, content={"job": db.get_job(jid)})
+
+
+@router.post("/v1/meetingsense/library/item/{meeting_id}/ask")
+async def ask_library_meeting(
+    meeting_id: str, body: Optional[Dict[str, Any]] = None,
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> Dict[str, Any]:
+    """The meeting's own Ask, for a finished library meeting.
+
+    The answer comes from the existing MeetingSense route, unchanged. Only when no model
+    answered (``degraded == "extractive"``) and the meeting is not live are the quoted lines
+    chosen again: the core fallback quotes the newest lines, which suits a live meeting, but for
+    a finished one the lines that match the question are the useful evidence.
+    """
+    from .. import ask as ask_mod  # noqa: PLC0415
+    from .. import export as export_mod  # noqa: PLC0415
+    from .. import session as session_mod  # noqa: PLC0415
+    from ..routes import ask_meeting  # noqa: PLC0415
+
+    _require_enabled()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    result = await ask_meeting(meeting_id, body or {})
+    if result.get("degraded") != "extractive":
+        return result
+    live = session_mod.get(meeting_id)
+    if live is not None and live.state == session_mod.MeetingState.LIVE:
+        return result
+    question = str((body or {}).get("text") or "")
+    rows = ask_mod.retrieve(store.get_segments(meeting_id), [], question, limit=3)
+    rendered = "\n".join(
+        f"[{export_mod.clock(r.get('t0_ms'))}] " + (f"{r['speaker']}: " if r.get("speaker") else "") + r["text"].strip()
+        for r in rows if (r.get("text") or "").strip()
+    )
+    if not rendered:
+        return result
+    text = f"From the meeting transcript:\n{rendered}"
+    cited = sorted({export_mod.clock(r.get("t0_ms")) for r in rows})
+    return {**result, "text": text, "cited": cited, "sources": len(rows)}
 
 
 @router.post("/v1/meetingsense/library/item/{meeting_id}/summarize")

@@ -300,7 +300,7 @@ def extract_zip(archive: Path, dest: Path, *, max_total_bytes: int) -> List[str]
         for info in infos:
             rel = _safe_member(info.filename)
             if rel is None:
-                raise UnsafeArchive(f"Refused an unsafe path in the archive: {info.filename!r}")
+                raise UnsafeArchive(f"Refused an unsafe path in the archive: “{info.filename}”")
             mode = info.external_attr >> 16
             if stat.S_ISLNK(mode):
                 continue  # a link inside an upload points somewhere the user did not upload

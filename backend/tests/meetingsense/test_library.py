@@ -466,3 +466,53 @@ def test_remove_hides_and_delete_removes_the_copies(lib):
     r = lib.client.delete(f"/v1/meetingsense/library/item/{mid}", params={"mode": "delete"}).json()
     assert r["removed"]["files"] >= 1 and not folder.exists()
     assert lib.store.get_meeting(mid) is None
+
+
+def test_an_outline_without_a_model_is_not_reported_as_a_summary(lib, monkeypatch):
+    from app.meetingsense import minutes
+
+    prev = preview(lib, [("Sync 2026-02-27 09-30-00.txt", b"[00:00:04] Anna: Beta shipped.\n[00:01:00] Tom: Thanks.\n", "text/plain")])
+    [res] = commit(lib, prev)["results"]
+    mid = res["meeting_id"]
+    lib.store.save_notes(mid, {"summary": "", "actions": []})  # keep the notes engine out of it
+
+    outline = {"text": "*No language model was reachable, so this is assembled from the meeting's own words "
+                       "rather than written.*\n\n## The meeting in order\n\n**00:00–00:01** — Beta shipped.",
+               "degraded": "extractive"}
+
+    async def no_model(meeting_id, *, call=None, options=None):
+        return outline
+
+    monkeypatch.setattr(minutes, "autogenerate", no_model)
+    assert ("summarize", "done") in run_jobs(lib)  # queued by the import
+    assert lib.db.get_entry(mid)["summary_state"] == "unavailable"
+
+    async def written(meeting_id, *, call=None, options=None):
+        return {"text": "The beta shipped to 40 testers.", "degraded": None}
+
+    monkeypatch.setattr(minutes, "autogenerate", written)
+    lib.db.create_job(mid, "summarize")
+    assert run_jobs(lib) == [("summarize", "done")]
+    assert lib.db.get_entry(mid)["summary_state"] == "ready"
+
+
+def test_ask_without_a_model_quotes_the_lines_that_match_the_question(lib, monkeypatch):
+    import app.meetingsense.notes_engine as notes_engine
+
+    async def no_model(*a, **k):
+        raise RuntimeError("no model configured")
+
+    monkeypatch.setattr(notes_engine, "call_model", no_model)
+    lines = ["Good morning, this is the budget review.", "The beta goes out on Friday.",
+             "We keep the current servers until the end of the quarter.",
+             "I will send the updated cost estimate to finance by Wednesday.",
+             "Please book a follow-up meeting for Tuesday.", "Thanks everyone."]
+    body = "".join(f"[00:00:{i * 5:02d}] Host: {t}\n" for i, t in enumerate(lines)).encode()
+    prev = preview(lib, [("Budget 2026-03-04 14-00-00.txt", body, "text/plain")])
+    [res] = commit(lib, prev)["results"]
+    r = lib.client.post(f"/v1/meetingsense/library/item/{res['meeting_id']}/ask", json={"text": "When is the cost estimate due?"})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["degraded"] == "extractive"
+    assert "cost estimate" in out["text"] and "00:00:15" in out["text"]
+    assert "Thanks everyone" not in out["text"]

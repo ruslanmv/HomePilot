@@ -183,7 +183,7 @@ export const libraryApi = {
     publishVersion: (meetingId: string, versionId: string) =>
         call<{ ok: boolean; versions: TranscriptVersion[] }>(`/v1/meetingsense/library/item/${encodeURIComponent(meetingId)}/versions/${versionId}/publish`, { method: 'POST' }),
     ask: (meetingId: string, text: string) =>
-        call<{ answer?: string; text?: string; [k: string]: any }>(`/v1/meetingsense/${encodeURIComponent(meetingId)}/ask`, { method: 'POST', ...json({ text }) }),
+        call<{ answer?: string; text?: string; [k: string]: any }>(`/v1/meetingsense/library/item/${encodeURIComponent(meetingId)}/ask`, { method: 'POST', ...json({ text }) }),
     commitImport: (body: Record<string, unknown>) =>
         call<{ import_id: string; status: string; results: Array<{ key: string; status: string; meeting_id?: string; transcript_state?: string }> }>(
             '/v1/meetingsense/imports', { method: 'POST', ...json(body) }),

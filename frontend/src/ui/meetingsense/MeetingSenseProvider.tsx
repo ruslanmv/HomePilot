@@ -257,12 +257,14 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         }
     }, []);
 
+    // Read by actuallyStart, whose own `capture` may be the wizard's options instead.
+    const currentCapture = capture;
     const actuallyStart = useCallback(async (
         override?: { capture?: CaptureOptions; title?: string; projectId?: string },
     ): Promise<{ ok: boolean; error?: string }> => {
         // The wizard passes its options here rather than through state, which would not have
         // updated yet in this same call.
-        const chosen = override?.capture ?? capture;
+        const capture = override?.capture ?? currentCapture;
         const nextConversation = freshMeetingConversationId();
         // Remember where the user was before the dedicated meeting thread takes over. Close
         // returns there instead of leaving the app parked on a meeting conversation that
@@ -272,7 +274,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         meeting.reset();
         setMeetingConversationId(nextConversation);
         setWorkspaceMounted(true);
-        setCaptureStatus(statusForCapture(chosen));
+        setCaptureStatus(statusForCapture(capture));
         setScreenStream(null);
         setStarting(true);
         setError(null);
@@ -283,30 +285,30 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                 ...(override?.title ? { title: override.title } : {}),
                 ...(override?.projectId ? { projectId: override.projectId } : {}),
                 notes: true,
-                watch: chosen.slides,
-                audio: chosen.audio,
-                mic: chosen.mic,
-                ...(chosen.mode ? { mode: chosen.mode } : {}),
+                watch: capture.slides,
+                audio: capture.audio,
+                mic: capture.mic,
+                ...(capture.mode ? { mode: capture.mode } : {}),
                 // MS26's name lists. Sent as arrays because that is what the `start` frame
                 // takes; the wizard collects them as one comma-separated field each, since
                 // "Ruslan, Rus" is how a person writes the two things they are called.
-                names: parseNames(chosen.myNames),
-                assistantNames: parseNames(chosen.assistantName),
+                names: parseNames(capture.myNames),
+                assistantNames: parseNames(capture.assistantName),
                 // MS34. The shape of the document this meeting should leave behind. Sent at
                 // `start` and stored on the meeting, so a stop that happens after a
                 // reconnect — or after this tab was closed — still writes the one the user
                 // chose rather than the default.
                 summary: {
-                    style: chosen.summaryStyle,
-                    length: chosen.summaryLength,
-                    provider: chosen.summaryProvider,
-                    model: chosen.summaryModel,
-                    base_url: chosen.summaryBaseUrl,
+                    style: capture.summaryStyle,
+                    length: capture.summaryLength,
+                    provider: capture.summaryProvider,
+                    model: capture.summaryModel,
+                    base_url: capture.summaryBaseUrl,
                 },
                 conversation: {
-                    provider: chosen.conversationProvider,
-                    model: chosen.conversationModel,
-                    base_url: chosen.conversationBaseUrl,
+                    provider: capture.conversationProvider,
+                    model: capture.conversationModel,
+                    base_url: capture.conversationBaseUrl,
                 },
             });
             if (!result.ok) {
@@ -323,10 +325,10 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
             const stream = browserRecorder()?.getScreenPreviewStream?.() || null;
             if (stream) setScreenStream(stream);
 
-            if (result.meetingId) void attachContext(result.meetingId, chosen.context);
+            if (result.meetingId) void attachContext(result.meetingId, capture.context);
 
             try {
-                await persistStartMarker(nextConversation, chosen);
+                await persistStartMarker(nextConversation, capture);
             } catch (markerError) {
                 console.warn('[MeetingSense] meeting started but start marker could not be persisted', markerError);
             }
@@ -338,7 +340,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         } finally {
             setStarting(false);
         }
-    }, [attachContext, capture, conversationId, meeting, onOpenConversation, persistStartMarker]);
+    }, [attachContext, currentCapture, conversationId, meeting, onOpenConversation, persistStartMarker]);
 
     const begin = useCallback(() => {
         if (live || starting) return;

@@ -278,6 +278,12 @@ def _model_call(options: Dict[str, Any]):
     return call
 
 
+def _only_outline(document: Dict[str, Any]) -> bool:
+    """True for the document minutes writes when no model answered (its first line says so)."""
+    text = (document.get("text") or "").lstrip()
+    return bool(document.get("degraded")) and text.startswith("*No language model was reachable")
+
+
 async def _summarize(job: Dict[str, Any]) -> str:
     """Minutes, then decisions and action items — if a model answers. Never fakes either."""
     from .. import minutes as minutes_mod  # noqa: PLC0415
@@ -295,7 +301,9 @@ async def _summarize(job: Dict[str, Any]) -> str:
     if style or length:
         opts = minutes_mod.options_from({"style": style or "minutes", "length": length or "standard"})
     document = await minutes_mod.autogenerate(meeting_id, call=call, options=opts)
-    if document is None:
+    if document is None or _only_outline(document):
+        # An outline assembled from the transcript is kept (the Summary tab shows it as one),
+        # but it is not a summary, and the meeting must not say it has one.
         db.update_entry(meeting_id, summary_state="unavailable")
         db.update_job(job["id"], diagnostic={"reason": "No language model answered, or there is no transcript."})
         return "done"

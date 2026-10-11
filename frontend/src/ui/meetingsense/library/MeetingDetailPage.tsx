@@ -296,8 +296,8 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                                 </TabButton>
                                 <div className="relative ml-auto">
                                     <button type="button" onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}
-                                        className={`inline-flex h-10 items-center gap-1.5 rounded-xl px-3 text-sm ${['audio', 'summary', 'chat', 'properties'].includes(tab) ? 'bg-violet-600/30 text-white' : 'text-white/70 hover:bg-white/[0.06]'}`}>
-                                        <MoreHorizontal size={16} /> More <ChevronDown size={14} />
+                                        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-sm sm:px-3 ${['audio', 'summary', 'chat', 'properties'].includes(tab) ? 'bg-violet-600/30 text-white' : 'text-white/70 hover:bg-white/[0.06]'}`}>
+                                        <MoreHorizontal size={16} className="hidden sm:block" aria-hidden /> More <ChevronDown size={14} aria-hidden />
                                     </button>
                                     {moreOpen ? (
                                         <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-white/10 bg-[#121218] py-1 text-sm shadow-2xl" role="menu">
@@ -339,7 +339,7 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                                             action={segments.length ? <button type="button" onClick={() => setTab('transcript')} className="text-sm text-violet-300 hover:text-violet-200">View full transcript →</button> : null}>
                                             {segments.length ? (
                                                 <ul className="space-y-3">
-                                                    {segments.slice(0, 3).map((s, i) => <TranscriptLine key={s.id || i} seg={s} timed={timed} onSeek={audio ? (ms) => player.current?.seek(ms) : undefined} />)}
+                                                    {segments.slice(0, 3).map((s, i) => <TranscriptLine key={s.id || i} seg={s} timed={timed} speakers={speakers.length > 0} onSeek={audio ? (ms) => player.current?.seek(ms) : undefined} />)}
                                                 </ul>
                                             ) : <TranscriptEmpty item={item} />}
                                         </Card>
@@ -422,8 +422,9 @@ function TabButton({ id, tab, setTab, icon, children }: { id: Tab; tab: Tab; set
     const active = tab === id;
     return (
         <button type="button" role="tab" aria-selected={active} onClick={() => setTab(id)}
-            className={`inline-flex h-10 items-center gap-2 rounded-xl px-3 text-sm sm:px-4 ${active ? 'bg-violet-600/30 font-semibold text-white shadow-[inset_0_-2px_0_rgba(167,139,250,0.9)]' : 'text-white/70 hover:bg-white/[0.06]'}`}>
-            {icon}{children}
+            className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-2.5 text-sm sm:px-4 ${active ? 'bg-violet-600/30 font-semibold text-white shadow-[inset_0_-2px_0_rgba(167,139,250,0.9)]' : 'text-white/70 hover:bg-white/[0.06]'}`}>
+            {/* Icons step aside on phones so all four tabs, More included, fit on one line. */}
+            <span className="hidden sm:inline-flex" aria-hidden>{icon}</span>{children}
         </button>
     );
 }
@@ -464,16 +465,25 @@ function TranscriptEmpty({ item }: { item: LibraryItem }) {
     return <p className="text-sm text-white/55">{text[item.transcript_state] || (item.recording_state === 'awaiting' ? 'The recording has not arrived yet.' : 'There is no transcript.')}</p>;
 }
 
-function TranscriptLine({ seg, timed, onSeek }: { seg: Segment; timed: boolean; onSeek?: (ms: number) => void }) {
+function TranscriptLine({ seg, timed, onSeek, speakers = true }: { seg: Segment; timed: boolean; onSeek?: (ms: number) => void; speakers?: boolean }) {
+    // A transcript with no speakers at all (most recordings transcribed here) drops the speaker
+    // columns rather than repeating "Speaker unknown" on every line.
+    const who = seg.speaker || 'Speaker unknown';
+    const stamp = timed && onSeek ? (
+        <button type="button" onClick={() => onSeek(seg.t0_ms)} className="hidden self-start pt-2 text-left text-sm tabular-nums text-violet-300 hover:text-violet-200 sm:block" aria-label={`Play from ${clock(seg.t0_ms)}`}>{clock(seg.t0_ms)}</button>
+    ) : <span className="hidden pt-2 text-sm tabular-nums text-white/40 sm:block">{timed ? clock(seg.t0_ms) : ''}</span>;
+    const phoneLabel = [speakers ? who : '', timed ? clock(seg.t0_ms) : ''].filter(Boolean).join(' · ');
     return (
-        <li className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-3 sm:grid-cols-[2.25rem_7rem_5rem_minmax(0,1fr)]">
-            <span className="grid h-9 w-9 place-items-center rounded-full bg-violet-500/20 text-xs font-semibold text-violet-100" aria-hidden>{initials(seg.speaker)}</span>
-            <span className="hidden truncate pt-2 text-sm font-medium sm:block">{seg.speaker || 'Speaker unknown'}</span>
-            {timed && onSeek ? (
-                <button type="button" onClick={() => onSeek(seg.t0_ms)} className="hidden pt-2 text-left text-sm tabular-nums text-violet-300 hover:text-violet-200 sm:block" aria-label={`Play from ${clock(seg.t0_ms)}`}>{clock(seg.t0_ms)}</button>
-            ) : <span className="hidden pt-2 text-sm tabular-nums text-white/40 sm:block">{timed ? clock(seg.t0_ms) : ''}</span>}
+        <li className={`grid gap-3 ${speakers ? 'grid-cols-[2.25rem_minmax(0,1fr)] sm:grid-cols-[2.25rem_7.5rem_4.5rem_minmax(0,1fr)]' : 'grid-cols-1 sm:grid-cols-[4.5rem_minmax(0,1fr)]'}`}>
+            {speakers ? (
+                <>
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-violet-500/20 text-xs font-semibold text-violet-100" aria-hidden>{initials(seg.speaker)}</span>
+                    <span className="hidden truncate pt-2 text-sm font-medium sm:block" title={who}>{who}</span>
+                </>
+            ) : null}
+            {stamp}
             <p className="pt-1.5 text-[15px] leading-relaxed text-white/85">
-                <span className="mr-2 text-xs text-white/40 sm:hidden">{seg.speaker || 'Speaker unknown'}{timed ? ` · ${clock(seg.t0_ms)}` : ''}</span>
+                {phoneLabel ? <span className="mr-2 text-xs text-white/40 sm:hidden">{phoneLabel}</span> : null}
                 {seg.text}
             </p>
         </li>
@@ -490,6 +500,7 @@ function TranscriptTab({ meetingId, detail, timed, onSeek, onSaved }: {
     const [saving, setSaving] = useState(false);
     const shown = q ? segments.filter((s) => `${s.speaker || ''} ${s.text}`.toLowerCase().includes(q.toLowerCase())) : segments;
     const versions = detail.versions || [];
+    const hasSpeakers = segments.some((s) => s.speaker);
 
     if (!segments.length) return <Card icon={<FileText size={18} />} title="Transcript"><TranscriptEmpty item={detail.item} /></Card>;
     return (
@@ -525,7 +536,7 @@ function TranscriptTab({ meetingId, detail, timed, onSeek, onSaved }: {
                     ))}
                 </ul>
             ) : (
-                <ul className="space-y-3">{shown.map((s, i) => <TranscriptLine key={s.id || i} seg={s} timed={timed} onSeek={onSeek} />)}</ul>
+                <ul className="space-y-3">{shown.map((s, i) => <TranscriptLine key={s.id || i} seg={s} timed={timed} speakers={hasSpeakers} onSeek={onSeek} />)}</ul>
             )}
             {versions.length > 1 && meetingId ? (
                 <details className="mt-5 rounded-xl border border-white/10 p-3 text-sm">
@@ -755,7 +766,7 @@ function DetailsPanel({ item, detail, overviewText, actions, speakers, onViewAct
                 </h3>
                 {actions.length ? (
                     <ul className="space-y-2">{actions.slice(0, 3).map((a, i) => (
-                        <li key={i} className="flex gap-2 text-white/80"><span className="mt-1 h-3.5 w-3.5 shrink-0 rounded border border-white/30" aria-hidden />
+                        <li key={i} className="flex items-start gap-2 text-white/80"><span className="mt-1 h-3.5 w-3.5 shrink-0 rounded border border-white/30" aria-hidden />
                             <span className="min-w-0">{a.text}{a.owner ? <span className="block text-xs text-white/45">{a.owner}</span> : null}</span>
                             {a.due ? <span className="ml-auto shrink-0 rounded border border-white/10 px-1.5 text-xs text-white/55">{a.due}</span> : null}
                         </li>))}
