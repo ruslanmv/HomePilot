@@ -50,6 +50,15 @@ export interface MeetingControls {
     undoSecondsLeft: number | null;
     capture: CaptureOptions;
     setCapture: (next: CaptureOptions) => void;
+    /**
+     * Start a live meeting with these options, a title and a project (the Meetings wizard).
+     * Additive: `begin` is unchanged. `acknowledge` records the consent the wizard asked for.
+     */
+    startWith?: (
+        next: CaptureOptions,
+        meta: { title?: string; projectId?: string },
+        acknowledge: boolean,
+    ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 interface WorkspaceRecorder {
@@ -212,14 +221,14 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
     const live = phase === 'live' || phase === 'reconnecting' || phase === 'stopping';
     const ended = phase === 'ended';
 
-    const persistStartMarker = useCallback(async (id: string) => {
+    const persistStartMarker = useCallback(async (id: string, options: CaptureOptions = capture) => {
         const response = await fetch(`${apiBase()}/conversations/${encodeURIComponent(id)}/messages`, {
             method: 'POST',
             credentials: 'include',
             headers: headers(),
             body: JSON.stringify({
                 role: 'system',
-                content: meetingStartMarker(capture, Boolean(status?.stt?.remote)),
+                content: meetingStartMarker(options, Boolean(status?.stt?.remote)),
             }),
         });
         if (!response.ok) throw new Error(`conversation marker HTTP ${response.status}`);
@@ -248,7 +257,12 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         }
     }, []);
 
-    const actuallyStart = useCallback(async () => {
+    const actuallyStart = useCallback(async (
+        override?: { capture?: CaptureOptions; title?: string; projectId?: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+        // The wizard passes its options here rather than through state, which would not have
+        // updated yet in this same call.
+        const chosen = override?.capture ?? capture;
         const nextConversation = freshMeetingConversationId();
         // Remember where the user was before the dedicated meeting thread takes over. Close
         // returns there instead of leaving the app parked on a meeting conversation that
@@ -258,7 +272,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         meeting.reset();
         setMeetingConversationId(nextConversation);
         setWorkspaceMounted(true);
-        setCaptureStatus(statusForCapture(capture));
+        setCaptureStatus(statusForCapture(chosen));
         setScreenStream(null);
         setStarting(true);
         setError(null);
@@ -266,31 +280,33 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         try {
             const result = await meeting.start({
                 conversationId: nextConversation,
+                ...(override?.title ? { title: override.title } : {}),
+                ...(override?.projectId ? { projectId: override.projectId } : {}),
                 notes: true,
-                watch: capture.slides,
-                audio: capture.audio,
-                mic: capture.mic,
-                ...(capture.mode ? { mode: capture.mode } : {}),
+                watch: chosen.slides,
+                audio: chosen.audio,
+                mic: chosen.mic,
+                ...(chosen.mode ? { mode: chosen.mode } : {}),
                 // MS26's name lists. Sent as arrays because that is what the `start` frame
                 // takes; the wizard collects them as one comma-separated field each, since
                 // "Ruslan, Rus" is how a person writes the two things they are called.
-                names: parseNames(capture.myNames),
-                assistantNames: parseNames(capture.assistantName),
+                names: parseNames(chosen.myNames),
+                assistantNames: parseNames(chosen.assistantName),
                 // MS34. The shape of the document this meeting should leave behind. Sent at
                 // `start` and stored on the meeting, so a stop that happens after a
                 // reconnect — or after this tab was closed — still writes the one the user
                 // chose rather than the default.
                 summary: {
-                    style: capture.summaryStyle,
-                    length: capture.summaryLength,
-                    provider: capture.summaryProvider,
-                    model: capture.summaryModel,
-                    base_url: capture.summaryBaseUrl,
+                    style: chosen.summaryStyle,
+                    length: chosen.summaryLength,
+                    provider: chosen.summaryProvider,
+                    model: chosen.summaryModel,
+                    base_url: chosen.summaryBaseUrl,
                 },
                 conversation: {
-                    provider: capture.conversationProvider,
-                    model: capture.conversationModel,
-                    base_url: capture.conversationBaseUrl,
+                    provider: chosen.conversationProvider,
+                    model: chosen.conversationModel,
+                    base_url: chosen.conversationBaseUrl,
                 },
             });
             if (!result.ok) {
@@ -301,16 +317,16 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                 setScreenStream(null);
                 returnConversationIdRef.current = null;
                 meeting.reset();
-                return;
+                return { ok: false, error: result.error || 'The meeting could not start.' };
             }
 
             const stream = browserRecorder()?.getScreenPreviewStream?.() || null;
             if (stream) setScreenStream(stream);
 
-            if (result.meetingId) void attachContext(result.meetingId, capture.context);
+            if (result.meetingId) void attachContext(result.meetingId, chosen.context);
 
             try {
-                await persistStartMarker(nextConversation);
+                await persistStartMarker(nextConversation, chosen);
             } catch (markerError) {
                 console.warn('[MeetingSense] meeting started but start marker could not be persisted', markerError);
             }
@@ -318,6 +334,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
             // Only after capture succeeds: the normal chat underneath switches to the new
             // conversation. If permissions fail, the user is still exactly where they started.
             onOpenConversation?.(nextConversation);
+            return { ok: true };
         } finally {
             setStarting(false);
         }
@@ -341,6 +358,19 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         // finalizing already-captured material, not continuing to listen during an undo timer.
         void meeting.stop();
     }, [meeting]);
+
+    const startWith = useCallback(async (
+        next: CaptureOptions,
+        meta: { title?: string; projectId?: string },
+        acknowledge: boolean,
+    ): Promise<{ ok: boolean; error?: string }> => {
+        if (live || starting) return { ok: false, error: 'A meeting is already recording.' };
+        if (!enabled) return { ok: false, error: 'MeetingSense is turned off on this server.' };
+        if (acknowledge) rememberConsent(storage);
+        if (!consentAcknowledged(storage)) return { ok: false, error: 'Recording needs your consent first.' };
+        setCapture(next);
+        return actuallyStart({ capture: next, title: meta.title, projectId: meta.projectId });
+    }, [live, starting, enabled, storage, actuallyStart]);
 
     const onAccept = useCallback((remember: boolean) => {
         if (remember) rememberConsent(storage);
@@ -563,6 +593,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         undoSecondsLeft: meeting.undoSecondsLeft,
         capture,
         setCapture,
+        startWith,
     };
 
     return (

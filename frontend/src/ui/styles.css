@@ -548,6 +548,12 @@ select option:hover {
   border-radius: var(--hp-radius-sheet);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
 }
+/* Wider sheets: the Meetings import preview and the Start a meeting wizard. */
+.hp-sheet.hp-sheet--wide { max-width: 60rem; }
+.hp-sheet.hp-sheet--xl { max-width: 76rem; max-height: min(94vh, 60rem); max-height: min(94dvh, 60rem); }
+@media (max-width: 639.98px) {
+  .hp-sheet.hp-sheet--wide, .hp-sheet.hp-sheet--xl { max-width: none; max-height: none; }
+}
 .hp-sheet__header, .hp-sheet__footer { flex: 0 0 auto; }
 .hp-sheet__body {
   flex: 1 1 auto;
