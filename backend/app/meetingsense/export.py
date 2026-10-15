@@ -131,6 +131,25 @@ def notes_body(notes: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+def note_line(item: Any) -> str:
+    """One note item as a Markdown bullet. The notes engine stores items as dicts
+    (``{"text", "owner", "t0", "done"}``); rendering those with ``str()`` printed Python
+    dict reprs into exports and into project knowledge. Strings pass through unchanged."""
+    if not isinstance(item, dict):
+        return str(item)
+    text = str(item.get("text") or item.get("title") or item.get("item") or "").strip()
+    extras = []
+    owner = item.get("owner") or item.get("who")
+    if owner:
+        extras.append(str(owner))
+    stamp = item.get("t0_ms") if item.get("t0_ms") is not None else item.get("t0")
+    if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+        extras.append(clock(int(stamp)))
+    if item.get("done"):
+        extras.append("done")
+    return f"{text} ({', '.join(extras)})" if extras and text else text or str(item)
+
+
 def to_markdown(
     meeting: Dict[str, Any],
     segments: Sequence[Dict[str, Any]],
@@ -157,7 +176,7 @@ def to_markdown(
             if isinstance(value, str):
                 out.append(f"\n{value}\n")
             else:
-                out.extend(f"\n- {item}" for item in value)
+                out.extend(f"\n- {note_line(item)}" for item in value)
                 out.append("\n")
 
     if keyframes:

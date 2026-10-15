@@ -25,13 +25,15 @@ export interface TeamsViewProps {
   apiKey?: string
   /** When true the "Join Meeting" bridge button is shown (requires Teams MCP server) */
   teamsMcpAvailable?: boolean
+  /** Open this room straight away (from the Meetings library). Additive; absent = landing. */
+  initialRoomId?: string | null
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function TeamsView({ backendUrl, apiKey, teamsMcpAvailable }: TeamsViewProps) {
+export function TeamsView({ backendUrl, apiKey, teamsMcpAvailable, initialRoomId }: TeamsViewProps) {
   const [viewMode, setViewMode] = useState<'landing' | 'wizard' | 'join-meeting' | 'room'>('landing')
   const [activeRoom, setActiveRoom] = useState<MeetingRoomT | null>(null)
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
@@ -94,6 +96,22 @@ export function TeamsView({ backendUrl, apiKey, teamsMcpAvailable }: TeamsViewPr
       setViewMode('room')
     }
   }, [getRoom])
+
+  // Opened from the Meetings library: show that room once its data is loaded.
+  const openedInitialRoom = React.useRef<string | null>(null)
+  useEffect(() => {
+    if (!initialRoomId || openedInitialRoom.current === initialRoomId) return
+    openedInitialRoom.current = initialRoomId
+    void (async () => {
+      try {
+        const room = await getRoom(initialRoomId)
+        if (room) await handleOpenRoom(room)
+      } catch {
+        // The landing page is shown instead; the room may have been deleted.
+      }
+    })()
+  }, [initialRoomId, getRoom, handleOpenRoom])
+
 
   // Create session from wizard
   const handleCreate = useCallback(

@@ -7,8 +7,11 @@
  * - Without one (or if every URL fails to load): the project's type icon.
  * - `level` (0..1, optional) makes the ring respond to audio — used by Voice
  *   for a static picture. The face itself is never animated.
+ * - While a picture is on its way (a full-size original can take a moment), a
+ *   soft shimmer fills the circle and the picture fades in once it has arrived —
+ *   never an empty black disc. A picture already in the cache shows at once.
  */
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Bot, Film, Image as ImageIcon, MessageSquare, User } from 'lucide-react'
 
 const FALLBACK_ACCENT = '139, 92, 246' // violet-500
@@ -73,6 +76,20 @@ export function useImageFallback(urls: Array<string | null | undefined>) {
   }
 }
 
+/**
+ * Whether the <img> showing `src` has finished loading. A cached picture can be
+ * complete before React listens for "load", so that is checked right away.
+ */
+export function useImageReady(src: string | null) {
+  const ref = useRef<HTMLImageElement>(null)
+  const [readySrc, setReadySrc] = useState<string | null>(null)
+  useLayoutEffect(() => {
+    const img = ref.current
+    if (src && img && img.complete && img.naturalWidth > 0) setReadySrc(src)
+  }, [src])
+  return { ref, ready: !!src && readySrc === src, onLoad: () => setReadySrc(src) }
+}
+
 /** A decorative <img> that tries each URL in turn; `fallback` when none loads. */
 export function AvatarImage({
   urls,
@@ -86,16 +103,19 @@ export function AvatarImage({
   fallback?: React.ReactNode
 }) {
   const { src, onError } = useImageFallback(urls)
+  const { ref, ready, onLoad } = useImageReady(src)
   if (!src) return <>{fallback}</>
   return (
     <img
+      ref={ref}
       src={src}
       alt=""
       aria-hidden
-      className={className}
+      className={ready ? className : `${className || ''} hp-avatar-loading`}
       style={style}
       draggable={false}
       decoding="async"
+      onLoad={onLoad}
       onError={onError}
     />
   )
@@ -121,7 +141,9 @@ export function ProjectAvatar({
   className?: string
 }) {
   const { src, onError } = useImageFallback([url, fallbackUrl])
+  const { ref: imgRef, ready, onLoad } = useImageReady(src)
   const showPicture = !!src
+  const loading = showPicture && !ready
   const [accent, setAccent] = useState(FALLBACK_ACCENT)
   useEffect(() => setAccent(FALLBACK_ACCENT), [src])
   const lvl = typeof level === 'number' && Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : null
@@ -137,6 +159,7 @@ export function ProjectAvatar({
         ['--hp-level' as string]: lvl ?? 0,
       }}
       data-kind={showPicture ? 'picture' : 'icon'}
+      aria-busy={loading || undefined}
     >
       {lvl !== null ? (
         <>
@@ -144,14 +167,18 @@ export function ProjectAvatar({
           <span className="hp-project-avatar__wave hp-project-avatar__wave--2" aria-hidden="true" />
         </>
       ) : null}
+      {loading ? <span className="hp-project-avatar__skeleton" aria-hidden="true" /> : null}
       {showPicture ? (
         <img
+          ref={imgRef}
           src={src as string}
           alt={name}
           className="hp-project-avatar__img"
+          data-ready={ready ? 'true' : 'false'}
           draggable={false}
           decoding="async"
           onLoad={(e) => {
+            onLoad()
             const tint = imageAccent(e.currentTarget)
             if (tint) setAccent(tint)
           }}

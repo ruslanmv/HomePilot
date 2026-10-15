@@ -17,4 +17,13 @@ needs WebSockets arrives in MS3 and is imported lazily then, so an install that 
 MeetingSense on never loads it.
 """
 
-from .routes import router  # noqa: F401
+from fastapi import APIRouter
+
+from .library import router as _library_router
+from .routes import router as _core_router
+
+# The library's routes first: MeetingSense's ``GET /v1/meetingsense/{meeting_id}`` would
+# otherwise read ``library`` or ``imports`` as a meeting id. Every core route is unchanged.
+router = APIRouter()
+router.include_router(_library_router)
+router.include_router(_core_router)

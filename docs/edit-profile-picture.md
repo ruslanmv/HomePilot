@@ -69,6 +69,12 @@ DELETE /projects/{id}/persona/avatar/crop   back to the automatic thumbnail
   the previous picture goes to `avatar_history`. The original files stay on disk.
 - Everything is saved on the project, so it holds after a reload and on any
   device signed in to the same HomePilot.
+- It stays until you pick another look. Saving Persona Settings — even from a
+  panel opened before the crop — keeps it: the project save restores the
+  framed picture when a client sends back an older copy of the appearance (or
+  wraps the current picture in a look of its own), and the automatic avatar
+  re-commit that follows a settings save leaves a framed picture alone.
+  Choosing a different look replaces the framing, as before.
 
 The face zoom in **Settings → Chat** (*Zoom pictures to the face*, off by
 default) never overrides a framing you saved.
