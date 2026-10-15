@@ -501,22 +501,43 @@ async def call_model(
     model: str = "",
     provider: str = "",
     base_url: str = "",
+    max_tokens: int = 600,
+    response_format: Optional[str] = None,
 ) -> str:
     """The default MeetingSense model call, routed through HomePilot's compute layer.
 
     All three of `provider`, `model` and `base_url` are optional: a meeting's setup supplies
     the chat target the rest of HomePilot is using, and anything it leaves out is resolved
     from the install's configuration by :func:`resolve_target` rather than assumed.
-    """
-    from ..compute import route_chat
 
+    ``max_tokens`` defaults to the 600 the rolling notes were tuned for; longer callers (the
+    end-of-meeting document, the typed analysis) say what they need. ``response_format="json"``
+    asks the provider for a JSON object where that is supported — today Ollama's ``format`` —
+    and is ignored elsewhere, where the caller's own parsing has to cope.
+    """
     target = resolve_target(provider=provider, model=model, base_url=base_url)
-    response = await route_chat(
-        messages,
-        provider=target["provider"],
-        base_url=target["base_url"],
-        temperature=temperature,
-        max_tokens=600,
-        model=target["model"],
-    )
+    if response_format and target["provider"] == "ollama":
+        # The compute router has no response_format parameter yet; the local Ollama path is the
+        # router's identity case, so calling it directly loses no routing and gains JSON mode.
+        from .. import llm
+
+        response = await llm.chat_ollama(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            base_url=target["base_url"],
+            model=target["model"],
+            response_format=response_format,
+        )
+    else:
+        from ..compute import route_chat
+
+        response = await route_chat(
+            messages,
+            provider=target["provider"],
+            base_url=target["base_url"],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=target["model"],
+        )
     return ((response.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""

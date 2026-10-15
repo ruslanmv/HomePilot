@@ -345,6 +345,20 @@ when a clearly better model than yours fits. See [docs/model-advisor.md](docs/mo
   <img src="docs/assets/model-advisor/card.jpg" alt="Suggested for your GPU: top chat and video models for a 12 GB GPU, with fit, speed and install" width="900" />
 </p>
 
+### Meetings library
+
+**Meetings** can hold every meeting in one place: recorded live, recorded inside a project,
+imported from an Insta360 / AIRecord device, uploaded audio, transcript-only, and scheduled
+meetings waiting for their recording. Import previews what it found before anything is saved,
+**Folder Sync** watches a folder such as `D:\AIRecord` (read-only, each recording once), and
+recordings are transcribed on your own computer. Each meeting opens with its recording,
+transcript, actions and a details panel you can hide or resize. Off by default
+(`MEETINGS_LIBRARY_UPGRADE=1`). See [docs/meetings-library.md](docs/meetings-library.md).
+
+<p align="center">
+  <img src="docs/assets/meetings-library/library.jpg" alt="The Meetings library: tabs, search, and one card per meeting with its type and transcription status" width="900" />
+</p>
+
 ### On Your Phone
 <p align="center">
   <img src="assets/readme/homepilot-mobile.jpg" alt="HomePilot on a phone: an answer being revealed, the menu, a persona's Conversation Hub, Voice with the persona's picture, and Account Settings" width="900" />
@@ -484,6 +498,10 @@ For detailed installation options and manual installation, see [MODEL_INSTALLATI
 make install
 make run
 ```
+
+> ComfyUI (image generation) is cloned shallowly and retried. If the download still fails on a weak
+> connection, `make install` finishes without it; add it later with `make install-comfyui`, or leave it
+> out on purpose with `make install SKIP_COMFYUI=1`.
 
 ### 5. Access
 

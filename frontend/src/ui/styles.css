@@ -548,6 +548,12 @@ select option:hover {
   border-radius: var(--hp-radius-sheet);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
 }
+/* Wider sheets: the Meetings import preview and the Start a meeting wizard. */
+.hp-sheet.hp-sheet--wide { max-width: 60rem; }
+.hp-sheet.hp-sheet--xl { max-width: 76rem; max-height: min(94vh, 60rem); max-height: min(94dvh, 60rem); }
+@media (max-width: 639.98px) {
+  .hp-sheet.hp-sheet--wide, .hp-sheet.hp-sheet--xl { max-width: none; max-height: none; }
+}
 .hp-sheet__header, .hp-sheet__footer { flex: 0 0 auto; }
 .hp-sheet__body {
   flex: 1 1 auto;
@@ -801,6 +807,27 @@ select option:hover {
   box-shadow: 0 0 0 2px rgba(var(--hp-accent), 0.55), 0 0 32px rgba(var(--hp-accent), 0.32);
   background: #111;
 }
+/* Loading: a soft shimmer in the circle (with the ring) until the picture has
+   arrived, then the picture fades in. Reduced motion / Motion off stop the
+   sweep and the fade (global rules). */
+.hp-project-avatar__img { transition: opacity 220ms ease-out; }
+.hp-project-avatar__img[data-ready='false'] { opacity: 0; }
+.hp-project-avatar__skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.05);
+  background-image: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.11) 50%, transparent 70%);
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  box-shadow: 0 0 0 2px rgba(var(--hp-accent), 0.35);
+  animation: hp-avatar-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes hp-avatar-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+/* Small avatars (chat header, beside replies): a gentle pulse until loaded. */
+.hp-avatar-loading { background-color: rgba(255, 255, 255, 0.07); animation: hp-avatar-pulse 1.4s ease-in-out infinite; }
+@keyframes hp-avatar-pulse { 50% { background-color: rgba(255, 255, 255, 0.15); } }
 .hp-project-avatar--live .hp-project-avatar__img {
   box-shadow:
     0 0 0 2px rgba(var(--hp-accent), calc(0.5 + var(--hp-level) * 0.4)),
@@ -830,4 +857,16 @@ select option:hover {
     linear-gradient(180deg, #0d0f1a 0%, #0a0b12 100%);
   border-color: rgba(129, 140, 248, 0.22);
   max-width: 46rem;
+}
+
+/* Meeting intelligence: printing the Executive Brief. The report is cloned into #hp-print-root
+   and only that root is printed, so the dark application shell never reaches the printer. */
+#hp-print-root { display: none; }
+@media print {
+  body.hp-print-brief > *:not(#hp-print-root) { display: none !important; }
+  body.hp-print-brief { background: #fff !important; color: #1e2c45; }
+  #hp-print-root { display: block; padding: 0; }
+  #hp-print-root .hp-brief { box-shadow: none !important; border-radius: 0 !important; }
+  #hp-print-root button { border: 0 !important; background: transparent !important; }
+  @page { margin: 12mm; }
 }

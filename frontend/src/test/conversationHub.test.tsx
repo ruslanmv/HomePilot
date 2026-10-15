@@ -120,6 +120,27 @@ describe('ProjectAvatar', () => {
     expect(screen.getByRole('img', { name: 'Angel' }).tagName).toBe('DIV')
   })
 
+  it('shows a loading shimmer until the picture has arrived, then the picture', () => {
+    render(<ProjectAvatar url="http://hp/files/big.png" fallbackUrl="http://hp/thumb.webp" name="Angel" projectType="persona" />)
+    const frame = document.querySelector('.hp-project-avatar') as HTMLElement
+    const img = screen.getByRole('img', { name: 'Angel' })
+    expect(frame).toHaveAttribute('aria-busy', 'true')
+    expect(frame.querySelector('.hp-project-avatar__skeleton')).not.toBeNull()
+    expect(img).toHaveAttribute('data-ready', 'false')
+    fireEvent.load(img)
+    expect(frame).not.toHaveAttribute('aria-busy')
+    expect(frame.querySelector('.hp-project-avatar__skeleton')).toBeNull()
+    expect(img).toHaveAttribute('data-ready', 'true')
+  })
+
+  it('a small avatar pulses until loaded', () => {
+    const { container } = render(<AvatarImage urls={['http://hp/thumb.webp']} className="h-8 w-8 rounded-full" />)
+    const img = container.querySelector('img') as HTMLImageElement
+    expect(img.className).toContain('hp-avatar-loading')
+    fireEvent.load(img)
+    expect(img.className).toBe('h-8 w-8 rounded-full')
+  })
+
   it('a small avatar shows its fallback mark when no picture loads', () => {
     const { container } = render(<AvatarImage urls={['http://hp/face', null]} className="a" fallback={<span>mark</span>} />)
     const img = container.querySelector('img') as HTMLImageElement

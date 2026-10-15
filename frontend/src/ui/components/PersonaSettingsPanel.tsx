@@ -405,7 +405,9 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
 
     const thumb = pap.selected_thumb_filename as string | undefined
     const full = pap.selected_filename as string | undefined
-    const url = fileUrl(backendUrl, thumb || full)
+    // The original, not the 256 px thumbnail: this look is what Save commits as
+    // the persona's picture, and a thumbnail (or a framed crop) would replace it.
+    const url = fileUrl(backendUrl, full || thumb)
     if (!url) return []
 
     return [

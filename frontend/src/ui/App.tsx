@@ -145,6 +145,9 @@ import {
 } from './meetingsense/catalog'
 import { useMeetingCatalog } from './meetingsense/useMeetingCatalog'
 import { MeetingLibrary } from './meetingsense/MeetingLibrary'
+import { MeetingsHome } from './meetingsense/library/MeetingsHome'
+import { MeetingDetailPage } from './meetingsense/library/MeetingDetailPage'
+import type { LibraryStatus } from './meetingsense/library/api'
 import { MeetingSenseProvider } from './meetingsense/MeetingSenseProvider'
 import type { MeetingSenseStatus } from './meetingsense/entryPoint'
 
@@ -3317,15 +3320,33 @@ export default function App() {
   // MS29. The one status body the whole feature reads: the nav flag, the record button, and
   // the consent sheet's copy all come from it, so there is one round trip and one answer.
   const [meetingStatus, setMeetingStatus] = useState<MeetingSenseStatus | null>(null)
-  const meetingsView = useMeetingCatalog({ enabled: meetingsNavEnabled && mode === 'meetings' })
+  // Meetings Library upgrade (MEETINGS_LIBRARY_UPGRADE). Its own status route, so the legacy
+  // catalog below stays exactly as it was whenever the upgrade is off.
+  const [libraryStatus, setLibraryStatus] = useState<LibraryStatus | null>(null)
+  const [meetingDetailId, setMeetingDetailId] = useState<string | null>(null)
+  const [teamsRoomToOpen, setTeamsRoomToOpen] = useState<string | null>(null)
+  const libraryOn = Boolean(libraryStatus?.enabled)
+  const meetingsView = useMeetingCatalog({ enabled: meetingsNavEnabled && mode === 'meetings' && !libraryOn })
+  useEffect(() => {
+    if (mode !== 'meetings') setMeetingDetailId(null)
+    if (mode !== 'teams') setTeamsRoomToOpen(null)
+  }, [mode])
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
         const res = await fetch('/v1/meetingsense/status')
         const body = res.ok ? await res.json() : null
+        let library: LibraryStatus | null = null
+        try {
+          const lib = await fetch('/v1/meetingsense/library/status')
+          library = lib.ok ? await lib.json() : null
+        } catch {
+          // An older backend has no library: the Meetings view is the legacy catalog.
+        }
         if (cancelled) return
-        setMeetingsNavEnabled(msCatalogEnabled(body))
+        setLibraryStatus(library)
+        setMeetingsNavEnabled(msCatalogEnabled(body) || Boolean(library?.enabled))
         setMeetingStatus(body)
       } catch {
         // An optional feature's probe failing is not something to tell the user about. The
@@ -6079,6 +6100,153 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
   const advisor = useAdvisorUpdates(settingsDraft.backendUrl, advisorCurrent, settingsDraft.apiKey)
   const projectThumbUrl = projectAvatarUrl(currentProject, settingsDraft.backendUrl, 'thumb')
 
+  // Opening a project — from the Projects page, and from a meeting's project link.
+  const handleProjectSelect = async (projectId: string) => {
+    try {
+      // Fetch project info to get instructions and document count
+      const response = await fetch(
+        `${settingsDraft.backendUrl.replace(/\/+$/, '')}/projects/${projectId}`,
+        {
+          headers: authHeaders,
+        }
+      )
+
+      if (response.ok) {
+        const data = await response.json()
+        const project = data.project
+
+        // Store project ID and info for chat context
+        localStorage.setItem('homepilot_current_project', projectId)
+        setCurrentProject({
+          id: projectId,
+          name: project.name,
+          document_count: project.document_count || 0,
+          project_type: project.project_type,
+          description: project.description,
+          instructions: project.instructions,
+          files: project.files,
+          agentic: project.agentic,
+          persona_agent: project.persona_agent,
+          persona_appearance: project.persona_appearance,
+          created_at: project.created_at,
+          updated_at: project.updated_at,
+        })
+
+        projectInfoLoadedRef.current = projectId
+        const lastConvId = project.last_conversation_id
+        const loadMessages = async (convId: string) => {
+          const convData = await getJson<{
+            ok: boolean
+            messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
+          }>(settingsDraft.backendUrl, `/conversations/${convId}/messages`, authHeaders)
+          return convData.ok && convData.messages ? convData.messages : []
+        }
+        const toMsgs = (rows: Array<{ role: string; content: string; media?: any }>) =>
+          rows.map((m, idx) => {
+            const h = hydratePersistedMessageMedia(m.media)
+            return {
+              id: `restored-${idx}`,
+              role: m.role as 'user' | 'assistant' | 'system',
+              text: m.content,
+              animate: false,
+              media: h.media,
+              ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+            }
+          })
+
+        if (project.project_type === 'persona') {
+          // Companion-grade: the Session Hub opens right away. The persistent
+          // session and its messages load behind it, in parallel with the last
+          // conversation (the fallback when the session is still empty) —
+          // previously four requests ran one after another before the hub showed.
+          void (async () => {
+            const lastPromise = lastConvId ? loadMessages(lastConvId).catch(() => []) : Promise.resolve([])
+            try {
+              const session = await resolveSession(projectId, 'text')
+              console.log('[Project] Resolved persona session:', session.id)
+              localStorage.setItem('homepilot_active_voice_session', JSON.stringify(session))
+              const sessionRows = session.conversation_id === lastConvId
+                ? await lastPromise
+                : await loadMessages(session.conversation_id).catch(() => [])
+              const rows = sessionRows.length > 0 ? sessionRows : await lastPromise
+              // Nothing to show: clear the chat first — it assigns a fresh
+              // conversation id, so the session's own id must be set after it.
+              if (rows.length === 0) onNewConversation()
+              setConversationId(session.conversation_id)
+              if (rows.length > 0) setMessages(toMsgs(rows))
+            } catch (err) {
+              console.warn('[Project] Session resolution failed:', err)
+              const rows = await lastPromise
+              if (lastConvId && rows.length > 0) {
+                setConversationId(lastConvId)
+                setMessages(toMsgs(rows))
+              } else {
+                onNewConversation()
+              }
+            }
+          })()
+        } else if (lastConvId) {
+          // Restore previous conversation for this project
+          try {
+            const rows = await loadMessages(lastConvId)
+            if (rows.length > 0) {
+              setConversationId(lastConvId)
+              setMessages(toMsgs(rows))
+            } else {
+              // Conversation was empty/deleted — start fresh
+              onNewConversation()
+            }
+          } catch {
+            // Failed to load — start fresh
+            onNewConversation()
+          }
+        } else {
+          // No previous conversation — start fresh
+          onNewConversation()
+        }
+
+        // Agent projects: auto-enable agentic execution mode
+        if (project.project_type === 'agent') {
+          const agentSettings: ChatScopedSettings = {
+            advancedHelpEnabled: true,
+            askBeforeActing: project.agentic?.ask_before_acting !== false,
+            executionProfile: project.agentic?.execution_profile === 'balanced'
+              ? 'balanced'
+              : project.agentic?.execution_profile === 'quality'
+              ? 'quality'
+              : 'fast',
+            incognito: false,
+          }
+          updateChatSettings(agentSettings)
+        }
+
+        // Route to the correct mode based on project type
+        if (project.project_type === 'persona') {
+          // Companion-grade: show the Session Hub first
+          // User picks Continue / New Voice / New Text
+          setShowSessionPanel(true)
+          setMode('chat')
+        } else if (project.project_type === 'image') {
+          setMode('imagine')
+        } else if (project.project_type === 'video') {
+          setMode('animate')
+        } else {
+          setMode('chat')
+        }
+      } else {
+        // Fallback if fetch fails
+        localStorage.setItem('homepilot_current_project', projectId)
+        setCurrentProject(null)
+        setMode('chat')
+      }
+    } catch (error) {
+      console.error('Error fetching project:', error)
+      // Fallback
+      localStorage.setItem('homepilot_current_project', projectId)
+      setMode('chat')
+    }
+  }
+
   return (
     <MeetingSenseProvider
       conversationId={conversationId}
@@ -6502,151 +6670,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
             matrixHubUrl={settingsDraft.matrixHubEnabled ? settingsDraft.matrixHubUrl : undefined}
-            onProjectSelect={async (projectId) => {
-              try {
-                // Fetch project info to get instructions and document count
-                const response = await fetch(
-                  `${settingsDraft.backendUrl.replace(/\/+$/, '')}/projects/${projectId}`,
-                  {
-                    headers: authHeaders,
-                  }
-                )
-
-                if (response.ok) {
-                  const data = await response.json()
-                  const project = data.project
-
-                  // Store project ID and info for chat context
-                  localStorage.setItem('homepilot_current_project', projectId)
-                  setCurrentProject({
-                    id: projectId,
-                    name: project.name,
-                    document_count: project.document_count || 0,
-                    project_type: project.project_type,
-                    description: project.description,
-                    instructions: project.instructions,
-                    files: project.files,
-                    agentic: project.agentic,
-                    persona_agent: project.persona_agent,
-                    persona_appearance: project.persona_appearance,
-                    created_at: project.created_at,
-                    updated_at: project.updated_at,
-                  })
-
-                  projectInfoLoadedRef.current = projectId
-                  const lastConvId = project.last_conversation_id
-                  const loadMessages = async (convId: string) => {
-                    const convData = await getJson<{
-                      ok: boolean
-                      messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
-                    }>(settingsDraft.backendUrl, `/conversations/${convId}/messages`, authHeaders)
-                    return convData.ok && convData.messages ? convData.messages : []
-                  }
-                  const toMsgs = (rows: Array<{ role: string; content: string; media?: any }>) =>
-                    rows.map((m, idx) => {
-                      const h = hydratePersistedMessageMedia(m.media)
-                      return {
-                        id: `restored-${idx}`,
-                        role: m.role as 'user' | 'assistant' | 'system',
-                        text: m.content,
-                        animate: false,
-                        media: h.media,
-                        ...(h.callMemory ? { callMemory: h.callMemory } : {}),
-                      }
-                    })
-
-                  if (project.project_type === 'persona') {
-                    // Companion-grade: the Session Hub opens right away. The persistent
-                    // session and its messages load behind it, in parallel with the last
-                    // conversation (the fallback when the session is still empty) —
-                    // previously four requests ran one after another before the hub showed.
-                    void (async () => {
-                      const lastPromise = lastConvId ? loadMessages(lastConvId).catch(() => []) : Promise.resolve([])
-                      try {
-                        const session = await resolveSession(projectId, 'text')
-                        console.log('[Project] Resolved persona session:', session.id)
-                        localStorage.setItem('homepilot_active_voice_session', JSON.stringify(session))
-                        const sessionRows = session.conversation_id === lastConvId
-                          ? await lastPromise
-                          : await loadMessages(session.conversation_id).catch(() => [])
-                        const rows = sessionRows.length > 0 ? sessionRows : await lastPromise
-                        // Nothing to show: clear the chat first — it assigns a fresh
-                        // conversation id, so the session's own id must be set after it.
-                        if (rows.length === 0) onNewConversation()
-                        setConversationId(session.conversation_id)
-                        if (rows.length > 0) setMessages(toMsgs(rows))
-                      } catch (err) {
-                        console.warn('[Project] Session resolution failed:', err)
-                        const rows = await lastPromise
-                        if (lastConvId && rows.length > 0) {
-                          setConversationId(lastConvId)
-                          setMessages(toMsgs(rows))
-                        } else {
-                          onNewConversation()
-                        }
-                      }
-                    })()
-                  } else if (lastConvId) {
-                    // Restore previous conversation for this project
-                    try {
-                      const rows = await loadMessages(lastConvId)
-                      if (rows.length > 0) {
-                        setConversationId(lastConvId)
-                        setMessages(toMsgs(rows))
-                      } else {
-                        // Conversation was empty/deleted — start fresh
-                        onNewConversation()
-                      }
-                    } catch {
-                      // Failed to load — start fresh
-                      onNewConversation()
-                    }
-                  } else {
-                    // No previous conversation — start fresh
-                    onNewConversation()
-                  }
-
-                  // Agent projects: auto-enable agentic execution mode
-                  if (project.project_type === 'agent') {
-                    const agentSettings: ChatScopedSettings = {
-                      advancedHelpEnabled: true,
-                      askBeforeActing: project.agentic?.ask_before_acting !== false,
-                      executionProfile: project.agentic?.execution_profile === 'balanced'
-                        ? 'balanced'
-                        : project.agentic?.execution_profile === 'quality'
-                        ? 'quality'
-                        : 'fast',
-                      incognito: false,
-                    }
-                    updateChatSettings(agentSettings)
-                  }
-
-                  // Route to the correct mode based on project type
-                  if (project.project_type === 'persona') {
-                    // Companion-grade: show the Session Hub first
-                    // User picks Continue / New Voice / New Text
-                    setShowSessionPanel(true)
-                    setMode('chat')
-                  } else if (project.project_type === 'image') {
-                    setMode('imagine')
-                  } else if (project.project_type === 'video') {
-                    setMode('animate')
-                  } else {
-                    setMode('chat')
-                  }
-                } else {
-                  // Fallback if fetch fails
-                  localStorage.setItem('homepilot_current_project', projectId)
-                  setCurrentProject(null)
-                  setMode('chat')
-                }
-              } catch (error) {
-                console.error('Error fetching project:', error)
-                // Fallback
-                localStorage.setItem('homepilot_current_project', projectId)
-                setMode('chat')
-              }
-            }}
+            onProjectSelect={handleProjectSelect}
           />
         ) : mode === 'imagine' ? (
           <ImagineView
@@ -6751,6 +6775,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
             teamsMcpAvailable={teamsMcpAvailable}
+            initialRoomId={teamsRoomToOpen}
           />
         ) : mode === 'routines' ? (
           // Routines: user-owned schedule definitions. Execution remains a separate capability.
@@ -6762,6 +6787,31 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               void openRoutineConversation(run)
             }}
           />
+        ) : mode === 'meetings' && libraryOn ? (
+          // Meetings Library (MEETINGS_LIBRARY_UPGRADE): one list of every meeting, with
+          // imports, folder sync and a detail page that does not need a conversation.
+          meetingDetailId ? (
+            <MeetingDetailPage
+              libraryId={meetingDetailId}
+              onBack={() => setMeetingDetailId(null)}
+              onOpenConversation={(cid) => { void loadConversation(cid); setMode('chat') }}
+              onOpenTeamsRoom={(roomId) => { setTeamsRoomToOpen(roomId); setMode('teams') }}
+              onOpenProject={(projectId) => { void handleProjectSelect(projectId) }}
+            />
+          ) : (
+            <MeetingsHome
+              status={libraryStatus}
+              canRecordLive={Boolean(meetingStatus?.enabled)}
+              onOpen={(item) => {
+                if (item.origin_type === 'teams_room') {
+                  setTeamsRoomToOpen(item.origin_id)
+                  setMode('teams')
+                } else {
+                  setMeetingDetailId(item.library_id)
+                }
+              }}
+            />
+          )
         ) : mode === 'meetings' ? (
           // MS28, only reachable when `_CATALOG` is on — `mode` cannot be set to this without
           // the nav item, and the nav item is behind the same flag.

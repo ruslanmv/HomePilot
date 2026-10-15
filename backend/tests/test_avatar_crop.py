@@ -224,3 +224,137 @@ def test_bad_uploads_and_wrong_projects_are_refused_without_changes(client, pers
     assert post_crop(client, "p-empty", area).status_code == 400
     assert post_crop(client, "chat", area).status_code == 400
     assert post_crop(client, "missing", area).status_code == 404
+
+
+# ── saving other persona settings later ─────────────────────────────────────
+# Settings panels send back the whole persona_appearance they loaded (maybe from
+# before the crop), and the project save re-derives the picture from the
+# selected look. Neither may undo what the user chose in Edit Profile Picture.
+
+
+@pytest.fixture()
+def stored(client, monkeypatch, tmp_path):
+    """A persona in the real project store, with two generated looks."""
+    import app.main as main
+    from app import projects
+
+    app_dir = "projects/p1/persona/appearance"
+    (tmp_path / app_dir).mkdir(parents=True)
+    look_a, look_b = f"{app_dir}/avatar_a.png", f"{app_dir}/avatar_b.png"
+    quadrants(tmp_path / look_a)
+    Image.new("RGB", (512, 768), GREEN).save(tmp_path / look_b)
+    auto = f"{app_dir}/thumb_avatar_a.webp"
+    Image.new("RGB", (256, 256), RED).save(tmp_path / auto)
+    pap = {
+        "sets": [{"set_id": "s1", "images": [
+            {"id": "a", "url": f"/files/{look_a}"},
+            {"id": "b", "url": f"/files/{look_b}"},
+        ]}],
+        "selected": {"set_id": "s1", "image_id": "a"},
+        "selected_filename": look_a,
+        "selected_thumb_filename": auto,
+    }
+    store = tmp_path / "projects_metadata.json"
+    store.write_text(json.dumps({"p1": {"id": "p1", "name": "Angel", "project_type": "persona",
+                                        "persona_appearance": pap}}))
+    monkeypatch.setattr(projects, "PROJECTS_FILE", store)
+    monkeypatch.setattr(main, "UPLOAD_PATH", tmp_path)
+    return {"root": tmp_path, "pap": pap, "look_a": look_a, "look_b": look_b, "auto": auto}
+
+
+def saved_pap():
+    from app import projects
+    return projects.get_project_by_id("p1")["persona_appearance"]
+
+
+def settings_save(client, pap, **fields):
+    """What Persona Settings sends: its fields plus the appearance it loaded."""
+    return client.put("/projects/p1", json={"name": "Angel", **fields, "persona_appearance": pap})
+
+
+def test_saving_settings_from_before_the_crop_keeps_the_crop(client, stored):
+    crop = post_crop(client, "p1", {"x": 0, "y": 0, "width": 50, "height": 33.33}).json()["avatar_crop"]
+    r = settings_save(client, dict(stored["pap"]), description="A stylist")   # loaded before the crop
+    assert r.status_code == 200, r.text
+    pa = saved_pap()
+    assert pa["selected_thumb_filename"] == crop["output"]
+    assert pa["avatar_crop"]["output"] == crop["output"]
+
+
+def test_saving_settings_keeps_a_replacement_photo_and_its_crop(client, stored):
+    buf = io.BytesIO()
+    Image.new("RGB", (600, 600), BLUE).save(buf, format="PNG")
+    pa = post_crop(client, "p1", {"x": 10, "y": 10, "width": 80, "height": 80},
+                   file=("me.png", buf.getvalue(), "image/png")).json()["persona_appearance"]
+    r = settings_save(client, pa, description="A stylist")                    # loaded after the crop
+    assert r.status_code == 200, r.text
+    after = saved_pap()
+    assert after["selected_filename"] == pa["selected_filename"] != stored["look_a"]
+    assert after["selected_thumb_filename"] == pa["avatar_crop"]["output"]
+
+
+def test_choosing_another_look_replaces_the_manual_picture(client, stored):
+    post_crop(client, "p1", {"x": 0, "y": 0, "width": 50, "height": 33.33})
+    pa = saved_pap()
+    r = settings_save(client, {**pa, "selected": {"set_id": "s1", "image_id": "b"}})
+    assert r.status_code == 200, r.text
+    after = saved_pap()
+    assert after["selected_filename"] == stored["look_b"]
+    assert after["selected_thumb_filename"] != pa["avatar_crop"]["output"]
+    from app.personas.avatar_crop import active_crop
+    assert active_crop(after) is None
+
+
+def test_the_guard_keeps_the_newest_framing_and_lets_a_new_look_through(ac):
+    look = {"set_id": "s1", "image_id": "a"}
+    now = {"selected": look, "selected_filename": "a.png", "selected_thumb_filename": "t_crop2.webp",
+           "avatar_crop": {"output": "t_crop2.webp", "source": "a.png"}}
+    stale = {**now, "selected_thumb_filename": "t_crop1.webp",
+             "avatar_crop": {"output": "t_crop1.webp", "source": "a.png"}, "style_preset": "new"}
+    kept = ac.keep_manual_picture(now, stale)
+    assert kept["selected_thumb_filename"] == "t_crop2.webp" and kept["avatar_crop"]["output"] == "t_crop2.webp"
+    assert kept["style_preset"] == "new"                                   # the rest of the save goes through
+    other = {**stale, "selected": {"set_id": "s1", "image_id": "b"}}
+    assert ac.keep_manual_picture(now, other) is other                     # another look: no guard
+    assert ac.keep_manual_picture({**now, "avatar_crop": None}, stale) is stale   # no crop in use
+
+
+def test_settings_that_wrap_the_current_picture_in_a_look_keep_the_crop(client, stored):
+    # A persona without generated looks: Persona Settings shows the current picture
+    # as a look of its own and saves it as "selected", then runs the auto commit.
+    from app import projects
+    db = json.loads(projects.PROJECTS_FILE.read_text())
+    db["p1"]["persona_appearance"].pop("sets"); db["p1"]["persona_appearance"].pop("selected")
+    projects.PROJECTS_FILE.write_text(json.dumps(db))
+    crop = post_crop(client, "p1", {"x": 0, "y": 0, "width": 50, "height": 33.33}).json()["avatar_crop"]
+    pa = saved_pap()
+    for wrapped in (pa["selected_filename"], pa["selected_thumb_filename"]):   # new panel, old panel
+        url = f"http://localhost:8000/files/{wrapped}?token=abc"
+        look = {"sets": [{"set_id": "set_imported_001", "images": [{"id": "pimg_imported_001", "url": url}]}],
+                "selected": {"set_id": "set_imported_001", "image_id": "pimg_imported_001"}}
+        assert settings_save(client, {**pa, **look}).status_code == 200
+        assert client.post("/projects/p1/persona/avatar/commit", json={"auto": True}).status_code == 200
+        after = saved_pap()
+        assert after["selected_thumb_filename"] == crop["output"], wrapped
+        assert after["selected_filename"] == stored["look_a"]
+
+
+def test_the_auto_commit_after_a_settings_save_keeps_the_crop(client, stored):
+    crop = post_crop(client, "p1", {"x": 0, "y": 0, "width": 50, "height": 33.33}).json()["avatar_crop"]
+    settings_save(client, saved_pap(), description="A stylist")
+    r = client.post("/projects/p1/persona/avatar/commit", json={"auto": True})
+    assert r.status_code == 200, r.text
+    assert saved_pap()["selected_thumb_filename"] == crop["output"]
+    # ...and once another look is picked, the auto commit works as before.
+    settings_save(client, {**saved_pap(), "selected": {"set_id": "s1", "image_id": "b"}})
+    assert client.post("/projects/p1/persona/avatar/commit", json={"auto": True}).status_code == 200
+    from app.personas.avatar_crop import active_crop
+    assert active_crop(saved_pap()) is None
+    assert saved_pap()["selected_thumb_filename"] != crop["output"]
+
+
+def test_files_rel_reads_relative_and_absolute_file_urls(ac):
+    assert ac.files_rel("/files/projects/p/a.png") == "projects/p/a.png"
+    assert ac.files_rel("http://h:8000/files/projects/p/a%20b.png?token=x") == "projects/p/a b.png"
+    assert ac.files_rel("files/x.png") == "x.png"
+    assert ac.files_rel("/comfy/view/x.png") is None and ac.files_rel(None) is None

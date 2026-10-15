@@ -50,6 +50,15 @@ export interface MeetingControls {
     undoSecondsLeft: number | null;
     capture: CaptureOptions;
     setCapture: (next: CaptureOptions) => void;
+    /**
+     * Start a live meeting with these options, a title and a project (the Meetings wizard).
+     * Additive: `begin` is unchanged. `acknowledge` records the consent the wizard asked for.
+     */
+    startWith?: (
+        next: CaptureOptions,
+        meta: { title?: string; projectId?: string },
+        acknowledge: boolean,
+    ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 interface WorkspaceRecorder {
@@ -212,14 +221,14 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
     const live = phase === 'live' || phase === 'reconnecting' || phase === 'stopping';
     const ended = phase === 'ended';
 
-    const persistStartMarker = useCallback(async (id: string) => {
+    const persistStartMarker = useCallback(async (id: string, options: CaptureOptions = capture) => {
         const response = await fetch(`${apiBase()}/conversations/${encodeURIComponent(id)}/messages`, {
             method: 'POST',
             credentials: 'include',
             headers: headers(),
             body: JSON.stringify({
                 role: 'system',
-                content: meetingStartMarker(capture, Boolean(status?.stt?.remote)),
+                content: meetingStartMarker(options, Boolean(status?.stt?.remote)),
             }),
         });
         if (!response.ok) throw new Error(`conversation marker HTTP ${response.status}`);
@@ -248,7 +257,14 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         }
     }, []);
 
-    const actuallyStart = useCallback(async () => {
+    // Read by actuallyStart, whose own `capture` may be the wizard's options instead.
+    const currentCapture = capture;
+    const actuallyStart = useCallback(async (
+        override?: { capture?: CaptureOptions; title?: string; projectId?: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+        // The wizard passes its options here rather than through state, which would not have
+        // updated yet in this same call.
+        const capture = override?.capture ?? currentCapture;
         const nextConversation = freshMeetingConversationId();
         // Remember where the user was before the dedicated meeting thread takes over. Close
         // returns there instead of leaving the app parked on a meeting conversation that
@@ -266,6 +282,8 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         try {
             const result = await meeting.start({
                 conversationId: nextConversation,
+                ...(override?.title ? { title: override.title } : {}),
+                ...(override?.projectId ? { projectId: override.projectId } : {}),
                 notes: true,
                 watch: capture.slides,
                 audio: capture.audio,
@@ -301,7 +319,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                 setScreenStream(null);
                 returnConversationIdRef.current = null;
                 meeting.reset();
-                return;
+                return { ok: false, error: result.error || 'The meeting could not start.' };
             }
 
             const stream = browserRecorder()?.getScreenPreviewStream?.() || null;
@@ -310,7 +328,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
             if (result.meetingId) void attachContext(result.meetingId, capture.context);
 
             try {
-                await persistStartMarker(nextConversation);
+                await persistStartMarker(nextConversation, capture);
             } catch (markerError) {
                 console.warn('[MeetingSense] meeting started but start marker could not be persisted', markerError);
             }
@@ -318,10 +336,11 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
             // Only after capture succeeds: the normal chat underneath switches to the new
             // conversation. If permissions fail, the user is still exactly where they started.
             onOpenConversation?.(nextConversation);
+            return { ok: true };
         } finally {
             setStarting(false);
         }
-    }, [attachContext, capture, conversationId, meeting, onOpenConversation, persistStartMarker]);
+    }, [attachContext, currentCapture, conversationId, meeting, onOpenConversation, persistStartMarker]);
 
     const begin = useCallback(() => {
         if (live || starting) return;
@@ -341,6 +360,19 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         // finalizing already-captured material, not continuing to listen during an undo timer.
         void meeting.stop();
     }, [meeting]);
+
+    const startWith = useCallback(async (
+        next: CaptureOptions,
+        meta: { title?: string; projectId?: string },
+        acknowledge: boolean,
+    ): Promise<{ ok: boolean; error?: string }> => {
+        if (live || starting) return { ok: false, error: 'A meeting is already recording.' };
+        if (!enabled) return { ok: false, error: 'MeetingSense is turned off on this server.' };
+        if (acknowledge) rememberConsent(storage);
+        if (!consentAcknowledged(storage)) return { ok: false, error: 'Recording needs your consent first.' };
+        setCapture(next);
+        return actuallyStart({ capture: next, title: meta.title, projectId: meta.projectId });
+    }, [live, starting, enabled, storage, actuallyStart]);
 
     const onAccept = useCallback((remember: boolean) => {
         if (remember) rememberConsent(storage);
@@ -563,6 +595,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         undoSecondsLeft: meeting.undoSecondsLeft,
         capture,
         setCapture,
+        startWith,
     };
 
     return (

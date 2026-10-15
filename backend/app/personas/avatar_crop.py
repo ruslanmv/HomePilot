@@ -167,3 +167,67 @@ def active_crop(appearance: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if crop.get("output") != appearance.get("selected_thumb_filename"):
         return None
     return crop
+
+
+
+def _look(appearance: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    sel = appearance.get("selected")
+    return sel if isinstance(sel, dict) and sel else None
+
+
+def files_rel(url: Optional[str]) -> Optional[str]:
+    """The upload-relative path a /files/ URL points at (absolute or not)."""
+    if not isinstance(url, str):
+        return None
+    if "/files/" in url:
+        ref = url.split("/files/", 1)[1]
+    elif url.startswith("files/"):
+        ref = url[len("files/"):]
+    else:
+        return None
+    from urllib.parse import unquote
+
+    ref = unquote(ref.split("?", 1)[0].split("#", 1)[0]).lstrip("/")
+    return ref or None
+
+
+def _same_picture(appearance: Dict[str, Any]) -> set:
+    """Every file that is the persona's current picture: the original, the
+    thumbnail shown, and the framing's source, output and automatic thumbnail."""
+    crop = appearance.get("avatar_crop") if isinstance(appearance.get("avatar_crop"), dict) else {}
+    names = (appearance.get("selected_filename"), appearance.get("selected_thumb_filename"),
+             crop.get("source"), crop.get("output"), crop.get("auto_thumb"))
+    return {n for n in names if isinstance(n, str) and n}
+
+
+def keeps_manual_picture(before: Dict[str, Any], after: Dict[str, Any], chosen_url: Optional[str] = None) -> bool:
+    """
+    True while a picture chosen in Edit Profile Picture stays: it is in use, and
+    the user has not picked another look since. A look that is only another
+    reference to the same picture (a settings panel wrapping the current
+    picture, or its thumbnail, in a look of its own) is not another look.
+    """
+    if active_crop(before) is None:
+        return False
+    if _look(after) == _look(before):
+        return True
+    rel = files_rel(chosen_url)
+    return rel is not None and rel in _same_picture(before)
+
+
+def keep_manual_picture(before: Dict[str, Any], after: Dict[str, Any], chosen_url: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Saving other persona settings must not undo Edit Profile Picture.
+
+    Settings panels send back the whole persona_appearance they loaded — maybe
+    from before the crop, with the old automatic thumbnail — so, while the user
+    has not picked another look, the picture, its thumbnail and the framing
+    stay as they were. Picking another look replaces them, as it always did.
+    """
+    if not keeps_manual_picture(before, after, chosen_url):
+        return after
+    kept = dict(after)
+    for key in ("selected_filename", "selected_thumb_filename", "avatar_crop"):
+        if key in before:
+            kept[key] = before[key]
+    return kept
