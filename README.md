@@ -499,6 +499,10 @@ make install
 make run
 ```
 
+> ComfyUI (image generation) is cloned shallowly and retried. If the download still fails on a weak
+> connection, `make install` finishes without it; add it later with `make install-comfyui`, or leave it
+> out on purpose with `make install SKIP_COMFYUI=1`.
+
 ### 5. Access
 
 * **UI:** `http://localhost:3000`

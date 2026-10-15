@@ -243,6 +243,14 @@ def migrate() -> None:
         con.commit()
     finally:
         con.close()
+    # Meeting intelligence keeps its own tables beside these; created only when its flag is
+    # on, so an install that never turns it on never gains them.
+    from .config import load_library_config  # noqa: PLC0415
+
+    if load_library_config().intelligence:
+        from ..intelligence import store as intelligence_store  # noqa: PLC0415
+
+        intelligence_store.migrate()
 
 
 def ensure_migrated() -> None:
@@ -1043,6 +1051,12 @@ def delete_library_rows(meeting_id: str) -> Dict[str, int]:
         cur = con.execute("DELETE FROM ms_transcript_versions WHERE meeting_id = ?", (meeting_id,))
         counts["ms_transcript_versions"] = int(cur.rowcount or 0)
         con.commit()
-        return counts
     finally:
         con.close()
+    try:
+        from ..intelligence import store as intelligence_store  # noqa: PLC0415
+
+        counts.update(intelligence_store.delete_for(meeting_id))
+    except Exception:  # noqa: BLE001 — the tables exist only once the flag has been on
+        pass
+    return counts

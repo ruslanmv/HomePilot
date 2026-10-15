@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     AlertTriangle, ArrowLeft, Bot, CalendarDays, CheckSquare, ChevronDown, Clock3, Download, ExternalLink, FileText,
     Folder, Info, Lightbulb, ListChecks, Loader2, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, RefreshCw,
-    Send, Sparkles, Users, X,
+    Presentation, Send, Sparkles, Users, X,
 } from 'lucide-react';
 import {
     LibraryError, libraryApi, mediaUrl, transcriptUrl, type LibraryDetail, type LibraryItem, type Segment,
@@ -25,13 +25,23 @@ import {
 import { SummaryMarkdown } from './SummaryMarkdown';
 import { WaveformPlayer, type PlayerHandle } from './WaveformPlayer';
 import { ProcessingPanel } from './ProcessingPanel';
+import { InsightsPanel } from './InsightsPanel';
+import { VisualSummaryTab } from './VisualSummaryTab';
+import { AssistantDrawer, AssistantLauncher } from './AssistantDrawer';
 
 const PANEL_OPEN_KEY = 'hp_meeting_details_open';
 const PANEL_WIDTH_KEY = 'hp_meeting_details_width';
 const PANEL_MIN = 280;
 const PANEL_MAX = 520;
 
-type Tab = 'overview' | 'transcript' | 'actions' | 'audio' | 'summary' | 'chat' | 'properties';
+type Tab = 'overview' | 'visual' | 'transcript' | 'actions' | 'audio' | 'summary' | 'chat' | 'properties';
+
+/** The line being spoken at `ms`: the last segment that starts at or before it. */
+function indexAt(segments: Segment[], ms: number): number {
+    let hit = -1;
+    for (let i = 0; i < segments.length; i += 1) { if (segments[i].t0_ms <= ms) hit = i; else break; }
+    return hit;
+}
 
 function readPanelOpen(): boolean {
     try {
@@ -93,6 +103,14 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [peaks, setPeaks] = useState<number[]>([]);
     const [notice, setNotice] = useState<string | null>(null);
+    // The playhead (ms), fed by the one player above the tabs; the transcript highlights the
+    // line being spoken from it.
+    const [activeMs, setActiveMs] = useState<number | undefined>(undefined);
+    const [askOpen, setAskOpen] = useState(false);
+    const [askSeed, setAskSeed] = useState<string | null>(null);
+    // A transcript line to open from "view source" in the visual summary; the nonce lets the
+    // same stamp be clicked twice.
+    const [focus, setFocus] = useState<{ ms: number; n: number } | null>(null);
     const narrow = useNarrow();
     const player = useRef<PlayerHandle>(null);
     const toggleRef = useRef<HTMLButtonElement>(null);
@@ -148,6 +166,15 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
     const segments = detail?.segments || [];
     const speakers = useMemo(() => Array.from(new Set(segments.map((s) => s.speaker).filter(Boolean) as string[])), [segments]);
     const timed = (detail?.versions || []).find((v) => v.active)?.timing !== 'none';
+
+    const seekTo = (ms: number) => player.current?.seek(ms);
+    // "View source" from the visual summary: open the transcript on that line and, when there
+    // is a recording, play from it.
+    const viewSource = (ms: number) => {
+        setTab('transcript');
+        setFocus((f) => ({ ms, n: (f?.n || 0) + 1 }));
+        if (audio) seekTo(ms);
+    };
 
     const act = async (fn: () => Promise<unknown>, message: string) => {
         try {
@@ -284,19 +311,32 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                         </ul>
                     ) : null}
 
+                    {audio && meetingId && !teamsRoom ? (
+                        <div className="mt-5">
+                            {/* One player for the whole page: playback continues across tabs, and every
+                                timestamp — transcript, insights, assistant — seeks the same recording. */}
+                            <WaveformPlayer ref={player} src={mediaUrl(meetingId, audio.id)} peaks={peaks}
+                                durationMs={audio.media_duration_ms} downloadUrl={mediaUrl(meetingId, audio.id, true)} onTime={setActiveMs} />
+                        </div>
+                    ) : null}
+
                     {teamsRoom ? (
                         <TeamsRoomView room={teamsRoom} onOpen={() => onOpenTeamsRoom?.(teamsRoom.id)} />
                     ) : (
                         <>
-                            <div className="mt-5 flex items-center gap-1 rounded-2xl border border-white/10 bg-white/[0.02] p-1" role="tablist" aria-label="Meeting sections">
+                            <div className="mt-5 flex items-center gap-0.5 rounded-2xl border border-white/10 bg-white/[0.02] p-1 sm:gap-1" role="tablist" aria-label="Meeting sections">
                                 <TabButton id="overview" tab={tab} setTab={setTab} icon={<Sparkles size={16} />}>Overview</TabButton>
+                                {/* On phones the visual summary keeps its icon only, so the five tabs still share one line. */}
+                                <TabButton id="visual" tab={tab} setTab={setTab} icon={<Presentation size={16} />} label="Visual Summary">
+                                    <span className="sm:hidden" aria-hidden><Presentation size={16} /></span><span className="hidden sm:inline">Visual Summary</span>
+                                </TabButton>
                                 <TabButton id="transcript" tab={tab} setTab={setTab} icon={<FileText size={16} />}>Transcript</TabButton>
                                 <TabButton id="actions" tab={tab} setTab={setTab} icon={<CheckSquare size={16} />}>
                                     Actions {actions.length ? <span className="ml-1 rounded-full bg-white/10 px-1.5 text-xs">{actions.length}</span> : null}
                                 </TabButton>
                                 <div className="relative ml-auto">
                                     <button type="button" onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}
-                                        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-sm sm:px-3 ${['audio', 'summary', 'chat', 'properties'].includes(tab) ? 'bg-violet-600/30 text-white' : 'text-white/70 hover:bg-white/[0.06]'}`}>
+                                        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-2 text-[13px] sm:px-3 sm:text-sm ${['audio', 'summary', 'chat', 'properties'].includes(tab) ? 'bg-violet-600/30 text-white' : 'text-white/70 hover:bg-white/[0.06]'}`}>
                                         <MoreHorizontal size={16} className="hidden sm:block" aria-hidden /> More <ChevronDown size={14} aria-hidden />
                                     </button>
                                     {moreOpen ? (
@@ -313,9 +353,12 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                             <div className="mt-4 space-y-4" role="tabpanel">
                                 {tab === 'overview' ? (
                                     <>
-                                        {audio && meetingId ? (
-                                            <WaveformPlayer ref={player} src={mediaUrl(meetingId, audio.id)} peaks={peaks}
-                                                durationMs={audio.media_duration_ms} downloadUrl={mediaUrl(meetingId, audio.id, true)} />
+                                        {meetingId ? (
+                                            <InsightsPanel meetingId={meetingId} hasTranscript={!!segments.length} title={item.title}
+                                                onSeek={audio ? seekTo : undefined}
+                                                onAsk={(q) => { setAskSeed(q); setAskOpen(true); }}
+                                                onOpenVisual={() => setTab('visual')}
+                                                onChanged={() => void load()} />
                                         ) : null}
                                         <Card icon={<ListChecks size={18} />} title="Meeting overview">
                                             {overview.text ? (
@@ -345,17 +388,26 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                                         </Card>
                                     </>
                                 ) : null}
+                                {tab === 'visual' ? (
+                                    meetingId ? (
+                                        <VisualSummaryTab meetingId={meetingId} item={item} hasTranscript={!!segments.length}
+                                            onEvidence={(ms) => viewSource(ms)}
+                                            onAsk={(q) => { setAskSeed(q); setAskOpen(true); }}
+                                            onChanged={() => void load()} />
+                                    ) : <Card icon={<Presentation size={18} />} title="Visual summary"><p className="text-sm text-white/55">A visual summary is written once this meeting has a transcript.</p></Card>
+                                ) : null}
                                 {tab === 'transcript' ? (
-                                    <TranscriptTab meetingId={meetingId} detail={detail} timed={timed}
-                                        onSeek={audio ? (ms) => { setTab('overview'); setTimeout(() => player.current?.seek(ms), 50); } : undefined}
+                                    <TranscriptTab meetingId={meetingId} detail={detail} timed={timed} activeMs={activeMs} focus={focus}
+                                        onSeek={audio ? seekTo : undefined}
                                         onSaved={() => { setNotice('Saved as a new transcript version.'); void load(); }} />
                                 ) : null}
                                 {tab === 'actions' ? <ActionsTab meetingId={meetingId || libraryId} actions={actions} item={item} /> : null}
                                 {tab === 'audio' ? (
                                     audio && meetingId ? (
                                         <>
-                                            <WaveformPlayer ref={player} src={mediaUrl(meetingId, audio.id)} peaks={peaks} durationMs={audio.media_duration_ms}
-                                                downloadUrl={mediaUrl(meetingId, audio.id, true)} />
+                                            <Card title="Audio" icon={<FileText size={18} />}>
+                                                <p className="text-sm text-white/60">The player stays at the top of the page, so playback continues while you read any tab.</p>
+                                            </Card>
                                             <FilesList detail={detail} meetingId={meetingId} />
                                         </>
                                     ) : <Card title="Audio" icon={<FileText size={18} />}><p className="text-sm text-white/60">This meeting has no recording.</p></Card>
@@ -410,6 +462,14 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                     </aside>
                 </div>
             ) : null}
+
+            {meetingId && !teamsRoom ? (
+                <>
+                    <AssistantLauncher hidden={askOpen || !segments.length} onOpen={() => setAskOpen(true)} />
+                    <AssistantDrawer meetingId={meetingId} open={askOpen} onClose={() => setAskOpen(false)} seed={askSeed}
+                        onSeeded={() => setAskSeed(null)} onSeek={audio ? seekTo : undefined} hasTranscript={!!segments.length} title={item.title} />
+                </>
+            ) : null}
         </div>
     );
 }
@@ -418,11 +478,13 @@ function MenuItem({ children, onClick, danger }: { children: React.ReactNode; on
     return <button type="button" role="menuitem" onClick={onClick} className={`block w-full px-3 py-2 text-left hover:bg-white/[0.06] ${danger ? 'text-rose-300' : 'text-white/85'}`}>{children}</button>;
 }
 
-function TabButton({ id, tab, setTab, icon, children }: { id: Tab; tab: Tab; setTab: (t: Tab) => void; icon: React.ReactNode; children: React.ReactNode }) {
+function TabButton({ id, tab, setTab, icon, label, children }: {
+    id: Tab; tab: Tab; setTab: (t: Tab) => void; icon: React.ReactNode; label?: string; children: React.ReactNode;
+}) {
     const active = tab === id;
     return (
-        <button type="button" role="tab" aria-selected={active} onClick={() => setTab(id)}
-            className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-2.5 text-sm sm:px-4 ${active ? 'bg-violet-600/30 font-semibold text-white shadow-[inset_0_-2px_0_rgba(167,139,250,0.9)]' : 'text-white/70 hover:bg-white/[0.06]'}`}>
+        <button type="button" role="tab" aria-selected={active} aria-label={label} onClick={() => setTab(id)}
+            className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-2 text-[13px] sm:px-4 sm:text-sm ${active ? 'bg-violet-600/30 font-semibold text-white shadow-[inset_0_-2px_0_rgba(167,139,250,0.9)]' : 'text-white/70 hover:bg-white/[0.06]'}`}>
             {/* Icons step aside on phones so all four tabs, More included, fit on one line. */}
             <span className="hidden sm:inline-flex" aria-hidden>{icon}</span>{children}
         </button>
@@ -465,16 +527,32 @@ function TranscriptEmpty({ item }: { item: LibraryItem }) {
     return <p className="text-sm text-white/55">{text[item.transcript_state] || (item.recording_state === 'awaiting' ? 'The recording has not arrived yet.' : 'There is no transcript.')}</p>;
 }
 
-function TranscriptLine({ seg, timed, onSeek, speakers = true }: { seg: Segment; timed: boolean; onSeek?: (ms: number) => void; speakers?: boolean }) {
+function TranscriptLine({ seg, timed, onSeek, speakers = true, active = false, flash = 0 }: {
+    seg: Segment; timed: boolean; onSeek?: (ms: number) => void; speakers?: boolean; active?: boolean; flash?: number;
+}) {
     // A transcript with no speakers at all (most recordings transcribed here) drops the speaker
     // columns rather than repeating "Speaker unknown" on every line.
     const who = seg.speaker || 'Speaker unknown';
+    const row = useRef<HTMLLIElement>(null);
+    // The line being spoken scrolls into view as the recording plays — nearest edge only, so a
+    // reader who scrolled elsewhere is nudged, never yanked.
+    useEffect(() => { if (active) row.current?.scrollIntoView?.({ block: 'nearest' }); }, [active]);
+    // A line opened from the visual summary ("view source") is centred and glows for a moment.
+    const [glow, setGlow] = useState(false);
+    useEffect(() => {
+        if (!flash) return undefined;
+        row.current?.scrollIntoView?.({ block: 'center' });
+        setGlow(true);
+        const t = setTimeout(() => setGlow(false), 2500);
+        return () => clearTimeout(t);
+    }, [flash]);
     const stamp = timed && onSeek ? (
         <button type="button" onClick={() => onSeek(seg.t0_ms)} className="hidden self-start pt-2 text-left text-sm tabular-nums text-violet-300 hover:text-violet-200 sm:block" aria-label={`Play from ${clock(seg.t0_ms)}`}>{clock(seg.t0_ms)}</button>
     ) : <span className="hidden pt-2 text-sm tabular-nums text-white/40 sm:block">{timed ? clock(seg.t0_ms) : ''}</span>;
     const phoneLabel = [speakers ? who : '', timed ? clock(seg.t0_ms) : ''].filter(Boolean).join(' · ');
     return (
-        <li className={`grid gap-3 ${speakers ? 'grid-cols-[2.25rem_minmax(0,1fr)] sm:grid-cols-[2.25rem_7.5rem_4.5rem_minmax(0,1fr)]' : 'grid-cols-1 sm:grid-cols-[4.5rem_minmax(0,1fr)]'}`}>
+        <li ref={row} aria-current={active ? 'true' : undefined} data-focused={glow || undefined}
+            className={`grid gap-3 rounded-lg transition-colors ${glow ? 'bg-fuchsia-500/[0.14] ring-2 ring-fuchsia-400/60' : active ? 'bg-violet-500/[0.12] ring-1 ring-violet-400/40' : ''} ${speakers ? 'grid-cols-[2.25rem_minmax(0,1fr)] sm:grid-cols-[2.25rem_7.5rem_4.5rem_minmax(0,1fr)]' : 'grid-cols-1 sm:grid-cols-[4.5rem_minmax(0,1fr)]'}`}>
             {speakers ? (
                 <>
                     <span className="grid h-9 w-9 place-items-center rounded-full bg-violet-500/20 text-xs font-semibold text-violet-100" aria-hidden>{initials(seg.speaker)}</span>
@@ -483,17 +561,26 @@ function TranscriptLine({ seg, timed, onSeek, speakers = true }: { seg: Segment;
             ) : null}
             {stamp}
             <p className="pt-1.5 text-[15px] leading-relaxed text-white/85">
-                {phoneLabel ? <span className="mr-2 text-xs text-white/40 sm:hidden">{phoneLabel}</span> : null}
+                {phoneLabel ? (
+                    timed && onSeek
+                        ? <button type="button" onClick={() => onSeek(seg.t0_ms)} className="mr-2 text-xs text-violet-300 sm:hidden" aria-label={`Play from ${clock(seg.t0_ms)}`}>{phoneLabel}</button>
+                        : <span className="mr-2 text-xs text-white/40 sm:hidden">{phoneLabel}</span>
+                ) : null}
                 {seg.text}
             </p>
         </li>
     );
 }
 
-function TranscriptTab({ meetingId, detail, timed, onSeek, onSaved }: {
-    meetingId: string | null; detail: LibraryDetail; timed: boolean; onSeek?: (ms: number) => void; onSaved: () => void;
+function TranscriptTab({ meetingId, detail, timed, onSeek, onSaved, activeMs, focus }: {
+    meetingId: string | null; detail: LibraryDetail; timed: boolean; onSeek?: (ms: number) => void; onSaved: () => void; activeMs?: number;
+    focus?: { ms: number; n: number } | null;
 }) {
     const segments = detail.segments || [];
+    // The line being spoken: the last segment that starts at or before the playhead.
+    const activeIndex = useMemo(() => (activeMs === undefined || !timed ? -1 : indexAt(segments, activeMs)), [segments, activeMs, timed]);
+    // The line a "view source" click asked for.
+    const focusIndex = focus && timed ? indexAt(segments, focus.ms) : -1;
     const [q, setQ] = useState('');
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState<Segment[]>([]);
@@ -536,7 +623,11 @@ function TranscriptTab({ meetingId, detail, timed, onSeek, onSaved }: {
                     ))}
                 </ul>
             ) : (
-                <ul className="space-y-3">{shown.map((s, i) => <TranscriptLine key={s.id || i} seg={s} timed={timed} speakers={hasSpeakers} onSeek={onSeek} />)}</ul>
+                <ul className="space-y-3">{shown.map((s, i) => (
+                    <TranscriptLine key={s.id || i} seg={s} timed={timed} speakers={hasSpeakers} onSeek={onSeek}
+                        active={activeIndex >= 0 && segments[activeIndex] === s}
+                        flash={focusIndex >= 0 && segments[focusIndex] === s ? focus!.n : 0} />
+                ))}</ul>
             )}
             {versions.length > 1 && meetingId ? (
                 <details className="mt-5 rounded-xl border border-white/10 p-3 text-sm">

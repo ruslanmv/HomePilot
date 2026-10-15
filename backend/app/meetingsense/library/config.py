@@ -56,6 +56,15 @@ class LibraryConfig:
     #: Offline transcription and summaries for imported recordings. On with the library;
     #: separate so an operator can keep imports but stop all background inference.
     processing: bool = True
+    #: Meeting intelligence: the typed analysis, the visual summary page, suggested questions
+    #: and first-class action items (``MEETINGS_INTELLIGENCE``). Off by default; needs the
+    #: library. Turning it off hides the routes and the page; nothing written is removed.
+    intelligence: bool = False
+    #: After a model has analysed a meeting, a title that names nothing — a timestamp, a
+    #: recorder default, the library's own "Imported meeting · Oct 10, 12:31" — gives way to
+    #: the analysis title (``MEETINGS_AUTO_TITLE``, on by default). A title a person typed is
+    #: never touched, and an extractive analysis never renames anything.
+    auto_title: bool = True
     sync_roots: Tuple[str, ...] = ()
     #: Upper bound for one uploaded file (MB). Meetings are long; an hour of 128 kb/s MP3
     #: is ~60 MB and an hour of WAV ~600 MB.
@@ -73,6 +82,7 @@ class LibraryConfig:
         return {
             "enabled": self.enabled,
             "processing": self.processing,
+            "intelligence": bool(self.enabled and self.intelligence),
             "sync": bool(self.sync_roots),
             "sync_suggestion": DEFAULT_SYNC_SUGGESTION,
             "max_upload_mb": self.max_upload_mb,
@@ -84,6 +94,8 @@ def load_library_config() -> LibraryConfig:
     return LibraryConfig(
         enabled=_flag("MEETINGS_LIBRARY_UPGRADE", False),
         processing=_flag("MEETINGS_LIBRARY_PROCESSING", True),
+        intelligence=_flag("MEETINGS_INTELLIGENCE", False),
+        auto_title=_flag("MEETINGS_AUTO_TITLE", True),
         sync_roots=_roots(os.getenv("MEETINGS_SYNC_ALLOWED_ROOTS", "")),
         max_upload_mb=max(1, _int("MEETINGS_IMPORT_MAX_MB", 2048)),
         stt_chunk_s=max(30, _int("MEETINGS_STT_CHUNK_S", 300)),

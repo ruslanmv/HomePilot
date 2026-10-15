@@ -101,6 +101,10 @@ jobs:
           src/test/composerPlusMenu.test.tsx
           src/test/meetingsenseAddon.test.js
           src/test/meetingsenseEnded.test.tsx
+          src/test/meetingsLibrary.test.tsx
+          src/test/meetingIntelligence.test.tsx
+          src/test/meetingsLandingGate.test.tsx
+          src/test/visualSummaryTab.test.tsx
           src/test/routinePresets.test.tsx
           src/test/routineEditorControls.test.tsx
           src/test/modeGroups.test.ts

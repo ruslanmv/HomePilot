@@ -95,6 +95,9 @@ the Insta360 app's `D:\AIRecord`.
 - **Pause** stops watching; **Disconnect** forgets the folder and keeps its meetings.
 - A recording that starts within 45 minutes of exactly one **scheduled** meeting is attached
   to it. With several candidates, it is imported on its own and you choose in the preview.
+- **Insta360 Wave**: the device shows its storage only in File Transfer mode, and WSL does not
+  see removable drives, so a small Windows watcher copies finished recordings into an inbox
+  that Folder Sync watches. See [insta360-wave.md](insta360-wave.md).
 
 ## Transcription and processing
 
@@ -195,6 +198,64 @@ Existing MeetingSense routes are unchanged.
 | `GET/POST library/item/{id}/versions`, `POST …/versions/{vid}/publish` | Transcript versions |
 | `GET library/item/{id}/transcript?fmt=txt\|md\|srt\|vtt\|json` | Export |
 | `GET library/item/{id}/media/{asset}`, `…/peaks` | Recording (range requests) and waveform |
+
+## Meeting insights
+
+`MEETINGS_INTELLIGENCE=1` (off by default, needs the library) adds a typed analysis of each
+transcript and the surfaces built from it. Nothing on the Meetings landing page changes; the
+new pieces live on the meeting detail page.
+
+- **A Visual Summary tab** — the meeting as a one-page executive brief, a light, print-ready
+  report inside the dark app: risks and blockers as colour-coded cards, a decision comparison
+  with status pills (Selected, Proposed or Rejected — from the verified status, never from the
+  wording), a next-actions timeline (Immediate / This week / Next steps, from the due words),
+  open questions, a core takeaway, meeting metadata and an evidence footer. Sections with
+  nothing in them are not drawn. **PDF** prints the report alone, **PNG** renders it at 2×,
+  **Present** shows the same brief as full-screen slides (arrow keys, Escape). Every stamp opens
+  the transcript on that line ("view source") and plays the recording from there.
+- **Polished, never invented.** With a model, the brief's wording is rewritten in executive
+  language and then checked field by field: only known item ids, every number (digits or words),
+  name and technical term already present in the source item, a proposal never worded as chosen,
+  a takeaway that cites the items it rests on. Anything that fails keeps the transcript's own
+  words, and the "What was checked" fold says what was kept back. **Rewrite brief** composes
+  again from the same analysis without re-extracting. Without a model the brief is assembled
+  deterministically from the verified items.
+- **Overview keeps a compact card**: counts, the verification line, suggested questions and
+  "Open visual summary".
+- **Verified, not invented.** The model must quote the line each item comes from. A validator
+  checks the quote against the transcript and drops anything it cannot find; the page says how
+  many items were verified and how many were dropped.
+- **Suggested questions** under the page open the **assistant** (the button at the bottom
+  right), whose answers show their citations as clickable timestamps and say when they are
+  quoted from the transcript because no model answered.
+- **One player for the whole page.** The recording sits above the tabs, so playback continues
+  while you switch tabs, the transcript highlights the line being spoken, and every timestamp
+  on the page seeks the same recording. Phones get the seek buttons too.
+- **Action items are kept on the server** (`ms_action_items`): a tick or an owner change
+  follows the meeting to every device and survives a regenerated analysis.
+- **Download .md** exports the analysis; **Regenerate** writes a new version and keeps the
+  previous one until the new one is ready.
+
+Without a language model the page is still produced — from the meeting's own lines, chosen by
+cue words, each citing itself — and it says so at the top. The analysis is queued automatically
+after a summary, or from **Generate insights** on the Overview tab.
+
+| Route | |
+|---|---|
+| `GET/POST library/item/{id}/analysis` | The newest analysis, visual page, questions and validator report with its state (`none`, `pending`, `ready`, `failed`, `no_transcript`); POST queues a run (202) |
+| `GET library/item/{id}/visual`, `…/questions` | The page (with its `brief`) and the questions alone |
+| `POST library/item/{id}/visual` | Queues a `layout` job that rewrites the brief from the latest analysis (202; 409 `no_analysis`) |
+| `GET library/item/{id}/actions`, `PATCH …/actions/{item}` | Server-kept action items: status, owner, due |
+| `GET library/schema` | The published JSON schema (v1) for other consumers such as DayPilot |
+
+Tables: `ms_analyses` (versioned), `ms_visual_specs` (the layout and the brief), `ms_action_items`.
+Model calls go through the same target as summaries; `response_format=json` is requested on
+Ollama. The brief's renderer (`meeting-summary/ExecutiveBrief.tsx`) takes only the analysis and
+the brief, so the same spec can be drawn elsewhere, DayPilot included. Tests:
+`backend/tests/meetingsense/test_intelligence.py`, `backend/tests/meetingsense/test_brief.py`,
+`frontend/src/test/meetingIntelligence.test.tsx`, `frontend/src/test/visualSummaryTab.test.tsx`,
+and `frontend/src/test/meetingsLandingGate.test.tsx`, which snapshots the landing page so it
+cannot change unnoticed.
 
 ## Storage
 

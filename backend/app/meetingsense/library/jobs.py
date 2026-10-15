@@ -19,6 +19,7 @@ import asyncio
 import logging
 import math
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -100,7 +101,8 @@ async def _loop() -> None:
 
 async def run_job(job: Dict[str, Any]) -> str:
     """Run one leased job to an end state. Returns that state."""
-    handlers = {"transcribe": _transcribe, "index": _index, "summarize": _summarize}
+    handlers = {"transcribe": _transcribe, "index": _index, "summarize": _summarize, "analyze": _analyze,
+                "layout": _layout}
     handler = handlers.get(job["type"])
     if handler is None:
         db.update_job(job["id"], state="failed", error=f"unknown job type {job['type']}", finished=True)
@@ -306,6 +308,7 @@ async def _summarize(job: Dict[str, Any]) -> str:
         # but it is not a summary, and the meeting must not say it has one.
         db.update_entry(meeting_id, summary_state="unavailable")
         db.update_job(job["id"], diagnostic={"reason": "No language model answered, or there is no transcript."})
+        _queue_analysis(meeting_id, options)
         return "done"
 
     if outputs.get("actions", True) and not store.get_notes(meeting_id):
@@ -324,4 +327,115 @@ async def _summarize(job: Dict[str, Any]) -> str:
             engine.add(window)
             await engine.run(force=True)
     db.update_entry(meeting_id, summary_state="ready")
+    _queue_analysis(meeting_id, options)
+    return "done"
+
+
+def _queue_analysis(meeting_id: str, options: Dict[str, Any]) -> Optional[str]:
+    """After a summary, the typed analysis — only with ``MEETINGS_INTELLIGENCE`` on. The
+    model target the summary used is carried along so both talk to the same model."""
+    if not load_library_config().intelligence:
+        return None
+    jid = db.create_job(meeting_id, "analyze", max_attempts=1,
+                        options={"model_target": (options or {}).get("model_target") or {}})
+    wake()
+    return jid
+
+
+def _active_version_id(meeting_id: str) -> Optional[str]:
+    for version in db.list_versions(meeting_id):
+        if version.get("active"):
+            return version.get("id")
+    return None
+
+
+async def _analyze(job: Dict[str, Any]) -> str:
+    """The typed analysis, the visual page and the suggested questions for one meeting.
+
+    Runs on the model lane the summary used; with no model it still finishes, with an
+    extractive analysis that says so. ``ValueError("no_transcript")`` is a permanent failure
+    for this transcript, not something a retry fixes.
+    """
+    from ..intelligence import service as intelligence  # noqa: PLC0415
+
+    meeting_id = job["meeting_id"]
+    options = job.get("options") or {}
+    cfg = load_library_config()
+    call = _model_call(options) if cfg.processing else None
+    db.update_job(job["id"], stage="analysing", progress=0.05, lease_s=1800)
+
+    def progress(stage: str, fraction: float) -> None:
+        db.update_job(job["id"], stage=stage, progress=fraction, lease_s=1800)
+
+    try:
+        result = await intelligence.run_analysis(
+            meeting_id, call=call, model=(options.get("model_target") or {}).get("model"),
+            transcript_version_id=_active_version_id(meeting_id), progress=progress,
+        )
+    except ValueError as exc:
+        if str(exc) == "no_transcript":
+            raise JobFailed("There is no transcript to analyse yet.") from exc
+        raise
+    report = (result.get("report") or {})
+    retitled = _maybe_retitle(meeting_id, result) if cfg.auto_title else None
+    db.update_job(job["id"], diagnostic={"degraded": result.get("degraded"), "kept": report.get("kept"),
+                                         "dropped": report.get("dropped"), "analysis_id": result.get("id"),
+                                         "retitled": retitled})
+    return "done"
+
+
+# A recorder default or the library's own fallback: a keyword followed by nothing but dates,
+# times and separators — "Imported meeting · Oct 10, 12:31", "Recording 12", "Meeting".
+_GENERIC_TITLE = re.compile(
+    r"^(?:imported meeting|new recording|recording|transcript|meeting|untitled|audio|rec)"
+    r"(?:[\s·._\-:∶,/]*(?:\d+|[a-z]{3,9}\.? \d{1,2}|\d{1,2}:\d{2}|am|pm))*$", re.IGNORECASE)
+
+
+def generic_title(title: str) -> bool:
+    """True for a title that names nothing: empty, only a timestamp (a recorder's file name),
+    or a default such as "Imported meeting · Oct 10, 12:31"."""
+    from .adapters import display_title, time_from_name  # noqa: PLC0415
+
+    text = " ".join((title or "").split())
+    if not text:
+        return True
+    if time_from_name(text) and display_title(text, fallback_prefix="~time-only~").startswith("~time-only~"):
+        return True
+    return bool(_GENERIC_TITLE.match(text))
+
+
+def _maybe_retitle(meeting_id: str, result: Dict[str, Any]) -> Optional[str]:
+    """Give a meeting whose title names nothing the title its analysis found. Only after a
+    model answered (an extractive analysis keeps the recorded title), only over a generic
+    title, never over one a person typed. Returns the new title, or None."""
+    from .. import store as ms_store  # noqa: PLC0415
+
+    analysis = result.get("analysis") or {}
+    new = " ".join(str(analysis.get("title") or "").split())[:120].strip(" .")
+    if result.get("degraded") or not new or generic_title(new):
+        return None
+    meeting = ms_store.get_meeting(meeting_id) or {}
+    old = str(meeting.get("title") or "")
+    if not generic_title(old) or new.lower() == old.strip().lower():
+        return None
+    ms_store.update_meeting(meeting_id, {"title": new})
+    log.info("meetings: %s titled from its analysis: %r -> %r", meeting_id, old, new)
+    return new
+
+
+async def _layout(job: Dict[str, Any]) -> str:
+    """Write the Executive Brief again for the latest analysis, without re-extracting."""
+    from ..intelligence import service as intelligence  # noqa: PLC0415
+
+    options = job.get("options") or {}
+    call = _model_call(options) if load_library_config().processing else None
+    db.update_job(job["id"], stage="writing the brief", progress=0.2, lease_s=900)
+    try:
+        result = await intelligence.recompose(job["meeting_id"], call=call)
+    except ValueError as exc:
+        if str(exc) == "no_analysis":
+            raise JobFailed("There is no analysis to lay out yet.") from exc
+        raise
+    brief = ((result.get("visual") or {}).get("brief") or {})
+    db.update_job(job["id"], diagnostic={"polished": brief.get("polished"), "source_count": brief.get("source_count")})
     return "done"

@@ -65,9 +65,19 @@ def _owned_entry(meeting_id: str, viewer: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="not found")
     entry = db.get_entry(meeting_id) or {}
     owner = entry.get("owner_user_id") or ""
-    if viewer and owner and owner != viewer:
+    # Fail closed: an owned meeting is never shown to an empty viewer. On a single-user
+    # install the viewer resolves to that user, so this only bites when several accounts
+    # exist and a request arrives with no token — which used to see everything.
+    if owner and (not viewer or owner != viewer):
         raise HTTPException(status_code=404, detail="not found")
     return {"meeting": meeting, "entry": entry}
+
+
+def _require_intelligence() -> None:
+    """The analysis routes exist only with ``MEETINGS_INTELLIGENCE`` on (404 otherwise, like
+    every other gated route, so a caller cannot tell a flag from a missing id)."""
+    if not load_library_config().intelligence:
+        raise HTTPException(status_code=404, detail="not found")
 
 
 # ── status ──────────────────────────────────────────────────────────────────
@@ -702,6 +712,168 @@ async def summarize_again(
     db.update_entry(meeting_id, summary_state="pending")
     jobs.wake()
     return JSONResponse(status_code=202, content={"job": db.get_job(jid)})
+
+
+# ── meeting intelligence ────────────────────────────────────────────────────
+
+
+def _analysis_jobs(meeting_id: str) -> List[Dict[str, Any]]:
+    return [j for j in db.list_jobs(meeting_id=meeting_id, limit=20) if j["type"] in ("analyze", "layout")]
+
+
+def _analysis_payload(meeting_id: str) -> Dict[str, Any]:
+    from ..intelligence import service as intelligence  # noqa: PLC0415
+
+    current = intelligence.current(meeting_id)
+    pending = [j for j in _analysis_jobs(meeting_id) if j["state"] in ("queued", "running")]
+    failed = [j for j in _analysis_jobs(meeting_id) if j["state"] == "failed"]
+    if pending:
+        state = "pending"
+    elif current:
+        state = "ready"
+    elif failed:
+        state = "failed"
+    elif store.get_segments(meeting_id):
+        state = "none"
+    else:
+        state = "no_transcript"
+    return {
+        "state": state,
+        "job": (pending or failed or [None])[0],
+        **({k: current.get(k) for k in ("id", "created_at", "model", "degraded", "schema_version", "versions",
+                                         "analysis", "visual", "questions", "report")} if current else {}),
+    }
+
+
+@router.get("/v1/meetingsense/library/item/{meeting_id}/analysis")
+async def analysis_read(
+    meeting_id: str,
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> Dict[str, Any]:
+    """The newest analysis with its visual page, questions and validator report, plus the
+    state the page should show (``none`` / ``pending`` / ``ready`` / ``failed`` / ``no_transcript``)."""
+    _require_enabled()
+    _require_intelligence()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    return await asyncio.to_thread(_analysis_payload, meeting_id)
+
+
+@router.post("/v1/meetingsense/library/item/{meeting_id}/analysis")
+async def analysis_run(
+    meeting_id: str, body: Optional[Dict[str, Any]] = None,
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """Queue the analysis (again). The current page stays until the new one is ready."""
+    _require_enabled()
+    _require_intelligence()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    if not store.get_segments(meeting_id):
+        raise _error(409, "no_transcript", "There is no transcript to analyse yet.",
+                     "Transcribe the recording first; the analysis is written from the transcript.")
+    for job in _analysis_jobs(meeting_id):
+        if job["state"] in ("queued", "running"):
+            return JSONResponse(status_code=202, content={"job": job, "state": "pending"})
+    db.ensure_entry(meeting_id)
+    jid = db.create_job(meeting_id, "analyze", max_attempts=1, options={k: v for k, v in (body or {}).items() if k == "model_target"})
+    jobs.wake()
+    return JSONResponse(status_code=202, content={"job": db.get_job(jid), "state": "pending"})
+
+
+@router.get("/v1/meetingsense/library/item/{meeting_id}/visual")
+async def visual_read(
+    meeting_id: str,
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> Dict[str, Any]:
+    from ..intelligence import service as intelligence  # noqa: PLC0415
+
+    _require_enabled()
+    _require_intelligence()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    current = await asyncio.to_thread(intelligence.current, meeting_id)
+    if not current:
+        raise _error(404, "no_analysis", "This meeting has not been analysed yet.")
+    return {"visual": current.get("visual"), "analysis": current.get("analysis"), "id": current.get("id")}
+
+
+@router.post("/v1/meetingsense/library/item/{meeting_id}/visual")
+async def visual_relayout(
+    meeting_id: str, body: Optional[Dict[str, Any]] = None,
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """Write the Executive Brief again from the latest analysis (no re-extraction). 409
+    ``no_analysis`` until an analysis exists; the current page stays until the new one lands."""
+    from ..intelligence import service as intelligence  # noqa: PLC0415
+
+    _require_enabled()
+    _require_intelligence()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    if not await asyncio.to_thread(intelligence.current, meeting_id):
+        raise _error(409, "no_analysis", "This meeting has not been analysed yet.", "Generate the insights first.")
+    for job in _analysis_jobs(meeting_id):
+        if job["state"] in ("queued", "running"):
+            return JSONResponse(status_code=202, content={"job": job, "state": "pending"})
+    jid = db.create_job(meeting_id, "layout", max_attempts=1,
+                        options={k: v for k, v in (body or {}).items() if k in ("model_target", "template")})
+    jobs.wake()
+    return JSONResponse(status_code=202, content={"job": db.get_job(jid), "state": "pending"})
+
+
+@router.get("/v1/meetingsense/library/item/{meeting_id}/questions")
+async def questions_read(
+    meeting_id: str,
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> Dict[str, Any]:
+    from ..intelligence import service as intelligence  # noqa: PLC0415
+
+    _require_enabled()
+    _require_intelligence()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    current = await asyncio.to_thread(intelligence.current, meeting_id)
+    return {"questions": (current or {}).get("questions") or []}
+
+
+@router.get("/v1/meetingsense/library/item/{meeting_id}/actions")
+async def actions_read(
+    meeting_id: str,
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> Dict[str, Any]:
+    from ..intelligence import store as intelligence_store  # noqa: PLC0415
+
+    _require_enabled()
+    _require_intelligence()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    return {"actions": await asyncio.to_thread(intelligence_store.actions, meeting_id)}
+
+
+@router.patch("/v1/meetingsense/library/item/{meeting_id}/actions/{item_id}")
+async def actions_update(
+    meeting_id: str, item_id: str, body: Dict[str, Any],
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> Dict[str, Any]:
+    """Tick, reassign or re-date an action item. Kept on the server, so it follows the meeting
+    to every device and survives a regenerated analysis."""
+    from ..intelligence import store as intelligence_store  # noqa: PLC0415
+
+    _require_enabled()
+    _require_intelligence()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    row = await asyncio.to_thread(
+        intelligence_store.update_action, meeting_id, item_id,
+        **{k: body.get(k) for k in intelligence_store.UPDATABLE if k in body},
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="not found")
+    return {"action": row}
+
+
+@router.get("/v1/meetingsense/library/schema")
+async def intelligence_schema() -> Dict[str, Any]:
+    """The published analysis contract, for other consumers (DayPilot reads this)."""
+    from ..intelligence import schema as schema_mod  # noqa: PLC0415
+
+    _require_enabled()
+    _require_intelligence()
+    return schema_mod.json_schema()
 
 
 @router.get("/v1/meetingsense/library/item/{meeting_id}/versions")

@@ -858,3 +858,15 @@ select option:hover {
   border-color: rgba(129, 140, 248, 0.22);
   max-width: 46rem;
 }
+
+/* Meeting intelligence: printing the Executive Brief. The report is cloned into #hp-print-root
+   and only that root is printed, so the dark application shell never reaches the printer. */
+#hp-print-root { display: none; }
+@media print {
+  body.hp-print-brief > *:not(#hp-print-root) { display: none !important; }
+  body.hp-print-brief { background: #fff !important; color: #1e2c45; }
+  #hp-print-root { display: block; padding: 0; }
+  #hp-print-root .hp-brief { box-shadow: none !important; border-radius: 0 !important; }
+  #hp-print-root button { border: 0 !important; background: transparent !important; }
+  @page { margin: 12mm; }
+}

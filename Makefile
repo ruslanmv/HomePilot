@@ -6,6 +6,17 @@ export UV_LINK_MODE ?= copy
 # Agentic mode: set AGENTIC=0 to disable MCP gateway & agent features
 AGENTIC ?= 1
 
+# ComfyUI (image generation). Its clone is shallow and retried: a dropped connection on a
+# 60k-object repository ("RPC failed; curl 56", "early EOF") was the usual way `make install`
+# died. SKIP_COMFYUI=1 leaves it out; `make install-comfyui` installs or repairs it alone.
+COMFYUI_REPO   ?= https://github.com/comfyanonymous/ComfyUI.git
+COMFYUI_REF    ?=
+SKIP_COMFYUI   ?= 0
+CLONE_ATTEMPTS ?= 4
+# clone_retry <url> <dir> [ref]: --depth 1 --single-branch; a transfer below 1 KB/s for 60 s is
+# aborted instead of hanging; every failed attempt removes the partial checkout and backs off.
+CLONE_RETRY = clone_retry() { url="$$1"; dest="$$2"; ref="$${3:-}"; n=0; while :; do n=$$((n+1)); rm -rf "$$dest"; if git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 clone --depth 1 --single-branch $${ref:+--branch "$$ref"} "$$url" "$$dest"; then return 0; fi; if [ "$$n" -ge "$(CLONE_ATTEMPTS)" ]; then rm -rf "$$dest"; return 1; fi; echo "  ⚠  clone failed (attempt $$n/$(CLONE_ATTEMPTS)) — retrying in $$((n*10))s..."; sleep $$((n*10)); done; }
+
 # MCP Context Forge settings
 MCP_DIR          ?= mcp-context-forge
 MCP_REPO         ?= https://github.com/ruslanmv/mcp-context-forge.git
@@ -22,7 +33,7 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
 # Each has its own Makefile with `install` and `test` targets.
 MCP_EXPERT_CORE_SERVERS := web_search doc_retrieval memory_store safety_policy observability code_sandbox citation_provenance eval_runner cost_router job_orchestrator
 
-.PHONY: help install setup run up down stop logs health dev build test test-local test-edit-session test-frontend test-mcp-servers test-docker clean \
+.PHONY: help install install-comfyui setup run up down stop logs health dev build test test-local test-edit-session test-frontend test-mcp-servers test-docker clean \
         download download-minimal download-minimum download-recommended download-full \
         download-chat download-multimodal \
         download-edit download-enhance download-video download-verify download-health \
@@ -88,120 +99,20 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "✓ Installing frontend dependencies..."
 	@cd frontend && npm install
 	@echo ""
-	@echo "✓ Installing ComfyUI..."
-	@if [ ! -f "ComfyUI/main.py" ]; then \
-		echo "  Cloning ComfyUI repository..."; \
-		rm -rf ComfyUI; \
-		git clone https://github.com/comfyanonymous/ComfyUI.git ComfyUI; \
-	else \
-		echo "  ComfyUI already present"; \
-	fi
-	@echo "  Setting up ComfyUI virtual environment..."
-	@if [ ! -d "ComfyUI/.venv" ]; then \
-		python3 -m venv ComfyUI/.venv; \
-	fi
-	@echo "  Installing ComfyUI dependencies..."
-	@ComfyUI/.venv/bin/pip install -U pip setuptools wheel >/dev/null 2>&1 || true
-	@ComfyUI/.venv/bin/pip install -r ComfyUI/requirements.txt
-	@echo "  Installing face restoration dependencies (GFPGAN/CodeFormer)..."
-	@if ComfyUI/.venv/bin/pip install facexlib gfpgan >/dev/null 2>&1; then \
-		echo "  ✓ Face restoration dependencies installed"; \
-		echo "  Patching basicsr for torchvision >= 0.18 compatibility..."; \
-		SITE_PKG=$$(ComfyUI/.venv/bin/python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null); \
-		if [ -f "$$SITE_PKG/basicsr/data/degradations.py" ]; then \
-			sed -i 's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' \
-				"$$SITE_PKG/basicsr/data/degradations.py" && \
-			echo "  ✓ basicsr patched (functional_tensor → functional)"; \
-		fi; \
-	else \
-		echo "    (optional: facexlib/gfpgan install skipped)"; \
-	fi
-	@echo "  Installing ComfyUI-Impact-Pack for face restore nodes..."
-	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-Impact-Pack" ]; then \
-		mkdir -p ComfyUI/custom_nodes && \
-		git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack 2>/dev/null \
-			|| echo "    (optional: Impact-Pack clone skipped)"; \
-	else \
-		echo "  ✓ ComfyUI-Impact-Pack already present"; \
-	fi
-	@# Always (re)install the node requirements — the clone above is skipped when the
-	@# directory already exists, so gating the dependency install on the clone left
-	@# nodes present but un-importable (e.g. ModuleNotFoundError: No module named 'piexif').
-	@if [ -f "ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt" ]; then \
-		if ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt >/dev/null 2>&1; then \
-			echo "  ✓ ComfyUI-Impact-Pack dependencies installed"; \
-		else \
-			echo "    (warning: some Impact-Pack requirements failed to install)"; \
-		fi; \
-	fi
-	@echo "  Installing common custom-node dependencies (piexif, imageio-ffmpeg)..."
-	@# piexif is imported directly by Impact-Pack; imageio-ffmpeg by VideoHelperSuite.
-	@# Install them explicitly so a partial requirements.txt failure cannot leave the
-	@# nodes broken ("No module named 'piexif'" / "Failed to import imageio_ffmpeg").
-	@if ComfyUI/.venv/bin/pip install piexif imageio-ffmpeg >/dev/null 2>&1; then \
-		echo "  ✓ piexif + imageio-ffmpeg installed"; \
-	else \
-		echo "    (optional: piexif/imageio-ffmpeg install skipped)"; \
-	fi
-	@echo "  Installing Ultralytics (needed for UltralyticsDetectorProvider)..."
-	@if ComfyUI/.venv/bin/pip install -U ultralytics >/dev/null 2>&1; then \
-		echo "  ✓ ultralytics installed"; \
-	else \
-		echo "  ⚠ ultralytics install failed (UltralyticsDetectorProvider may not register)"; \
-	fi
-	@echo "  Installing ComfyUI-InstantID for identity-preserving generation..."
-	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-InstantID" ]; then \
-		mkdir -p ComfyUI/custom_nodes && \
-		if git clone https://github.com/cubiq/ComfyUI_InstantID.git ComfyUI/custom_nodes/ComfyUI-InstantID 2>/dev/null; then \
-			if [ -f "ComfyUI/custom_nodes/ComfyUI-InstantID/requirements.txt" ]; then \
-				ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-InstantID/requirements.txt >/dev/null 2>&1 || true; \
-			fi; \
-			echo "  ✓ ComfyUI-InstantID installed"; \
-		else \
-			echo "    (optional: ComfyUI-InstantID install skipped)"; \
-		fi; \
-	else \
-		echo "  ✓ ComfyUI-InstantID already installed"; \
-	fi
-	@echo "  Installing Python dev headers + build tools (needed by InsightFace C++ extensions)..."
-	@if [ -f /etc/os-release ] && grep -qi 'ubuntu\|debian' /etc/os-release 2>/dev/null; then \
-		PY_VER=$$(ComfyUI/.venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.11"); \
-		if dpkg -s "python$${PY_VER}-dev" >/dev/null 2>&1 && dpkg -s build-essential >/dev/null 2>&1; then \
-			echo "  ✓ python$${PY_VER}-dev and build-essential already installed"; \
-		else \
-			echo "  Installing python$${PY_VER}-dev and build-essential (may require sudo)..."; \
-			if sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq "python$${PY_VER}-dev" build-essential >/dev/null 2>&1; then \
-				echo "  ✓ Build dependencies installed"; \
-			else \
-				echo "    (optional: could not install python$${PY_VER}-dev / build-essential — insightface may fail)"; \
-				echo "    Run manually: sudo apt-get install -y python$${PY_VER}-dev build-essential"; \
-			fi; \
-		fi; \
-	else \
-		echo "  (non-Debian system — skipping apt-get; ensure Python dev headers are available)"; \
-	fi
-	@echo "  Installing InsightFace + ONNX Runtime in ComfyUI venv (needed by InstantID)..."
-	@if ComfyUI/.venv/bin/pip install insightface onnxruntime >/dev/null 2>&1; then \
-		echo "  ✓ InsightFace + ONNX Runtime installed in ComfyUI venv"; \
-	else \
-		echo "    (optional: insightface/onnxruntime install skipped)"; \
-		echo "    If this failed with 'Python.h not found', run:"; \
-		echo "      sudo apt-get install -y python3-dev build-essential"; \
-		echo "    Then retry: make install"; \
-	fi
-	@echo ""
 	@echo "✓ Setting up model directories..."
 	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg models/comfy/upscale_models models/comfy/gfpgan models/comfy/insightface/models models/comfy/instantid models/comfy/photomaker models/comfy/pulid models/comfy/avatar models/comfy/ipadapter models/comfy/controlnet/InstantID models/comfy/controlnet/thibaud-openpose-sdxl-1.0
-	@echo "  Linking ComfyUI models to ./models/comfy..."
-	@rm -rf ComfyUI/models
-	@ln -s $$(pwd)/models/comfy ComfyUI/models
-	@test -L ComfyUI/models || (echo "  ❌ ERROR: Failed to create symlink"; exit 1)
-	@echo "  ✓ Symlink created successfully"
 	@echo ""
-	@echo "✓ Verifying ComfyUI install..."
-	@test -f ComfyUI/main.py || (echo "  ❌ ERROR: ComfyUI/main.py missing"; exit 1)
-	@test -x ComfyUI/.venv/bin/python || (echo "  ❌ ERROR: ComfyUI venv missing"; exit 1)
-	@ComfyUI/.venv/bin/python -c "import torch; print('  ✓ torch:', torch.__version__)" 2>/dev/null || echo "  ✓ torch: (will be loaded at runtime)"
+	@if [ "$(SKIP_COMFYUI)" = "1" ]; then \
+		echo "⏭  Skipping ComfyUI (SKIP_COMFYUI=1). Image generation stays off until: make install-comfyui"; \
+	else \
+		$(MAKE) --no-print-directory install-comfyui || { \
+			echo ""; \
+			echo "  ⚠  ComfyUI did not finish installing (non-fatal). Usually the network dropped during the clone."; \
+			echo "     Chat, meetings and the rest of HomePilot work without it; image generation needs it."; \
+			echo "     Retry it alone:   make install-comfyui"; \
+			echo "     Skip on purpose:  make install SKIP_COMFYUI=1"; \
+		}; \
+	fi
 	@echo ""
 	@# ── MCP Context Forge (agentic features) ──
 	@if [ "$(AGENTIC)" = "1" ]; then \
@@ -277,6 +188,135 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	fi
 	@echo ""
 
+install-comfyui: ## Install ComfyUI alone (shallow clone with retries); rerun this if the network dropped during make install
+	@echo "✓ Installing ComfyUI..."
+	@if [ ! -f "ComfyUI/main.py" ]; then \
+		echo "  Cloning ComfyUI repository..."; \
+		if [ -d ComfyUI ] && [ -n "$$(ls -id comfyui 2>/dev/null | cut -d' ' -f1)" ] && \
+		   [ "$$(ls -id comfyui 2>/dev/null | cut -d' ' -f1)" = "$$(ls -id ComfyUI 2>/dev/null | cut -d' ' -f1)" ]; then \
+			echo "  ❌ On this filesystem 'ComfyUI' (the runtime checkout) and 'comfyui/' (this repo's Dockerfile and workflows)"; \
+			echo "     are the same folder, so cloning here would delete tracked files. Case-insensitive mounts such as /mnt/c do this."; \
+			echo "     Run HomePilot from a case-sensitive location (e.g. ~/HomePilot inside WSL), or make this folder case-sensitive once,"; \
+			echo "     from an administrator PowerShell:  fsutil.exe file setCaseSensitiveInfo \"$$(wslpath -w . 2>/dev/null || pwd)\" enable"; \
+			exit 1; \
+		fi; \
+		rm -rf ComfyUI; \
+		$(CLONE_RETRY); clone_retry "$(COMFYUI_REPO)" ComfyUI "$(COMFYUI_REF)" || { \
+			echo "  ❌ Could not clone ComfyUI after $(CLONE_ATTEMPTS) attempts (network or proxy)."; \
+			echo "     When the connection is back:  make install-comfyui"; \
+			exit 1; \
+		}; \
+	else \
+		echo "  ComfyUI already present"; \
+	fi
+	@echo "  Setting up ComfyUI virtual environment..."
+	@if [ ! -d "ComfyUI/.venv" ]; then \
+		python3 -m venv ComfyUI/.venv; \
+	fi
+	@echo "  Installing ComfyUI dependencies..."
+	@ComfyUI/.venv/bin/pip install -U pip setuptools wheel >/dev/null 2>&1 || true
+	@ComfyUI/.venv/bin/pip install -r ComfyUI/requirements.txt
+	@echo "  Installing face restoration dependencies (GFPGAN/CodeFormer)..."
+	@if ComfyUI/.venv/bin/pip install facexlib gfpgan >/dev/null 2>&1; then \
+		echo "  ✓ Face restoration dependencies installed"; \
+		echo "  Patching basicsr for torchvision >= 0.18 compatibility..."; \
+		SITE_PKG=$$(ComfyUI/.venv/bin/python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null); \
+		if [ -f "$$SITE_PKG/basicsr/data/degradations.py" ]; then \
+			sed -i 's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' \
+				"$$SITE_PKG/basicsr/data/degradations.py" && \
+			echo "  ✓ basicsr patched (functional_tensor → functional)"; \
+		fi; \
+	else \
+		echo "    (optional: facexlib/gfpgan install skipped)"; \
+	fi
+	@echo "  Installing ComfyUI-Impact-Pack for face restore nodes..."
+	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-Impact-Pack" ]; then \
+		mkdir -p ComfyUI/custom_nodes && \
+		($(CLONE_RETRY); clone_retry https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack) 2>/dev/null \
+			|| echo "    (optional: Impact-Pack clone skipped)"; \
+	else \
+		echo "  ✓ ComfyUI-Impact-Pack already present"; \
+	fi
+	@# Always (re)install the node requirements — the clone above is skipped when the
+	@# directory already exists, so gating the dependency install on the clone left
+	@# nodes present but un-importable (e.g. ModuleNotFoundError: No module named 'piexif').
+	@if [ -f "ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt" ]; then \
+		if ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt >/dev/null 2>&1; then \
+			echo "  ✓ ComfyUI-Impact-Pack dependencies installed"; \
+		else \
+			echo "    (warning: some Impact-Pack requirements failed to install)"; \
+		fi; \
+	fi
+	@echo "  Installing common custom-node dependencies (piexif, imageio-ffmpeg)..."
+	@# piexif is imported directly by Impact-Pack; imageio-ffmpeg by VideoHelperSuite.
+	@# Install them explicitly so a partial requirements.txt failure cannot leave the
+	@# nodes broken ("No module named 'piexif'" / "Failed to import imageio_ffmpeg").
+	@if ComfyUI/.venv/bin/pip install piexif imageio-ffmpeg >/dev/null 2>&1; then \
+		echo "  ✓ piexif + imageio-ffmpeg installed"; \
+	else \
+		echo "    (optional: piexif/imageio-ffmpeg install skipped)"; \
+	fi
+	@echo "  Installing Ultralytics (needed for UltralyticsDetectorProvider)..."
+	@if ComfyUI/.venv/bin/pip install -U ultralytics >/dev/null 2>&1; then \
+		echo "  ✓ ultralytics installed"; \
+	else \
+		echo "  ⚠ ultralytics install failed (UltralyticsDetectorProvider may not register)"; \
+	fi
+	@echo "  Installing ComfyUI-InstantID for identity-preserving generation..."
+	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-InstantID" ]; then \
+		mkdir -p ComfyUI/custom_nodes && \
+		if ($(CLONE_RETRY); clone_retry https://github.com/cubiq/ComfyUI_InstantID.git ComfyUI/custom_nodes/ComfyUI-InstantID) 2>/dev/null; then \
+			if [ -f "ComfyUI/custom_nodes/ComfyUI-InstantID/requirements.txt" ]; then \
+				ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-InstantID/requirements.txt >/dev/null 2>&1 || true; \
+			fi; \
+			echo "  ✓ ComfyUI-InstantID installed"; \
+		else \
+			echo "    (optional: ComfyUI-InstantID install skipped)"; \
+		fi; \
+	else \
+		echo "  ✓ ComfyUI-InstantID already installed"; \
+	fi
+	@echo "  Installing Python dev headers + build tools (needed by InsightFace C++ extensions)..."
+	@if [ -f /etc/os-release ] && grep -qi 'ubuntu\|debian' /etc/os-release 2>/dev/null; then \
+		PY_VER=$$(ComfyUI/.venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.11"); \
+		if dpkg -s "python$${PY_VER}-dev" >/dev/null 2>&1 && dpkg -s build-essential >/dev/null 2>&1; then \
+			echo "  ✓ python$${PY_VER}-dev and build-essential already installed"; \
+		else \
+			echo "  Installing python$${PY_VER}-dev and build-essential (may require sudo)..."; \
+			if sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq "python$${PY_VER}-dev" build-essential >/dev/null 2>&1; then \
+				echo "  ✓ Build dependencies installed"; \
+			else \
+				echo "    (optional: could not install python$${PY_VER}-dev / build-essential — insightface may fail)"; \
+				echo "    Run manually: sudo apt-get install -y python$${PY_VER}-dev build-essential"; \
+			fi; \
+		fi; \
+	else \
+		echo "  (non-Debian system — skipping apt-get; ensure Python dev headers are available)"; \
+	fi
+	@echo "  Installing InsightFace + ONNX Runtime in ComfyUI venv (needed by InstantID)..."
+	@if ComfyUI/.venv/bin/pip install insightface onnxruntime >/dev/null 2>&1; then \
+		echo "  ✓ InsightFace + ONNX Runtime installed in ComfyUI venv"; \
+	else \
+		echo "    (optional: insightface/onnxruntime install skipped)"; \
+		echo "    If this failed with 'Python.h not found', run:"; \
+		echo "      sudo apt-get install -y python3-dev build-essential"; \
+		echo "    Then retry: make install-comfyui"; \
+	fi
+	@echo ""
+	@echo "✓ Setting up model directories..."
+	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg models/comfy/upscale_models models/comfy/gfpgan models/comfy/insightface/models models/comfy/instantid models/comfy/photomaker models/comfy/pulid models/comfy/avatar models/comfy/ipadapter models/comfy/controlnet/InstantID models/comfy/controlnet/thibaud-openpose-sdxl-1.0
+	@echo "  Linking ComfyUI models to ./models/comfy..."
+	@rm -rf ComfyUI/models
+	@ln -s $$(pwd)/models/comfy ComfyUI/models
+	@test -L ComfyUI/models || (echo "  ❌ ERROR: Failed to create symlink"; exit 1)
+	@echo "  ✓ Symlink created successfully"
+	@echo ""
+	@echo "✓ Verifying ComfyUI install..."
+	@test -f ComfyUI/main.py || (echo "  ❌ ERROR: ComfyUI/main.py missing"; exit 1)
+	@test -x ComfyUI/.venv/bin/python || (echo "  ❌ ERROR: ComfyUI venv missing"; exit 1)
+	@ComfyUI/.venv/bin/python -c "import torch; print('  ✓ torch:', torch.__version__)" 2>/dev/null || echo "  ✓ torch: (will be loaded at runtime)"
+	@echo ""
+
 verify-install: ## Verify that all components are properly installed
 	@echo "Verifying installation..."
 	@test -f backend/.venv/bin/uvicorn || (echo "❌ backend not installed"; exit 1)
@@ -285,12 +325,15 @@ verify-install: ## Verify that all components are properly installed
 	@echo "  ✓ Edit-session installed"
 	@test -d frontend/node_modules || (echo "❌ frontend not installed"; exit 1)
 	@echo "  ✓ Frontend installed"
-	@test -f ComfyUI/main.py || (echo "❌ ComfyUI missing"; exit 1)
-	@echo "  ✓ ComfyUI cloned"
-	@test -x ComfyUI/.venv/bin/python || (echo "❌ ComfyUI deps missing"; exit 1)
-	@echo "  ✓ ComfyUI dependencies installed"
-	@test -L ComfyUI/models || (echo "❌ ComfyUI/models not linked"; exit 1)
-	@echo "  ✓ ComfyUI models linked"
+	@if [ -f ComfyUI/main.py ]; then \
+		echo "  ✓ ComfyUI cloned"; \
+		test -x ComfyUI/.venv/bin/python || (echo "❌ ComfyUI deps missing (run: make install-comfyui)"; exit 1); \
+		echo "  ✓ ComfyUI dependencies installed"; \
+		test -L ComfyUI/models || (echo "❌ ComfyUI/models not linked (run: make install-comfyui)"; exit 1); \
+		echo "  ✓ ComfyUI models linked"; \
+	else \
+		echo "  ⚠  ComfyUI not installed (optional — image generation; add it with: make install-comfyui)"; \
+	fi
 	@test -d models/comfy/checkpoints || (echo "❌ model directories missing"; exit 1)
 	@echo "  ✓ Model directories created"
 	@if [ -d "ComfyUI/custom_nodes/ComfyUI-Impact-Pack" ]; then \
@@ -380,8 +423,12 @@ preflight: ## Verify install is complete + every critical dep is reachable (no s
 			echo "  ✗ frontend packages out of date (run: cd frontend && npm install)"; fail=1; \
 		fi; \
 	fi; \
-	check_fs ComfyUI/main.py             "ComfyUI checkout"; \
-	check_fs ComfyUI/.venv/bin/python    "ComfyUI venv"; \
+	if [ -f ComfyUI/main.py ]; then \
+		echo "  ✓ ComfyUI checkout"; \
+		check_fs ComfyUI/.venv/bin/python "ComfyUI venv (repair with: make install-comfyui)"; \
+	else \
+		echo "  · ComfyUI not installed — image generation off (add it with: make install-comfyui)"; \
+	fi; \
 	echo "- Backend Python modules that have drifted before (pyproject.toml must ship them)"; \
 	check_import backend/.venv langgraph      "langgraph"; \
 	check_import backend/.venv bcrypt         "bcrypt (password hashing)"; \
