@@ -2663,7 +2663,9 @@ function ChatState({
       {/* Phones: a soft scrim under the menu button and header icons so text
           scrolling past never runs underneath them. */}
       <div className="md:hidden pointer-events-none fixed inset-x-0 top-0 z-30 h-16 hp-top-scrim" aria-hidden />
-      <div className="fixed top-3 right-3 sm:right-5 z-50">
+      {/* `hp-chat-header-actions` steps aside while a meeting workspace is open (styles.css):
+          these act on the chat underneath, and sat on top of the meeting's End button. */}
+      <div className="hp-chat-header-actions fixed top-3 right-3 sm:right-5 z-50">
         <div className="relative flex items-center gap-2">
           {/* Live computer/presence pill (Batch 4). Null unless the Account &
               Computers flag is on and a computer exists. */}
@@ -3283,7 +3285,10 @@ export default function App() {
     const backendUrl = resolveBackendUrl()
     const provider = (localStorage.getItem('homepilot_provider') as Provider) || 'backend'
     const ollamaUrl = localStorage.getItem('homepilot_ollama_url') || 'http://localhost:11434'
-    const ollamaModel = localStorage.getItem('homepilot_ollama_model') || 'llama3:8b'
+    // Empty means "auto": the backend uses the configured model when it is
+    // installed, otherwise the best installed one. A literal default here
+    // used to make fresh installs ask for a model nobody had pulled.
+    const ollamaModel = localStorage.getItem('homepilot_ollama_model') || ''
     const apiKey = localStorage.getItem('homepilot_api_key') || ''
     const funMode = localStorage.getItem('homepilot_funmode') === '1'
 
@@ -3775,10 +3780,27 @@ export default function App() {
   useEffect(() => {
     if (autoDetectRanRef.current) return
     const hasExistingSettings = localStorage.getItem('homepilot_model_chat')
-    if (hasExistingSettings) return  // User already has saved settings
+    const backendUrl = resolveBackendUrl(settingsDraft.backendUrl)
+    if (hasExistingSettings) {
+      // A saved model that is no longer installed must not pin chat to a 404
+      // forever (docs/design/LOCAL_MODEL_RESOLUTION.md): ask the backend once
+      // per load and fall back to Auto when it is gone.
+      autoDetectRanRef.current = true
+      fetch(`${backendUrl}/v1/models/resolution?configured=${encodeURIComponent(hasExistingSettings)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const chat = data?.chat
+          if (chat && chat.runtime_url && chat.configured_installed === false) {
+            console.warn(`[AutoDetect] Saved chat model "${hasExistingSettings}" is not installed — using Auto (${chat.model || 'no model yet'})`)
+            localStorage.removeItem('homepilot_model_chat')
+            setSettingsDraft((prev) => ({ ...prev, modelChat: '' }))
+          }
+        })
+        .catch(() => { /* backend not up yet — nothing to reconcile */ })
+      return
+    }
     autoDetectRanRef.current = true
 
-    const backendUrl = resolveBackendUrl(settingsDraft.backendUrl)
     fetch(`${backendUrl}/auto-detect`)
       .then((r) => r.json())
       .then((data) => {
@@ -4145,7 +4167,7 @@ export default function App() {
         baseUrlChat: localStorage.getItem('homepilot_base_url_chat') || '',
         baseUrlImages: localStorage.getItem('homepilot_base_url_images') || '',
         baseUrlVideo: localStorage.getItem('homepilot_base_url_video') || '',
-        modelChat: localStorage.getItem('homepilot_model_chat') || 'local-model',
+        modelChat: localStorage.getItem('homepilot_model_chat') || '',
         modelImages: localStorage.getItem('homepilot_model_images') || '',
         modelVideo: localStorage.getItem('homepilot_model_video') || '',
         preset: (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med',
@@ -5302,7 +5324,19 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
-              ? { ...m, pending: false, animate: true, text: (data.text ?? data.content ?? '…'), media: data.media ?? null, compute: data.compute ?? null }
+              ? {
+                  ...m,
+                  pending: false,
+                  animate: !data.error,
+                  text: (data.text ?? data.content ?? '…'),
+                  media: data.media ?? null,
+                  compute: data.compute ?? null,
+                  // A structured error (e.g. no local model) renders as an error
+                  // bubble with Retry, not as a normal-looking reply.
+                  ...(data.error
+                    ? { error: true, retry: { requestText, mode, projectId: currentProjectId } }
+                    : {}),
+                }
               : m
           )
         )

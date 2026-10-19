@@ -352,8 +352,8 @@ imported from an Insta360 / AIRecord device, uploaded audio, transcript-only, an
 meetings waiting for their recording. Import previews what it found before anything is saved,
 **Folder Sync** watches a folder such as `D:\AIRecord` (read-only, each recording once), and
 recordings are transcribed on your own computer. Each meeting opens with its recording,
-transcript, actions and a details panel you can hide or resize. Off by default
-(`MEETINGS_LIBRARY_UPGRADE=1`). See [docs/meetings-library.md](docs/meetings-library.md).
+transcript, actions and a details panel you can hide or resize. On by default; set
+`MEETINGS_LIBRARY_UPGRADE=0` to hide it. See [docs/meetings-library.md](docs/meetings-library.md).
 
 <p align="center">
   <img src="docs/assets/meetings-library/library.jpg" alt="The Meetings library: tabs, search, and one card per meeting with its type and transcription status" width="900" />
@@ -510,6 +510,14 @@ make run
 * **ComfyUI:** `http://localhost:8188`
 * **MCP Gateway:** `http://localhost:4444/admin` *(when agentic mode is enabled)*
 
+> **Ports already taken?** `make start` never stops other programs. When something else
+> holds a default port — a `kubectl port-forward` on 8000, a container on 8010, Langfuse
+> on 3000 — HomePilot moves that service to the next free port, tells the backend, the
+> edit-session service and the browser where it went, and prints the addresses to open.
+> A ComfyUI that is already running is reused instead of started twice. Pin a port with
+> `HOMEPILOT_BACKEND_PORT`, `HOMEPILOT_EDIT_PORT`, `HOMEPILOT_FRONTEND_PORT` or `COMFY_PORT`.
+> `make stop` stops only processes started from this folder.
+
 ---
 
 ## 🎮 Using the Interface
@@ -610,7 +618,8 @@ HomePilot is **workflow-driven**. Instead of hardcoded pipelines, it loads JSON 
 | `make down` | Stop and remove containers |
 | `make health` | Run best-effort health checks |
 | `make health-check` | Comprehensive health check of all services |
-| `make start` | Start all services (set `AGENTIC=1` for MCP + tool servers) |
+| `make start` | Start all services on free ports, leaving other programs alone (set `AGENTIC=1` for MCP + tool servers) |
+| `make stop` | Stop the HomePilot processes started from this folder, and nothing else |
 | `make start-mcp` | Start MCP Context Forge gateway and servers |
 | `make start-agentic-servers` | Start MCP tool servers + A2A agents standalone |
 | `make mcp-register-homepilot` | Register default tools with MCP Gateway |
@@ -804,3 +813,42 @@ Apache-2.0
 
 <p align="center"><sub>Run each model where you choose — this PC, a paired Google Colab / RunPod GPU via OllaBridge Cloud, or a hosted API — with <b>per-model routing</b>, <b>health-aware fallback</b>, cost budgets, and token streaming. HomePilot sends the request to Cloud with routing metadata (model · device · fallback) — never to the worker directly.</sub></p>
 <p align="center"><sub>👉 <b>New here?</b> Follow the beginner step-by-step guide — connect a free Google Colab / RunPod / AWS GPU in minutes: <a href="docs/COMPUTE_PRODUCTION.md">docs/COMPUTE_PRODUCTION.md</a>. Going live? It ends with the production checklist and <code>GET /compute/readiness</code>.</sub></p>
+
+---
+
+<h2 align="center">🎙️ Meetings — one click to record, live transcript</h2>
+
+<p align="center">
+  <img src="docs/assets/meetings-live/quick-record.jpg" alt="Record a call: three switches (call audio, my microphone, optional screen), an optional title and one Start recording button, processed locally" width="900" />
+</p>
+
+<p align="center"><sub><b>Record a call.</b> <i>Meetings → New Meeting</i> opens on three switches — call audio and your microphone are on, the screen is optional — and one <b>Start recording</b> button. The title is optional (the meeting is named from what was said), consent is asked once per computer, and your choices are remembered, so the next Slack, Zoom or Teams call is a single click. <i>More options</i> opens the full wizard: schedule, external recorder, project, assistant and summary.</sub></p>
+
+<p align="center"><sub>Your browser then asks what to share. For the Slack, Zoom or Teams <b>app</b>, choose <i>Entire screen</i> and switch on <i>Share system audio</i>; for a call in a <b>browser tab</b>, choose that tab and keep <i>Share tab audio</i> on.</sub></p>
+
+<p align="center">
+  <img src="docs/assets/meetings-live/live-transcript.jpg" alt="Live meeting: a Recording badge with a running clock, capture chips and an End meeting button; the transcript grouped by speaker with the line being spoken shown in italics; a side panel with call audio and microphone levels and highlights such as decisions and action items" width="900" />
+</p>
+
+<p align="center"><sub><b>Follow the call as it happens.</b> Words appear a few seconds after they are spoken, transcribed on your own computer. Lines are grouped by speaker, the sentence still being spoken is shown in italics, and the view follows the newest line until you scroll up to read (then <i>Jump to live</i> brings you back). Two tabs only: <b>Transcript</b>, and <b>Ask</b> for private questions answered from the meeting so far. The side panel shows what is really being captured, with live level meters, and collects decisions and action items as <b>Highlights</b>.</sub></p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/meetings-live/listening.jpg" alt="Before anyone speaks: Listening, with the microphone flagged as No audio detected in the capture panel" /></td>
+    <td width="50%"><img src="docs/assets/meetings-live/restart-recovered.jpg" alt="After a server restart: a blue notice says recording continues and the earlier part is saved as its own meeting" /></td>
+  </tr>
+  <tr>
+    <td><sub><b>Listening.</b> Until the first words arrive the transcript says so, and each source says whether sound is really reaching HomePilot — here the call is heard but the microphone is silent.</sub></td>
+    <td><sub><b>Survives a restart.</b> If the HomePilot server restarts mid-call, recording continues as a new part of the same conversation and the earlier part is saved as its own meeting. Problems are explained in plain words, never as server codes.</sub></td>
+  </tr>
+</table>
+
+<h2 align="center">🧠 Local models that just work</h2>
+
+<p align="center">
+  <img src="docs/assets/meetings-live/model-download.jpg" alt="Settings, Model Endpoints: the Chat Model set to Auto, and a card offering llama3.2:3b, qwen2.5:7b and deepseek-r1:8b with their sizes and a Download button, one download in progress at 42 percent" width="900" />
+</p>
+
+<p align="center"><sub><b>Auto picks a model you actually have.</b> HomePilot finds Ollama on this computer, on the Windows host from WSL, or on the Docker host, and uses the configured model when it is installed — otherwise the best installed one. When nothing is installed, <i>Settings → Models</i> offers a few good models with their download size and a <b>Download</b> button with progress, instead of an error asking you to run a command. See <a href="docs/design/LOCAL_MODEL_RESOLUTION.md">docs/design/LOCAL_MODEL_RESOLUTION.md</a>.</sub></p>
+
+<p align="center"><sub><code>make start</code> also moves HomePilot to free ports when another program already uses 8000, 8010 or 3000, and prints the address to open; <code>make stop</code> stops only HomePilot's own processes.</sub></p>

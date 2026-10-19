@@ -14,7 +14,8 @@ its catalog and every existing MeetingSense endpoint behave exactly as before.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `MEETINGS_LIBRARY_UPGRADE` | off | Shows the library in the Meetings section and enables its API. Turning it off again hides it; nothing is deleted. |
+| `MEETINGS_LIBRARY_UPGRADE` | on | Shows the library in the Meetings section and enables its API. `0` hides it again; nothing is deleted. |
+| `MEETINGS_INTELLIGENCE` | on | The typed analysis of each transcript and the Visual Summary (see *Meeting insights*). Needs the library. |
 | `MEETINGS_LIBRARY_PROCESSING` | on | Background transcription, search indexing and summaries for imported recordings. |
 | `MEETINGS_SYNC_ALLOWED_ROOTS` | empty | Folders the server may watch, separated by `;`. Empty means Folder Sync is off. |
 | `MEETINGS_IMPORT_MAX_MB` | 2048 | Largest upload (per import). |
@@ -25,7 +26,6 @@ its catalog and every existing MeetingSense endpoint behave exactly as before.
 
 ```bash
 # .env (HomePilot running in WSL, recorder files on D:\AIRecord)
-MEETINGS_LIBRARY_UPGRADE=1
 MEETINGS_SYNC_ALLOWED_ROOTS=/mnt/d/AIRecord
 ```
 
@@ -152,7 +152,33 @@ HomePilot's copies. Neither touches originals in a synced folder.
 
 ## Start a meeting
 
-**New Meeting** opens a four-step wizard: **Setup** (title, project, now or later),
+### Quick record (one click)
+
+When HomePilot can record live, **New Meeting** opens on **Record a call**: three switches and
+one button. It is built for quick calls in Slack, Zoom, Teams or a browser.
+
+| Switch | Default | What it records |
+|---|---|---|
+| Call audio | on | The other people, through the browser's share picker |
+| My microphone | on | What you say |
+| Screen | off | Key frames of slides and shared screens |
+
+- **Title is optional.** Left empty, the meeting is named from what was said.
+- **Consent is asked once per computer.** After that, Start recording is a single click and
+  a short reminder stays on the screen.
+- **The switches are remembered** for the next call.
+- **What the browser asks next.** For the Slack, Zoom or Teams app choose *Entire screen* and
+  switch on *Share system audio*. For a call in a browser tab, choose that tab with
+  *Share tab audio* on.
+- **More options** opens the full wizard below, with the switches carried over.
+
+The Start meeting button under the chat box follows the same idea: capture switches, privacy
+and Start are on top, and the assistant role, context and summary settings sit under
+*More options*.
+
+### Full wizard
+
+**More options** (or New Meeting when live recording is not possible) opens a four-step wizard: **Setup** (title, project, now or later),
 **Recording** (HomePilot Live, External Recorder or Hybrid, plus what to capture),
 **Assistant** (note taker, participant, presenter…) and **Summary** (what to produce, and how long).
 
@@ -201,7 +227,7 @@ Existing MeetingSense routes are unchanged.
 
 ## Meeting insights
 
-`MEETINGS_INTELLIGENCE=1` (off by default, needs the library) adds a typed analysis of each
+`MEETINGS_INTELLIGENCE` (on by default, needs the library; `0` turns it off) adds a typed analysis of each
 transcript and the surfaces built from it. Nothing on the Meetings landing page changes; the
 new pieces live on the meeting detail page.
 
@@ -265,7 +291,7 @@ New tables sit beside MeetingSense's (`ms_library_entries`, `_sources`, `_assets
 of a meeting; existing rows are never rewritten, and existing project meetings are linked to
 their project when the tables are first created.
 
-**Rolling back** is turning `MEETINGS_LIBRARY_UPGRADE` off. The tables and copied files stay
+**Rolling back** is setting `MEETINGS_LIBRARY_UPGRADE=0`. The tables and copied files stay
 until you remove them, so turning it on again brings everything back.
 
 ## Limits

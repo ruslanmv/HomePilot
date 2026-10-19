@@ -2107,6 +2107,13 @@ async def orchestrate(
     except Exception as e:
         llm_elapsed_ms = int((time.perf_counter() - llm_started) * 1000)
         print(f"[CHAT TRACE {trace_id}] llm_error elapsed_ms={llm_elapsed_ms} error={type(e).__name__}: {e}")
+        from .model_resolver import NoLocalModelError as _NoLocalModel
+        if isinstance(e, _NoLocalModel):
+            # Nothing can answer: hand the UI a structured error with the fix
+            # (download / start / bridge) and keep it out of the conversation
+            # history, which is for real replies.
+            body = e.payload()
+            return {"conversation_id": cid, "text": body["message"], "media": None, "error": body}
         # Don't crash the API; return a stable response
         err = f"LLM error ({prov}): {str(e)}"
         add_message(cid, "assistant", err)

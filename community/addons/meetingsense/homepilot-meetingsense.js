@@ -988,6 +988,20 @@
             this._lastSeq = 0;
             this._queue = [];
             this._attempt = 0;
+            /**
+             * The server has accepted this socket's `start` or `resume` (`ready`/`resumed`).
+             *
+             * Audio waits for it. A frame that reaches a session that never started is
+             * refused ("session is idle, not live") and lost — which is what happened after a
+             * server restart: the reconnect's `resume` was refused, the queue drained onto the
+             * new socket anyway, and every frame of the rest of the call was rejected while
+             * the screen still said Live.
+             */
+            this._sessionReady = false;
+            /** The `start` frame last sent, so a meeting the server lost can be started again. */
+            this._lastStartFrame = null;
+            /** Set while such a restart is in flight: `{ previous: <old meeting id> }`. */
+            this._restarting = null;
             /** A provisional read is out and has not come back. See `_partialsWanted`. */
             this._partialInFlight = false;
             this._partialSentAt = 0;
@@ -1348,6 +1362,7 @@
             // Skipping them is most of what makes continuous capture affordable.
             if (this._segmenter && this._segmenter.isMediaMode()) return false;
             if (!this._ws || this._ws.readyState !== 1) return false;
+            if (!this._sessionReady) return false;
             if (this._ws.bufferedAmount > SOCKET_HIGH_WATER) return false;
             if (this._queue.length) return false;
             if (this._partialInFlight) {
@@ -1461,7 +1476,9 @@
                 });
             }
 
-            while (this._queue.length && this._ws && this._ws.readyState === 1) {
+            // Only once the server has accepted this socket's start or resume: audio sent before
+            // that lands on a session that never started and is refused, frame by frame.
+            while (this._queue.length && this._sessionReady && this._ws && this._ws.readyState === 1) {
                 if (this._ws.bufferedAmount > SOCKET_HIGH_WATER) break;
                 this._ws.send(JSON.stringify(this._queue[0].frame));
                 this._queue.shift();
@@ -1645,6 +1662,7 @@
                     return;
                 }
                 this._ws = ws;
+                this._sessionReady = false;
                 let settled = false;
                 const settle = (result) => {
                     if (settled) return;
@@ -1653,8 +1671,7 @@
                 };
 
                 ws.onopen = () => {
-                    ws.send(
-                        JSON.stringify(
+                    const opening = (
                             resuming
                                 ? { type: 'resume', meeting_id: this.meetingId, last_seq: this._lastSeq }
                                 : {
@@ -1712,9 +1729,10 @@
                                           channels: this._channels || 1,
                                           mode: this.audioMode,
                                       },
-                                  },
-                        ),
+                                  }
                     );
+                    if (opening.type === 'start') this._lastStartFrame = opening;
+                    ws.send(JSON.stringify(opening));
                 };
 
                 ws.onmessage = (event) => {
@@ -1726,10 +1744,25 @@
                     }
                     if (frame.type === 'ready') {
                         this.meetingId = frame.meeting_id;
+                        this._sessionReady = true;
+                        if (this._restarting) {
+                            // The server lost the meeting and this socket started a new one:
+                            // the rest of the call is recorded there.
+                            emit('ms:restarted', {
+                                meeting_id: frame.meeting_id,
+                                previous_meeting_id: this._restarting.previous,
+                            });
+                            this._restarting = null;
+                            this.reconnecting = false;
+                            this._attempt = 0;
+                        }
                         settle({ ok: true });
+                        // Audio captured before the server said yes goes now, in order.
+                        this._pump();
                     } else if (frame.type === 'resumed') {
                         this.reconnecting = false;
                         this._attempt = 0;
+                        this._sessionReady = true;
                         emit('ms:resumed', frame);
                         settle({ ok: true });
                         // Whatever piled up while the socket was gone goes now, in order.
@@ -1772,9 +1805,29 @@
                         emit('ms:status', frame);
                     } else if (frame.type === 'error') {
                         if (frame.code === 'not_resumable') {
-                            // The grace window closed, or the server restarted. Nothing here
-                            // can recover the meeting, and retrying forever would leave a
-                            // recording indicator on over a socket that will never take audio.
+                            // The grace window closed, or the server restarted, and the old
+                            // meeting cannot come back. Capture is still running, so the call
+                            // goes on as a new meeting in the same conversation — started on
+                            // this very socket, whose server session is still idle. Once only:
+                            // if that start is refused too, give up below rather than retrying
+                            // forever under a recording indicator.
+                            const previous = this.meetingId;
+                            this.meetingId = null;
+                            this._stopReconnecting();
+                            if (this.recording && this._lastStartFrame && !this._restarting) {
+                                this._restarting = { previous: previous };
+                                emit('ms:restarting', { previous_meeting_id: previous });
+                                try {
+                                    ws.send(JSON.stringify(this._lastStartFrame));
+                                    return;
+                                } catch (_) {
+                                    this._restarting = null;
+                                }
+                            }
+                            this.recording = false;
+                        } else if (this._restarting) {
+                            // The fresh start was refused as well: nothing more to try.
+                            this._restarting = null;
                             this.meetingId = null;
                             this.recording = false;
                             this._stopReconnecting();

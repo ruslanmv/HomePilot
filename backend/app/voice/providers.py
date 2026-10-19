@@ -21,6 +21,7 @@ import os
 import shutil
 import math
 import subprocess
+import sys
 import tempfile
 from typing import Any, Dict, List
 
@@ -446,6 +447,110 @@ def _cpu_compute_type(requested: str) -> str:
     return "default" if (requested or "").strip().lower() in _GPU_ONLY_COMPUTE else requested
 
 
+def _cpu_supports(compute: str) -> bool:
+    try:
+        import ctranslate2
+
+        return compute in set(ctranslate2.get_supported_compute_types("cpu"))
+    except Exception:  # noqa: BLE001 — unknown means "do not assume"
+        return False
+
+
+def _cpu_fast_compute(requested: str) -> str:
+    """Compute type for a CPU load *chosen* by the GPU preflight below.
+
+    ``default`` on CPU means "the saved type, converted": Whisper ships float16, so the CPU
+    runs float32 — the slowest choice, and the warning in the log. int8 is what faster-whisper
+    recommends for CPU (several times faster, far less memory, near-identical accuracy for
+    speech). An explicit CPU type such as ``float32`` is kept.
+    """
+    value = (requested or "").strip().lower()
+    if value in ("", "default", "auto") or value in _GPU_ONLY_COMPUTE:
+        return "int8" if _cpu_supports("int8") else "default"
+    return requested
+
+
+#: The CUDA runtime CTranslate2 4.x loads lazily for Whisper on an NVIDIA GPU, and where the
+#: optional `make install-speech-gpu` wheels put each library.
+_CUDA_RUNTIME = (
+    ("libcublas.so.12", "nvidia.cublas"),
+    ("libcudnn.so.9", "nvidia.cudnn"),
+)
+
+
+def _load_cuda_lib(soname: str, package: str) -> bool:
+    """Make ``soname`` loadable for CTranslate2, from the system or from a pip ``nvidia.*`` wheel.
+
+    A wheel's libraries are not on the loader path, so they are preloaded globally by file:
+    once a library with that soname is loaded, CTranslate2's later ``dlopen(soname)`` gets
+    it. Every library in the wheel's ``lib`` directory is preloaded so the ones it opens in
+    turn (cublasLt, the cuDNN sub-libraries) resolve too.
+    """
+    import ctypes
+    import glob
+    import importlib.util
+
+    try:
+        ctypes.CDLL(soname, mode=ctypes.RTLD_GLOBAL)
+        return True
+    except OSError:
+        pass
+    try:
+        spec = importlib.util.find_spec(package)
+    except (ImportError, ValueError):
+        spec = None
+    for base in list(getattr(spec, "submodule_search_locations", None) or []):
+        libs = sorted(glob.glob(os.path.join(base, "lib", "lib*.so*")))
+        pending = list(libs)
+        for _ in range(len(libs) + 1):  # dependency order is unknown: retry until stuck
+            still = []
+            for path in pending:
+                try:
+                    ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+                except OSError:
+                    still.append(path)
+            if not still or len(still) == len(pending):
+                break
+            pending = still
+        try:
+            ctypes.CDLL(soname, mode=ctypes.RTLD_GLOBAL)
+            return True
+        except OSError:
+            continue
+    return False
+
+
+def _cuda_runtime_problem() -> str | None:
+    """Why Whisper would fail on the GPU *at the first inference*, or ``None``.
+
+    A visible GPU is not a usable one. Under WSL the driver provides ``libcuda`` only;
+    CTranslate2 also needs CUDA 12 cuBLAS and cuDNN 9, loads them lazily, and so the model
+    loads fine and the first chunk of a meeting fails ("Library libcublas.so.12 is not found
+    or cannot be loaded") — then everything is rebuilt on CPU in float32. Checking here
+    lets ``auto`` go straight to the CPU with int8 instead.
+
+    ``None`` when no GPU is visible (CPU is simply the answer, nothing to explain), when the
+    runtime loads, and off Linux, where the existing load/inference fallbacks still apply.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() <= 0:
+            return None
+    except Exception:  # noqa: BLE001
+        return None
+    missing = [soname for soname, package in _CUDA_RUNTIME if not _load_cuda_lib(soname, package)]
+    if not missing:
+        return None
+    return (
+        "An NVIDIA GPU is visible, but the CUDA 12 runtime Whisper needs on it "
+        f"({', '.join(missing)}) is not installed, so speech runs on the CPU (int8). "
+        "To transcribe on the GPU, run: make install-speech-gpu"
+    )
+
+
 class WhisperLocalSTTProvider(STTProvider):
     """Local faster-whisper STT, included in standard HomePilot installations.
 
@@ -519,6 +624,23 @@ class WhisperLocalSTTProvider(STTProvider):
         """
         if self._model is None:
             from faster_whisper import WhisperModel
+
+            if self.requested_device == "auto":
+                problem = _cuda_runtime_problem()
+                if problem:
+                    # Straight to the CPU. `auto` would pick the GPU, load, and then fail on
+                    # the first chunk of a meeting; the rebuild after that lands on float32.
+                    self.load_error = problem
+                    self._cpu_forced = True
+                    log.info("faster-whisper: %s", problem)
+                    self._model = WhisperModel(
+                        self.model_name,
+                        device="cpu",
+                        compute_type=_cpu_fast_compute(self.compute_type),
+                    )
+                    inner = getattr(self._model, "model", None)
+                    self.device = str(getattr(inner, "device", None) or "cpu")
+                    return self._model
 
             try:
                 self._model = WhisperModel(

@@ -1,8 +1,15 @@
 /**
- * Start a meeting — four short steps instead of one long form: Setup, Recording, Assistant,
- * Summary. Every setting is MeetingSense's own (capture sources, assistant roles, summary
- * style and length, consent); the wizard only orders them. Back and Next keep everything
- * entered, and nothing records until "Start meeting" — with the consent line ticked.
+ * Start a meeting.
+ *
+ * Opens on **Quick record** whenever live recording is possible: three switches (call audio,
+ * microphone, optional screen), an optional title and one Start button — remembered, so the
+ * next call is a single click. Consent is asked once per computer, the same remembered
+ * consent the chat-box Start button uses.
+ *
+ * "More options" opens the full wizard, unchanged: four short steps — Setup, Recording,
+ * Assistant, Summary. Every setting is MeetingSense's own (capture sources, assistant roles,
+ * summary style and length, consent); the wizard only orders them. Back and Next keep
+ * everything entered, and nothing records until "Start meeting" — with the consent line ticked.
  *
  * "Now" + HomePilot Live starts the existing live recorder (title and project included).
  * "Schedule for later" or an external recorder creates the meeting in the library, where its
@@ -11,14 +18,18 @@
 import React, { useMemo, useState } from 'react';
 import {
     ArrowLeft, ArrowRight, AudioLines, CalendarClock, CalendarDays, Check, Clock3, FileText, Folder, HardDrive,
-    Lightbulb, Mic, Mic2, MonitorUp, Radio, ShieldCheck, Sparkles, Users, X,
+    Info, Lightbulb, Mic, Mic2, MonitorUp, Radio, ShieldCheck, SlidersHorizontal, Sparkles, Users, X,
 } from 'lucide-react';
 import { ModalSheet } from '../../components/ModalSheet';
 import { DEFAULT_CAPTURE, MODES, type CaptureOptions } from '../CapturePopover';
+import { consentAcknowledged } from '../ConsentSheet';
 import { SUMMARY_LENGTHS } from '../MeetingMinutes';
 import { consentSentences } from '../meetingState';
 import { useMeetingControls } from '../MeetingSenseProvider';
 import { LibraryError, libraryApi } from './api';
+import {
+    nothingSelected, readQuickPrefs, shareHint, writeQuickPrefs, type QuickRecordPrefs,
+} from './quickRecord';
 
 type When = 'now' | 'later';
 type Plan = 'live' | 'external' | 'hybrid';
@@ -72,6 +83,10 @@ export function StartMeetingWizard({ onClose, onCreated, canRecordLive = true }:
     const [consent, setConsent] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Quick record is the front door whenever a live recording can start right now.
+    const [view, setView] = useState<'quick' | 'steps'>(liveAvailable ? 'quick' : 'steps');
+    const [quick, setQuick] = useState<QuickRecordPrefs>(() => readQuickPrefs());
+    const [consentKnown] = useState(() => consentAcknowledged());
 
     React.useEffect(() => { void libraryApi.projects().then(setProjects); }, []);
 
@@ -138,6 +153,120 @@ export function StartMeetingWizard({ onClose, onCreated, canRecordLive = true }:
             setBusy(false);
         }
     };
+
+    const startQuick = async () => {
+        if (busy) return;
+        if (nothingSelected(quick)) { setError('Choose at least one thing to record.'); return; }
+        if (!consentKnown && !consent) { setError('Confirm that you may record this call.'); return; }
+        if (!controls?.startWith) { setError('Live recording is not available here.'); return; }
+        setBusy(true);
+        setError(null);
+        writeQuickPrefs(quick);
+        try {
+            const result = await controls.startWith(
+                { ...capture, audio: quick.audio, mic: quick.mic, slides: quick.screen },
+                // No title: the meeting is named from what was said (MEETINGS_AUTO_TITLE).
+                title.trim() ? { title: title.trim() } : {},
+                true,
+            );
+            if (!result.ok) throw new Error(result.error || 'The recording could not start.');
+            onClose();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : 'The recording could not start.');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const openFullWizard = () => {
+        setCapture({ ...capture, audio: quick.audio, mic: quick.mic, slides: quick.screen });
+        setPlan('live');
+        setWhen('now');
+        setError(null);
+        setStep(0);
+        setView('steps');
+    };
+
+    if (view === 'quick') {
+        const startDisabled = busy || nothingSelected(quick) || (!consentKnown && !consent);
+        return (
+            <ModalSheet
+                labelledBy="hp-quick-title"
+                onRequestClose={() => { if (!busy) onClose(); }}
+                className="hp-sheet--wide"
+                header={(
+                    <div className="flex items-start gap-4 border-b border-white/[0.06] px-5 py-5 sm:px-7">
+                        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-violet-400/30 bg-violet-500/15 text-violet-200"><Mic size={22} /></div>
+                        <div className="min-w-0 flex-1">
+                            <h2 id="hp-quick-title" className="text-xl font-semibold sm:text-2xl">Record a call</h2>
+                            <p className="mt-0.5 text-sm text-white/60">Slack, Zoom, Teams or any call. HomePilot transcribes it and writes the notes when you stop.</p>
+                        </div>
+                        {local ? (
+                            <span className="hidden items-center gap-1.5 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold tracking-wide text-emerald-300 sm:inline-flex">
+                                <HardDrive size={12} /> PROCESSED LOCALLY
+                            </span>
+                        ) : null}
+                        <button type="button" onClick={onClose} aria-label="Close" className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 text-white/70 hover:bg-white/10"><X size={18} /></button>
+                    </div>
+                )}
+                footer={(
+                    <div className="flex flex-wrap items-center gap-3 border-t border-white/[0.06] px-5 py-3 sm:px-7">
+                        <button type="button" onClick={onClose} className="h-11 rounded-xl border border-white/15 px-5 text-sm font-semibold hover:bg-white/10">Cancel</button>
+                        <span className="min-w-0 flex-1 truncate text-sm text-rose-200" role="alert">{error}</span>
+                        <button type="button" onClick={openFullWizard} data-testid="hp-quick-more"
+                            className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/15 px-4 text-sm font-semibold text-white/80 hover:bg-white/10"
+                            title="Schedule, external recorder, project, assistant and summary">
+                            <SlidersHorizontal size={15} /> More options
+                        </button>
+                        <button type="submit" form="hp-quick-form" disabled={startDisabled} autoFocus data-testid="hp-quick-start"
+                            className="inline-flex h-11 items-center gap-2 rounded-xl bg-violet-600 px-5 text-sm font-semibold shadow-lg shadow-violet-900/40 hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50">
+                            <Radio size={15} /> {busy ? 'Starting…' : 'Start recording'}
+                        </button>
+                    </div>
+                )}
+            >
+                <form id="hp-quick-form" className="space-y-5 px-5 py-5 sm:px-7"
+                    onSubmit={(e) => { e.preventDefault(); void startQuick(); }}>
+                    <fieldset>
+                        <legend className="text-sm font-semibold text-white/85">Record</legend>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                            <QuickSwitch on={quick.audio} onToggle={() => setQuick({ ...quick, audio: !quick.audio })}
+                                icon={<AudioLines size={16} />} title="Call audio" note="The other people on the call" testId="hp-quick-audio" />
+                            <QuickSwitch on={quick.mic} onToggle={() => setQuick({ ...quick, mic: !quick.mic })}
+                                icon={<Mic2 size={16} />} title="My microphone" note="What you say" testId="hp-quick-mic" />
+                            <QuickSwitch on={quick.screen} onToggle={() => setQuick({ ...quick, screen: !quick.screen })}
+                                icon={<MonitorUp size={16} />} title="Screen" note="Optional: slides and shared screens" testId="hp-quick-screen" />
+                        </div>
+                        <p className="mt-3 flex gap-2 text-xs leading-5 text-white/55" data-testid="hp-quick-hint">
+                            <Info size={14} className="mt-0.5 shrink-0 text-sky-300" /> {shareHint(quick)}
+                        </p>
+                    </fieldset>
+
+                    <label className="block text-sm text-white/75">Title <span className="text-white/40">(optional)</span>
+                        <input value={title} onChange={(e) => setTitle(e.target.value)} data-testid="hp-quick-title-input"
+                            placeholder="Leave empty and HomePilot names it from the conversation"
+                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 text-sm text-white placeholder-white/30 focus:border-violet-400/70 focus:outline-none" />
+                    </label>
+
+                    {consentKnown ? (
+                        <p className="flex items-center gap-2 text-xs text-white/50">
+                            <ShieldCheck size={14} className="shrink-0 text-emerald-300" />
+                            Tell everyone on the call that it is recorded.
+                        </p>
+                    ) : (
+                        <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+                            <ul className="space-y-1 text-xs text-white/55">{privacy.map((line) => <li key={line}>• {line}</li>)}</ul>
+                            <label className="mt-3 flex items-start gap-2 text-sm">
+                                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)}
+                                    data-testid="hp-quick-consent" className="mt-0.5 accent-violet-500" />
+                                <span>I have permission to record this call, and the people on it know. <span className="text-white/45">Asked once on this computer.</span></span>
+                            </label>
+                        </div>
+                    )}
+                </form>
+            </ModalSheet>
+        );
+    }
 
     const last = step === STEPS.length - 1;
     const finishLabel = startsLive ? 'Start meeting' : (when === 'later' ? 'Schedule meeting' : 'Create meeting');
@@ -395,6 +524,25 @@ function ChoiceCard({ selected, onClick, icon, title, note, disabled }: {
             <span className="min-w-0">
                 <span className="block font-semibold">{title}</span>
                 <span className="block text-xs text-white/55">{note}</span>
+            </span>
+        </button>
+    );
+}
+
+function QuickSwitch({ on, onToggle, icon, title, note, testId }: {
+    on: boolean; onToggle: () => void; icon: React.ReactNode; title: string; note: string; testId: string;
+}) {
+    return (
+        <button type="button" role="switch" aria-checked={on} onClick={onToggle} data-testid={testId}
+            className={`flex items-center gap-3 rounded-xl border p-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 ${
+                on ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10 bg-white/[0.02] hover:border-white/20'}`}>
+            <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg border ${on ? 'border-violet-400/40 bg-violet-500/20 text-violet-100' : 'border-white/10 text-white/50'}`}>{icon}</span>
+            <span className="min-w-0 flex-1">
+                <span className={`block text-sm font-semibold ${on ? 'text-white' : 'text-white/60'}`}>{title}</span>
+                <span className="block text-xs text-white/45">{note}</span>
+            </span>
+            <span aria-hidden className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition ${on ? 'justify-end bg-violet-500' : 'justify-start bg-white/15'}`}>
+                <span className="h-4 w-4 rounded-full bg-white" />
             </span>
         </button>
     );

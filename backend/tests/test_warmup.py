@@ -166,3 +166,50 @@ def test_warm_image_model_on_startup_waits_for_comfy(monkeypatch):
     # run_workflow must NOT have been called. That's the fix:
     # no more "Connection refused" submit before ComfyUI is up.
     assert submit_called["n"] == 0
+
+
+# ── Fresh install: no checkpoints on disk ────────────────────────
+
+
+def test_warmup_skips_when_no_image_checkpoints_are_installed(monkeypatch, caplog):
+    """Regression: with an empty checkpoints folder the warmup submitted the
+    default token ('sdxl') and ComfyUI answered "Value not in list: ckpt_name:
+    'sdxl' not in []". It must skip before probing ComfyUI and say why."""
+    from app import warmup as warmup_mod
+    monkeypatch.setenv("INTERACTIVE_WARMUP_IMAGE", "true")
+    monkeypatch.setenv("IMAGE_MODEL", "sdxl")
+    monkeypatch.setattr(warmup_mod, "_installed_image_checkpoints", lambda: [])
+
+    probed = {"n": 0}
+
+    async def _no_probe(*a, **kw):
+        probed["n"] += 1
+        return False
+    monkeypatch.setattr(warmup_mod, "_wait_for_comfy_ready", _no_probe)
+
+    caplog.set_level(logging.INFO, logger="app.warmup")
+    asyncio.run(asyncio.wait_for(warmup_mod.warm_image_model_on_startup(), timeout=2.0))
+
+    assert probed["n"] == 0
+    joined = " ".join(r.message for r in caplog.records)
+    assert "no image checkpoints installed" in joined
+    assert "make download-minimal" in joined
+
+
+def test_warmup_proceeds_when_the_scan_is_inconclusive(monkeypatch):
+    """A failed scan (None) is not "nothing installed": keep the old behaviour
+    and let ComfyUI validate, so a scan bug can never disable warmup."""
+    from app import warmup as warmup_mod
+    monkeypatch.setenv("INTERACTIVE_WARMUP_IMAGE", "true")
+    monkeypatch.setenv("IMAGE_MODEL", "dreamshaper_8.safetensors")
+    monkeypatch.setattr(warmup_mod, "_installed_image_checkpoints", lambda: None)
+
+    probed = {"n": 0}
+
+    async def _not_ready(*a, **kw):
+        probed["n"] += 1
+        return False
+    monkeypatch.setattr(warmup_mod, "_wait_for_comfy_ready", _not_ready)
+
+    asyncio.run(asyncio.wait_for(warmup_mod.warm_image_model_on_startup(), timeout=2.0))
+    assert probed["n"] == 1

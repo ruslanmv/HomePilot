@@ -870,3 +870,7 @@ select option:hover {
   #hp-print-root button { border: 0 !important; background: transparent !important; }
   @page { margin: 12mm; }
 }
+
+/* A meeting workspace covers the chat. The chat's fixed header buttons (Call, Chat settings,
+   New chat) act on the chat underneath and sat on top of the meeting's End button. */
+body.hp-meeting-open .hp-chat-header-actions { display: none !important; }

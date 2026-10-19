@@ -574,7 +574,7 @@ describe('reconnect and backpressure, wired', () => {
         new Function(readFileSync(SHIPPED, 'utf8')).call(window);
         recorder = window.hpMeetingSense;
         for (const name of ['ms:reconnecting', 'ms:resumed', 'ms:status', 'ms:segment',
-            'ms:chip', 'ms:chip_result']) listen(name);
+            'ms:chip', 'ms:chip_result', 'ms:restarting', 'ms:restarted']) listen(name);
     });
 
     afterEach(() => {
@@ -698,23 +698,64 @@ describe('reconnect and backpressure, wired', () => {
         expect(of('ms:reconnecting').at(-1).detail.delay).toBe(1000);
     });
 
-    it('gives up when the meeting is past saving', async () => {
-        // The grace window closed or the server restarted. Retrying forever would leave a
-        // recording indicator on over a socket that will never accept audio again.
+    it('carries on as a new meeting when the server lost the old one', async () => {
+        // Regression: the backend restarted (an auto-reload) a second after a meeting began.
+        // The resume was refused, the client stopped recording internally, and the screen
+        // went on saying Live while every audio frame was rejected ("session is idle, not
+        // live"). Capture is still running, so the rest of the call becomes a new meeting
+        // in the same conversation, started on the same socket.
+        await openMeeting();
+        recorder.recording = true;
+        sockets[0].drop();
+        await vi.advanceTimersByTimeAsync(1000);
+        sockets[1].open();
+        expect(sockets[1].sent[0]).toMatchObject({ type: 'resume', meeting_id: 'm1' });
+        sockets[1].deliver({ type: 'error', code: 'not_resumable', msg: 'gone' });
+
+        expect(sockets[1].sent.at(-1)).toMatchObject({ type: 'start', conversation_id: 'c1' });
+        expect(of('ms:restarting').map((e) => e.detail.previous_meeting_id)).toEqual(['m1']);
+        expect(recorder.recording).toBe(true);
+
+        sockets[1].deliver({ type: 'ready', meeting_id: 'm2' });
+        expect(recorder.meetingId).toBe('m2');
+        expect(recorder.reconnecting).toBe(false);
+        expect(of('ms:restarted').map((e) => e.detail)).toEqual([{ meeting_id: 'm2', previous_meeting_id: 'm1' }]);
+        // No extra socket: it happened on the one that was already open.
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(sockets.length).toBe(2);
+    });
+
+    it('gives up when the fresh start is refused as well', async () => {
+        // Retrying forever would leave a recording indicator on over a server that will
+        // never accept audio again.
         await openMeeting();
         recorder.recording = true;
         sockets[0].drop();
         await vi.advanceTimersByTimeAsync(1000);
         sockets[1].open();
         sockets[1].deliver({ type: 'error', code: 'not_resumable', msg: 'gone' });
+        sockets[1].deliver({ type: 'error', code: 'disabled', msg: 'MeetingSense is off' });
 
         expect(recorder.recording).toBe(false);
         expect(recorder.meetingId).toBeNull();
-        // And the pill stops saying "reconnecting…": a permanent "reconnecting" over a
-        // meeting that is gone is worse than saying nothing, because the user keeps waiting.
         expect(recorder.reconnecting).toBe(false);
         await vi.advanceTimersByTimeAsync(60000);
         expect(sockets.length).toBe(2);
+    });
+
+    it('holds audio until the server has accepted the session', async () => {
+        const promise = recorder._connect({ conversationId: 'c1' });
+        const ws = sockets[0];
+        ws.open();
+        recorder._queue.push({ frame: { type: 'audio', t0: 0 }, durationMs: 900, silent: false });
+        recorder._pump();
+        // Sent now, these would reach a session that has not started and be refused.
+        expect(ws.sent.filter((f) => f.type === 'audio')).toEqual([]);
+
+        ws.deliver({ type: 'ready', meeting_id: 'm1' });
+        await promise;
+        expect(ws.sent.filter((f) => f.type === 'audio').length).toBe(1);
+        expect(recorder.behindMs).toBe(0);
     });
 
     it('does not reconnect after a deliberate stop', async () => {

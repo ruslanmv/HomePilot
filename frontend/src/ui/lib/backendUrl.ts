@@ -24,7 +24,12 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 // 5173/5174. All of them must route API traffic to the backend at :8000
 // rather than to the Vite origin (which would SPA-fallback every request
 // to index.html and break JSON.parse).
-const DEV_VITE_PORTS = new Set(["3000", "5173", "5174"]);
+// Vite takes the next free port when one is busy ("Port 3000 is in use,
+// trying another one…"), so 3000-3010 and 5173-5180 all count as dev ports.
+const DEV_VITE_PORTS = new Set<string>([
+  ...Array.from({ length: 11 }, (_, i) => String(3000 + i)),
+  ...Array.from({ length: 8 }, (_, i) => String(5173 + i)),
+]);
 
 function isLocalHost(hostname: string): boolean {
   return LOCAL_HOSTS.has(hostname);
@@ -48,7 +53,9 @@ export function getDefaultBackendUrl(): string {
 
   const { hostname, origin, port } = window.location;
   // On the Vite dev server the backend is a separate process on :8000.
-  if (isLocalHost(hostname) && DEV_VITE_PORTS.has(port)) {
+  // import.meta.env.DEV is true only under the Vite dev server, whatever port
+  // it ended up on; production builds served by the backend keep same-origin.
+  if (isLocalHost(hostname) && (DEV_VITE_PORTS.has(port) || !!import.meta.env?.DEV)) {
     return "http://localhost:8000";
   }
   // Everywhere else — deployed Spaces, Docker, preview builds — the frontend
@@ -67,7 +74,7 @@ export function getDefaultBackendUrl(): string {
  */
 export function resolveBackendUrl(override?: string | null): string {
   if (typeof override === "string" && override.trim()) {
-    return stripTrailingSlash(override.trim());
+    return followMovedDevBackend(stripTrailingSlash(override.trim()));
   }
   if (typeof window !== "undefined") {
     try {
@@ -96,9 +103,10 @@ export function resolveBackendUrl(override?: string | null): string {
         // not stale, and rewriting it made every reload unreachable.
         const configured = (import.meta.env?.VITE_API_URL as string | undefined)?.trim();
         if (storedIsLocal && DEV_VITE_PORTS.has(storedPort) && clean !== stripTrailingSlash(configured || "")) {
-          return "http://localhost:8000";
+          // The default backend: :8000, or wherever `make start` put it.
+          return getDefaultBackendUrl();
         }
-        return clean;
+        return followMovedDevBackend(clean);
       }
     } catch {
       /* localStorage unavailable — fall through to default */
@@ -109,5 +117,26 @@ export function resolveBackendUrl(override?: string | null): string {
 
 function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+/**
+ * `make start` moves the backend off :8000 when another program holds that port, and
+ * tells the dev server where it went (VITE_API_URL, e.g. http://localhost:8002). A saved
+ * or passed `localhost:8000` is then the old default rather than a choice, so it follows
+ * the backend. Any other saved address — a remote server, a custom local port — is kept.
+ */
+export function followMovedDevBackend(url: string): string {
+  const configured = stripTrailingSlash(((import.meta.env?.VITE_API_URL as string | undefined) || "").trim());
+  if (!configured || url === configured) return url;
+  try {
+    const target = new URL(configured);
+    const current = new URL(url);
+    if (isLocalHost(target.hostname) && isLocalHost(current.hostname) && current.port === "8000") {
+      return configured;
+    }
+  } catch {
+    /* not URLs — leave as given */
+  }
+  return url;
 }
 

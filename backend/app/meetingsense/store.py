@@ -433,6 +433,42 @@ def end_meeting(meeting_id: str, *, ended_at: Optional[float] = None, summary: A
         con.close()
 
 
+def close_orphaned_meetings() -> int:
+    """End meetings that a previous server process left ``live`` or ``suspended``.
+
+    Sessions live in memory (see ``session._SESSIONS``): after a restart nothing can resume
+    them, yet their rows still said "in progress" — forever, in the library and on the
+    conversation card. Called once at startup, when by definition no session of this process
+    exists yet. Single-process servers only, which is how HomePilot runs; switch it off with
+    ``MEETINGSENSE_CLOSE_ORPHANS=0`` for anything else.
+
+    The end time is the truest one available: when the socket dropped, else the end of the
+    last line transcribed, else the start (an empty meeting has no duration to invent).
+    Returns how many meetings were closed.
+    """
+    con = _connect()
+    try:
+        cur = con.execute(
+            """
+            UPDATE ms_meetings
+               SET status = 'ended',
+                   ended_at = COALESCE(
+                       suspended_at,
+                       started_at + (
+                           SELECT MAX(COALESCE(s.t1_ms, s.t0_ms)) FROM ms_segments s
+                            WHERE s.meeting_id = ms_meetings.id
+                       ) / 1000.0,
+                       started_at
+                   )
+             WHERE ended_at IS NULL AND status IN ('live', 'suspended')
+            """
+        )
+        con.commit()
+        return int(cur.rowcount or 0)
+    finally:
+        con.close()
+
+
 def suspend_meeting(meeting_id: str, *, suspended_at: Optional[float] = None) -> None:
     """Mark a meeting as droppped-but-resumable (D10).
 

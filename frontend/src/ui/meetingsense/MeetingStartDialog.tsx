@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     AudioLines,
     Check,
+    ChevronDown,
     Cloud,
     FileText,
     HardDrive,
@@ -237,6 +238,22 @@ export function MeetingStartDialog({
                             ) : null}
                         </section>
 
+                        {/*
+                          Quick calls need only the capture switches and Start. The assistant
+                          role, context and end-of-meeting document keep their current values
+                          and are one click away; nothing here was removed.
+                        */}
+                        <details className="group rounded-2xl border border-white/[0.08] bg-white/[0.02]" data-testid="ms-start-more">
+                            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm text-white/80 hover:bg-white/[0.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 [&::-webkit-details-marker]:hidden">
+                                <span>
+                                    <span className="font-medium">More options</span>
+                                    <span className="ml-2 text-[11px] text-white/40">
+                                        {selectedMode.label} · {SUMMARY_STYLES.find((option) => option.id === capture.summaryStyle)?.label ?? 'Minutes'}
+                                    </span>
+                                </span>
+                                <ChevronDown size={16} className="shrink-0 text-white/45 transition-transform group-open:rotate-180" />
+                            </summary>
+                            <div className="space-y-6 px-4 pb-4 pt-2">
                         <section aria-labelledby="ms-role-heading">
                             <div className="mb-3 flex items-center gap-2">
                                 <Sparkles size={14} className="text-violet-200/80" />
@@ -431,6 +448,8 @@ export function MeetingStartDialog({
                                 three-hour recording as well as a ten-minute one.
                             </p>
                         </section>
+                            </div>
+                        </details>
 
                         <section aria-labelledby="ms-privacy-heading" className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
                             <div className="flex gap-3">

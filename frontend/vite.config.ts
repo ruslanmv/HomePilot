@@ -63,6 +63,8 @@ const API_PREFIXES = [
   '/auto-detect', '/capabilities', '/compatibility', '/download',
   '/connect', '/disconnect', '/active', '/installed', '/invoke',
   '/card', '/context-block',
+  // community gallery ("Shared with me") + compute plan
+  '/community', '/compute',
 ] as const
 
 export default defineConfig({

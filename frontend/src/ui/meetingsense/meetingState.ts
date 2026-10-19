@@ -90,6 +90,12 @@ export interface MeetingView {
      *  shows a number and the card shows the list. */
     queued: number;
     error: string | null;
+    /**
+     * Something the user should know that is not an error — for example that the server
+     * restarted and the recording went on as a new part. Optional so older constructors of a
+     * view stay valid.
+     */
+    notice?: string | null;
 }
 
 export const EMPTY_VIEW: MeetingView = {
@@ -109,6 +115,7 @@ export const EMPTY_VIEW: MeetingView = {
     mode: null,
     queued: 0,
     error: null,
+    notice: null,
 };
 
 /**

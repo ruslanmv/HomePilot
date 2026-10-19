@@ -109,6 +109,25 @@ def _resolve_warmup_checkpoint(model: str) -> str:
         return raw
 
 
+def _installed_image_checkpoints() -> Optional[list]:
+    """Image checkpoints on disk, ``[]`` when there are none, ``None`` when the scan
+    itself failed (unknown — the warmup then proceeds as before and lets ComfyUI
+    validate)."""
+    try:
+        from .providers import scan_installed_models
+        return list(scan_installed_models("image") or [])
+    except Exception:  # noqa: BLE001 — a scan problem must not block startup
+        return None
+
+
+def _models_dir_hint() -> str:
+    try:
+        from .providers import get_comfy_models_path
+        return str(get_comfy_models_path() / "checkpoints")
+    except Exception:  # noqa: BLE001
+        return "models/comfy/checkpoints"
+
+
 def warmup_enabled() -> bool:
     """Opt-out via env. Default on so fresh installs get the
     "just works" experience. Set ``INTERACTIVE_WARMUP_IMAGE=false``
@@ -216,6 +235,18 @@ async def warm_image_model_on_startup() -> None:
 
     if not model:
         log.info("warmup: IMAGE_MODEL not set — skipping")
+        return
+
+    # Nothing to preload on a fresh install: submitting the default token
+    # ("sdxl") to a ComfyUI with an empty checkpoint list only produces a
+    # "Value not in list: ckpt_name" validation error in the logs.
+    installed = _installed_image_checkpoints()
+    if installed is not None and not installed:
+        log.info(
+            "warmup: no image checkpoints installed in %s — skipping. "
+            "Download one with `make download-minimal` or from the Models page.",
+            _models_dir_hint(),
+        )
         return
 
     model = _resolve_warmup_checkpoint(model)

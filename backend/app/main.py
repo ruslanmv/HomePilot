@@ -433,6 +433,11 @@ app.include_router(agent_router)
 # Include Community Gallery proxy routes (/community/*)
 app.include_router(community_router)
 
+# Model discovery + resolution (/v1/models/resolution, /v1/models/pull, …).
+# Design: docs/design/LOCAL_MODEL_RESOLUTION.md
+from .model_resolver_routes import router as model_resolver_router
+app.include_router(model_resolver_router)
+
 # Include OpenAI-compatible persona endpoint (/v1/chat/completions, /v1/models)
 # Enables external tools (OllaBridge, 3D-Avatar-Chatbot) to chat with personas
 # Controlled at runtime via /settings/ollabridge toggle
@@ -1235,6 +1240,18 @@ def _startup() -> None:
     _ensure_db_path_is_writable()
     # Database
     init_db()
+    # Meetings a previous process left "live"/"suspended" can never be resumed (sessions are
+    # in memory), so close them now instead of showing them as in progress forever.
+    if os.getenv("MEETINGSENSE_CLOSE_ORPHANS", "1").strip().lower() not in ("0", "false", "off"):
+        try:
+            from .meetingsense import store as _ms_store
+            _closed = _ms_store.close_orphaned_meetings()
+            if _closed:
+                logging.getLogger("homepilot.meetingsense").info(
+                    "closed %d meeting(s) left open by a previous server process", _closed,
+                )
+        except Exception as _exc:  # noqa: BLE001 — never block startup on this
+            logging.getLogger("homepilot.meetingsense").warning("could not close orphaned meetings: %s", _exc)
     # Initialize game mode database tables
     init_game_db()
     # Initialize story mode database tables
@@ -1448,12 +1465,16 @@ async def health() -> JSONResponse:
         "version": app.version,
     }
 
-    # Check Ollama
+    # Check Ollama through discovery, so an Ollama on the WSL/Docker host
+    # counts as available (docs/design/LOCAL_MODEL_RESOLUTION.md).
     ollama_ok = False
+    ollama_url = OLLAMA_BASE_URL
+    ollama_model_count = 0
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
-            ollama_ok = (r.status_code == 200)
+        from .model_resolver import active_runtime as _active_runtime
+        _rt, _ = await _active_runtime()
+        if _rt is not None:
+            ollama_ok, ollama_url, ollama_model_count = True, _rt.url, len(_rt.models)
     except Exception:
         ollama_ok = False
 
@@ -1467,7 +1488,7 @@ async def health() -> JSONResponse:
         vllm_ok = False
 
     status["providers"] = {
-        "ollama": {"ok": ollama_ok, "base_url": OLLAMA_BASE_URL},
+        "ollama": {"ok": ollama_ok, "base_url": ollama_url, "model_count": ollama_model_count},
         "openai_compat": {"ok": vllm_ok, "base_url": LLM_BASE_URL},
     }
 
@@ -1671,23 +1692,21 @@ async def auto_detect() -> JSONResponse:
         "detected": {},
     }
 
-    # ── 1. Probe Ollama ──────────────────────────────────────────────────
+    # ── 1. Probe Ollama: any reachable runtime (loopback, WSL/Docker host) ──
+    from .model_resolver import active_runtime as _active_runtime, resolve as _resolve_model
+    from .config import OLLAMA_MODEL as _configured_chat_model
     ollama_models: list[str] = []
     ollama_ok = False
+    ollama_url = OLLAMA_BASE_URL
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
-            if r.status_code == 200:
-                ollama_ok = True
-                ollama_models = [
-                    m.get("name", "") for m in r.json().get("models", [])
-                ]
+        _rt, _ = await _active_runtime()
+        if _rt is not None:
+            ollama_ok, ollama_url, ollama_models = True, _rt.url, _rt.model_names
     except Exception:
         pass
-
     result["detected"]["ollama"] = {
         "ok": ollama_ok,
-        "url": OLLAMA_BASE_URL,
+        "url": ollama_url,
         "models": ollama_models,
     }
 
@@ -1725,25 +1744,19 @@ async def auto_detect() -> JSONResponse:
 
     # ── 4. Pick best chat provider + model ───────────────────────────────
     # Priority: Ollama (local, free) > vLLM > fallback
-    CHAT_MODEL_PRIORITY = [
-        "llama3.2:3b", "llama3.2", "llama3.1", "llama3:8b",
-        "mistral-nemo", "qwen2.5", "gemma2", "mistral:7b",
-        "phi4", "deepseek-r1:latest",
-    ]
+    # (chat priority table: model_resolver.CHAT_MODEL_PRIORITY)
 
     if ollama_ok and ollama_models:
         result["providerChat"] = "ollama"
         result["baseUrlChat"] = ""
-        # Pick best available chat model by priority
-        picked = ""
-        for preferred in CHAT_MODEL_PRIORITY:
-            for available in ollama_models:
-                if available == preferred or available.startswith(preferred + ":"):
-                    picked = available
-                    break
-            if picked:
-                break
-        result["modelChat"] = picked or ollama_models[0]
+        # Same rules as every chat turn: the configured model when installed,
+        # otherwise the best installed text model (never vision/embedding).
+        try:
+            _chat_res = await _resolve_model("chat", _configured_chat_model)
+            result["modelChat"] = _chat_res.model or ollama_models[0]
+            result["detected"]["ollama"]["resolution"] = _chat_res.to_dict()
+        except Exception:
+            result["modelChat"] = ollama_models[0]
     elif vllm_ok and vllm_models:
         result["providerChat"] = "openai_compat"
         result["baseUrlChat"] = LLM_BASE_URL
@@ -2446,7 +2459,25 @@ async def list_models(
             )
         prov: ProviderName = provider  # type: ignore
 
+        # Ollama: list from whichever runtime discovery found (loopback, WSL or
+        # Docker host) unless the caller pinned a base URL. When the list is
+        # empty, say why and what to do (remedy), not just "no models".
+        remedy_extra: Dict[str, Any] = {}
+        if provider == "ollama":
+            from .model_resolver import active_runtime_url as _active_runtime_url
+            from .model_resolver import resolve as _resolve_model
+            if not base_url:
+                base_url = await _active_runtime_url()
+
         models, err = await list_models_for_provider(prov, base_url=base_url)
+        if provider == "ollama" and (err or not models):
+            try:
+                _res = await _resolve_model(
+                    "vision" if model_type == "multimodal" else "chat", "", base_url=base_url,
+                )
+                remedy_extra = {"remedy": _res.remedy, "runtime_url": _res.runtime_url}
+            except Exception:
+                remedy_extra = {}
         if err:
             # For Ollama/chat providers, return 200 with empty list + warning
             # instead of 503 — the provider may simply not be running yet
@@ -2460,6 +2491,7 @@ async def list_models(
                         "models": [],
                         "count": 0,
                         "error": err,
+                        **remedy_extra,
                     },
                 )
             return JSONResponse(status_code=503, content=_safe_err(err, code="models_unavailable"))
@@ -2479,6 +2511,7 @@ async def list_models(
                 "base_url": (base_url or ""),
                 "models": models,
                 "count": len(models),
+                **remedy_extra,
             },
         )
 
@@ -3246,13 +3279,19 @@ async def append_conversation_message(
         try:
             _existing = get_messages(conversation_id, limit=1, user_id=uid)
             # When user_id is set and the conversation isn't theirs,
-            # get_messages returns []. We still allow the append only
-            # when at least one record exists OR the caller is the
-            # conversation creator — for call-memory the conversation
-            # always has pre-existing turns (the call itself), so an
-            # empty result is a real authorisation miss.
+            # get_messages returns []. An empty result is fine in two
+            # cases: the caller already owns the (still empty) conversation,
+            # or nobody owns it yet — a meeting opens a brand-new conversation
+            # with a client-chosen id and writes its "Meeting started" marker
+            # before any turn exists. The caller then becomes the owner.
+            # A conversation owned by someone else stays a 404 (probe-safe).
             if uid is not None and not _existing:
-                raise HTTPException(status_code=404, detail="Conversation not found")
+                from .storage import ensure_conversation_owner, get_conversation_owner
+                owner = get_conversation_owner(conversation_id)
+                if owner is not None and owner != uid:
+                    raise HTTPException(status_code=404, detail="Conversation not found")
+                if owner is None:
+                    ensure_conversation_owner(conversation_id, uid)
         except HTTPException:
             raise
         except Exception:

@@ -279,43 +279,18 @@ ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx"]
 # model for a *text* turn (that is what made persona chats land on
 # ``moondream:latest`` and return empty content → "couldn't parse"). These
 # heuristics + priority keep text chats on a text model.
-_VISION_ONLY_HINTS = (
-    "moondream", "llava", "bakllava", "minicpm-v", "-vl", "vision", "llama3.2-vision",
+# The classification tables and rules live in model_resolver (single source
+# of truth for chat, meetings, vision and the Settings UI). Re-exported here
+# so existing imports and tests keep working.
+from .model_resolver import (  # noqa: E402
+    VISION_ONLY_HINTS as _VISION_ONLY_HINTS,
+    EMBED_HINTS as _EMBED_HINTS,
+    CHAT_MODEL_PRIORITY as _CHAT_MODEL_PRIORITY,
+    VISION_MODEL_PRIORITY as _VISION_MODEL_PRIORITY,
+    NoLocalModelError,
+    is_text_chat_model,
+    _match_priority,
 )
-_EMBED_HINTS = (
-    "embed", "nomic-embed", "mxbai-embed", "all-minilm", "bge-", "bge:",
-)
-# Preferred general text-chat models, best first (mirrors /auto-detect).
-_CHAT_MODEL_PRIORITY = (
-    "llama3.2:3b", "llama3.2", "llama3.1", "llama3:8b", "qwen3", "qwen2.5",
-    "mistral-nemo", "gemma2", "mistral:7b", "phi4", "deepseek-r1",
-)
-_VISION_MODEL_PRIORITY = (
-    "moondream", "gemma3:4b", "gemma3", "llava:7b", "llava", "minicpm-v",
-    "llama3.2-vision",
-)
-
-
-def is_text_chat_model(name: str) -> bool:
-    """True when a model id can serve a plain text chat turn (i.e. it is not a
-    vision-only or embedding model)."""
-    n = (name or "").lower()
-    if not n:
-        return False
-    if any(h in n for h in _EMBED_HINTS):
-        return False
-    if any(h in n for h in _VISION_ONLY_HINTS):
-        return False
-    return True
-
-
-def _match_priority(available: List[str], priority) -> str:
-    for preferred in priority:
-        for a in available:
-            al = a.lower()
-            if al == preferred or al.startswith(preferred + ":") or preferred in al:
-                return a
-    return ""
 
 
 def pick_chat_model(available: List[str], configured: str = "") -> str:
@@ -507,9 +482,22 @@ async def chat_ollama(
     Ollama expects:
       { model, messages: [{role, content}], stream: false, options: {...} }
     """
-    base = (base_url or OLLAMA_BASE_URL).rstrip("/")
     requested_model = (model or "").strip() or None
-    mdl = (model or OLLAMA_MODEL).strip()
+    # Resolve runtime + model first (docs/design/LOCAL_MODEL_RESOLUTION.md):
+    # the configured name when it is installed, otherwise the best installed
+    # model, otherwise a structured NoLocalModelError carrying a remedy.
+    from . import model_resolver as _mr
+    _res = await _mr.resolve("chat", (model or OLLAMA_MODEL).strip(), base_url=base_url)
+    if not _res.model:
+        raise NoLocalModelError(_res)
+    if _res.source == "fallback":
+        print(f"[OLLAMA] model fallback: {_res.reason}")
+        log_event(
+            "llm.model_fallback", provider="ollama", requested_model=requested_model,
+            selected_model=_res.model, base_url=_res.runtime_url, reason=_res.reason,
+        )
+    base = (_res.runtime_url or base_url or OLLAMA_BASE_URL).rstrip("/")
+    mdl = _res.model
 
     url = f"{base}/api/chat"
     request_messages = [{"role": m["role"], "content": m["content"]} for m in messages]
@@ -551,28 +539,6 @@ async def chat_ollama(
         payload.setdefault("options", {})["stop"] = list(stop)
 
     async with httpx.AsyncClient(timeout=_timeout()) as client:
-        if not mdl:
-            # Auto-pick first available model (prod-friendly default)
-            try:
-                tags_r = await client.get(f"{base}/api/tags")
-                if tags_r.status_code == 200:
-                    tags_data = tags_r.json()
-                    models = tags_data.get("models", [])
-                    if models:
-                        names = [str(m.get("name") or "").strip() for m in models]
-                        # Prefer a text-chat model over a vision-only/embedding
-                        # one so a text turn never lands on e.g. moondream.
-                        mdl = pick_chat_model(names, OLLAMA_MODEL)
-            except Exception:
-                pass
-
-        if not mdl:
-            raise RuntimeError(
-                "Ollama has no model selected and none were found. "
-                "Run 'ollama pull llama3:8b' (or another model) and refresh the UI."
-            )
-
-        # Ensure payload uses the final model name
         payload["model"] = mdl
 
         prompt_chars = sum(len(str(m.get("content") or "")) for m in request_messages)
@@ -634,30 +600,22 @@ async def chat_ollama(
                 )
             )
         except httpx.HTTPStatusError as e:
-            # Better error handling for 404 model not found
             if e.response.status_code == 404:
-                error_msg = f"Ollama model '{mdl}' not found"
-
-                # Try to fetch available models
-                try:
-                    tags_r = await client.get(f"{base}/api/tags")
-                    if tags_r.status_code == 200:
-                        tags_data = tags_r.json()
-                        models = tags_data.get("models", [])
-                        if models:
-                            model_names = [m.get("name", "") for m in models if m.get("name")]
-                            error_msg += f". Available models: {', '.join(model_names)}"
-                            # Provide a simple suggestion if a close llama tag exists
-                            if mdl.startswith("llama") and "llama3:8b" in model_names and mdl != "llama3:8b":
-                                error_msg += " (Did you mean llama3:8b?)"
-                        else:
-                            error_msg += ". No models are currently available. Run 'ollama pull <model-name>' to download a model."
-                    else:
-                        error_msg += f". Could not fetch available models. Please run 'ollama pull {mdl}' to download it."
-                except Exception:
-                    error_msg += f". Please run 'ollama pull {mdl}' to download it."
-
-                raise RuntimeError(error_msg) from e
+                # The runtime no longer has the model we resolved (deleted or
+                # retagged since the last probe). Forget the cache, resolve
+                # again and retry once with whatever is installed now.
+                _mr.invalidate(f"404 for {mdl} at {base}")
+                _again = await _mr.resolve("chat", "", base_url=base_url)
+                if not _again.model:
+                    raise NoLocalModelError(_again) from e
+                if _again.model == mdl:
+                    raise RuntimeError(f"Ollama at {base} rejected model '{mdl}' (404).") from e
+                print(f"[OLLAMA] model {mdl!r} vanished; retrying once with {_again.model!r}")
+                mdl = _again.model
+                payload["model"] = mdl
+                r = await client.post(url, json=payload)
+                r.raise_for_status()
+                data = r.json()
             else:
                 # Re-raise other HTTP errors
                 raise RuntimeError(f"Ollama HTTP {e.response.status_code}: {e.response.text}") from e
@@ -828,8 +786,12 @@ async def stream_chat(
     way, so the streaming path never breaks a provider it can't stream.
     """
     if provider == "ollama":
-        base = (base_url or OLLAMA_BASE_URL).rstrip("/")
-        mdl = (model or OLLAMA_MODEL).strip()
+        from . import model_resolver as _mr
+        _res = await _mr.resolve("chat", (model or OLLAMA_MODEL).strip(), base_url=base_url)
+        if not _res.model:
+            raise NoLocalModelError(_res)
+        base = (_res.runtime_url or base_url or OLLAMA_BASE_URL).rstrip("/")
+        mdl = _res.model
         payload = {
             "model": mdl,
             "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
