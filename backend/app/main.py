@@ -2752,9 +2752,9 @@ class ModelInstallRequest(BaseModel):
     civitai_api_key: Optional[str] = Field(None, description="Optional Civitai API key for restricted/NSFW downloads")
 
 
-def _run_streaming(cmd, env=None, logger=None):
+def _run_streaming(cmd, env=None, logger=None, on_line=None):
     """Run ``cmd``, logging each output line as it comes. Returns (returncode, lines).
-    Blocking — call it through ``asyncio.to_thread``."""
+    Blocking — call it through ``asyncio.to_thread``. ``on_line`` sees every line (progress)."""
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -2772,9 +2772,73 @@ def _run_streaming(cmd, env=None, logger=None):
             if logger is not None:
                 logger.info(f"  {line}")
             lines.append(line)
+            if on_line is not None:
+                try:
+                    on_line(line)
+                except Exception:  # noqa: BLE001 — progress is a nicety; the install goes on
+                    pass
             _sys.stdout.flush()
     process.wait()
     return process.returncode, lines
+
+
+# ── Install progress ────────────────────────────────────────────────────────
+# The download script prints its stages ("[3/3] Downloading model...") and a progress bar
+# ("name:  42%|████  | 2.7G/6.46G [01:02<01:24, 5.81MB/s]"; the text pipe turns each "\r"
+# update into its own line). The latest one per model is kept here, so the Models page — the
+# catalog rows and the suggestions alike — can show real progress while the request runs.
+_INSTALL_PROGRESS: Dict[str, Dict[str, Any]] = {}
+_TQDM_LINE = _re.compile(
+    r"(\d{1,3})%\|[^|]*\|\s*([\d.]+\s?[kMGTP]?i?B?)/([\d.]+\s?[kMGTP]?i?B?)"
+    r"(?:\s*\[[^\],]*,\s*([\d.?]+\s?[kMGTP]?i?B/s|\?B/s))?"
+)
+# `ollama pull`: "pulling 6a07…  42% ▕██████      ▏ 2.0 GB/4.7 GB   25 MB/s   1m48s"
+_OLLAMA_LINE = _re.compile(
+    r"(\d{1,3})%\s*\S*.*?([\d.]+\s?[KMGT]?B)\s*/\s*([\d.]+\s?[KMGT]?B)(?:\s+([\d.]+\s?[KMGT]?B/s))?"
+)
+_PLAIN_PCT = _re.compile(r":\s*(\d{1,3})%\s*$")  # download.py's fallback without tqdm
+_STAGE_LINE = _re.compile(r"\[(\d)/(\d)\]\s*\W*\s*(.+?)\.*$")
+
+
+def _note_install_progress(model_id: str, line: str) -> None:
+    entry = _INSTALL_PROGRESS.setdefault(model_id, {"state": "running", "percent": None})
+    entry["updated_at"] = time.time()
+    bar = _TQDM_LINE.search(line) or _OLLAMA_LINE.search(line)
+    if bar:
+        entry.update(percent=min(100, int(bar.group(1))), done=bar.group(2).strip(),
+                     total=bar.group(3).strip(), rate=(bar.group(4) or "").strip() or None,
+                     stage="Downloading")
+        return
+    plain = _PLAIN_PCT.search(line)
+    if plain:
+        entry.update(percent=min(100, int(plain.group(1))), stage="Downloading")
+        return
+    stage = _STAGE_LINE.search(line)
+    if stage:
+        entry["stage"] = stage.group(3).strip()[:60]
+
+
+def _start_install_progress(model_id: str) -> None:
+    _INSTALL_PROGRESS[model_id] = {"state": "running", "percent": None, "stage": "Starting",
+                                   "started_at": time.time(), "updated_at": time.time()}
+
+
+def _finish_install_progress(model_id: str, ok: bool) -> None:
+    entry = _INSTALL_PROGRESS.setdefault(model_id, {})
+    entry.update(state="done" if ok else "failed", updated_at=time.time())
+    if ok:
+        entry["percent"] = 100
+
+
+@app.get("/models/install/progress")
+async def install_progress(model_id: str = Query("")) -> JSONResponse:
+    """The latest progress of a running (or just finished) install — one model, or all."""
+    cutoff = time.time() - 3600
+    for key in [k for k, v in _INSTALL_PROGRESS.items() if v.get("updated_at", 0) < cutoff]:
+        _INSTALL_PROGRESS.pop(key, None)
+    if model_id:
+        return JSONResponse(content={"model_id": model_id, **(_INSTALL_PROGRESS.get(model_id) or {"state": "idle"})})
+    return JSONResponse(content={"installs": _INSTALL_PROGRESS})
 
 
 @app.post("/models/install")
@@ -2846,7 +2910,10 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
 
             # Streamed to the logs, on a worker thread: a multi-GB pull must not freeze the
             # event loop (and every other request) until it finishes.
-            returncode, output_lines = await asyncio.to_thread(_run_streaming, pull_cmd, None, logger)
+            _start_install_progress(req.model_id)
+            returncode, output_lines = await asyncio.to_thread(
+                _run_streaming, pull_cmd, None, logger, lambda line: _note_install_progress(req.model_id, line))
+            _finish_install_progress(req.model_id, returncode == 0)
 
             if returncode == 0:
                 logger.info(f"Successfully pulled Ollama model: {req.model_id}")
@@ -2893,7 +2960,10 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
 
         # Streamed in real time, on a worker thread: a 4 GB checkpoint used to block the event
         # loop — chat and every other request — for the whole download.
-        returncode, output_lines = await asyncio.to_thread(_run_streaming, cmd, env, logger)
+        _start_install_progress(req.model_id)
+        returncode, output_lines = await asyncio.to_thread(
+            _run_streaming, cmd, env, logger, lambda line: _note_install_progress(req.model_id, line))
+        _finish_install_progress(req.model_id, returncode == 0)
 
         if returncode == 0:
             logger.info(f"Successfully installed model: {req.model_id}")
@@ -2920,6 +2990,7 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             )
 
     except subprocess.TimeoutExpired:
+        _finish_install_progress(req.model_id, False)
         logger.error(f"Installation timed out for model: {req.model_id}")
         return JSONResponse(
             status_code=500,
@@ -2929,6 +3000,7 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             ),
         )
     except Exception as e:
+        _finish_install_progress(req.model_id, False)
         logger.exception(f"Installation error for model {req.model_id}: {e}")
         return JSONResponse(
             status_code=500,

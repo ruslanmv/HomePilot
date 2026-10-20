@@ -294,3 +294,23 @@ def test_persona_agent_search_is_real_now(monkeypatch):
 
     monkeypatch.setattr(ws(), "search", down)
     assert asyncio.run(search.web_search("anything")) == []
+
+
+def test_expert_chats_get_the_same_grounding_through_the_context_route(monkeypatch):
+    """Fast / Expert / Heavy are answered by Expert, which builds its own prompts: the browser
+    asks /v1/web-search/context first and hands Expert the block."""
+    from fastapi.testclient import TestClient
+    from app import main
+
+    async def fake_gather(user_text, history, chat=None):
+        assert user_text == "news today" and history == [("user", "earlier")]
+        return ws().WebContext(status="ok", query="news today", sources=[
+            ws().Source(n=1, title="Wire", url="https://wire.test/a", domain="wire.test", snippet="s")])
+
+    monkeypatch.setattr(ws(), "gather", fake_gather)
+    client = TestClient(main.app)
+    body = client.post("/v1/web-search/context",
+                       json={"query": "news today", "history": [{"role": "user", "content": "earlier"}]}).json()
+    assert body["web_search"]["status"] == "ok"
+    assert "[1] Wire — wire.test" in body["context"]
+    assert client.post("/v1/web-search/context", json={"query": " "}).status_code == 400

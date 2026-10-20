@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import { progressLabel, useInstallProgress } from './lib/installProgress'
 import { ProgressBar, Skeleton } from './motion'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink,
   MessageSquare, ScanEye, Image as ImageIcon, Pencil, Video, Sparkles, Layers, Puzzle } from 'lucide-react'
@@ -381,6 +382,10 @@ export default function ModelsView(props: ModelsParams) {
 
   // Install/delete jobs — optional endpoint (we degrade if not present)
   const [installBusy, setInstallBusy] = useState<string | null>(null)
+  // A suggestion being installed from the advisor card (its model id), for the toast.
+  const [advisorBusy, setAdvisorBusy] = useState<string | null>(null)
+  // Live percent, size and speed of whichever install is running (lib/installProgress.ts).
+  const installProgress = useInstallProgress(backendUrl, authKey, installBusy || advisorBusy)
   const [deleteBusy, setDeleteBusy] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -1896,6 +1901,7 @@ export default function ModelsView(props: ModelsParams) {
               current={props.currentModels}
               onToast={setToast}
               onInstalled={() => { void refreshInstalled() }}
+              onBusyChange={setAdvisorBusy}
               defaultCollapsed
             />
           ) : null}
@@ -2139,7 +2145,7 @@ export default function ModelsView(props: ModelsParams) {
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                   </svg>
-                                  <span>Downloading...</span>
+                                  <span>Downloading{installProgress?.state === 'running' && installProgress.percent !== null ? ` ${installProgress.percent}%` : '...'}</span>
                                 </>
                               ) : (
                                 <>
@@ -2935,11 +2941,11 @@ export default function ModelsView(props: ModelsParams) {
           )}
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-white/90 truncate">{toast}</div>
-            {installBusy && (
-              <div className="text-[10px] text-white/50 mt-1 font-medium">
-                Large models may take several minutes...
+            {installBusy || advisorBusy ? (
+              <div className="text-[10px] text-white/50 mt-1 font-medium" data-testid="install-toast-progress">
+                {installProgress?.percent != null ? progressLabel(installProgress) : 'Large models may take several minutes...'}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       ) : null}
