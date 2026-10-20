@@ -16,6 +16,7 @@ import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from .config import EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE, EXPERT_SYSTEM_PROMPT
+from . import grounding
 from .router import dispatch, dispatch_stream, extract_dispatch_meta, ProviderName
 
 logger = logging.getLogger("expert.thinking")
@@ -95,7 +96,7 @@ async def think(
     """
     def _msg(prompt: str) -> List[Dict[str, str]]:
         return [
-            {"role": "system", "content": EXPERT_SYSTEM_PROMPT},
+            {"role": "system", "content": grounding.apply(EXPERT_SYSTEM_PROMPT)},
             {"role": "user", "content": prompt},
         ]
 
@@ -178,7 +179,7 @@ async def stream_think(
     """
     def _msg(prompt: str) -> List[Dict[str, str]]:
         return [
-            {"role": "system", "content": EXPERT_SYSTEM_PROMPT},
+            {"role": "system", "content": grounding.apply(EXPERT_SYSTEM_PROMPT)},
             {"role": "user", "content": prompt},
         ]
 

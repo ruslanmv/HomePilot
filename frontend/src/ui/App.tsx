@@ -108,6 +108,7 @@ import {
   type ChatScopedSettings,
 } from './components/ChatSettingsPopover'
 import { MessageMarkdown } from './components/MessageMarkdown'
+import { WebSources, WebSearchToggleContext, linkCitations, parseWebSearch } from './components/WebSources'
 import RouteBadge from './components/compute/RouteBadge'
 import { ChatEmptyState } from './components/ChatEmptyState'
 import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
@@ -198,6 +199,8 @@ export type Msg = {
     active_angle?: 'front' | 'left' | 'right' | 'back'
     available_views?: Array<'front' | 'left' | 'right' | 'back'>
     interactive_preview?: boolean
+    /** The web sources this answer was written from (`web_search.py`); read with parseWebSearch. */
+    web?: unknown
   } | null
   // Compute routing diagnostics (P0-2): which device served this reply, and
   // whether it fell back. Raw shape from /chat (snake_case, not camelized).
@@ -242,6 +245,15 @@ export type Msg = {
  * For every other media shape (images, video_url, …) this returns
  * ``{ media: raw }`` unchanged, so regular messages are untouched.
  */
+/** The browser's IANA time zone ("Europe/Rome"), so the chat's "today" is the user's. */
+function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined
+  } catch {
+    return undefined
+  }
+}
+
 function hydratePersistedMessageMedia(raw: unknown): {
   media: Msg['media']
   callMemory?: Msg['callMemory']
@@ -2851,13 +2863,25 @@ function ChatState({
                         }
                         onProgress={keepPinned}
                         onDone={() => markRevealed(m.id)}
-                        render={(visible) => (
-                          <MessageMarkdown text={visible} onImageClick={setLightbox} backendUrl={backendUrl} />
-                        )}
+                        render={(visible) => {
+                          // [n] in a web-grounded answer opens source n.
+                          const web = m.role === 'assistant' ? parseWebSearch(m.media?.web) : null
+                          return (
+                            <MessageMarkdown
+                              text={web?.sources.length ? linkCitations(visible, web.sources) : visible}
+                              onImageClick={setLightbox}
+                              backendUrl={backendUrl}
+                            />
+                          )
+                        }}
                       />
                     </div>
                   )}
                 </div>
+
+                {m.role === 'assistant' && !m.pending && parseWebSearch(m.media?.web) ? (
+                  <WebSources web={parseWebSearch(m.media?.web)!} />
+                ) : null}
 
                 {/* Grok-style icon action row */}
                 {!m.pending ? (
@@ -3209,6 +3233,7 @@ export default function App() {
             : 'fast',
         incognito: !!parsed.incognito,
         model: parseChatModelChoice(parsed.model),
+        webSearch: parsed.webSearch === true,
       }
     } catch {
       return DEFAULT_CHAT_SETTINGS
@@ -3235,6 +3260,7 @@ export default function App() {
             : 'fast',
         incognito: !!parsed.incognito,
         model: parseChatModelChoice(parsed.model),
+        webSearch: parsed.webSearch === true,
       })
     } catch {
       setChatSettings(DEFAULT_CHAT_SETTINGS)
@@ -4028,6 +4054,19 @@ export default function App() {
     return Object.keys(headers).length ? headers : undefined
   }, [settings.apiKey])
 
+  // This chat's "Search the web" (+ menu and Chat settings share it). Standard chat only:
+  // persona and project chats go through their own pipeline, which this does not touch.
+  const webSearchToggle = useMemo(() => ({
+    available: mode === 'chat' && !currentProject,
+    on: chatSettings.webSearch === true,
+    setOn: (next: boolean) => updateChatSettings({ ...chatSettings, webSearch: next }),
+    check: async () => {
+      const res = await fetch(`${settings.backendUrl.replace(/\/+$/, '')}/v1/web-search/status`, { headers: authHeaders })
+      if (!res.ok) return { available: false, hint: 'Could not ask the backend whether web search is available.' }
+      return res.json()
+    },
+  }), [mode, currentProject, chatSettings, updateChatSettings, settings.backendUrl, authHeaders])
+
   const onNewConversation = useCallback(() => {
     // New UUID → backend auto-creates fresh personality memory.
     // Old conversation stays in SQLite (browsable via History panel).
@@ -4702,14 +4741,24 @@ export default function App() {
       // user-visible message stays as typed; request uses mode prefixes
       const requestText = buildMessageForMode(mode, trimmed)
 
-      const user: Msg = { id: uuid(), role: 'user', text: trimmed }
-      const tmpId = uuid()
-      const pending: Msg = { id: tmpId, role: 'assistant', text: '', pending: true }
-
-      setMessages((prev) => [...prev, user, pending])
-
       // Get current project ID from localStorage if user selected one
       const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+
+      // "Search the web" applies to chats outside projects (persona and project chats keep their
+      // own pipeline), answered by the standard chat or by Expert (Fast / Expert / Heavy —
+      // grounded through /v1/web-search/context below), and not to a message carrying an image.
+      const webSearchOn =
+        chatSettings?.webSearch === true &&
+        mode === 'chat' &&
+        !currentProjectId &&
+        !currentProject &&
+        !(pendingFile || pendingPreviewUrl)
+
+      const user: Msg = { id: uuid(), role: 'user', text: trimmed }
+      const tmpId = uuid()
+      const pending: Msg = { id: tmpId, role: 'assistant', text: webSearchOn ? 'Searching the web…' : '', pending: true }
+
+      setMessages((prev) => [...prev, user, pending])
 
       // ─── Phase 4 (additive): agentic invoke with dynamic capabilities ──
       // Agent projects ALWAYS route agentically (regardless of chatSettings toggle).
@@ -5311,12 +5360,38 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
-        const data = canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type)
+        const expertPath = canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type)
+        // Expert (Fast / Expert / Heavy) builds its own prompts, so with "Search the web" on the
+        // sources are found here first and handed to it as grounding; the answer then shows
+        // them like any web-grounded reply. Search failing never blocks the answer.
+        let expertWeb: { web_search?: unknown; context?: string } | null = null
+        if (expertPath && webSearchOn) {
+          expertWeb = await postJson<any>(
+            settings.backendUrl,
+            '/v1/web-search/context',
+            {
+              query: requestText,
+              history: messages.filter((m) => !m.pending).slice(-8).map((m) => ({ role: m.role, content: m.text })),
+            },
+            authHeaders,
+          ).catch(() => ({
+            web_search: {
+              status: 'unavailable', query: requestText, sources: [],
+              message: "Web search isn't available right now, so this answer may be out of date.",
+              hint: 'The backend could not run the search.',
+            },
+            context: undefined,
+          }))
+        }
+        const reply = expertPath
           ? await postJson<any>(
               settings.backendUrl,
               '/v1/expert/chat',
               {
                 query: requestText,
+                // Today's date in the user's zone, and the web sources when searched (grounding.py).
+                client_timezone: browserTimeZone(),
+                context: expertWeb?.context || undefined,
                 provider: 'auto',
                 thinking_mode: toThinkingMode(chatReasoningMode),
                 with_critique: false,
@@ -5383,9 +5458,14 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 // (backend needs this separately from provider_model which may be image model)
                 ollama_model: chatSelection.providerChat === 'ollama' ? chatSelection.modelChat : undefined,
                 llm_model: chatSelection.providerChat === 'openai_compat' ? chatSelection.modelChat : undefined,
+                // This chat's "Search the web", and the browser's zone so "today" is the user's.
+                web_search: webSearchOn || undefined,
+                client_timezone: browserTimeZone(),
               },
               authHeaders
             )
+        // Expert answers with the sources found above; the standard chat returns its own.
+        const data = expertWeb?.web_search ? { ...reply, web_search: expertWeb.web_search } : reply
 
         setMessages((prev) =>
           prev.map((m) =>
@@ -5395,7 +5475,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   pending: false,
                   animate: !data.error,
                   text: (data.text ?? data.content ?? '…'),
-                  media: data.media ?? null,
+                  // The sources ride on the media, as they are stored, so a reloaded chat shows them too.
+                  media: data.web_search ? { ...(data.media ?? {}), web: data.web_search } : (data.media ?? null),
                   compute: data.compute ?? null,
                   // A structured error (e.g. no local model) renders as an error
                   // bubble with Retry, not as a normal-looking reply.
@@ -6350,6 +6431,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
   }
 
   return (
+    <WebSearchToggleContext.Provider value={webSearchToggle}>
     <MeetingSenseProvider
       conversationId={conversationId}
       status={meetingStatus}
@@ -7361,5 +7443,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       ) : null}
     </div>
     </MeetingSenseProvider>
+    </WebSearchToggleContext.Provider>
   )
 }

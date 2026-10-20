@@ -1,0 +1,24 @@
+# SearXNG for HomePilot's web search (agentic/integrations/mcp/web_search, port 9105).
+#
+# Only what differs from SearXNG's defaults. The JSON API is off in a stock install, and it is
+# the one HomePilot uses. The limiter (bot detection) is for public instances; this one listens
+# on 127.0.0.1 only. The secret key is not here: it comes from SEARXNG_SECRET, generated when
+# the container is created (`make start-searxng`).
+use_default_settings: true
+
+general:
+  instance_name: "HomePilot search"
+
+server:
+  limiter: false
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json
+
+ui:
+  query_in_title: false

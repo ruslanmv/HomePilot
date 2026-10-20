@@ -1279,8 +1279,8 @@ def _startup() -> None:
     if os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", "yes"):
         asyncio.get_event_loop().create_task(_start_agentic_servers())
 
-    # Routines scheduler is opt-in at the server level so upgrading from the
-    # original definition-only release cannot unexpectedly execute saved rows.
+    # Routines scheduler: on by default (each routine has its own switch);
+    # ROUTINES_EXECUTION_ENABLED=false turns every scheduled run off.
     try:
         from .routines.scheduler import start_scheduler
         routine_task = start_scheduler()
@@ -1288,7 +1288,7 @@ def _startup() -> None:
             logging.getLogger("homepilot.startup").info("Routines scheduler started")
         else:
             logging.getLogger("homepilot.startup").info(
-                "Routines scheduler disabled (set ROUTINES_EXECUTION_ENABLED=true to enable)"
+                "Routines scheduler off (ROUTINES_EXECUTION_ENABLED=false); Run now still works"
             )
     except Exception as exc:
         logging.getLogger("homepilot.startup").warning(
@@ -2752,6 +2752,31 @@ class ModelInstallRequest(BaseModel):
     civitai_api_key: Optional[str] = Field(None, description="Optional Civitai API key for restricted/NSFW downloads")
 
 
+def _run_streaming(cmd, env=None, logger=None):
+    """Run ``cmd``, logging each output line as it comes. Returns (returncode, lines).
+    Blocking — call it through ``asyncio.to_thread``."""
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    )
+    import sys as _sys
+
+    lines = []
+    for line in iter(process.stdout.readline, ""):
+        line = line.rstrip()
+        if line:
+            if logger is not None:
+                logger.info(f"  {line}")
+            lines.append(line)
+            _sys.stdout.flush()
+    process.wait()
+    return process.returncode, lines
+
+
 @app.post("/models/install")
 async def install_model(req: ModelInstallRequest) -> JSONResponse:
     """
@@ -2789,8 +2814,10 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
 
         logger.info(f"Starting model installation: provider={req.provider}, model={req.model_id}")
 
-        # Build command based on provider
-        cmd = ["python3", str(script_path)]
+        # Build command based on provider. The backend's own interpreter, not `python3` from
+        # PATH: that is often the system Python, without the venv's requests/tqdm/huggingface_hub,
+        # and the install failed with "Missing required packages" (studio/bundles.py does the same).
+        cmd = [sys.executable or "python3", str(script_path)]
 
         if req.provider == "civitai":
             # Experimental Civitai download
@@ -2817,24 +2844,11 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             logger.info(f"Pulling Ollama model: {req.model_id}")
             pull_cmd = ["ollama", "pull", req.model_id]
 
-            # Use Popen to stream output to logs
-            process = subprocess.Popen(
-                pull_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
+            # Streamed to the logs, on a worker thread: a multi-GB pull must not freeze the
+            # event loop (and every other request) until it finishes.
+            returncode, output_lines = await asyncio.to_thread(_run_streaming, pull_cmd, None, logger)
 
-            output_lines = []
-            for line in iter(process.stdout.readline, ""):
-                line = line.rstrip()
-                if line:
-                    logger.info(f"  {line}")
-                    output_lines.append(line)
-            process.wait()
-
-            if process.returncode == 0:
+            if returncode == 0:
                 logger.info(f"Successfully pulled Ollama model: {req.model_id}")
                 return JSONResponse(
                     status_code=200,
@@ -2877,28 +2891,11 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
 
         logger.info(f"Running download script: {' '.join(cmd)}")
 
-        # Use Popen to stream output in real-time
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env,
-        )
+        # Streamed in real time, on a worker thread: a 4 GB checkpoint used to block the event
+        # loop — chat and every other request — for the whole download.
+        returncode, output_lines = await asyncio.to_thread(_run_streaming, cmd, env, logger)
 
-        output_lines = []
-        for line in iter(process.stdout.readline, ""):
-            line = line.rstrip()
-            if line:
-                logger.info(f"  {line}")
-                output_lines.append(line)
-                # Flush stdout to ensure logs appear immediately
-                sys.stdout.flush()
-
-        process.wait()
-
-        if process.returncode == 0:
+        if returncode == 0:
             logger.info(f"Successfully installed model: {req.model_id}")
             return JSONResponse(
                 status_code=200,
@@ -7373,6 +7370,38 @@ async def multimodal_attach(inp: MultimodalAttachIn) -> JSONResponse:
             status_code=500,
             content={"ok": False, "error": f"Failed to attach multimodal analysis: {str(e)}"},
         )
+
+
+@app.get("/v1/web-search/status", dependencies=[Depends(require_api_key)])
+async def web_search_status() -> JSONResponse:
+    """Whether a chat's "Search the web" can run: the web-search server (:9105) answers and its
+    engine (SearXNG, or a Tavily key) is there. Says what to start when it is not."""
+    from .web_search import status as _web_status
+
+    return JSONResponse(content=await _web_status())
+
+
+@app.post("/v1/web-search/context", dependencies=[Depends(require_api_key)])
+async def web_search_context(body: Dict[str, Any]) -> JSONResponse:
+    """Search the web for one chat message and return the grounding for it.
+
+    For chats answered by Expert (Fast / Expert / Heavy), which builds its own prompts: the
+    browser asks here first and hands Expert ``context`` (the numbered sources and how to cite
+    them — the same block the standard chat gets), then shows ``web_search`` under the answer.
+    Never fails: an unavailable search comes back as ``status: "unavailable"``.
+    """
+    from . import web_search as _ws
+
+    query = str((body or {}).get("query") or "").strip()[:2000]
+    if not query:
+        return JSONResponse(status_code=400, content={"detail": "query is required"})
+    history = [
+        (str(m.get("role") or ""), str(m.get("content") or ""))
+        for m in ((body or {}).get("history") or [])
+        if isinstance(m, dict)
+    ][-8:]
+    ctx = await _ws.gather(query, history, chat=None)
+    return JSONResponse(content={"web_search": ctx.public(), "context": _ws.system_block(ctx)})
 
 
 @app.get("/v1/multimodal/status", dependencies=[Depends(require_api_key)])

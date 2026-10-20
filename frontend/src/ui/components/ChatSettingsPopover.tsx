@@ -1,7 +1,8 @@
-import React, { useEffect, useId, useRef } from 'react'
-import { Box, EyeOff, SlidersHorizontal } from 'lucide-react'
+import React, { useContext, useEffect, useId, useRef, useState } from 'react'
+import { Box, EyeOff, Globe, SlidersHorizontal } from 'lucide-react'
 import { ChatAppearanceQuick } from './ChatAppearanceSettings'
 import { chatChoices, sourceKey, useModelShelf } from '../lib/modelShelf'
+import { WebSearchToggleContext, type WebSearchStatus } from './WebSources'
 
 /**
  * A model picked for one chat (level 2 of the model shelf — lib/modelShelf.ts). Only ever one
@@ -20,6 +21,8 @@ export type ChatScopedSettings = {
   executionProfile: 'fast' | 'balanced' | 'quality'
   incognito: boolean
   model?: ChatModelChoice | null
+  /** Answer from current web results, with sources (standard chat only; off by default). */
+  webSearch?: boolean
 }
 
 export const DEFAULT_CHAT_SETTINGS: ChatScopedSettings = {
@@ -28,6 +31,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatScopedSettings = {
   executionProfile: 'fast',
   incognito: false,
   model: null,
+  webSearch: false,
 }
 
 /** Asks the app to open Models, where the offered models are chosen. */
@@ -124,16 +128,56 @@ function ChatModelPicker({ value, onChange }: { value: ChatModelChoice | null; o
   )
 }
 
+/**
+ * "Search the web" for this chat. Shown only in the standard chat; says whether search can
+ * actually run, and what to start when it cannot, so turning it on never silently does nothing.
+ */
+function WebSearchRow({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  const web = useContext(WebSearchToggleContext)
+  const [status, setStatus] = useState<WebSearchStatus | null>(null)
+  useEffect(() => {
+    if (!web?.available || !value) return
+    let cancelled = false
+    void web.check().then((s) => { if (!cancelled) setStatus(s) }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [web, value])
+  if (!web?.available) return null
+  return (
+    <div data-testid="chat-web-search">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-start gap-2">
+          <Globe size={14} className="text-white/40 mt-0.5 shrink-0" aria-hidden />
+          <div>
+            <div className="text-sm text-white/90">Search the web</div>
+            <div className="text-[11px] text-white/45">
+              Answers from current web pages, with numbered sources. Your searches go to the web.
+            </div>
+          </div>
+        </div>
+        <Toggle value={value} onChange={onChange} label="Search the web" />
+      </div>
+      {value && status ? (
+        <div className={`mt-1.5 pl-6 text-[11px] ${status.available ? 'text-emerald-300/80' : 'text-amber-200/85'}`} data-testid="chat-web-search-status">
+          {status.available ? `Ready · ${status.provider === 'tavily' ? 'Tavily' : 'SearXNG on this computer'}` : status.hint || 'Web search is not available right now.'}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function Toggle({
   value,
   onChange,
+  label,
 }: {
   value: boolean
   onChange: (v: boolean) => void
+  label?: string
 }) {
   return (
     <button
       type="button"
+      aria-label={label}
       onClick={() => onChange(!value)}
       className={[
         'w-10 h-6 rounded-full border transition-all relative',
@@ -208,6 +252,8 @@ export function ChatSettingsPopover({
             <div className="border-t border-white/5" />
           </>
         ) : null}
+
+        <WebSearchRow value={!!settings.webSearch} onChange={(webSearch) => onChange({ ...settings, webSearch })} />
 
         <div className="flex items-center justify-between gap-3">
           <div>

@@ -23,6 +23,9 @@ MCP_REPO         ?= https://github.com/ruslanmv/mcp-context-forge.git
 MCP_GATEWAY_PORT ?= 4444
 MCP_GATEWAY_HOST ?= 127.0.0.1
 
+# SearXNG for web search in chat (make start-searxng). Not 8080: too many tools take it.
+SEARXNG_PORT     ?= 8899
+
 # New MCP server directories (functional contract servers)
 MCP_NEW_SERVERS := local_notes local_projects web shell_safe gmail google_calendar microsoft_graph slack github notion
 MCP_SERVERS_DIR := agentic/integrations/mcp
@@ -620,6 +623,10 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 			else \
 				echo "  ⚠ A2A Agents: $$a2a_ok/$$a2a_total healthy — check the log above"; \
 			fi; \
+		elif [ "$(AGENTIC)" = "1" ]; then \
+			echo ""; \
+			echo "  ⚠ MCP gateway (Context Forge) is not installed, so Discover MCP Servers stays empty."; \
+			echo "    Install it with:  make install-mcp   — then run make start again."; \
 		fi; \
 		\
 		echo ""; \
@@ -1434,6 +1441,26 @@ install-mcp: ## Install MCP Context Forge separately (gateway + servers + agent)
 	@echo "  Installing MCP Context Forge"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@bash scripts/mcp-setup.sh "$(MCP_DIR)"
+
+start-searxng: ## Start SearXNG for web search in chat (Docker, 127.0.0.1:$(SEARXNG_PORT))
+	@command -v docker >/dev/null 2>&1 || { echo "❌ Docker is needed for SearXNG."; exit 1; }
+	@# The port must be free, or already ours: another program there is not a search engine.
+	@if ss -ltnH "( sport = :$(SEARXNG_PORT) )" 2>/dev/null | grep -q . \
+		&& ! docker ps --filter name=^hp-searxng$$ --format '{{.Ports}}' | grep -q ":$(SEARXNG_PORT)->"; then \
+		echo "❌ Port $(SEARXNG_PORT) is taken by another program."; \
+		echo "   Pick another: make start-searxng SEARXNG_PORT=8898, and set SEARXNG_BASE_URL=http://127.0.0.1:8898"; \
+		exit 1; \
+	fi
+	@# A fresh secret each time the container is created; it lives only in the container.
+	@SEARXNG_PORT=$(SEARXNG_PORT) SEARXNG_SECRET=$$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n') \
+		docker compose -f agentic/ops/compose/websearch.compose.yml up -d --no-deps searxng
+	@for i in $$(seq 1 30); do curl -s -m 1 -o /dev/null http://127.0.0.1:$(SEARXNG_PORT)/healthz && break; sleep 1; done
+	@curl -s -m 2 -o /dev/null -w "  SearXNG: http://127.0.0.1:$(SEARXNG_PORT) (%{http_code})\n" http://127.0.0.1:$(SEARXNG_PORT)/healthz || echo "  SearXNG did not answer yet — docker logs hp-searxng"
+	@if [ "$(SEARXNG_PORT)" != "8899" ]; then echo "  Not the default port: set SEARXNG_BASE_URL=http://127.0.0.1:$(SEARXNG_PORT) for the web-search server."; fi
+	@echo "  Chat → + → Search the web uses it through the web-search server on :9105."
+
+stop-searxng: ## Stop SearXNG (web search in chat then says it is unavailable)
+	@docker compose -f agentic/ops/compose/websearch.compose.yml stop searxng 2>/dev/null || true
 
 start-mcp: ## Start only the MCP Gateway (port 4444)
 	@echo "════════════════════════════════════════════════════════════════════════════════"

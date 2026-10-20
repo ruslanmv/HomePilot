@@ -54,6 +54,14 @@ class ExpertChatRequest(BaseModel):
         default=None,
         description="Override the default Expert system prompt.",
     )
+    client_timezone: Optional[str] = Field(
+        default=None, max_length=64,
+        description="The browser's IANA time zone, so the prompt's 'today' is the user's (grounding.py).",
+    )
+    context: Optional[str] = Field(
+        default=None, max_length=40000,
+        description="Grounding for this request — e.g. HomePilot's numbered web sources — added to every system prompt.",
+    )
     session_id: Optional[str] = Field(
         default=None,
         description="Session identifier for memory/trace linkage.",

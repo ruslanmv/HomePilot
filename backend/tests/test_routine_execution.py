@@ -34,6 +34,18 @@ def _routine(**overrides):
     return data
 
 
+def test_scheduled_runs_are_on_unless_the_server_turns_them_off(monkeypatch):
+    """On by default: a routine left enabled is one somebody expects to run at its time."""
+    monkeypatch.delenv("ROUTINES_EXECUTION_ENABLED", raising=False)
+    assert scheduler.execution_enabled() is True
+    for off in ("false", "0", "no", "OFF", " False "):
+        monkeypatch.setenv("ROUTINES_EXECUTION_ENABLED", off)
+        assert scheduler.execution_enabled() is False, off
+    for on in ("true", "1", "yes", "anything-else"):
+        monkeypatch.setenv("ROUTINES_EXECUTION_ENABLED", on)
+        assert scheduler.execution_enabled() is True, on
+
+
 def test_daily_schedule_tracks_europe_rome_dst():
     before = scheduler.most_recent_occurrence(
         _routine(),

@@ -20,6 +20,7 @@ from .providers import (
     chat_local, stream_local,
     chat_openai_compat,
 )
+from . import grounding
 from . import target as target_mod
 
 logger = logging.getLogger("expert.router")
@@ -165,7 +166,7 @@ def build_messages(
     messages: List[Dict[str, str]] = []
     messages.append({
         "role": "system",
-        "content": system_prompt or EXPERT_SYSTEM_PROMPT,
+        "content": grounding.apply(system_prompt or EXPERT_SYSTEM_PROMPT),
     })
     for msg in (history or []):
         if msg.get("role") in ("user", "assistant") and msg.get("content"):
@@ -199,9 +200,10 @@ async def dispatch(
     except Exception as e:
         logger.warning("Provider '%s' failed (%s), falling back to local.", provider, e)
         if provider != "local":
-            # "local" is the user's chosen chat model when there is one (see target.py).
+            # "local" is the user's chosen chat model when there is one (see target.py) —
+            # called directly, so the fallback never re-enters the path that just failed.
             raw = await asyncio.wait_for(
-                _call_provider(messages, "local", model=model, temperature=temperature, max_tokens=max_tokens),
+                _call_local(messages, model=model, temperature=temperature, max_tokens=max_tokens),
                 timeout=EXPERT_PROVIDER_TIMEOUT_S,
             )
             return _attach_dispatch_meta(
@@ -235,7 +237,18 @@ async def _call_provider(
     if provider == "openai":
         from ..llm import chat_openai
         return await chat_openai(messages, **{k: v for k, v in kwargs.items() if v is not None})
-    # Default: the chat model the user picked, else local Ollama.
+    return await _call_local(messages, **kwargs)
+
+
+async def _call_local(
+    messages: List[Dict[str, str]],
+    *,
+    model: Optional[str],
+    temperature: float,
+    max_tokens: int,
+) -> Dict[str, Any]:
+    """The chat model the user picked (target.py), else local Ollama."""
+    kwargs = dict(model=model, temperature=temperature, max_tokens=max_tokens)
     chosen = target_mod.current()
     if chosen is not None:
         return await _call_target(messages, chosen, **kwargs)

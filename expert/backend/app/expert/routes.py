@@ -48,6 +48,7 @@ from .schemas import (
     ProductionReadinessResponse,
     ReadinessCheckItem,
 )
+from . import grounding
 from . import target as target_mod
 from .readiness import build_readiness_report
 from .mcp_catalog import ESSENTIAL_MCP_SERVERS, TOOL_MAPPING, mcp_key_to_env, mcp_key_to_forge_tool_env
@@ -115,7 +116,8 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
     ``target`` (the user's chosen chat model) is in force for every step of the pipeline.
     """
     chosen = target_mod.from_request(req.target)
-    with target_mod.using(chosen):
+    # Today's date (and any web sources HomePilot found) reach every step's system prompt.
+    with target_mod.using(chosen), grounding.using(req.client_timezone, req.context):
         return await _expert_chat(req, chosen)
 
 
@@ -362,7 +364,7 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
     async def with_target():
         # Set inside the generator: the response body is iterated after this function has
         # returned, so a context set around the return would already be gone.
-        with target_mod.using(chosen):
+        with target_mod.using(chosen), grounding.using(req.client_timezone, req.context):
             async for item in event_generator():
                 yield item
 

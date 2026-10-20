@@ -8,21 +8,11 @@
  * silent one says "No speech".
  */
 import type { LibraryItem } from './api';
+import { TONE_CLASSES, type Tone } from '../../ds';
 
-export type Tone = 'violet' | 'blue' | 'indigo' | 'teal' | 'green' | 'amber' | 'red' | 'slate' | 'pink' | 'sky';
-
-export const TONE_CLASSES: Record<Tone, string> = {
-    violet: 'bg-violet-500/15 text-violet-200 border-violet-400/25',
-    blue: 'bg-blue-500/15 text-blue-200 border-blue-400/25',
-    indigo: 'bg-indigo-500/20 text-indigo-200 border-indigo-400/25',
-    teal: 'bg-teal-500/15 text-teal-200 border-teal-400/25',
-    green: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/25',
-    amber: 'bg-amber-500/15 text-amber-200 border-amber-400/30',
-    red: 'bg-rose-500/15 text-rose-300 border-rose-400/30',
-    slate: 'bg-white/[0.06] text-white/70 border-white/10',
-    pink: 'bg-fuchsia-500/15 text-fuchsia-200 border-fuchsia-400/25',
-    sky: 'bg-sky-500/15 text-sky-200 border-sky-400/25',
-};
+// The badge colours are HomePilot's, shared by every page (ui/ds); re-exported here because
+// the Meetings code reads them from this module.
+export { TONE_CLASSES, type Tone };
 
 const CATEGORY_TONES: Array<[RegExp, Tone]> = [
     [/project/i, 'violet'],
