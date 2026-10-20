@@ -2469,7 +2469,19 @@ async def list_models(
             if not base_url:
                 base_url = await _active_runtime_url()
 
-        models, err = await list_models_for_provider(prov, base_url=base_url)
+        # OpenAI-compatible endpoints (an OllaBridge gateway) also say *what* each model is —
+        # a base model or an assistant built on one — which a picker needs to choose a
+        # sensible default list. Additive: `models` stays the plain id list it always was.
+        details_extra: Dict[str, Any] = {}
+        if provider == "openai_compat":
+            from .model_catalog import list_openai_compat_details
+
+            details, err = await list_openai_compat_details(base_url=base_url)
+            models = [d["id"] for d in details]
+            if not err:
+                details_extra = {"models_detail": details}
+        else:
+            models, err = await list_models_for_provider(prov, base_url=base_url)
         if provider == "ollama" and (err or not models):
             try:
                 _res = await _resolve_model(
@@ -2512,6 +2524,7 @@ async def list_models(
                 "models": models,
                 "count": len(models),
                 **remedy_extra,
+                **details_extra,
             },
         )
 

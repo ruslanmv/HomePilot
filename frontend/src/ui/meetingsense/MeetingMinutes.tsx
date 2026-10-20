@@ -124,13 +124,15 @@ export interface MeetingMinutesProps {
     hasTranscript: boolean;
     /** Initial model target, normally the one chosen in meeting setup. */
     modelTarget?: MeetingModelTarget;
+    /** The server is writing the end-of-meeting document right now. */
+    writing?: boolean;
     /** Injected in tests. */
     fetcher?: typeof fetch;
     modelFetcher?: typeof fetch;
 }
 
 export function MeetingMinutes({
-    meetingId, documents, hasTranscript, modelTarget, fetcher, modelFetcher,
+    meetingId, documents, hasTranscript, modelTarget, writing = false, fetcher, modelFetcher,
 }: MeetingMinutesProps) {
     const [written, setWritten] = useState<MeetingSummaryDoc[]>([]);
     const [selected, setSelected] = useState<number | null>(null);
@@ -410,6 +412,11 @@ export function MeetingMinutes({
                         ) : null}
                     </div>
                 </>
+            ) : writing ? (
+                <p className="flex items-center gap-2 py-4 text-sm text-white/55" role="status" data-testid="ms-minutes-writing">
+                    <Loader2 size={14} className="animate-spin text-sky-300" />
+                    Writing the summary from the whole transcript… With a local model this can take a few minutes.
+                </p>
             ) : (
                 <p className="py-4 text-sm text-white/35" data-testid="ms-minutes-empty">
                     {hasTranscript

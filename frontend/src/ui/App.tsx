@@ -79,6 +79,7 @@ import { useRemoteChatTarget, useSelectedOfflineNode } from './account/useRemote
 // BFF session flag (Batch 7) — when on, the browser stops sending the cloud
 // token; the backend injects it server-side.
 import { isBffSessionEnabled } from './account/featureFlags'
+import { localGatewayApiKeyFor } from './components/ollabridge/ollabridgeLocal'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
@@ -102,6 +103,8 @@ import { CreatorStudioHost } from './CreatorStudioHost'
 import {
   ChatSettingsPopover,
   DEFAULT_CHAT_SETTINGS,
+  OPEN_MODELS_EVENT,
+  parseChatModelChoice,
   type ChatScopedSettings,
 } from './components/ChatSettingsPopover'
 import { MessageMarkdown } from './components/MessageMarkdown'
@@ -368,9 +371,12 @@ type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'anim
  * relay (base URL ends in /ollama/v1), attach the user's Cloud token so the
  * relay resolves the user and serves inference from THEIR linked GPU node.
  * Returns undefined for every other provider — nothing else changes.
+ * OllaBridge Local: the optional key from the Local card, only for that exact
+ * gateway (<root>/v1) — the Cloud never receives it.
  */
 function cloudProviderApiKey(baseUrl?: string): string | undefined {
-  if (!baseUrl || !baseUrl.includes('/ollama/v1')) return undefined
+  if (!baseUrl) return undefined
+  if (!baseUrl.includes('/ollama/v1')) return localGatewayApiKeyFor(baseUrl)
   // Batch 7 (BFF): when the backend holds the cloud token server-side it injects
   // it into the relay call; the browser sends nothing. Off → legacy behavior.
   if (isBffSessionEnabled()) return undefined
@@ -2714,6 +2720,8 @@ function ChatState({
             onClose={() => setChatSettingsOpen(false)}
             settings={chatSettings}
             onChange={onUpdateChatSettings}
+            // Personas keep the model chosen in Models with their own setup.
+            modelPicker={!allowPersonaMode}
           />
         </div>
       </div>
@@ -3200,6 +3208,7 @@ export default function App() {
             ? 'quality'
             : 'fast',
         incognito: !!parsed.incognito,
+        model: parseChatModelChoice(parsed.model),
       }
     } catch {
       return DEFAULT_CHAT_SETTINGS
@@ -3225,6 +3234,7 @@ export default function App() {
             ? 'quality'
             : 'fast',
         incognito: !!parsed.incognito,
+        model: parseChatModelChoice(parsed.model),
       })
     } catch {
       setChatSettings(DEFAULT_CHAT_SETTINGS)
@@ -3756,6 +3766,19 @@ export default function App() {
     return () => window.removeEventListener('homepilot:open-settings', onOpen)
   }, [setShowSettings])
 
+  // Chat settings → "Manage models" opens Models, where the offered models are chosen.
+  useEffect(() => {
+    const onOpen = () => setMode('models')
+    window.addEventListener(OPEN_MODELS_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_MODELS_EVENT, onOpen)
+  }, [])
+
+  // This chat's own model (Chat settings), read at send time like everything below. Ordinary
+  // chats only: a persona project keeps the model chosen in Models together with its own
+  // instructions and knowledge, untouched by a per-chat choice.
+  const chatModelRef = useRef(chatSettings.model)
+  chatModelRef.current = currentProject?.project_type === 'persona' ? null : chatSettings.model
+
   const currentChatSelection = useCallback(() => {
     // If a remote computer is selected, swap the target to the cloud relay bound
     // to that node's model (same wire shape as "Use for Chat"). The cloud token
@@ -3763,6 +3786,11 @@ export default function App() {
     const remote = remoteChatTargetRef.current
     if (remote) {
       return { providerChat: 'openai_compat', modelChat: remote.model, baseUrlChat: remote.baseUrl }
+    }
+    // A model picked for this chat only, from the ones offered in Models.
+    const own = chatModelRef.current
+    if (own && own.model) {
+      return { providerChat: own.provider, modelChat: own.model, baseUrlChat: own.baseUrl }
     }
     const providerChat = localStorage.getItem('homepilot_provider_chat') || settingsDraft.providerChat || 'ollama'
     const modelChat = localStorage.getItem('homepilot_model_chat') || settingsDraft.modelChat || ''
@@ -3786,6 +3814,10 @@ export default function App() {
       // forever (docs/design/LOCAL_MODEL_RESOLUTION.md): ask the backend once
       // per load and fall back to Auto when it is gone.
       autoDetectRanRef.current = true
+      // That check is against the local Ollama runtime; a model picked on
+      // another provider (an OllaBridge gateway or the Cloud relay) is not an
+      // Ollama install and must survive the reload.
+      if ((localStorage.getItem('homepilot_provider_chat') || 'ollama') !== 'ollama') return
       fetch(`${backendUrl}/v1/models/resolution?configured=${encodeURIComponent(hasExistingSettings)}`)
         .then((r) => r.json())
         .then((data) => {
@@ -5270,6 +5302,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 session_id: conversationId || undefined,
                 has_attachments: Boolean(pendingFile || pendingPreviewUrl),
                 feature_hints: { budgetTier: 'normal' },
+                // The chat model picked in Models / Settings. Without it Expert answered from
+                // its own default Ollama model, whatever the user had selected — an OllaBridge
+                // gateway model included.
+                target: {
+                  provider: chatSelection.providerChat || 'ollama',
+                  base_url: chatSelection.baseUrlChat || undefined,
+                  model: chatSelection.modelChat || undefined,
+                  api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
+                },
               },
               authHeaders
             )

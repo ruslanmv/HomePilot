@@ -43,6 +43,9 @@ export interface Chip { label: string; tone: Tone; busy?: boolean; title?: strin
 /** The status chip for a card: recording first (it is happening now), then the transcript. */
 export function statusChip(item: Pick<LibraryItem, 'transcript_state' | 'recording_state' | 'media_present' | 'live' | 'origin_type' | 'warnings'>): Chip {
     if (item.live || item.recording_state === 'recording') return { label: 'Recording', tone: 'red', busy: true };
+    if (item.recording_state === 'paused') {
+        return { label: 'Reconnecting', tone: 'amber', busy: true, title: 'The connection dropped. Recording continues when the browser reconnects.' };
+    }
     switch (item.transcript_state) {
         case 'ready':
         case 'imported':
@@ -73,6 +76,19 @@ export function statusChip(item: Pick<LibraryItem, 'transcript_state' | 'recordi
 export function formatDate(ts: number | null | undefined, locale?: string): string {
     if (!ts) return '—';
     return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(ts * 1000));
+}
+
+/** The time of day a meeting started, in the viewer's locale: "10:27 AM", or "10:27". */
+export function formatTime(ts: number | null | undefined, locale?: string): string {
+    if (!ts) return '';
+    return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(new Date(ts * 1000));
+}
+
+/** Date and start time for a card: "10/20/2026 · 10:27 AM". The hour is what tells one day's
+ *  meetings apart, so a card never shows the date alone. */
+export function formatWhen(ts: number | null | undefined, locale?: string): string {
+    if (!ts) return '—';
+    return `${formatDate(ts, locale)} · ${formatTime(ts, locale)}`;
 }
 
 export function formatDateTime(ts: number | null | undefined, locale?: string): string {

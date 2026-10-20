@@ -94,6 +94,32 @@ def _live_ids() -> set:
         return set()
 
 
+#: A row younger than this may be a meeting whose session is a moment from being registered.
+_ORPHAN_MIN_AGE_S = 60.0
+
+
+def _close_orphans() -> None:
+    """End rows still "in progress" that no session of this process holds.
+
+    The startup sweep (``store.close_orphaned_meetings``) only ran once, so a meeting whose
+    session went away while the server kept running — a part split off by a reconnect, a stop
+    stuck behind a slow model — said "Recording" on its card until the next restart. The
+    library is where that lie is seen, so the library is where it is corrected.
+    """
+    try:
+        import time  # noqa: PLC0415
+
+        from .. import session as session_mod  # noqa: PLC0415
+        from .. import store  # noqa: PLC0415
+
+        held = [mid for mid, s in session_mod._SESSIONS.items()
+                if getattr(s, "state", None) in (session_mod.MeetingState.LIVE,
+                                                 session_mod.MeetingState.SUSPENDED)]
+        store.close_orphaned_meetings(held, started_before=time.time() - _ORPHAN_MIN_AGE_S)
+    except Exception:  # noqa: BLE001 — a stale chip is better than a library that will not load
+        pass
+
+
 def _summary_line(notes: Dict[str, Any], entry: Dict[str, Any]) -> str:
     text = (entry or {}).get("description") or ""
     if not text:
@@ -105,6 +131,7 @@ def _summary_line(notes: Dict[str, Any], entry: Dict[str, Any]) -> str:
 
 def meeting_items(viewer: str = "") -> List[Dict[str, Any]]:
     """Every MeetingSense / library meeting the viewer may see, as library items."""
+    _close_orphans()
     con = db._connect()
     try:
         rows = [dict(r) for r in con.execute("SELECT * FROM ms_meetings").fetchall()]
@@ -135,8 +162,11 @@ def _item(row: Dict[str, Any], entry: Dict[str, Any], links: List[Dict[str, Any]
     origin = entry.get("origin_type") or "meetingsense"
     status = row.get("status") or ""
     if origin == "meetingsense":
-        recording = "recording" if status in ("live", "suspended") else "none"
-        transcript = "live" if status in ("live", "suspended") else ("ready" if segments else "none")
+        # A suspended meeting lost its socket and is waiting out the grace window for the
+        # browser to come back. That is not "Recording" — nothing is being heard — and the
+        # card says so ("Reconnecting") until it resumes or ends.
+        recording = "recording" if status == "live" else ("paused" if status == "suspended" else "none")
+        transcript = "live" if status == "live" else ("ready" if segments else "none")
         source_kind = "meetingsense"
         source_label = _LIVE_SOURCE_LABELS.get((row.get("source") or "").lower(), "HomePilot")
     else:

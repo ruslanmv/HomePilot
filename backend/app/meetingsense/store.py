@@ -433,7 +433,7 @@ def end_meeting(meeting_id: str, *, ended_at: Optional[float] = None, summary: A
         con.close()
 
 
-def close_orphaned_meetings() -> int:
+def close_orphaned_meetings(keep: Iterable[str] = (), *, started_before: Optional[float] = None) -> int:
     """End meetings that a previous server process left ``live`` or ``suspended``.
 
     Sessions live in memory (see ``session._SESSIONS``): after a restart nothing can resume
@@ -445,7 +445,22 @@ def close_orphaned_meetings() -> int:
     The end time is the truest one available: when the socket dropped, else the end of the
     last line transcribed, else the start (an empty meeting has no duration to invent).
     Returns how many meetings were closed.
+
+    Also called while the server runs, by the library (see ``library/projection.py``): a row
+    still "in progress" whose session this process does not hold — ``keep`` lists the ones it
+    does — can never be continued, and saying "Recording" over it is the stale card the
+    library showed. ``started_before`` spares a meeting whose row is written but whose session
+    is a moment from being registered.
     """
+    keep = [str(k) for k in keep if k]
+    clauses = ["ended_at IS NULL", "status IN ('live', 'suspended')"]
+    params: List[Any] = []
+    if keep:
+        clauses.append(f"id NOT IN ({','.join('?' for _ in keep)})")
+        params.extend(keep)
+    if started_before is not None:
+        clauses.append("started_at < ?")
+        params.append(float(started_before))
     con = _connect()
     try:
         cur = con.execute(
@@ -460,8 +475,8 @@ def close_orphaned_meetings() -> int:
                        ) / 1000.0,
                        started_at
                    )
-             WHERE ended_at IS NULL AND status IN ('live', 'suspended')
-            """
+             WHERE """ + " AND ".join(clauses),
+            params,
         )
         con.commit()
         return int(cur.rowcount or 0)

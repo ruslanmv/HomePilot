@@ -10,7 +10,7 @@ import { backendBase, requestHeaders } from '../api';
 export type TranscriptState =
     | 'none' | 'imported' | 'queued' | 'transcribing' | 'ready' | 'ready_warnings' | 'failed'
     | 'needs_setup' | 'no_speech' | 'transcript_only' | 'live';
-export type RecordingState = 'none' | 'awaiting' | 'recording' | 'present' | 'unavailable';
+export type RecordingState = 'none' | 'awaiting' | 'recording' | 'paused' | 'present' | 'unavailable';
 
 export interface LibraryProject { id: string; name: string; kind?: string; missing?: boolean }
 

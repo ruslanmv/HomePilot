@@ -195,7 +195,7 @@ TRANSCRIPT_STATES = (
     "none", "imported", "queued", "transcribing", "ready", "ready_warnings",
     "failed", "needs_setup", "no_speech", "transcript_only",
 )
-RECORDING_STATES = ("none", "awaiting", "recording", "present", "unavailable")
+RECORDING_STATES = ("none", "awaiting", "recording", "paused", "present", "unavailable")
 JOB_STATES = ("queued", "running", "done", "failed", "cancelled", "needs_setup")
 
 _migrated_paths: set = set()

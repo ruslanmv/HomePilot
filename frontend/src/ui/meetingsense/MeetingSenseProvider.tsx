@@ -21,6 +21,7 @@ import { useMeetingRecord } from './useMeetingRecord';
 import type { MeetingRecord } from './meetingRecord';
 import type { MeetingSenseStatus } from './entryPoint';
 import { readMeetingModelTarget } from './api';
+import { readMeetingPrefs, subscribeMeetingPrefs } from './meetingPrefs';
 
 export interface MeetingSenseProviderProps {
     conversationId: string | null;
@@ -191,8 +192,13 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
     const meeting = useMeetingSense({ provider: status?.stt?.provider ?? null });
     const [capture, setCapture] = useState<CaptureOptions>(() => {
         const target = readMeetingModelTarget();
+        const prefs = readMeetingPrefs();
         return {
             ...DEFAULT_CAPTURE,
+            // Settings → Meetings sets the default document; the wizard can still change it
+            // for one meeting.
+            summaryStyle: prefs.summaryStyle,
+            summaryLength: prefs.summaryLength,
             summaryProvider: target.provider,
             summaryModel: target.model,
             summaryBaseUrl: target.baseUrl,
@@ -201,6 +207,12 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
             conversationBaseUrl: target.baseUrl,
         };
     });
+    // A change in Settings → Meetings reaches the next meeting without a reload.
+    useEffect(() => subscribeMeetingPrefs((prefs) => setCapture((current) => ({
+        ...current,
+        summaryStyle: prefs.summaryStyle,
+        summaryLength: prefs.summaryLength,
+    }))), []);
     const [pendingStart, setPendingStart] = useState(false);
     const [starting, setStarting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -279,12 +291,17 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
         setStarting(true);
         setError(null);
 
+        // Read at the moment of starting, so Settings → Meetings applies to the very next one.
+        const prefs = readMeetingPrefs();
         try {
             const result = await meeting.start({
                 conversationId: nextConversation,
                 ...(override?.title ? { title: override.title } : {}),
                 ...(override?.projectId ? { projectId: override.projectId } : {}),
-                notes: true,
+                // Live notes ask the chat model for a recap every minute. Off in Settings →
+                // Meetings for a slow computer; the summary at the end is written either way.
+                notes: prefs.liveNotes,
+                language: prefs.language,
                 watch: capture.slides,
                 audio: capture.audio,
                 mic: capture.mic,
@@ -304,6 +321,7 @@ export function MeetingSenseProvider(props: React.PropsWithChildren<MeetingSense
                     provider: capture.summaryProvider,
                     model: capture.summaryModel,
                     base_url: capture.summaryBaseUrl,
+                    ...(prefs.summaryLanguage ? { language: prefs.summaryLanguage } : {}),
                 },
                 conversation: {
                     provider: capture.conversationProvider,

@@ -153,6 +153,12 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
         const onAudioLost = (event: Event) => {
             patch({ audioMode: (event as CustomEvent).detail?.audioMode ?? null });
         };
+        // Advice from the server, e.g. that the microphone keeps repeating the call because it
+        // is coming out of the speakers. Shown in the same banner as the restart notice.
+        const onNotice = (event: Event) => {
+            const msg = (event as CustomEvent).detail?.msg;
+            if (typeof msg === 'string' && msg.trim()) patch({ notice: msg.trim() });
+        };
 
         const handlers: Array<[string, EventListener]> = [
             ['ms:segment', onSegment],
@@ -168,6 +174,7 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
             ['ms:restarting', onRestarting],
             ['ms:restarted', onRestarted],
             ['ms:audio_lost', onAudioLost],
+            ['ms:notice', onNotice],
         ];
         for (const [name, handler] of handlers) target.addEventListener(name, handler);
         return () => {

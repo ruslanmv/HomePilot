@@ -69,7 +69,8 @@ class STTProvider(abc.ABC):
     async def transcribe(self, audio: bytes, *, fmt: str = "wav") -> str: ...
 
     async def transcribe_segments(
-        self, audio: bytes, *, fmt: str = "wav", duration_s: float | None = None
+        self, audio: bytes, *, fmt: str = "wav", duration_s: float | None = None,
+        language: str | None = None,
     ) -> List[Span]:
         """Transcribe into timed spans.
 
@@ -383,7 +384,8 @@ class OpenAICompatSTTProvider(STTProvider):
             return (r.json().get("text") or "").strip()
 
     async def transcribe_segments(
-        self, audio: bytes, *, fmt: str = "wav", duration_s: float | None = None
+        self, audio: bytes, *, fmt: str = "wav", duration_s: float | None = None,
+        language: str | None = None,
     ) -> List[Span]:
         """The same endpoint, asked for timings (MS1-a).
 
@@ -409,6 +411,9 @@ class OpenAICompatSTTProvider(STTProvider):
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         files = {"file": (f"audio.{fmt}", audio, f"audio/{fmt}")}
         data = {"model": self.model, "response_format": "verbose_json"}
+        if language:
+            # The OpenAI transcription API's own field; a server that ignores it detects.
+            data["language"] = language
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(
                 f"{self.base_url}/audio/transcriptions", headers=headers, files=files, data=data
@@ -747,7 +752,12 @@ class WhisperLocalSTTProvider(STTProvider):
                 pass
 
     async def transcribe_segments(
-        self, audio: bytes, *, fmt: str = "wav", duration_s: float | None = None
+        self,
+        audio: bytes,
+        *,
+        fmt: str = "wav",
+        duration_s: float | None = None,
+        language: str | None = None,
     ) -> List[Span]:
         """The same call, keeping the timings ``transcribe`` throws away.
 
@@ -759,15 +769,34 @@ class WhisperLocalSTTProvider(STTProvider):
         token log-probability as a rough 0–1 confidence. It is a signal for greying out a
         doubtful line, not a calibrated probability, and it is reported as ``None`` when the
         model does not supply one rather than defaulted to something reassuring.
+
+        This is the meeting path, so it also applies :mod:`.transcript_quality` — a speech
+        gate before decoding, options against repetition loops, and a filter for Whisper's
+        captions for silence. ``language`` decodes in that language instead of guessing it per
+        clip; when it is not given, each span reports what was detected (``lang``,
+        ``lang_p``) so the meeting can lock to it. ``transcribe`` (voice calls) is unchanged.
         """
+        from . import transcript_quality as quality
+
         path = self._write_temp(audio, fmt)
+        filtering = quality.enabled()
 
         def _run(model) -> List[Span]:
-            segments, _info = model.transcribe(path)
+            if filtering and quality.has_speech(path) is False:
+                return []
+            options = quality.supported(model.transcribe, quality.MEETING_OPTIONS) if filtering else {}
+            if language:
+                options["language"] = language
+            segments, info = model.transcribe(path, **options)
+            detected = None if language else getattr(info, "language", None)
+            detected_p = getattr(info, "language_probability", None) if detected else None
             spans: List[Span] = []
             for seg in segments:
                 text = (getattr(seg, "text", "") or "").strip()
                 if not text:
+                    continue
+                if filtering and not quality.keep(seg):
+                    log.debug("meeting transcript: dropped %r", text)
                     continue
                 logprob = getattr(seg, "avg_logprob", None)
                 conf = None
@@ -776,14 +805,17 @@ class WhisperLocalSTTProvider(STTProvider):
                         conf = round(min(1.0, max(0.0, math.exp(logprob))), 4)
                     except (OverflowError, ValueError):
                         conf = None
-                spans.append(
-                    {
-                        "t0": float(getattr(seg, "start", 0.0) or 0.0),
-                        "t1": float(getattr(seg, "end", 0.0) or 0.0),
-                        "text": text,
-                        "conf": conf,
-                    }
-                )
+                span: Span = {
+                    "t0": float(getattr(seg, "start", 0.0) or 0.0),
+                    "t1": float(getattr(seg, "end", 0.0) or 0.0),
+                    "text": text,
+                    "conf": conf,
+                }
+                if isinstance(detected, str) and detected:
+                    span["lang"] = detected
+                    if isinstance(detected_p, (int, float)):
+                        span["lang_p"] = round(float(detected_p), 4)
+                spans.append(span)
             return spans
 
         try:

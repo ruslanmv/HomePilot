@@ -3,6 +3,8 @@ import { ProgressBar, Skeleton } from './motion'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink,
   MessageSquare, ScanEye, Image as ImageIcon, Pencil, Video, Sparkles, Layers, Puzzle } from 'lucide-react'
 import OllaBridgeModels from './components/OllaBridgeModels'
+import OllaBridgeChatPanel from './components/ollabridge/OllaBridgeChatPanel'
+import { isOllaBridgeChatRoute } from './components/ollabridge/chatRoute'
 import { isAccountsUxEnabled } from './account/featureFlags'
 import { GENERATED_CATALOGS } from '../generated/modelCatalog'
 import { ModelAdvisorCard } from './components/ModelAdvisorCard'
@@ -341,11 +343,17 @@ export default function ModelsView(props: ModelsParams) {
   const [providersError, setProvidersError] = useState<string | null>(null)
 
   const [modelType, setModelType] = useState<'chat' | 'multimodal' | 'image' | 'video' | 'edit' | 'enhance' | 'addons' | 'lora'>('chat')
-  const [provider, setProvider] = useState<string>(props.providerChat || 'ollama')
+  // Chat routed to an OllaBridge connection (openai_compat @ the Local gateway
+  // or the Cloud relay) reopens on the OllaBridge provider, where it was picked.
+  const chatProviderDefault = () =>
+    isOllaBridgeChatRoute(props.providerChat, props.baseUrlChat) ? 'ollabridge' : (props.providerChat || 'ollama')
+  const [provider, setProvider] = useState<string>(chatProviderDefault)
   // Latest provider for effects that only depend on [modelType] but must not
   // clobber a manual OllaBridge selection when the user switches tabs.
   const providerRef = React.useRef(provider)
   React.useEffect(() => { providerRef.current = provider }, [provider])
+  // OllaBridge on the Chat tab shows the Local + Cloud connection cards.
+  const ollaBridgeChat = provider === 'ollabridge' && modelType === 'chat' && !isAccountsUxEnabled()
 
   const defaultBaseUrl = useMemo(() => {
     if (modelType === 'chat') return props.baseUrlChat || ''
@@ -452,7 +460,7 @@ export default function ModelsView(props: ModelsParams) {
     // When modelType changes, update provider + baseUrl defaults
     if (modelType === 'chat') {
       // Switch to a chat provider (prefer the one from settings, or default to ollama)
-      const newProvider = props.providerChat || 'ollama'
+      const newProvider = chatProviderDefault()
       setProvider(newProvider)
       setBaseUrl(props.baseUrlChat || '')
     } else if (modelType === 'multimodal') {
@@ -1578,6 +1586,9 @@ export default function ModelsView(props: ModelsParams) {
             {providersError ? <div className="mt-2 text-xs text-rose-400/80">{providersError}</div> : null}
           </div>
 
+          {/* OllaBridge on Chat has its own Gateway URL / Base URL fields in the
+              Local and Cloud cards below; the override does not apply to it. */}
+          {!ollaBridgeChat && (
           <div className="min-w-0">
             <label htmlFor="hp-models-base-url" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Base URL Override</label>
             <input
@@ -1591,6 +1602,7 @@ export default function ModelsView(props: ModelsParams) {
               Optional. Leave empty to use default configuration.
             </div>
           </div>
+          )}
         </div>
       </div>
 
@@ -1860,7 +1872,11 @@ export default function ModelsView(props: ModelsParams) {
               synced from the user's linked HomePilot / GPU nodes (relay), shown
               for whichever Model Type tab is active. When selected it replaces
               the local catalog for this tab. */}
-          {provider === 'ollabridge' && !isAccountsUxEnabled() ? (
+          {ollaBridgeChat ? (
+            /* Chat: two independent connections — OllaBridge Local (your own
+               gateway) and OllaBridge Cloud (your account's machines). */
+            <OllaBridgeChatPanel backendUrl={backendUrl} backendApiKey={authKey} />
+          ) : provider === 'ollabridge' && !isAccountsUxEnabled() ? (
             <OllaBridgeModels filterType={modelType} />
           ) : (
           <>

@@ -24,6 +24,7 @@ import {
   Cpu,
   Sparkles,
   MessageSquare,
+  CalendarDays,
 } from "lucide-react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
 import ModelDownloadCard from "./components/ModelDownloadCard";
@@ -41,6 +42,7 @@ import ModelExecutionSelector from "./components/compute/ModelExecutionSelector"
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import { MotionGallery } from "./motion/MotionGallery";
 import { ChatAppearanceSettings } from "./components/ChatAppearanceSettings";
+import { MeetingsSettings } from "./meetingsense/MeetingsSettings";
 import { lastCheck, useAdvisorPrefs, writeAdvisorPrefs, type AdvisorPrefs } from "./modelAdvisor";
 
 function AdvisorSwitch({ id, label, hint, checked, disabled, onChange }: {
@@ -401,6 +403,7 @@ const SECTIONS = [
   { id: "generation", label: "Generation", Icon: SlidersHorizontal },
   { id: "memory", label: "Memory & Safety", Icon: ShieldCheck },
   { id: "voice", label: "Voice", Icon: AudioLines },
+  { id: "meetings", label: "Meetings", Icon: CalendarDays },
   { id: "vision", label: "Vision", Icon: Eye },
   { id: "teams", label: "Teams", Icon: Users },
   { id: "tools", label: "Tools & Agents", Icon: Wrench },
@@ -1708,6 +1711,15 @@ export default function SettingsPanel({
       case "generation": return renderGeneration();
       case "memory": return renderMemory();
       case "voice": return renderVoice();
+      case "meetings": return (
+        <SettingsCard
+          title="Meetings"
+          description="How meetings are recorded and transcribed on this computer. Applies right away — no need to Save."
+          icon={<CalendarDays size={16} />}
+        >
+          <MeetingsSettings />
+        </SettingsCard>
+      );
       case "vision": return renderVision();
       case "teams": return renderTeams();
       case "tools": return renderTools();

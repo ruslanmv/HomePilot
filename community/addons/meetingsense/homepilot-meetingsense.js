@@ -960,6 +960,21 @@
         return constraints;
     }
 
+    /**
+     * The spoken language Settings → Meetings chose, or '' to let the server decide.
+     *
+     * Read from `localStorage` for the same reason as `micConstraints`: the key and its shape
+     * are the contract with `meetingsense/meetingPrefs.ts`.
+     */
+    function meetingLanguage() {
+        try {
+            const saved = JSON.parse(window.localStorage.getItem('homepilot_meeting_prefs_v1') || 'null');
+            return saved && typeof saved.language === 'string' ? saved.language : '';
+        } catch (_) {
+            return '';
+        }
+    }
+
     // ── The recorder ──────────────────────────────────────────────────────────────────────
 
     class HPMeetingSense {
@@ -1303,7 +1318,13 @@
 
             this._frameSamples = Math.round((TARGET_RATE * FRAME_MS) / 1000);
             this._framers = null;
-            this._segmenter = new Segmenter({});
+            // A call is a conversation, not a soundtrack. Media cadence — a hard cut every
+            // 2.5 s whatever is being said — exists for a shared video with no pauses in it, and
+            // a busy call reads as exactly that: back-to-back voices tripped it within seconds
+            // and every sentence was cut mid-word ("We are cropping text recognized"). With the
+            // microphone in the mix the cuts come from pauses, up to the normal maximum, and the
+            // provisional line keeps the transcript moving in between.
+            this._segmenter = new Segmenter({ adaptiveMedia: this.audioMode !== 'system+mic' });
             this._elapsedSamples = 0;
             this._channels = channels;
 
@@ -1724,6 +1745,12 @@
                                       conversation:
                                           opts.conversation && typeof opts.conversation === 'object'
                                               ? opts.conversation : null,
+                                      // Settings → Meetings → Spoken language: 'auto' (lock to
+                                      // the first confident detection), 'multi', or a code such
+                                      // as 'en'. Without it Whisper guesses per clip, and a
+                                      // two-second clip of English came back as Italian.
+                                      language: typeof opts.language === 'string' && opts.language
+                                          ? opts.language : meetingLanguage(),
                                       audio: {
                                           rate: TARGET_RATE,
                                           channels: this._channels || 1,
@@ -1803,6 +1830,10 @@
                         emit('ms:queued', frame);
                     } else if (frame.type === 'status' || frame.type === 'final') {
                         emit('ms:status', frame);
+                    } else if (frame.type === 'notice') {
+                        // Advice from the server that is not an error — today, that the
+                        // microphone keeps repeating the call (speakers, not headphones).
+                        emit('ms:notice', frame);
                     } else if (frame.type === 'error') {
                         if (frame.code === 'not_resumable') {
                             // The grace window closed, or the server restarted, and the old

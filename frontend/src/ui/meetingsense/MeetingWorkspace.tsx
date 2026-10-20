@@ -804,6 +804,7 @@ export function MeetingWorkspace({
                                     meetingId={view.meetingId}
                                     documents={summaryDocs(record)}
                                     hasTranscript={view.segments.length > 0}
+                                    writing={record?.summary_writing === true}
                                     modelTarget={{
                                         provider: capture.summaryProvider,
                                         model: capture.summaryModel,

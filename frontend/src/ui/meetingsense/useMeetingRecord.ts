@@ -17,6 +17,9 @@ import { hasPayoff, notesBody, type MeetingRecord } from './meetingRecord';
 /** How many times to look again when the record arrives without notes, and how far apart. */
 export const NOTES_RETRIES = 4;
 export const NOTES_RETRY_MS = 1500;
+/** How many times to look again while the server reports the summary is being written
+ *  (every 2 × NOTES_RETRY_MS — ten minutes in all). */
+export const WRITING_MAX_POLLS = 200;
 
 export interface UseMeetingRecordOptions {
     meetingId: string | null;
@@ -59,6 +62,7 @@ export function useMeetingRecord({
         }
         let cancelled = false;
         let attempt = 0;
+        let writingPolls = 0;
         const get = fetcher || (typeof fetch === 'function' ? fetch : null);
         if (!get) return undefined;
 
@@ -81,7 +85,14 @@ export function useMeetingRecord({
                 // accept that this meeting has no notes — some genuinely do not, and a
                 // meeting of pure silence should not spin forever.
                 const ready = hasPayoff(notesBody(body?.notes));
-                if (!ready && attempt < NOTES_RETRIES) {
+                // The server is still writing the end-of-meeting document — a local model can
+                // take minutes. Keep looking, more slowly, for as long as it says so (bounded),
+                // rather than settling on "No summary" while the summary is on its way.
+                if (body?.summary_writing === true && writingPolls < WRITING_MAX_POLLS) {
+                    writingPolls += 1;
+                    setPendingNotes(true);
+                    timer.current = setTimeout(() => void load(), delayMs * 2);
+                } else if (!ready && attempt < NOTES_RETRIES) {
                     attempt += 1;
                     setPendingNotes(true);
                     timer.current = setTimeout(() => void load(), delayMs);

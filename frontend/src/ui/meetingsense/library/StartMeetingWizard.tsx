@@ -18,7 +18,7 @@
 import React, { useMemo, useState } from 'react';
 import {
     ArrowLeft, ArrowRight, AudioLines, CalendarClock, CalendarDays, Check, Clock3, FileText, Folder, HardDrive,
-    Info, Lightbulb, Mic, Mic2, MonitorUp, Radio, ShieldCheck, SlidersHorizontal, Sparkles, Users, X,
+    Headphones, Info, Lightbulb, Mic, Mic2, MonitorUp, Radio, ShieldCheck, SlidersHorizontal, Sparkles, Users, X,
 } from 'lucide-react';
 import { ModalSheet } from '../../components/ModalSheet';
 import { DEFAULT_CAPTURE, MODES, type CaptureOptions } from '../CapturePopover';
@@ -240,6 +240,12 @@ export function StartMeetingWizard({ onClose, onCreated, canRecordLive = true }:
                         <p className="mt-3 flex gap-2 text-xs leading-5 text-white/55" data-testid="hp-quick-hint">
                             <Info size={14} className="mt-0.5 shrink-0 text-sky-300" /> {shareHint(quick)}
                         </p>
+                        {quick.audio && quick.mic ? (
+                            <p className="mt-1.5 flex gap-2 text-xs leading-5 text-white/45" data-testid="hp-quick-headphones">
+                                <Headphones size={14} className="mt-0.5 shrink-0 text-cyan-300" />
+                                Headphones give the cleanest transcript: through speakers the call also reaches your microphone.
+                            </p>
+                        ) : null}
                     </fieldset>
 
                     <label className="block text-sm text-white/75">Title <span className="text-white/40">(optional)</span>

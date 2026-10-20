@@ -17,11 +17,14 @@ notice a disconnect and both will try.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence
 
+from . import echo as echo_mod
+from . import language as language_mod
 from . import store
 from .transcript import UtteranceAssembler
 
@@ -36,6 +39,56 @@ log = logging.getLogger(__name__)
 #: every eight seconds, so at most one request is usually outstanding; this is the ceiling on
 #: how much a slow vision model may delay the end of a meeting.
 CAPTION_DRAIN_S = 8.0
+
+#: How long the audio path waits for model work it started — a notes window, a chip draft, an
+#: answer to the assistant's name — before letting it finish in the background.
+#:
+#: This used to be "as long as it takes", and with a slow local model that was the bug behind
+#: meetings breaking into pieces: a reasoning model took a minute per notes window, the frame
+#: loop stopped reading the socket for that minute, the WebSocket keepalive failed, the
+#: browser reconnected, and its resume was refused because the server still thought the old
+#: socket was live — so every forty seconds the call became a new "Untitled meeting". A fast
+#: model still answers inside this window, so its frames arrive exactly where they did.
+FOLLOW_UP_INLINE_S = 0.75
+
+#: At `stop`, how long background model work may take before the meeting ends without it.
+FOLLOW_UP_DRAIN_S = 10.0
+
+#: At `stop`, the ceiling on the final forced notes window. The store already says the meeting
+#: ended; this is only how long the last minute of rolling notes is waited for.
+FINAL_NOTES_S = 30.0
+
+#: The once-per-meeting notice sent when the microphone keeps repeating the call.
+ECHO_NOTICE_AFTER = 2
+ECHO_NOTICE = (
+    "Your microphone is picking up the call from your speakers. HomePilot removes the repeated "
+    "lines, but headphones give a cleaner transcript."
+)
+
+
+def _ours(task: Any) -> Any:
+    """``task`` if it belongs to the running event loop, else ``None``.
+
+    A server has one loop and this is always the task. A caller that drives a session from a
+    fresh loop per call — the avatar bridge's tests do — leaves tasks behind on loops that will
+    never run again, and waiting on one of those from the next loop never returns.
+    """
+    if task is None:
+        return None
+    try:
+        return task if task.get_loop() is asyncio.get_running_loop() else None
+    except (AttributeError, RuntimeError):
+        return None
+
+
+def _accepts_keyword(fn: Any, name: str) -> bool:
+    """Whether ``fn`` takes keyword ``name`` — so an injected transcriber written before the
+    keyword existed keeps working rather than failing every frame with a TypeError."""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 class Transport(Protocol):
@@ -216,6 +269,17 @@ class MeetingSession:
         #: persisted beside the meeting so a stop that happens after a reconnect (or after
         #: the tab was closed) still produces the document the user asked for.
         self.summary_options: Any = None
+        #: The meeting's spoken language — fixed by `start`, or locked from the first
+        #: confident detections. See :mod:`.language`.
+        self.language = language_mod.LanguageLock(language_mod.configured_default())
+        #: Remembers what the call said so the microphone repeating it can be dropped.
+        self.echo = echo_mod.EchoGuard()
+        self._echo_noticed = False
+        #: Model work started from the audio path, by kind, so it never holds the frame loop
+        #: and `stop` can wait for it. See `FOLLOW_UP_INLINE_S`.
+        self._follow_ups: Dict[str, Any] = {}
+        #: `time.monotonic()` of the last frame its socket delivered; set by the frame loop.
+        self.last_heard: float = 0.0
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
@@ -270,6 +334,8 @@ class MeetingSession:
         # summary model selected in setup instead of silently falling back to another provider.
         self._remember_summary_prefs(message.get("summary"))
         self._remember_ask_prefs(message.get("conversation"))
+        # Settings → Meetings → Spoken language. Absent keeps the operator default (auto).
+        self.language.request(message.get("language"))
 
         # MS12-a. The engine is built here rather than in the constructor because whether
         # notes are wanted arrives in this frame — and because it was built *nowhere* until
@@ -442,20 +508,38 @@ class MeetingSession:
         # how long people were talking.
         self.ended_at = self.suspended_at if self.suspended_at is not None else self._now()
         self.state = MeetingState.ENDED
+        # The store first, before anything that waits on a model: the library and the
+        # conversation card read this row, and a meeting whose end was queued behind a slow
+        # notes call used to show "Recording" long after everyone had hung up.
+        store.end_meeting(self.meeting_id, ended_at=self.ended_at)
+        # And the recap is told a document is on its way, from this moment rather than from
+        # when the summariser starts, so it never shows "No summary" in between.
+        summary_cfg = getattr(self.config, "summary", None)
+        if summary_cfg is None or getattr(summary_cfg, "auto", True):
+            from . import minutes as minutes_mod
+
+            minutes_mod.expect_summary(self.meeting_id)
+
+        # Model work the audio path started and has not finished, briefly — then without it.
+        await self._drain_follow_ups(FOLLOW_UP_DRAIN_S)
 
         # The final window, forced: without this the last minute of every meeting is missing
-        # from its notes, and the summary is built from an incomplete picture.
+        # from its notes, and the summary is built from an incomplete picture. Bounded: the
+        # summary below reads the whole transcript anyway, so a slow model costs the rolling
+        # recap its last minute, not the meeting its end.
         if self.notes is not None:
             try:
-                final_notes = await self.notes.run(force=True)
+                final_notes = await asyncio.wait_for(self.notes.run(force=True), FINAL_NOTES_S)
                 if final_notes is not None:
-                    await self.transport.send(final_notes)
+                    await self._emit(final_notes)
+            except asyncio.TimeoutError:
+                log.warning("meetingsense: final notes for %s took over %ss; skipped",
+                            self.meeting_id, FINAL_NOTES_S)
             except Exception:  # noqa: BLE001
                 log.exception("meetingsense: final notes failed for %s", self.meeting_id)
         # Captions still in flight, briefly: the summary message is written below, and a
         # caption that lands a second after it is a caption nobody reads.
         await self.drain_captions()
-        store.end_meeting(self.meeting_id, ended_at=self.ended_at)
         final: Frame = {
             "type": "final",
             "meeting_id": self.meeting_id,
@@ -463,7 +547,9 @@ class MeetingSession:
             "segments": self.segment_count,
             "slides": self.keyframe_count,
         }
-        await self.transport.send(final)
+        # Never raises: a client that closed its socket first must not cost the meeting its
+        # summary, its conversation message or its search index below.
+        await self._emit(final)
 
         # MS34, and deliberately before `finalize`: the summary message a meeting leaves in
         # its conversation should carry the real document rather than the rolling recap when
@@ -471,7 +557,12 @@ class MeetingSession:
         # nobody is waiting on this — and `autogenerate` swallows everything, because a
         # meeting that recorded a perfectly good transcript must end cleanly whatever the
         # summariser does.
-        await self._write_summary()
+        try:
+            await self._write_summary()
+        finally:
+            from . import minutes as minutes_mod
+
+            minutes_mod.summary_done(self.meeting_id)
 
         # The meeting lands in its conversation here rather than in the route, so both
         # transports get it: MS7's avatar session ends a meeting through this same method.
@@ -550,14 +641,23 @@ class MeetingSession:
         t1 = message.get("t1")
         t0_ms = int(message.get("t0") or 0)
         duration_s = None if t1 is None else max(0.0, (float(t1) - t0_ms) / 1000.0)
-        return await self._transcribe(
+        kwargs: Dict[str, Any] = {}
+        language = self.language.decode_language
+        if language and _accepts_keyword(self._transcribe, "language"):
+            kwargs["language"] = language
+        spans = await self._transcribe(
             audio,
             fmt=message.get("format") or "wav",
             # The client framed this audio and knows how long it is; the provider may not,
             # and a provider that only returns text would otherwise report `t1: None` for a
             # span whose length was never in doubt.
             duration_s=duration_s,
+            **kwargs,
         )
+        # Provisional reads are the same audio again; only the stored path gets a vote.
+        if not message.get("partial"):
+            self.language.observe(spans or [])
+        return spans
 
     async def on_audio(self, message: Frame) -> List[Frame]:
         """Transcribe one chunk and emit whatever it added.
@@ -574,6 +674,15 @@ class MeetingSession:
             chunk_t0_ms=int(message.get("t0") or 0),
             speaker=speaker,
         )
+        # The call coming back through the microphone is not the user speaking: see
+        # :mod:`.echo`. The call channel is split first in every stereo frame, so what the
+        # call said at this moment is already known when the microphone's copy arrives.
+        echoes: List[Frame] = []
+        if echo_mod.enabled():
+            fresh, echoes = echo_mod.split(fresh, self.echo, speaker)
+        if echoes:
+            log.debug("meetingsense: dropped %d echoed microphone line(s)", len(echoes))
+            await self._maybe_echo_notice()
         if not fresh:
             return []
 
@@ -600,11 +709,90 @@ class MeetingSession:
             await self.transport.send(frame)
             sent.append(frame)
 
+        # Everything below may wait on a model. None of it may hold the frame loop: see
+        # `FOLLOW_UP_INLINE_S`. Notes are single-flight — the window keeps filling while one
+        # is out — and the rest runs in arrival order, behind whatever ran before it.
         await self._maybe_notes(fresh)
-        await self._maybe_chips(fresh)
-        await self._maybe_addressed(fresh)
-        await self._maybe_queue(fresh)
+
+        async def tail() -> None:
+            await self._maybe_chips(fresh)
+            await self._maybe_addressed(fresh)
+            await self._maybe_queue(fresh)
+
+        await self._settle(self._follow_up("tail", tail, chain=True))
         return sent
+
+    # ── model work off the audio path ──────────────────────────────────────
+
+    async def _emit(self, frame: Frame) -> bool:
+        """Send a frame that nothing waits on. Never raises; returns whether it was sent.
+
+        For the end of a meeting and for work finishing in the background: the socket may
+        have gone in the meantime, and a dead socket must not cost the meeting its summary
+        or turn a finished notes window into a traceback.
+        """
+        try:
+            await self.transport.send(frame)
+            return True
+        except Exception:  # noqa: BLE001 — the peer is gone; the store has what matters
+            log.debug("meetingsense: could not send %s for %s", frame.get("type"),
+                      self.meeting_id, exc_info=True)
+            return False
+
+    def _follow_up(self, kind: str, work: Callable[[], Awaitable[Any]], *,
+                   chain: bool = False) -> Any:
+        """Start ``work`` as a task tracked under ``kind``.
+
+        ``chain`` runs it after the previous task of that kind, so ordered work stays in
+        order; otherwise a task already running means this one is not started and that one is
+        returned (single-flight). Exceptions are logged here, because a background task whose
+        failure nobody reads is a failure nobody sees.
+        """
+        previous = _ours(self._follow_ups.get(kind))
+        running = previous is not None and not previous.done()
+        if running and not chain:
+            return previous
+
+        async def runner() -> Any:
+            if running:
+                await asyncio.wait({previous})
+            try:
+                return await work()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — model work is never worth a meeting
+                log.exception("meetingsense: %s failed for %s", kind, self.meeting_id)
+                return None
+
+        task = asyncio.get_running_loop().create_task(runner())
+        self._follow_ups[kind] = task
+        return task
+
+    @staticmethod
+    async def _settle(task: Any, timeout: float = FOLLOW_UP_INLINE_S) -> None:
+        """Wait up to ``timeout`` for ``task``, then let it carry on alone. Never cancels."""
+        task = _ours(task)
+        if task is not None and not task.done():
+            await asyncio.wait({task}, timeout=timeout)
+
+    async def _drain_follow_ups(self, timeout: float) -> None:
+        """At the end of a meeting: let background work finish, up to ``timeout``, then cancel."""
+        pending = {t for t in map(_ours, self._follow_ups.values()) if t is not None and not t.done()}
+        if not pending:
+            return
+        _, unfinished = await asyncio.wait(pending, timeout=max(0.0, timeout))
+        for task in unfinished:
+            task.cancel()
+        if unfinished:
+            log.warning("meetingsense: %d model task(s) still running when %s ended; cancelled",
+                        len(unfinished), self.meeting_id)
+
+    async def _maybe_echo_notice(self) -> None:
+        """Tell the user, once, that their speakers are reaching their microphone."""
+        if self._echo_noticed or self.echo.suppressed < ECHO_NOTICE_AFTER:
+            return
+        self._echo_noticed = True
+        await self._emit({"type": "notice", "code": "echo", "msg": ECHO_NOTICE})
 
     async def _maybe_chips(self, fresh: List[Frame],
                            keyframe: Optional[Frame] = None) -> List[Frame]:
@@ -658,13 +846,23 @@ class MeetingSession:
             self.notes.add(fresh)
             if not self.notes.due():
                 return None
-            frame = await self.notes.run()
         except Exception:  # noqa: BLE001 — notes are never worth a meeting
             log.exception("meetingsense: notes failed for %s", self.meeting_id)
             return None
-        if frame is not None:
-            await self.transport.send(frame)
-        return frame
+
+        async def window() -> Optional[Frame]:
+            frame = await self.notes.run()
+            if frame is not None and self.state == MeetingState.LIVE:
+                await self._emit(frame)
+            return frame
+
+        # Single-flight: while one window is with the model, the next keeps filling and goes
+        # when this one is back. A fast model answers inside the inline wait, exactly as before.
+        task = self._follow_up("notes", window)
+        await self._settle(task)
+        if task.done() and not task.cancelled():
+            return task.result()
+        return None
 
     def _apply_start_mode(self, requested: Any) -> None:
         """Record the wizard's helper mode, the same way the REST `op: "mode"` does.
@@ -834,9 +1032,17 @@ class MeetingSession:
             frame = {
                 "type": "partial",
                 "t0": int(round(float(span.get("t0") or 0.0) * 1000)) + t0_ms,
+                "t1": int(round(float(span.get("t1") or span.get("t0") or 0.0) * 1000)) + t0_ms,
                 "speaker": span.get("speaker") or message.get("speaker"),
                 "text": text,
             }
+            # The same echo rule as the stored path, so the call's words do not flash up under
+            # "You" for the seconds before the final line replaces them.
+            if frame["speaker"] == echo_mod.FAR:
+                self.echo.heard_partial(frame)
+            elif (frame["speaker"] == echo_mod.NEAR and echo_mod.enabled()
+                  and self.echo.is_echo(frame, partial=True)):
+                continue
             await self.transport.send(frame)
             sent.append(frame)
         return sent

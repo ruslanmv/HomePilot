@@ -365,8 +365,76 @@ async def stream_gemini(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OpenAI-compatible endpoint the user chose for chat (OllaBridge gateway, Cloud relay, vLLM…)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def chat_openai_compat(
+    messages: List[Dict[str, Any]],
+    *,
+    base_url: str,
+    model: str = "",
+    api_key: str = "",
+    temperature: float = EXPERT_TEMPERATURE,
+    max_tokens: int = EXPERT_MAX_TOKENS,
+    provider_label: str = "openai_compat",
+) -> Dict[str, Any]:
+    """``POST {base_url}/chat/completions`` — the same request HomePilot's ordinary chat sends
+    (``app.llm.chat_openai_compat``), kept here because Expert is loaded as its own top-level
+    package and cannot import the backend's modules relatively.
+
+    Failures carry the endpoint's own explanation: a gateway that refuses a model says why in
+    its body, and "HTTP 500" alone sends the user looking in the wrong place.
+    """
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    payload: Dict[str, Any] = {
+        "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+        "stream": False,
+    }
+    if model:
+        payload["model"] = model
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            r = await client.post(url, json=payload, headers=headers)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            f"Could not reach {base_url} for {model or 'the selected model'} "
+            f"({type(exc).__name__}). Is it running?"
+        ) from exc
+    if r.status_code >= 400:
+        detail = ""
+        try:
+            body = r.json()
+            err = body.get("error") if isinstance(body, dict) else None
+            detail = str((err.get("message") if isinstance(err, dict) else err) or body.get("detail") or "")
+        except Exception:  # noqa: BLE001
+            detail = (r.text or "").strip()
+        raise RuntimeError(
+            f"{model or 'The selected model'} at {base_url} answered HTTP {r.status_code}"
+            + (f": {detail[:240]}" if detail else "")
+        )
+    data = r.json()
+    return _openai_wrap(_extract_content(data), str(data.get("model") or model), provider_label)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Local Ollama  (free, on-premises, no API key needed)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _ollama_failure(r: httpx.Response, mdl: str) -> RuntimeError:
+    """Ollama's own reason for a 5xx, which is usually the useful part ("model requires more
+    system memory", "llama runner process has terminated") and was hidden behind a bare
+    ``500 Internal Server Error``."""
+    reason = ""
+    try:
+        reason = str((r.json() or {}).get("error") or "")
+    except Exception:  # noqa: BLE001
+        reason = (r.text or "").strip()
+    reason = reason[:240] or r.reason_phrase or "server error"
+    return RuntimeError(f"Ollama could not run '{mdl}' (HTTP {r.status_code}): {reason}")
+
 
 async def chat_local(
     messages: List[Dict[str, Any]],
@@ -375,11 +443,16 @@ async def chat_local(
     fast: bool = False,
     temperature: float = EXPERT_TEMPERATURE,
     max_tokens: int = EXPERT_MAX_TOKENS,
+    base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Ollama local inference — zero cost, fully sovereign."""
+    """Ollama local inference — zero cost, fully sovereign.
+
+    ``base_url`` is an Ollama the user chose for chat; its model is used as given, since the
+    installed-model check below is about the default Ollama, not that one.
+    """
     requested = model or (EXPERT_LOCAL_FAST_MODEL if fast else EXPERT_LOCAL_MODEL)
-    mdl = await _resolve_local_model(requested)
-    url = f"{_ollama_base()}/api/chat"
+    mdl = requested if (base_url and model) else await _resolve_local_model(requested)
+    url = f"{(base_url or _ollama_base()).rstrip('/')}/api/chat"
     payload = {
         "model": mdl,
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
@@ -396,6 +469,8 @@ async def chat_local(
                 f"Ollama rejected model '{mdl}' with 404. Run "
                 f"`ollama pull {mdl}` and retry (or set EXPERT_LOCAL_MODEL)."
             )
+        if r.status_code >= 500:
+            raise _ollama_failure(r, mdl)
         r.raise_for_status()
         data = r.json()
 
@@ -410,11 +485,12 @@ async def stream_local(
     fast: bool = False,
     temperature: float = EXPERT_TEMPERATURE,
     max_tokens: int = EXPERT_MAX_TOKENS,
+    base_url: Optional[str] = None,
 ) -> AsyncIterator[str]:
-    """Stream tokens from Ollama."""
+    """Stream tokens from Ollama. ``base_url``: as in :func:`chat_local`."""
     requested = model or (EXPERT_LOCAL_FAST_MODEL if fast else EXPERT_LOCAL_MODEL)
-    mdl = await _resolve_local_model(requested)
-    url = f"{_ollama_base()}/api/chat"
+    mdl = requested if (base_url and model) else await _resolve_local_model(requested)
+    url = f"{(base_url or _ollama_base()).rstrip('/')}/api/chat"
     payload = {
         "model": mdl,
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages],

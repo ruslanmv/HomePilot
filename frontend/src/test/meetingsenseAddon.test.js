@@ -606,6 +606,37 @@ describe('reconnect and backpressure, wired', () => {
         expect(recorder.meetingId).toBe('m1');
     });
 
+    it('sends the spoken language chosen in Settings → Meetings', async () => {
+        // Without it Whisper guesses the language per clip, and two seconds of English came
+        // back as Italian ("e piacco").
+        window.localStorage.setItem('homepilot_meeting_prefs_v1', JSON.stringify({ language: 'it' }));
+        try {
+            await openMeeting();
+            expect(sockets[0].sent[0]).toMatchObject({ type: 'start', language: 'it' });
+            // A language passed for this one meeting wins over the saved default. (A new
+            // meeting, not a resume of the one above.)
+            recorder.meetingId = null;
+            await openMeeting({ conversationId: 'c2', language: 'en' });
+            expect(sockets.at(-1).sent[0]).toMatchObject({ type: 'start', language: 'en' });
+        } finally {
+            window.localStorage.removeItem('homepilot_meeting_prefs_v1');
+        }
+    });
+
+    it('passes a server notice on, so the meeting can show it', async () => {
+        listen('ms:notice');
+        const ws = await openMeeting();
+        ws.deliver({ type: 'notice', code: 'echo', msg: 'Use headphones' });
+        expect(of('ms:notice').map((e) => e.detail.code)).toEqual(['echo']);
+    });
+
+    it('cuts a call at pauses, not every 2.5 seconds', () => {
+        // Media cadence exists for a shared video with no pauses; a busy call tripped it and
+        // every sentence was cut mid-word. With the microphone in the mix it stays off.
+        const source = readFileSync(SHIPPED, 'utf8');
+        expect(source).toContain("new Segmenter({ adaptiveMedia: this.audioMode !== 'system+mic' })");
+    });
+
     /*
      * MS34-a. Both compute targets travel on the start frame.
      *
