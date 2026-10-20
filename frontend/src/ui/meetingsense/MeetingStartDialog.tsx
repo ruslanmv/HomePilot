@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { MODES, type CaptureOptions } from './CapturePopover';
 import { SUMMARY_LENGTHS, SUMMARY_STYLES } from './MeetingMinutes';
-import type { ConsentStatus } from './ConsentSheet';
+import { withUserRetention, type ConsentStatus } from './ConsentSheet';
 import { consentSentences } from './meetingState';
 import { fetchMeetingModels } from './api';
 
@@ -92,7 +92,7 @@ export function MeetingStartDialog({
     ]);
 
     const privacyLines = useMemo(
-        () => consentSentences({ ...(status || {}), mode: capture.mode }),
+        () => consentSentences({ ...withUserRetention(status), mode: capture.mode }),
         [status, capture.mode],
     );
     const selectedMode = MODES.find((mode) => mode.id === capture.mode) ?? MODES[0];

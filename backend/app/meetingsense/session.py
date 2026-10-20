@@ -223,6 +223,8 @@ class MeetingSession:
         self.ended_at: Optional[float] = None
         self.conversation_id: Optional[str] = None
         self.audio_mode: Optional[str] = None
+        #: What this meeting keeps (`retention.meeting_retention`), decided by `start`.
+        self.retention: str = "text"
         #: Declared by `start`. Kept on the session because a resume arrives on a new socket
         #: that never sent a `start`, and the channel count decides how its audio is split.
         self.audio_channels: int = 1
@@ -309,6 +311,11 @@ class MeetingSession:
             self.audio_channels = 1
         self.started_at = self._now()
         self.state = MeetingState.LIVE
+        # The operator's MEETINGSENSE_RETENTION when set, otherwise the user's Settings →
+        # Meetings choice. Decided once and stored, so the recording upload can check it.
+        from .retention import meeting_retention  # noqa: PLC0415
+
+        self.retention = meeting_retention(self.config, message.get("keep_audio"))
 
         store.create_meeting(
             conversation_id=conversation_id,
@@ -316,7 +323,7 @@ class MeetingSession:
             title=message.get("title"),
             source=message.get("source"),
             audio_mode=self.audio_mode,
-            retention=getattr(self.config, "retention", "text"),
+            retention=self.retention,
             meeting_id=self.meeting_id,
             started_at=self.started_at,
         )
@@ -392,6 +399,10 @@ class MeetingSession:
                 # email and is told `"minutes"` knows the setting did not take, which is
                 # better than finding out when the meeting ends.
                 "summary": self.summary_options.as_dict() if self.summary_options else None,
+                # Whether to upload the meeting's own recording. The browser records only when
+                # told yes here: a client cannot keep audio a policy said not to.
+                "retention": self.retention,
+                "recording": {"keep": self.retention == "all"},
             }
         )
 

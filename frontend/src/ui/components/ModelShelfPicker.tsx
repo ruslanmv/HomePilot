@@ -15,16 +15,35 @@ const GROUPS: Array<{ kind: ShelfModel['kind']; title: string; hint: string }> =
   { kind: 'assistant', title: 'Assistants & workflows', hint: 'Presets built on a model, with their own instructions.' },
 ]
 
-export function ModelShelfPicker({ source, onClose }: { source: ShelfSource; onClose: () => void }) {
+export interface ModelShelfPickerProps {
+  source: ShelfSource
+  onClose: () => void
+  /** The default ("Suggested") rule; Multimodal passes one that asks the vision check. */
+  suggest?: (m: ShelfModel) => boolean
+  title?: string
+  hint?: string
+  /** A short status shown on each row (Multimodal: the vision check's verdict). */
+  statusOf?: (m: ShelfModel) => string
+  /** Called for each model the user adds, e.g. to check it straight away. */
+  onAdded?: (m: ShelfModel) => void
+}
+
+export function ModelShelfPicker({
+  source, onClose, suggest, title = 'Models offered in chat',
+  hint = 'Each chat can pick one of these in its Chat settings.', statusOf, onAdded,
+}: ModelShelfPickerProps) {
   const uid = useId()
   const [query, setQuery] = useState('')
-  const shown = useMemo(() => new Set(shownModels(source).map((m) => m.id)), [source])
+  const shown = useMemo(() => new Set(shownModels(source, suggest).map((m) => m.id)), [source, suggest])
   const total = source.models.length
 
   const q = query.trim().toLowerCase()
   const matches = (m: ShelfModel) => !q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
 
-  const apply = (next: Set<string>) => setShown(source.key, 'custom', source.models.filter((m) => next.has(m.id)).map((m) => m.id))
+  const apply = (next: Set<string>) => {
+    for (const m of source.models) if (next.has(m.id) && !shown.has(m.id)) onAdded?.(m)
+    setShown(source.key, 'custom', source.models.filter((m) => next.has(m.id)).map((m) => m.id))
+  }
   const toggle = (id: string) => {
     const next = new Set(shown)
     if (next.has(id)) next.delete(id)
@@ -48,9 +67,9 @@ export function ModelShelfPicker({ source, onClose }: { source: ShelfSource; onC
     >
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 id={`${uid}-title`} className="text-sm font-semibold text-white">Models offered in chat</h3>
+          <h3 id={`${uid}-title`} className="text-sm font-semibold text-white">{title}</h3>
           <p className="mt-0.5 text-xs text-white/50">
-            {shown.size} of {total} shown. Each chat can pick one of these in its Chat settings.
+            {shown.size} of {total} shown. {hint}
           </p>
         </div>
         <button
@@ -132,7 +151,12 @@ export function ModelShelfPicker({ source, onClose }: { source: ShelfSource; onC
                             {on ? <Check size={11} strokeWidth={3} /> : null}
                           </span>
                           <span className="min-w-0 flex-1 truncate text-sm text-white/85" title={m.id}>{m.label}</span>
-                          {isSuggested(m) && group.kind === 'model' ? null : m.available === false ? (
+                          {statusOf ? (
+                            <span className={[
+                              'shrink-0 text-[10px]',
+                              statusOf(m).startsWith('✓') ? 'text-emerald-300/90' : statusOf(m).startsWith('✗') ? 'text-rose-300/80' : 'text-white/40',
+                            ].join(' ')}>{statusOf(m)}</span>
+                          ) : isSuggested(m) && group.kind === 'model' ? null : m.available === false ? (
                             <span className="shrink-0 text-[10px] text-amber-200/70">unavailable</span>
                           ) : m.hidden ? (
                             <span className="shrink-0 text-[10px] text-white/35">hidden by gateway</span>

@@ -66,6 +66,8 @@ export interface GatewayModel {
   /** Dropdown text, e.g. "deepseek-r1 (Ollama)". */
   label: string
   kind: GatewayModelKind
+  /** The gateway *claims* it reads images (`capabilities.vision`) — a hint, not proof. */
+  vision?: boolean
   /** The gateway's display name, when it has one ("Natro Destek Koçu"). */
   name?: string
   /** The gateway hides it, or reports it stale / not available. */
@@ -153,11 +155,13 @@ export function normalizeLocalModels(payload: unknown): GatewayModel[] {
     const owner = String(entry.owned_by || '').trim().toLowerCase()
     let shown = kind === 'assistant' && name ? name : displayModelId(id)
     if (owner && shown.toLowerCase().startsWith(`${owner}/`)) shown = shown.slice(owner.length + 1)
+    const caps = entry.capabilities as Record<string, unknown> | undefined
     return {
       id,
       origin,
       label: `${shown} (${origin})`,
       kind,
+      ...(caps && caps.vision === true ? { vision: true } : {}),
       ...(name ? { name } : {}),
       hidden: entry.hidden === true,
       available: entry.stale !== true && (!status || status === 'available'),

@@ -211,7 +211,11 @@ async def meetingsense_status() -> Dict[str, Any]:
     return {
         "enabled": cfg.enabled,
         "ready": ready,
-        "retention": cfg.retention,
+        # What a new meeting keeps when its user has not said otherwise, and — when the
+        # operator set MEETINGSENSE_RETENTION — the policy every meeting keeps instead
+        # (`retention_policy`; null means each user chooses in Settings → Meetings).
+        "retention": cfg.retention if cfg.retention_locked else "all",
+        "retention_policy": cfg.retention if cfg.retention_locked else None,
         "flags": cfg.flags.as_dict(),
         "stt": stt,
         "vision": vision,

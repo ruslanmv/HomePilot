@@ -23,16 +23,25 @@ import {
 } from './ollabridgeCloud'
 import { isRoutedTo, type ChatSelection } from './chatRoute'
 import { useReconnect, type ConnStatus } from './useReconnect'
-import { deactivateSource, rememberCatalog, sourceKey } from '../../lib/modelShelf'
+import { deactivateSource, rememberCatalog, sourceKey, type ShelfRole } from '../../lib/modelShelf'
+import { checkKey, useVisionChecks, visionStatus, type VisionVerdict } from './visionCheck'
 
 type SyncMode = 'restore' | 'retry' | 'fetch' | 'signin'
 
 export interface OllaBridgeCloudCardProps {
   route: ChatSelection
   onSelect: (baseUrl: string, model: string) => void
+  /** `vision`: Models → Multimodal — its own model list, and every model is checked first. */
+  role?: ShelfRole
+  /** HomePilot backend, which runs the vision check. */
+  backendUrl?: string
+  backendApiKey?: string
 }
 
-export default function OllaBridgeCloudCard({ route, onSelect }: OllaBridgeCloudCardProps) {
+export default function OllaBridgeCloudCard({ route, onSelect, role = 'chat', backendUrl, backendApiKey }: OllaBridgeCloudCardProps) {
+  const vision = role === 'vision'
+  const { checks, running, run } = useVisionChecks()
+  const [visionNote, setVisionNote] = useState<{ model: string; verdict: VisionVerdict } | null>(null)
   const [cloudUrl, setCloudUrl] = useState(getCloudUrl)
   const [token, setToken] = useState(getCloudToken)
   const [status, setStatus] = useState<ConnStatus>(() => (getCloudToken() ? 'connecting' : 'disconnected'))
@@ -66,7 +75,7 @@ export default function OllaBridgeCloudCard({ route, onSelect }: OllaBridgeCloud
     setFetching(false)
     if (inv.status === 'expired') {
       clearCloudSession()
-      deactivateSource(sourceKey('openai_compat', cloudChatBaseUrl(url)))
+      deactivateSource(sourceKey('openai_compat', cloudChatBaseUrl(url), role))
       setToken('')
       setDevices([])
       setModels(null)
@@ -92,7 +101,7 @@ export default function OllaBridgeCloudCard({ route, onSelect }: OllaBridgeCloud
     setModels(options)
     // Level 1 of the model shelf: what this account offers, for each chat's Chat settings.
     rememberCatalog(
-      { title: 'OllaBridge Cloud', provider: 'openai_compat', baseUrl: cloudChatBaseUrl(url) },
+      { title: 'OllaBridge Cloud', provider: 'openai_compat', baseUrl: cloudChatBaseUrl(url), role },
       options.map((o) => ({
         id: o.id,
         label: o.label,
@@ -138,7 +147,7 @@ export default function OllaBridgeCloudCard({ route, onSelect }: OllaBridgeCloud
   function signOut() {
     seqRef.current++
     clearCloudSession()
-    deactivateSource(sourceKey('openai_compat', cloudChatBaseUrl(urlRef.current)))
+    deactivateSource(sourceKey('openai_compat', cloudChatBaseUrl(urlRef.current), role))
     setToken('')
     setDevices([])
     setModels(null)
@@ -158,12 +167,35 @@ export default function OllaBridgeCloudCard({ route, onSelect }: OllaBridgeCloud
   const offline = connected && !!selectedOption && !selectedOption.available
   const onlineCount = devices.filter((d) => d.online).length
 
+  // Multimodal: each model carries its vision-check verdict. The Cloud reports no capability
+  // flags, so the check is the only evidence — it runs when a model is chosen.
+  const verdictOf = (id: string) => checks[checkKey(chatBase, id)]
+  const checkingId = (id: string) => !!running[checkKey(chatBase, id)]
+  const labelOf = (m: CloudModelOption) => (vision ? `${m.label} — ${visionStatus({}, verdictOf(m.id), checkingId(m.id))}` : m.label)
+
   const options: SelectOption[] = []
   if (missing) options.push({ value: selected, label: `${displayModelId(selected)} — unavailable`, disabled: true })
   for (const m of models || []) {
-    options.push({ value: m.id, label: m.label, group: CLOUD_GROUP_LABEL[m.group], disabled: !m.available })
+    options.push({ value: m.id, label: labelOf(m), group: CLOUD_GROUP_LABEL[m.group], disabled: !m.available })
   }
   const selectable = (models || []).some((m) => m.available)
+
+  /** Multimodal: check the model with a test image before images are sent to it. */
+  const choose = async (id: string, force = false) => {
+    if (!vision || force) {
+      setVisionNote(null)
+      onSelect(chatBase, id)
+      return
+    }
+    const known = verdictOf(id)
+    const verdict = known?.sees ? known : await run({ backendUrl, backendApiKey, baseUrl: chatBase, model: id, apiKey: tokenRef.current || undefined })
+    if (verdict.sees) {
+      setVisionNote(null)
+      onSelect(chatBase, id)
+    } else {
+      setVisionNote({ model: id, verdict })
+    }
+  }
 
   const placeholder = !connected
     ? 'Connect first to load models'
@@ -219,7 +251,7 @@ export default function OllaBridgeCloudCard({ route, onSelect }: OllaBridgeCloud
             options={options}
             disabled={!connected || !selectable}
             placeholder={placeholder}
-            onChange={(v) => { if (v) onSelect(chatBase, v) }}
+            onChange={(v) => { if (v) void choose(v) }}
           />
         </div>
         <div className="flex-[1_1_100%] sm:flex-none">
@@ -298,9 +330,34 @@ export default function OllaBridgeCloudCard({ route, onSelect }: OllaBridgeCloud
         </WarnLine>
       )}
 
+      {vision && visionNote && (
+        <WarnLine
+          action={
+            <button
+              type="button"
+              onClick={() => void choose(visionNote.model, true)}
+              className="text-amber-100 underline underline-offset-2 hover:text-white"
+            >
+              Use anyway
+            </button>
+          }
+        >
+          “{displayModelId(visionNote.model)}” did not pass the image check — {visionNote.verdict.reason || 'it did not describe the test image.'}
+        </WarnLine>
+      )}
+
+      {vision && connected && Object.keys(running).some((k) => k.startsWith(`${chatBase.toLowerCase().replace(/\/+$/, '')}|`)) && (
+        <p className="mt-3 flex items-center gap-1.5 text-xs text-white/55" role="status">
+          <Loader2 size={13} className="animate-spin" aria-hidden /> Checking with a test image…
+        </p>
+      )}
+
       {connected && selectedOption?.available && (
         <p className="mt-3 flex items-center gap-1.5 text-xs text-emerald-300/90">
-          <CheckCircle2 size={13} aria-hidden /> Chat uses {selectedOption.label} through OllaBridge Cloud.
+          <CheckCircle2 size={13} aria-hidden />
+          {vision
+            ? <>Images are read by {selectedOption.label} through OllaBridge Cloud.</>
+            : <>Chat uses {selectedOption.label} through OllaBridge Cloud.</>}
         </p>
       )}
 

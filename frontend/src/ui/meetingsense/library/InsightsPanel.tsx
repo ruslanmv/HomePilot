@@ -164,7 +164,8 @@ function ValidatorLine({ report }: { report?: ValidatorReport | null }) {
 
 export function SuggestedQuestions({ questions, onAsk }: { questions: SuggestedQuestion[]; onAsk?: (q: string) => void }) {
     return (
-        <div data-testid="suggested-questions">
+        // These open the meeting assistant, so a press on them never counts as "outside" it.
+        <div data-testid="suggested-questions" data-assistant-trigger="">
             <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-white/70"><HelpCircle size={15} className="text-violet-300" /> Ask about this meeting</h3>
             <div className="grid gap-2 sm:grid-cols-3">
                 {questions.slice(0, 3).map((q, i) => (

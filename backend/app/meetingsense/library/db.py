@@ -412,6 +412,17 @@ def get_entry(meeting_id: str) -> Optional[Dict[str, Any]]:
         con.close()
 
 
+def meetings_with_recording_state(state: str) -> List[str]:
+    """Meeting ids whose entry is in this recording state (``uploading``: a live recording is
+    still arriving, or was cut off before the browser said it was complete)."""
+    con = _connect()
+    try:
+        rows = con.execute("SELECT meeting_id FROM ms_library_entries WHERE recording_state = ?", (state,)).fetchall()
+        return [r[0] for r in rows]
+    finally:
+        con.close()
+
+
 def entries_by_id(meeting_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
     ids = list(meeting_ids)
     if not ids:

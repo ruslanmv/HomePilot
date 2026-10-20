@@ -352,8 +352,9 @@ export default function ModelsView(props: ModelsParams) {
   // clobber a manual OllaBridge selection when the user switches tabs.
   const providerRef = React.useRef(provider)
   React.useEffect(() => { providerRef.current = provider }, [provider])
-  // OllaBridge on the Chat tab shows the Local + Cloud connection cards.
-  const ollaBridgeChat = provider === 'ollabridge' && modelType === 'chat' && !isAccountsUxEnabled()
+  // OllaBridge on the Chat and Multimodal tabs shows the Local + Cloud connection cards — on
+  // Multimodal with its own (vision-checked) model list and route, never chat's.
+  const ollaBridgeChat = provider === 'ollabridge' && (modelType === 'chat' || modelType === 'multimodal') && !isAccountsUxEnabled()
 
   const defaultBaseUrl = useMemo(() => {
     if (modelType === 'chat') return props.baseUrlChat || ''
@@ -1873,9 +1874,14 @@ export default function ModelsView(props: ModelsParams) {
               for whichever Model Type tab is active. When selected it replaces
               the local catalog for this tab. */}
           {ollaBridgeChat ? (
-            /* Chat: two independent connections — OllaBridge Local (your own
-               gateway) and OllaBridge Cloud (your account's machines). */
-            <OllaBridgeChatPanel backendUrl={backendUrl} backendApiKey={authKey} />
+            /* Chat / Multimodal: two independent connections — OllaBridge Local
+               (your own gateway) and OllaBridge Cloud (your account's machines). */
+            <OllaBridgeChatPanel
+              key={modelType}
+              backendUrl={backendUrl}
+              backendApiKey={authKey}
+              role={modelType === 'multimodal' ? 'vision' : 'chat'}
+            />
           ) : provider === 'ollabridge' && !isAccountsUxEnabled() ? (
             <OllaBridgeModels filterType={modelType} />
           ) : (

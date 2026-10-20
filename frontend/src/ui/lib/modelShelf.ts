@@ -21,6 +21,12 @@ import { useEffect, useState } from 'react'
 
 export type ShelfModelKind = 'model' | 'assistant'
 
+/**
+ * What the list is for. `chat` is what Chat settings offers; `vision` is Models → Multimodal,
+ * kept apart so choosing image models never changes the chat list (or the other way round).
+ */
+export type ShelfRole = 'chat' | 'vision'
+
 export interface ShelfModel {
   id: string
   label: string
@@ -29,12 +35,15 @@ export interface ShelfModel {
   group?: string
   hidden?: boolean
   available?: boolean
+  /** The connection *claims* the model reads images (not proof — see visionCheck.ts). */
+  vision?: boolean
 }
 
 export type ShelfMode = 'suggested' | 'custom'
 
 export interface ShelfSource {
   key: string
+  role: ShelfRole
   /** "OllaBridge Local", "OllaBridge Cloud". */
   title: string
   provider: string
@@ -56,8 +65,9 @@ const MAX_MODELS = 2000
 
 type Shelf = Record<string, ShelfSource>
 
-export function sourceKey(provider: string, baseUrl: string): string {
-  return `${(provider || '').trim().toLowerCase()}|${(baseUrl || '').trim().replace(/\/+$/, '').toLowerCase()}`
+export function sourceKey(provider: string, baseUrl: string, role: ShelfRole = 'chat'): string {
+  const key = `${(provider || '').trim().toLowerCase()}|${(baseUrl || '').trim().replace(/\/+$/, '').toLowerCase()}`
+  return role === 'chat' ? key : `${role}:${key}`
 }
 
 function storage(): Storage | null {
@@ -80,6 +90,7 @@ function sanitizeModel(raw: unknown): ShelfModel | null {
     ...(typeof m.group === 'string' && m.group ? { group: m.group } : {}),
     ...(m.hidden === true ? { hidden: true } : {}),
     ...(m.available === false ? { available: false } : {}),
+    ...(m.vision === true ? { vision: true } : {}),
   }
 }
 
@@ -91,6 +102,7 @@ function sanitizeSource(key: string, raw: unknown): ShelfSource | null {
     : []
   return {
     key,
+    role: s.role === 'vision' ? 'vision' : 'chat',
     title: typeof s.title === 'string' ? s.title : key,
     provider: typeof s.provider === 'string' ? s.provider : '',
     baseUrl: typeof s.baseUrl === 'string' ? s.baseUrl : '',
@@ -138,14 +150,16 @@ export function getSource(key: string): ShelfSource | null {
 
 /** Level 1: record what a connection offers now. The user's choice of what to show is kept. */
 export function rememberCatalog(
-  info: { title: string; provider: string; baseUrl: string },
+  info: { title: string; provider: string; baseUrl: string; role?: ShelfRole },
   models: ShelfModel[],
 ): ShelfSource {
   const shelf = readShelf()
-  const key = sourceKey(info.provider, info.baseUrl)
+  const role: ShelfRole = info.role ?? 'chat'
+  const key = sourceKey(info.provider, info.baseUrl, role)
   const previous = shelf[key]
   const next: ShelfSource = {
     key,
+    role,
     title: info.title,
     provider: info.provider,
     baseUrl: info.baseUrl,
@@ -181,20 +195,26 @@ export function isSuggested(m: ShelfModel): boolean {
   return m.kind === 'model' && !m.hidden && m.available !== false
 }
 
-/** The models a connection offers for chat, in catalog order. */
-export function shownModels(source: ShelfSource | null | undefined): ShelfModel[] {
+/**
+ * The models a connection offers, in catalog order. ``suggest`` replaces the default rule for
+ * the suggested list — Multimodal passes one that also asks the vision check.
+ */
+export function shownModels(
+  source: ShelfSource | null | undefined,
+  suggest: (m: ShelfModel) => boolean = isSuggested,
+): ShelfModel[] {
   if (!source) return []
   if (source.mode === 'custom') {
     const wanted = new Set(source.shown)
     return source.models.filter((m) => wanted.has(m.id))
   }
-  return source.models.filter(isSuggested)
+  return source.models.filter(suggest)
 }
 
 /** Level 2: every connection's offered models, for a chat to choose from. */
 export function chatChoices(shelf: Shelf = readShelf()): Array<{ source: ShelfSource; models: ShelfModel[] }> {
   return Object.values(shelf)
-    .filter((source) => source.active)
+    .filter((source) => source.active && source.role === 'chat')
     .map((source) => ({ source, models: shownModels(source) }))
     .filter((group) => group.models.length > 0)
     .sort((a, b) => a.source.title.localeCompare(b.source.title))

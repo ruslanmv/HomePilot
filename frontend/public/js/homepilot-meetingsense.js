@@ -289,6 +289,18 @@
     const JPEG_QUALITY = 0.72;
     const KEYFRAME_MAX_W = 1280;
 
+    /** The meeting's own recording (`RecordingUpload`). A slice is posted every five seconds,
+     *  so a closed tab loses at most that much. 32 kbps Opus is clear speech at about 14 MB an
+     *  hour. What is waiting to be uploaded is held in memory up to the backlog limit; past
+     *  it the recording stops rather than the page running out of memory. */
+    const RECORDING_SLICE_MS = 5000;
+    const RECORDING_BITRATE = 32000;
+    const RECORDING_MAX_BACKLOG_BYTES = 64 * 1024 * 1024;
+    /** How long the stop waits for the last slices to reach the server before "complete". */
+    const RECORDING_FINISH_WAIT_MS = 20000;
+    /** Consecutive failed posts before the upload gives up (with backoff, about ten minutes). */
+    const RECORDING_MAX_FAILURES = 40;
+
     const API_BASE = window.HOMEPILOT_API_BASE || '';
 
     // ── Pure helpers ──────────────────────────────────────────────────────────────────────
@@ -975,6 +987,273 @@
         }
     }
 
+    /**
+     * Whether this user keeps the audio of their meetings (Settings → Meetings), on unless
+     * switched off. The server has the last word — an operator policy wins, and `ready` says
+     * which — so this is the user's request, not the decision.
+     */
+    function keepAudioPreference() {
+        try {
+            const saved = JSON.parse(window.localStorage.getItem('homepilot_meeting_prefs_v1') || 'null');
+            return !(saved && saved.keepAudio === false);
+        } catch (_) {
+            return true;
+        }
+    }
+
+    /** The best container this browser's `MediaRecorder` offers for speech, or '' for its own
+     *  default. Opus in WebM on Chrome and Edge, in Ogg on Firefox, AAC in MP4 on Safari. */
+    function recordingMimeType(Recorder) {
+        const R = Recorder || (typeof MediaRecorder !== 'undefined' ? MediaRecorder : null);
+        if (!R || typeof R.isTypeSupported !== 'function') return '';
+        const wanted = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm', 'audio/mp4'];
+        for (let i = 0; i < wanted.length; i++) {
+            try {
+                if (R.isTypeSupported(wanted[i])) return wanted[i];
+            } catch (_) {
+                /* a browser that throws here simply does not offer it */
+            }
+        }
+        return '';
+    }
+
+    /**
+     * The meeting's own recording, uploaded while it runs (`library/recording.py`).
+     *
+     * `MediaRecorder` on the same gain nodes the transcriber hears — the call and this
+     * microphone, mixed, so muting the microphone mutes the recording — handing over a slice
+     * every `RECORDING_SLICE_MS`. Slices are posted strictly in order, one at a time, and held
+     * until the server has them: a dropped connection delays the upload, it does not lose it.
+     *
+     * It starts with the audio graph, before the server has said whether this meeting keeps
+     * audio, so the first words are in it; slices wait for `bind`, and `discard` throws them
+     * away when the answer is no. `offsetMs` is where on the capture clock — the clock every
+     * transcript time is on — the recording begins, so playback can line up with the text.
+     */
+    class RecordingUpload {
+        constructor(stream, offsetMs, options) {
+            const opts = options || {};
+            this.stream = stream;
+            this.offsetMs = Math.max(0, Math.round(offsetMs || 0));
+            this.meetingId = null;
+            this.apiKey = opts.apiKey || null;
+            this.mime = '';
+            this.seq = 0;
+            this.queue = [];
+            this.backlog = 0;
+            this.failures = 0;
+            /** idle | recording | stopping | done | incomplete | failed | discarded */
+            this.state = 'idle';
+            this._fetch = opts.fetch || ((url, init) => window.fetch(url, init));
+            this._Recorder = opts.Recorder || (typeof MediaRecorder !== 'undefined' ? MediaRecorder : null);
+            this._sleep = opts.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+            this._sending = false;
+            this._stopped = null;
+            this._recorder = null;
+        }
+
+        start() {
+            if (!this._Recorder || !this.stream) return false;
+            const mime = recordingMimeType(this._Recorder);
+            try {
+                const options = { audioBitsPerSecond: RECORDING_BITRATE };
+                if (mime) options.mimeType = mime;
+                this._recorder = new this._Recorder(this.stream, options);
+            } catch (_) {
+                return false;
+            }
+            this.mime = this._recorder.mimeType || mime || 'audio/webm';
+            this._stopped = new Promise((resolve) => {
+                this._recorder.onstop = () => resolve();
+            });
+            this._recorder.ondataavailable = (event) => {
+                if (event && event.data && event.data.size) this._enqueue(event.data);
+            };
+            this._recorder.onerror = () => this._fail('recorder');
+            try {
+                this._recorder.start(RECORDING_SLICE_MS);
+            } catch (_) {
+                return false;
+            }
+            this.state = 'recording';
+            return true;
+        }
+
+        /** The server said this meeting keeps its audio: upload to it. */
+        bind(meetingId) {
+            if (this._closed()) return;
+            this.meetingId = meetingId;
+            emit('ms:recording', { meetingId: meetingId, state: 'recording' });
+            this._pump();
+        }
+
+        /** The server said it does not: nothing recorded so far is sent anywhere. */
+        discard() {
+            this.state = 'discarded';
+            this.queue = [];
+            this.backlog = 0;
+            this._stopRecorder();
+        }
+
+        /** Stop, send what is left (bounded), and tell the server it is complete. */
+        async finish() {
+            if (this._closed() || this.state === 'done' || this.state === 'incomplete') return this.state;
+            this.state = 'stopping';
+            this._stopRecorder();
+            if (this._stopped) await Promise.race([this._stopped, this._sleep(2000)]);
+            if (!this.meetingId) {
+                this.discard();
+                return this.state;
+            }
+            const deadline = Date.now() + RECORDING_FINISH_WAIT_MS;
+            this._pump();
+            while ((this.queue.length || this._sending) && !this._closed() && Date.now() < deadline) {
+                await this._sleep(100);
+            }
+            if (this._closed() || this.seq === 0) return this.state;
+            // Sent even when slices are still waiting: the server completes what it has, and a
+            // page that stays open keeps trying the rest until the server refuses them.
+            let ok = false;
+            try {
+                const res = await this._fetch(this._url('/complete'), {
+                    method: 'POST',
+                    headers: this._headers(),
+                    credentials: 'include',
+                });
+                ok = !!(res && res.ok);
+            } catch (_) {
+                ok = false;
+            }
+            // Not "failed": a server that missed this completes the recording itself once the
+            // slices stop (`finalize_stale`).
+            this.state = ok ? 'done' : 'incomplete';
+            emit('ms:recording', { meetingId: this.meetingId, state: ok ? 'saved' : 'incomplete' });
+            return this.state;
+        }
+
+        _closed() {
+            return this.state === 'discarded' || this.state === 'failed';
+        }
+
+        _enqueue(blob) {
+            if (this._closed()) return;
+            if (this.backlog + blob.size > RECORDING_MAX_BACKLOG_BYTES) {
+                this._fail('backlog');
+                return;
+            }
+            this.queue.push({ seq: this.seq, blob: blob });
+            this.seq += 1;
+            this.backlog += blob.size;
+            this._pump();
+        }
+
+        async _pump() {
+            if (this._sending || !this.meetingId) return;
+            this._sending = true;
+            try {
+                while (this.queue.length && !this._closed()) {
+                    const item = this.queue[0];
+                    const outcome = await this._post(item);
+                    if (outcome === 'ok') {
+                        this.queue.shift();
+                        this.backlog -= item.blob.size;
+                        this.failures = 0;
+                    } else if (typeof outcome === 'number') {
+                        // The server already has everything below `outcome` (a retry whose first
+                        // answer was lost): drop those, and stop if it is missing one we dropped.
+                        while (this.queue.length && this.queue[0].seq < outcome) {
+                            this.backlog -= this.queue.shift().blob.size;
+                        }
+                        if (this.queue.length && this.queue[0].seq > outcome) this._fail('gap');
+                    } else if (outcome === 'refused') {
+                        this._fail('refused');
+                    } else {
+                        this.failures += 1;
+                        if (this.failures > RECORDING_MAX_FAILURES) {
+                            this._fail('unreachable');
+                        } else {
+                            await this._sleep(backoffDelay(this.failures));
+                        }
+                    }
+                }
+            } finally {
+                this._sending = false;
+            }
+        }
+
+        async _post(item) {
+            let res;
+            try {
+                const query = '?seq=' + item.seq + (item.seq === 0 ? '&offset_ms=' + this.offsetMs : '');
+                res = await this._fetch(this._url(query), {
+                    method: 'POST',
+                    headers: Object.assign({ 'Content-Type': this.mime }, this._headers()),
+                    body: item.blob,
+                    credentials: 'include',
+                });
+            } catch (_) {
+                return 'retry';
+            }
+            if (res.ok) return 'ok';
+            if (res.status === 409) {
+                let body = null;
+                try {
+                    body = await res.json();
+                } catch (_) {
+                    body = null;
+                }
+                const detail = body && body.detail;
+                if (detail && detail.code === 'out_of_order' && typeof detail.expected === 'number') {
+                    return detail.expected;
+                }
+                return 'refused';
+            }
+            if (res.status >= 500 || res.status === 408 || res.status === 429) return 'retry';
+            // 404 (no library here), 410 (too late), 413, 415: retrying cannot change the answer.
+            return 'refused';
+        }
+
+        _url(suffix) {
+            return API_BASE + '/v1/meetingsense/library/item/' + encodeURIComponent(this.meetingId)
+                + '/recording' + suffix;
+        }
+
+        /** The same credentials the library's own requests carry (`meetingsense/api.ts`). */
+        _headers() {
+            const headers = {};
+            let token = '';
+            try {
+                const key = window.localStorage.getItem('homepilot_api_key') || '';
+                token = window.localStorage.getItem('homepilot_auth_token') || '';
+                if (key) headers['x-api-key'] = key;
+            } catch (_) {
+                token = '';
+            }
+            if (token) headers.Authorization = 'Bearer ' + token;
+            else if (this.apiKey) headers.Authorization = 'Bearer ' + this.apiKey;
+            return headers;
+        }
+
+        _stopRecorder() {
+            if (this._recorder && this._recorder.state !== 'inactive') {
+                try {
+                    this._recorder.stop();
+                } catch (_) {
+                    /* already stopped */
+                }
+            }
+        }
+
+        _fail(reason) {
+            const was = this.state;
+            this.state = 'failed';
+            this.queue = [];
+            this.backlog = 0;
+            this._stopRecorder();
+            if (was !== 'failed') emit('ms:recording', { meetingId: this.meetingId, state: 'failed', reason: reason });
+        }
+    }
+
     // ── The recorder ──────────────────────────────────────────────────────────────────────
 
     class HPMeetingSense {
@@ -1028,6 +1307,10 @@
             this._systemAudio = [];
             this._micAudio = [];
             this._micGain = null;
+            /** Where the meeting's own recording listens: both gains, mixed. */
+            this._recDest = null;
+            /** That recording's upload, while one runs (`RecordingUpload`). */
+            this._upload = null;
             this._frameSamples = Math.round((TARGET_RATE * FRAME_MS) / 1000);
             this._framers = null;
             this._segmenter = null;
@@ -1150,6 +1433,7 @@
 
             // Held for the reconnect: a resume needs the same options a start was given.
             this._opts = opts;
+            this._beginRecording();
             const opened = await this._connect(opts);
             if (!opened.ok) {
                 this._teardown();
@@ -1205,6 +1489,7 @@
             }
 
             this._opts = opts;
+            this._beginRecording();
             const openedBorrowed = await this._connect(opts);
             if (!openedBorrowed.ok) {
                 this._teardown();
@@ -1258,6 +1543,9 @@
             this._flush();
             this._pump();
             this._send({ type: 'stop' });
+            // Before the graph goes: stopping the recorder hands over its last slice, which is
+            // then uploaded and the recording completed while the recap opens.
+            this._finishRecording();
             // The socket is left to close on the server's `final`; closing it here would race
             // the frame that carries the counts the card is about to show.
             this._teardown();
@@ -1297,11 +1585,18 @@
                 channelInterpretation: 'discrete',
             });
 
+            // The meeting's own recording hears exactly what the transcriber hears, mixed into
+            // one track: both gains feed it, so a muted microphone is muted in it too.
+            this._recDest = typeof ctx.createMediaStreamDestination === 'function'
+                ? ctx.createMediaStreamDestination() : null;
+            if (this._recDest) this._nodes.push(this._recDest);
+
             const attach = (stream, index, bucket) => {
                 const source = ctx.createMediaStreamSource(stream);
                 const gain = ctx.createGain();
                 source.connect(gain);
                 gain.connect(merger, 0, index);
+                if (this._recDest) gain.connect(this._recDest);
                 this._nodes.push(source, gain);
                 stream.getTracks().forEach((track) => {
                     this._tracks.push(track);
@@ -1595,6 +1890,22 @@
             return Math.round((this._elapsedSamples / TARGET_RATE) * 1000);
         }
 
+        /** Start the meeting's own recording, if this user keeps audio and the browser can. */
+        _beginRecording() {
+            if (this._upload || !this._recDest || !keepAudioPreference()) return;
+            const upload = new RecordingUpload(this._recDest.stream, this._mediaClockMs(), {
+                apiKey: (this._opts || {}).apiKey || null,
+            });
+            if (upload.start()) this._upload = upload;
+        }
+
+        /** Hand the recording over for completion — or drop it, if no meeting ever took it. */
+        _finishRecording() {
+            const upload = this._upload;
+            this._upload = null;
+            if (upload) upload.finish();
+        }
+
         /** Grab the frame at full size, upload it, and tell the server where it landed. */
         async _sendKeyframe(decision) {
             const watch = this._watch;
@@ -1751,6 +2062,10 @@
                                       // two-second clip of English came back as Italian.
                                       language: typeof opts.language === 'string' && opts.language
                                           ? opts.language : meetingLanguage(),
+                                      // Settings → Meetings → Keep the audio recording. The
+                                      // server decides (an operator policy wins) and says so
+                                      // in `ready`.
+                                      keep_audio: keepAudioPreference(),
                                       audio: {
                                           rate: TARGET_RATE,
                                           channels: this._channels || 1,
@@ -1782,6 +2097,18 @@
                             this._restarting = null;
                             this.reconnecting = false;
                             this._attempt = 0;
+                        }
+                        // The meeting's own recording goes to it only when the server says
+                        // this meeting keeps audio; otherwise nothing recorded is sent.
+                        const keepAudio = !!(frame.recording && frame.recording.keep);
+                        if (keepAudio && !this._upload) this._beginRecording();
+                        if (this._upload) {
+                            if (keepAudio) {
+                                this._upload.bind(frame.meeting_id);
+                            } else {
+                                this._upload.discard();
+                                this._upload = null;
+                            }
                         }
                         settle({ ok: true });
                         // Audio captured before the server said yes goes now, in order.
@@ -1845,6 +2172,9 @@
                             const previous = this.meetingId;
                             this.meetingId = null;
                             this._stopReconnecting();
+                            // The old meeting's recording ends with it; the new meeting, if
+                            // one starts, gets its own from this moment on the capture clock.
+                            this._finishRecording();
                             if (this.recording && this._lastStartFrame && !this._restarting) {
                                 this._restarting = { previous: previous };
                                 emit('ms:restarting', { previous_meeting_id: previous });
@@ -1862,6 +2192,7 @@
                             this.meetingId = null;
                             this.recording = false;
                             this._stopReconnecting();
+                            this._finishRecording();
                         }
                         settle({ ok: false, error: frame.msg || frame.code });
                         emit('ms:status', frame);
@@ -1922,6 +2253,10 @@
         }
 
         _teardown() {
+            // A recording still running here belongs to a start that failed or a capture that
+            // died: one bound to a meeting is completed, one that never was is dropped.
+            this._finishRecording();
+            this._recDest = null;
             // Before the tracks: the sampler holds a <video> onto the stream it is about to
             // stop, and a stopped track behind a running interval is one exception per second.
             this._stopWatching();
@@ -1985,6 +2320,9 @@
         Framer: Framer,
         Segmenter: Segmenter,
         KeyframeScheduler: KeyframeScheduler,
+        RecordingUpload: RecordingUpload,
+        recordingMimeType: recordingMimeType,
+        keepAudioPreference: keepAudioPreference,
         constants: {
             TARGET_RATE: TARGET_RATE,
             FRAME_MS: FRAME_MS,
@@ -2016,6 +2354,11 @@
             MAX_KEYFRAMES_PER_HOUR: MAX_KEYFRAMES_PER_HOUR,
             JPEG_QUALITY: JPEG_QUALITY,
             KEYFRAME_MAX_W: KEYFRAME_MAX_W,
+            RECORDING_SLICE_MS: RECORDING_SLICE_MS,
+            RECORDING_BITRATE: RECORDING_BITRATE,
+            RECORDING_MAX_BACKLOG_BYTES: RECORDING_MAX_BACKLOG_BYTES,
+            RECORDING_FINISH_WAIT_MS: RECORDING_FINISH_WAIT_MS,
+            RECORDING_MAX_FAILURES: RECORDING_MAX_FAILURES,
         },
     };
 })();

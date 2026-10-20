@@ -120,6 +120,23 @@ def _close_orphans() -> None:
         pass
 
 
+def _summary_state(row: Dict[str, Any], entry: Dict[str, Any], notes: Dict[str, Any]) -> str:
+    """``pending`` while the end-of-meeting document is being written for a recorded meeting.
+
+    A meeting that has just ended has its summary written by the session (``minutes.
+    autogenerate``), not by a library job, so the library said "none" until it landed — and
+    the recap, which shows this page the moment a meeting ends, had no reason to look again.
+    """
+    try:
+        from .. import minutes  # noqa: PLC0415
+
+        if minutes.is_writing(row["id"]):
+            return "pending"
+    except Exception:  # noqa: BLE001
+        pass
+    return entry.get("summary_state") or ("ready" if notes else "none")
+
+
 def _summary_line(notes: Dict[str, Any], entry: Dict[str, Any]) -> str:
     text = (entry or {}).get("description") or ""
     if not text:
@@ -165,7 +182,16 @@ def _item(row: Dict[str, Any], entry: Dict[str, Any], links: List[Dict[str, Any]
         # A suspended meeting lost its socket and is waiting out the grace window for the
         # browser to come back. That is not "Recording" — nothing is being heard — and the
         # card says so ("Reconnecting") until it resumes or ends.
-        recording = "recording" if status == "live" else ("paused" if status == "suspended" else "none")
+        # After the meeting: its own recording, still arriving from the browser ("saving") or
+        # kept ("present") — `library/recording.py`.
+        if status == "live":
+            recording = "recording"
+        elif status == "suspended":
+            recording = "paused"
+        elif entry.get("recording_state") == "uploading":
+            recording = "saving"
+        else:
+            recording = "present" if entry.get("media_present") else "none"
         transcript = "live" if status == "live" else ("ready" if segments else "none")
         source_kind = "meetingsense"
         source_label = _LIVE_SOURCE_LABELS.get((row.get("source") or "").lower(), "HomePilot")
@@ -204,7 +230,7 @@ def _item(row: Dict[str, Any], entry: Dict[str, Any], links: List[Dict[str, Any]
         "media_present": bool(entry.get("media_present")),
         "recording_state": recording,
         "transcript_state": transcript,
-        "summary_state": entry.get("summary_state") or ("ready" if notes else "none"),
+        "summary_state": _summary_state(row, entry, notes),
         "segments": segments,
         "conversation_id": row.get("conversation_id"),
         "status": status,

@@ -843,6 +843,31 @@ Apache-2.0
   </tr>
 </table>
 
+<h3 align="center">When the meeting ends</h3>
+
+<p align="center">
+  <img src="docs/assets/meetings-recap/recap.jpg" alt="The recap of a finished meeting: title, date, duration and a Completed badge; Overview, Visual Summary, Transcript and Actions tabs; the meeting overview, key decisions, the full summary with Copy and Rewrite as minutes, an Ask this meeting box, key screens and a transcript preview; a details column with the quick summary, action items with owners and due dates, and participants" width="900" />
+</p>
+
+<p align="center"><sub><b>The recap is the meeting's page.</b> Press <i>End meeting</i> and the recap opens at once as the same <b>Meeting details</b> page the library shows later, so a meeting looks the same the minute it ends and a month later. It has the overview, the key decisions and the <b>full summary</b> (every rewrite kept as its own version), the screens captured during the call, a transcript preview, and a details column with action items, owners and due dates. If no language model is running, the page says so once, and the transcript can still be searched.</sub></p>
+
+<p align="center">
+  <img src="docs/assets/meetings-recap/recap-chat.jpg" alt="Ask about this meeting: a chat panel beside the recap, not over it, with a question, an answer quoting the meeting and buttons for the two moments it cites; the page stays undimmed and a Hide chat button replaces Hide details" width="900" />
+</p>
+
+<p align="center"><sub><b>Ask about this meeting.</b> Questions open in a panel beside the meeting. It doesn't cover or dim the page, and it stays open while you type, scroll or select text inside it. Close it with ✕, <kbd>Esc</kbd> or a click on the meeting. The conversation is still there when you reopen it. Answers come only from this meeting's transcript, link to the moments they rest on, and are private to you.</sub></p>
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="docs/assets/meetings-recap/recap-mobile.jpg" alt="The recap on a phone: one column with the meeting overview first" width="300" /></td>
+    <td width="50%" align="center"><img src="docs/assets/meetings-recap/recap-mobile-chat.jpg" alt="The meeting assistant on a phone: full screen, with the question, the cited answer and the input at the bottom" width="300" /></td>
+  </tr>
+  <tr>
+    <td><sub><b>On a phone</b> the recap becomes a single column, with the details column one tap away.</sub></td>
+    <td><sub>The assistant opens <b>full screen</b>; ✕ or <kbd>Esc</kbd> goes back to the meeting.</sub></td>
+  </tr>
+</table>
+
 <h2 align="center">🧠 Local models that just work</h2>
 
 <p align="center">

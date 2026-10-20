@@ -3744,6 +3744,23 @@ export default function App() {
     return () => window.removeEventListener('homepilot:use-gpu-node', onUseGpuNode)
   }, [])
 
+  // Models → Multimodal → OllaBridge: a model that passed the vision check reads images from
+  // now on. The multimodal settings only — chat keeps its own model.
+  useEffect(() => {
+    function onUseVisionModel(e: Event) {
+      const d = (e as CustomEvent).detail || {}
+      if (!d.baseUrl || !d.model) return
+      setSettingsDraft((prev) => ({
+        ...prev,
+        providerMultimodal: d.provider || 'openai_compat',
+        baseUrlMultimodal: d.baseUrl,
+        modelMultimodal: d.model,
+      }))
+    }
+    window.addEventListener('homepilot:use-vision-model', onUseVisionModel)
+    return () => window.removeEventListener('homepilot:use-vision-model', onUseVisionModel)
+  }, [])
+
 
   // Batch 5: transparent remote-LLM routing. When the Account & Computers flag
   // is on and the user picked an online remote computer, this resolves the cloud
@@ -3771,6 +3788,13 @@ export default function App() {
     const onOpen = () => setMode('models')
     window.addEventListener(OPEN_MODELS_EVENT, onOpen)
     return () => window.removeEventListener(OPEN_MODELS_EVENT, onOpen)
+  }, [])
+
+  // The meeting recap's "Meetings" breadcrumb opens the Meetings library.
+  useEffect(() => {
+    const onOpen = () => setMode('meetings')
+    window.addEventListener('homepilot:open-meetings', onOpen)
+    return () => window.removeEventListener('homepilot:open-meetings', onOpen)
   }, [])
 
   // This chat's own model (Chat settings), read at send time like everything below. Ordinary
@@ -4896,6 +4920,7 @@ export default function App() {
                 provider: settingsDraft.providerMultimodal || 'ollama',
                 base_url: settingsDraft.baseUrlMultimodal || undefined,
                 model: settingsDraft.modelMultimodal || undefined,
+                api_key: cloudProviderApiKey(settingsDraft.baseUrlMultimodal),
                 mode: 'both',
                 user_prompt: trimmed,
                 nsfw_mode: settingsDraft.nsfwMode || false,
@@ -5531,6 +5556,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               provider: settingsDraft.providerMultimodal || 'ollama',
               base_url: settingsDraft.baseUrlMultimodal || undefined,
               model: settingsDraft.modelMultimodal || undefined,
+              api_key: cloudProviderApiKey(settingsDraft.baseUrlMultimodal),
               mode: 'both',
               user_prompt: multimodal.userPrompt || undefined,
               nsfw_mode: settingsDraft.nsfwMode || false,
@@ -5841,6 +5867,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               provider: settingsDraft.providerMultimodal || 'ollama',
               base_url: settingsDraft.baseUrlMultimodal || undefined,
               model: settingsDraft.modelMultimodal || undefined,
+              api_key: cloudProviderApiKey(settingsDraft.baseUrlMultimodal),
               mode: 'both',
               user_prompt: userPrompt || undefined,
               nsfw_mode: settingsDraft.nsfwMode || false,

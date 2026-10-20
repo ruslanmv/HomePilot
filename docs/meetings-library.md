@@ -171,6 +171,23 @@ one button. It is built for quick calls in Slack, Zoom, Teams or a browser.
   switch on *Share system audio*. For a call in a browser tab, choose that tab with
   *Share tab audio* on.
 - **More options** opens the full wizard below, with the switches carried over.
+- **The call's audio is kept**, so you can play it back and download it from the meeting's
+  page. It is the same mix the transcriber hears — the call and your microphone, so muting
+  yourself mutes the recording too. Turn it off in **Settings → Meetings → Keep the audio
+  recording** to keep only the transcript; an operator can decide for everyone with
+  `MEETINGSENSE_RETENTION` (the switch then shows that setting, locked).
+
+### Listening back to a recorded call
+
+The browser records the call (Opus, about 15 MB an hour) and uploads it in five-second pieces
+while the meeting runs, so closing the tab or losing the connection costs seconds rather than
+the call. When you press **End meeting** the last piece is sent and the recording is finished
+on the server; the recap says *Saving the recording…* for a moment, then the player appears
+above the tabs. Every timestamp on the page — transcript lines, key screens, the assistant's
+citations — plays from that moment. A browser that closed before saying it was done still gets
+its recording finished, from the pieces that arrived, the next time the library is opened.
+
+Meetings recorded before this kept no audio, so they have nothing to play.
 
 The Start meeting button under the chat box follows the same idea: capture switches, privacy
 and Start are on top, and the assistant role, context and summary settings sit under
@@ -224,6 +241,7 @@ Existing MeetingSense routes are unchanged.
 | `GET/POST library/item/{id}/versions`, `POST …/versions/{vid}/publish` | Transcript versions |
 | `GET library/item/{id}/transcript?fmt=txt\|md\|srt\|vtt\|json` | Export |
 | `GET library/item/{id}/media/{asset}`, `…/peaks` | Recording (range requests) and waveform |
+| `POST library/item/{id}/recording?seq=N`, `POST …/recording/complete` | A live meeting's own recording: pieces in order (a repeat is acknowledged, a gap answers `409 out_of_order` with `expected`), then completion. Refused with `409 not_kept` when the meeting keeps only text |
 
 ## Meeting insights
 
@@ -290,6 +308,13 @@ New tables sit beside MeetingSense's (`ms_library_entries`, `_sources`, `_assets
 `ms_transcript_version_segments`, `ms_library_sync_seen`). `ms_meetings` remains the record
 of a meeting; existing rows are never rewritten, and existing project meetings are linked to
 their project when the tables are first created.
+
+Files live in HomePilot's own media folder — `MEETINGS_LIBRARY_DIR`, by default
+`backend/data/meetings_library/` next to the uploads — one folder per meeting. A recorded
+call's audio is `<meeting id>/recording.webm` (`.ogg` from Firefox, `.m4a` from Safari),
+registered as the meeting's audio asset and served only by the library's media route, which
+checks who is asking. Deleting the meeting deletes the folder. `MEETINGS_RECORDING_MAX_MB`
+(default 4096) caps one recording.
 
 **Rolling back** is setting `MEETINGS_LIBRARY_UPGRADE=0`. The tables and copied files stay
 until you remove them, so turning it on again brings everything back.

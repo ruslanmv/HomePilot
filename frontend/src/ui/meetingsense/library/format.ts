@@ -162,8 +162,9 @@ export const STATE_FILTERS: Array<{ id: string; label: string }> = [
 ];
 
 /** Which list items mean "keep polling" — something is still changing. */
-export function isWorking(item: Pick<LibraryItem, 'transcript_state' | 'summary_state' | 'live'>): boolean {
-    return item.live || item.transcript_state === 'queued' || item.transcript_state === 'transcribing' || item.summary_state === 'pending';
+export function isWorking(item: Pick<LibraryItem, 'transcript_state' | 'summary_state' | 'live'> & Partial<Pick<LibraryItem, 'recording_state'>>): boolean {
+    return item.live || item.transcript_state === 'queued' || item.transcript_state === 'transcribing'
+        || item.summary_state === 'pending' || item.recording_state === 'saving';
 }
 
 export type SummaryDoc = { text?: string; degraded?: string | null; [k: string]: unknown };
@@ -171,9 +172,12 @@ export type SummaryDoc = { text?: string; degraded?: string | null; [k: string]:
 const FALLBACK_MARK = /^\s*\*No language model was reachable/;
 const OUTLINE_HEADING = /\n#{1,3}\s*The meeting in order\b[\s\S]*$/;
 
-/** A document assembled from the meeting's own words because no language model answered. */
+/**
+ * A document assembled from the meeting's own words because no language model answered —
+ * flagged `degraded: "extractive"` by the server, or (older documents) marked in its text.
+ */
 export function isFallbackSummary(doc: SummaryDoc | null | undefined): boolean {
-    return !!doc && FALLBACK_MARK.test(doc.text || '');
+    return !!doc && (doc.degraded === 'extractive' || FALLBACK_MARK.test(doc.text || ''));
 }
 
 /**
@@ -188,6 +192,19 @@ export function overviewSummary(docs: SummaryDoc[] | undefined, notesSummary?: s
     if (latest) return { text: (latest.text || '').replace(OUTLINE_HEADING, '').trim(), markdown: true };
     const plain = (notesSummary || description || '').trim();
     return { text: plain, markdown: false };
+}
+
+/**
+ * The paragraph a "Quick summary" shows: a written document's opening prose — not its headings,
+ * lists or later sections, which the Overview shows in full — or the plain fallback text as is.
+ */
+export function quickSummary(overview: { text: string; markdown: boolean }): string {
+    if (!overview.markdown) return overview.text;
+    const prose = overview.text
+        .split(/\n\s*\n/)
+        .map((block) => block.replace(/^(\s*#{1,6}\s.*(\n|$))+/, '').trim())
+        .find((block) => block && !/^[-*+]\s|^\d+[.)]\s/.test(block));
+    return plainText(prose || overview.text);
 }
 
 /** Markdown reduced to readable plain text, for short previews. */

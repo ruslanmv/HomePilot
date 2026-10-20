@@ -147,6 +147,31 @@ The Expert reasoning modes (Fast, Think, Heavy) answer from the same chat model,
 `/v1/expert/chat` as `target`, instead of Expert's own default Ollama model. They remain
 their own workflow and never run in persona projects.
 
+#### Multimodal (images) through OllaBridge
+
+**Models → Multimodal → OllaBridge** shows the same Local and Cloud cards, with their own
+list and route: a pick there sets `homepilot_*_multimodal` (image analysis) and never chat.
+
+- **Every model is checked before images go to it.** Choosing one sends it a known test
+  image — two flat colours, yellow left and blue right — through `POST /v1/multimodal/check`
+  (`backend/app/vision_check.py`), the same path every real image takes. It passes only if it
+  names both colours in order. A gateway's `vision: true` is shown as *claims vision · not
+  checked* until then: one real gateway flagged a text-only model and left genuine vision
+  models unflagged, and a model that never received the picture still answered
+  ("LEFT=blue, RIGHT=red"). A model that fails is not used unless you press **Use anyway**.
+- **Choose models** works as on Chat, and a model you add is checked straight away. The
+  verdicts are remembered per connection and model.
+- Images travel as OpenAI `image_url` parts (`multimodal.analyze_image`, provider
+  `openai_compat`). This needs **OllaBridge with image pass-through**: older gateways
+  flattened every message to text and dropped the picture. The gateway now keeps images for
+  Open WebUI and the other OpenAI-compatible providers, sends Ollama its own `images` field,
+  Gemini `inline_data`, and paired devices the Ollama shape; it refuses with `501
+  unsupported_capability` on routes that cannot carry images rather than answering blind.
+  Requests relayed by **OllaBridge Cloud** (Ollama's `images` beside the text) are accepted
+  too — that field used to be dropped on arrival.
+- The `ext-*` models behind Open WebUI are external services (Claude, Gemini, OpenAI): an
+  image sent to them leaves your machine.
+
 ---
 
 ## Two HomePilot editions

@@ -4,7 +4,9 @@
  * Everything applies immediately and is saved on this computer — there is no Save button,
  * the same as Audio & Video and Motion. Four groups, in the order a meeting meets them:
  *
- *   1. What to record by default (the Quick record switches, `library/quickRecord.ts`).
+ *   1. What to record by default (the Quick record switches, `library/quickRecord.ts`), and
+ *      whether the audio is kept afterwards (`meetingPrefs.keepAudio`, unless the operator's
+ *      MEETINGSENSE_RETENTION decides).
  *   2. Which microphone, and its clean-up — the *shared* media preference, so Meetings, calls
  *      and Settings → Audio & Video can never disagree about which microphone is "mine".
  *   3. The spoken language, which the transcriber otherwise guesses per sentence.
@@ -12,7 +14,8 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Headphones, Mic, MonitorUp, Play, RefreshCw, Square, Volume2 } from 'lucide-react';
+import { HardDrive, Headphones, Mic, MonitorUp, Play, RefreshCw, Square, Volume2 } from 'lucide-react';
+import { backendBase, requestHeaders } from './api';
 import {
     buildAudioConstraints,
     getMediaPreferences,
@@ -46,17 +49,20 @@ const SUMMARY_LANGUAGES = [
     ...SPOKEN_LANGUAGES.filter((l) => l.id !== 'auto' && l.id !== 'multi').map((l) => ({ id: l.label, label: l.label })),
 ];
 
-function Switch({ checked, label, onChange }: { checked: boolean; label: string; onChange: (next: boolean) => void }) {
+function Switch({ checked, label, onChange, disabled = false }: {
+    checked: boolean; label: string; onChange: (next: boolean) => void; disabled?: boolean;
+}) {
     return (
         <button
             type="button"
             role="switch"
             aria-checked={checked}
             aria-label={label}
+            disabled={disabled}
             onClick={() => onChange(!checked)}
             className={[
                 'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#9b5cff]/75',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-[#9b5cff]/75 disabled:cursor-not-allowed disabled:opacity-50',
                 checked ? 'bg-[#9b5cff]' : 'bg-white/10',
             ].join(' ')}
         >
@@ -75,8 +81,9 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
     );
 }
 
-function ToggleRow({ icon, label, note, checked, onChange }: {
+function ToggleRow({ icon, label, note, checked, onChange, disabled }: {
     icon?: React.ReactNode; label: string; note?: string; checked: boolean; onChange: (next: boolean) => void;
+    disabled?: boolean;
 }) {
     return (
         <div className="flex items-center justify-between gap-4 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3.5 py-3">
@@ -87,9 +94,32 @@ function ToggleRow({ icon, label, note, checked, onChange }: {
                     {note ? <div className="mt-0.5 text-xs leading-snug text-white/50">{note}</div> : null}
                 </div>
             </div>
-            <Switch checked={checked} label={label} onChange={onChange} />
+            <Switch checked={checked} label={label} onChange={onChange} disabled={disabled} />
         </div>
     );
+}
+
+/**
+ * The operator's `MEETINGSENSE_RETENTION`, when one is set — it decides for everyone, so the
+ * switch shows it instead of the user's choice. `null` while unknown or when users choose.
+ */
+function useRetentionPolicy(): string | null {
+    const [policy, setPolicy] = useState<string | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        try {
+            void fetch(`${backendBase()}/v1/meetingsense/status`, { headers: requestHeaders() })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((body) => {
+                    if (!cancelled && body) setPolicy(typeof body.retention_policy === 'string' ? body.retention_policy : null);
+                })
+                .catch(() => undefined);
+        } catch {
+            /* no fetch here: the user's own choice is what the switch shows */
+        }
+        return () => { cancelled = true; };
+    }, []);
+    return policy;
 }
 
 function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
@@ -168,6 +198,7 @@ export function MeetingsSettings() {
     const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
     const [labelsHidden, setLabelsHidden] = useState(false);
     const test = useMicTest(media);
+    const policy = useRetentionPolicy();
 
     useEffect(() => subscribeMediaPreferences(setMedia), []);
     useEffect(() => subscribeMeetingPrefs(setPrefs), []);
@@ -220,6 +251,19 @@ export function MeetingsSettings() {
                 <ToggleRow icon={<Volume2 size={16} />} label="Call audio" note="The other people on the call — tab or system audio from the share picker." checked={quick.audio} onChange={(v) => updateQuick({ audio: v })} />
                 <ToggleRow icon={<Mic size={16} />} label="My microphone" note="What you say." checked={quick.mic} onChange={(v) => updateQuick({ mic: v })} />
                 <ToggleRow icon={<MonitorUp size={16} />} label="Screen" note="Key frames of shared slides, for the summary. Optional." checked={quick.screen} onChange={(v) => updateQuick({ screen: v })} />
+            </Section>
+
+            <Section title="Recording" hint="What is kept after the meeting, besides the transcript.">
+                <ToggleRow
+                    icon={<HardDrive size={16} />}
+                    label="Keep the audio recording"
+                    note={policy
+                        ? `Set for everyone on this server (MEETINGSENSE_RETENTION=${policy}): ${policy === 'all' ? 'the audio is always kept.' : 'only the transcript is kept.'}`
+                        : 'Saved on this computer with the transcript, so you can play a meeting back and download it from Meetings. Deleted when you delete the meeting. Off keeps only the transcript.'}
+                    checked={policy ? policy === 'all' : prefs.keepAudio}
+                    disabled={!!policy}
+                    onChange={(v) => updatePrefs({ keepAudio: v })}
+                />
             </Section>
 
             <Section title="Microphone" hint="Shared with Settings → Audio & Video, so calls and meetings use the same input.">

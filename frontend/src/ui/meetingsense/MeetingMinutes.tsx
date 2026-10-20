@@ -126,14 +126,17 @@ export interface MeetingMinutesProps {
     modelTarget?: MeetingModelTarget;
     /** The server is writing the end-of-meeting document right now. */
     writing?: boolean;
+    /** `page`: the card style of the Meeting details page (the recap uses it). */
+    appearance?: 'compact' | 'page';
     /** Injected in tests. */
     fetcher?: typeof fetch;
     modelFetcher?: typeof fetch;
 }
 
 export function MeetingMinutes({
-    meetingId, documents, hasTranscript, modelTarget, writing = false, fetcher, modelFetcher,
+    meetingId, documents, hasTranscript, modelTarget, writing = false, appearance = 'compact', fetcher, modelFetcher,
 }: MeetingMinutesProps) {
+    const page = appearance === 'page';
     const [written, setWritten] = useState<MeetingSummaryDoc[]>([]);
     const [selected, setSelected] = useState<number | null>(null);
     const [style, setStyle] = useState<string>(documents[documents.length - 1]?.style || 'minutes');
@@ -273,15 +276,49 @@ export function MeetingMinutes({
         }
     };
 
+    const documentActions = current ? (
+        <>
+            <button
+                type="button"
+                onClick={() => void copy()}
+                data-testid="ms-minutes-copy"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-[11px] text-white/65 hover:bg-white/[0.08]"
+            >
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? 'Copied' : 'Copy'}
+            </button>
+            {current.chunks ? (
+                <span className={`text-[10px] ${page ? 'text-white/40' : 'text-white/25'}`} data-testid="ms-minutes-meta">
+                    From {current.chunks} part{current.chunks === 1 ? '' : 's'} of the transcript
+                </span>
+            ) : null}
+        </>
+    ) : null;
+
+    const generateButton = (
+        <button
+            type="button"
+            onClick={() => void generate()}
+            disabled={busy || !meetingId || !hasTranscript}
+            data-testid="ms-minutes-generate"
+            className="inline-flex h-9 items-center gap-2 rounded-xl bg-white px-3.5 text-xs font-semibold text-black hover:bg-white/90 disabled:opacity-35"
+        >
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            {busy ? 'Writing…' : current ? `Rewrite as ${styleLabel(style).toLowerCase()}` : 'Write the summary'}
+        </button>
+    );
+
     return (
         <section
-            className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"
+            className={page
+                ? 'rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5'
+                : 'rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4'}
             data-testid="ms-minutes"
             aria-label="Meeting summary"
         >
             <div className="mb-3 flex flex-wrap items-center gap-2">
-                <FileText size={14} className="text-violet-200/70" />
-                <h3 className="text-sm font-semibold text-white/90">Full summary</h3>
+                <FileText size={page ? 18 : 14} className={page ? 'text-violet-300' : 'text-violet-200/70'} />
+                <h3 className={page ? 'font-semibold' : 'text-sm font-semibold text-white/90'}>Full summary</h3>
                 {all.length > 1 ? (
                     <span className="text-[10px] text-white/35" data-testid="ms-minutes-count">
                         {all.length} versions kept
@@ -395,22 +432,7 @@ export function MeetingMinutes({
                         </p>
                     ) : null}
                     <DocumentBody text={current.text || ''} />
-                    <div className="mt-3 flex items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={() => void copy()}
-                            data-testid="ms-minutes-copy"
-                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 text-[11px] text-white/65 hover:bg-white/[0.08]"
-                        >
-                            {copied ? <Check size={12} /> : <Copy size={12} />}
-                            {copied ? 'Copied' : 'Copy'}
-                        </button>
-                        {current.chunks ? (
-                            <span className="text-[10px] text-white/25" data-testid="ms-minutes-meta">
-                                From {current.chunks} part{current.chunks === 1 ? '' : 's'} of the transcript
-                            </span>
-                        ) : null}
-                    </div>
+                    {page ? null : <div className="mt-3 flex items-center gap-2">{documentActions}</div>}
                 </>
             ) : writing ? (
                 <p className="flex items-center gap-2 py-4 text-sm text-white/55" role="status" data-testid="ms-minutes-writing">
@@ -431,16 +453,13 @@ export function MeetingMinutes({
                 </p>
             ) : null}
 
-            <button
-                type="button"
-                onClick={() => void generate()}
-                disabled={busy || !meetingId || !hasTranscript}
-                data-testid="ms-minutes-generate"
-                className="mt-3 inline-flex h-9 items-center gap-2 rounded-xl bg-white px-3.5 text-xs font-semibold text-black hover:bg-white/90 disabled:opacity-35"
-            >
-                {busy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                {busy ? 'Writing…' : current ? `Rewrite as ${styleLabel(style).toLowerCase()}` : 'Write the summary'}
-            </button>
+            {page ? (
+                // One row on the page: what can be done with this version, then writing another.
+                <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="ms-minutes-actions">
+                    {current ? documentActions : null}
+                    <span className="ml-auto">{generateButton}</span>
+                </div>
+            ) : <div className="mt-3">{generateButton}</div>}
             {/* Said plainly, because the button is the one people hesitate over: a
                 regeneration they dislike costs nothing, so there is no reason not to try one. */}
             <p className="mt-1.5 text-[10px] text-white/25" data-testid="ms-minutes-additive">

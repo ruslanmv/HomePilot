@@ -20,7 +20,11 @@ import {
 } from 'lucide-react';
 import MeetingSummary from './MeetingSummary';
 import MeetingMinutes from './MeetingMinutes';
+import { MeetingDetailPage } from './library/MeetingDetailPage';
 import { backendBase, requestHeaders } from './api';
+
+/** Asks the app to show the Meetings library (the recap's "Meetings" breadcrumb). */
+export const OPEN_MEETINGS_EVENT = 'homepilot:open-meetings';
 import {
     elapsedLabel,
     modeLabel,
@@ -482,6 +486,9 @@ export function MeetingWorkspace({
     // panel as Highlights, which is the part of it people actually used.
     const [tab, setTab] = useState<'transcript' | 'ask'>('transcript');
     const [confirmEnd, setConfirmEnd] = useState(false);
+    // The library could not show this meeting (switched off on this install): use the
+    // workspace's own recap instead.
+    const [recapFallback, setRecapFallback] = useState(false);
     const [input, setInput] = useState('');
     const [chatTurns, setChatTurns] = useState<ChatTurn[]>([]);
 
@@ -693,6 +700,30 @@ export function MeetingWorkspace({
     };
 
     if (!host) return null;
+
+    /*
+     * The recap is the meeting's own page — the same Meeting details page the Meetings library
+     * opens, in its recap form — rather than a second, narrower layout of the same meeting.
+     * One presentation, so a meeting looks the same the moment it ends and a week later.
+     * The view below remains as the fallback for an install whose library is switched off.
+     */
+    if (view.phase === 'ended' && view.meetingId && !recapFallback) {
+        return createPortal(
+            <div className="absolute inset-0 z-[35] flex min-h-0 flex-col overflow-hidden bg-black text-white" data-testid="meeting-workspace">
+                <MeetingDetailPage
+                    libraryId={view.meetingId}
+                    variant="recap"
+                    onBack={onClose || (() => undefined)}
+                    onUnavailable={() => setRecapFallback(true)}
+                    onOpenLibrary={() => {
+                        onClose?.();
+                        window.dispatchEvent(new CustomEvent(OPEN_MEETINGS_EVENT));
+                    }}
+                />
+            </div>,
+            host,
+        );
+    }
 
     const ending = view.phase === 'stopping';
     const ended = view.phase === 'ended';

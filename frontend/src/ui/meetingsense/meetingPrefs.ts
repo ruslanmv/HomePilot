@@ -7,9 +7,9 @@
  * shared with calls and voice (`media/mediaPreferences.ts`), and the Meetings tab edits that
  * same record rather than keeping a second microphone that could disagree with the first.
  *
- * `homepilot_meeting_prefs_v1` and the `language` field are also read by the classic recorder
- * script (`public/js/homepilot-meetingsense.js`, `meetingLanguage()`), which cannot import
- * this module.
+ * `homepilot_meeting_prefs_v1` and its `language` and `keepAudio` fields are also read by the
+ * classic recorder script (`public/js/homepilot-meetingsense.js`, `meetingLanguage()` and
+ * `keepAudioPreference()`), which cannot import this module.
  */
 
 export type SummaryStyle = 'minutes' | 'email' | 'notes' | 'brief' | 'actions';
@@ -25,6 +25,12 @@ export interface MeetingPrefs {
     summaryLength: SummaryLength;
     /** The language the summary is written in; '' = the meeting's own. */
     summaryLanguage: string;
+    /**
+     * Keep the meeting's audio, so it can be played back and downloaded from Meetings. Read by
+     * the recorder script too (`keepAudioPreference()`). An operator's `MEETINGSENSE_RETENTION`
+     * overrides it — see `effectiveRetention`.
+     */
+    keepAudio: boolean;
 }
 
 export const MEETING_PREFS_KEY = 'homepilot_meeting_prefs_v1';
@@ -36,7 +42,22 @@ export const MEETING_PREFS_DEFAULTS: MeetingPrefs = {
     summaryStyle: 'minutes',
     summaryLength: 'standard',
     summaryLanguage: '',
+    keepAudio: true,
 };
+
+/**
+ * What a new meeting will keep, given the server's status and this user's choice.
+ *
+ * `retention_policy` is the operator's `MEETINGSENSE_RETENTION` (it wins), or null when each
+ * user decides. A server too old to send it never kept audio, so its own `retention` stands.
+ */
+export function effectiveRetention(
+    status: { retention?: string; retention_policy?: string | null } | null | undefined,
+    keepAudio: boolean,
+): string {
+    if (status && !('retention_policy' in status)) return status.retention || 'text';
+    return status?.retention_policy || (keepAudio ? 'all' : 'text');
+}
 
 /** Languages offered for speech. Whisper knows ~100; these are the ones people pick. */
 export const SPOKEN_LANGUAGES: Array<{ id: string; label: string }> = [
@@ -87,6 +108,7 @@ function sanitize(raw: unknown): MeetingPrefs {
         summaryLength: LENGTHS.includes(value.summaryLength as SummaryLength)
             ? (value.summaryLength as SummaryLength) : MEETING_PREFS_DEFAULTS.summaryLength,
         summaryLanguage: typeof value.summaryLanguage === 'string' ? value.summaryLanguage.slice(0, 40) : '',
+        keepAudio: value.keepAudio !== false,
     };
 }
 

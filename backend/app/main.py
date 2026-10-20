@@ -7204,6 +7204,35 @@ async def mcp_server_status() -> JSONResponse:
 # Multimodal Vision Layer (additive — on-demand image understanding)
 # ============================================================================
 
+class MultimodalCheckIn(BaseModel):
+    """Request body for /v1/multimodal/check."""
+    provider: str = Field("ollama", description="'ollama' or 'openai_compat'")
+    base_url: Optional[str] = Field(None, description="Provider base URL (an OllaBridge gateway: <root>/v1)")
+    model: str = Field(..., min_length=1, max_length=300)
+    api_key: Optional[str] = Field(None, max_length=4096, description="Only for that endpoint; never stored")
+
+
+@app.post("/v1/multimodal/check", dependencies=[Depends(require_api_key)])
+async def multimodal_check(inp: MultimodalCheckIn) -> JSONResponse:
+    """Does this model really see images? (see ``vision_check.py``)
+
+    Shows the model a known two-colour test image through the same path every real image
+    takes, and reports whether it named what is in it. Models → Multimodal runs this before a
+    model is offered for images, so a model that only *claims* vision — or a route that drops
+    the picture — is caught before anyone uploads a photo to it.
+    """
+    from .vision_check import check as _vision_check
+
+    try:
+        result = await _vision_check(
+            provider=inp.provider, base_url=inp.base_url, model=inp.model, api_key=inp.api_key,
+        )
+    except Exception as e:  # noqa: BLE001 — a check that cannot run is a failed check
+        result = {"ok": True, "sees_images": False, "answer": "", "reason": f"The check could not run: {e}",
+                  "error_code": "check_failed", "model": inp.model}
+    return JSONResponse(status_code=200, content=result)
+
+
 class MultimodalAnalyzeIn(BaseModel):
     """Request body for /v1/multimodal/analyze."""
     image_url: str = Field(..., description="URL of the image to analyze (local /files/... or remote)")
@@ -7215,6 +7244,10 @@ class MultimodalAnalyzeIn(BaseModel):
     mode: Optional[str] = Field("both", description="Analysis mode: caption | ocr | both")
     user_prompt: Optional[str] = Field(None, description="Custom prompt for the vision model")
     nsfw_mode: Optional[bool] = Field(False, description="Enable unrestricted analysis")
+    api_key: Optional[str] = Field(
+        None, max_length=4096, repr=False,
+        description="Key for the vision endpoint (an OllaBridge Cloud token, a gateway key); never stored",
+    )
     persist: Optional[bool] = Field(
         True,
         description="If true (default), store analysis in conversation history. If false, return only.",
@@ -7246,6 +7279,7 @@ async def multimodal_analyze(inp: MultimodalAnalyzeIn) -> JSONResponse:
             user_prompt=inp.user_prompt,
             nsfw_mode=bool(inp.nsfw_mode),
             mode=inp.mode or "both",
+            api_key=inp.api_key,
         )
 
         if not result.get("ok"):

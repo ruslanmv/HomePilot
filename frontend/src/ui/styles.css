@@ -133,6 +133,13 @@ select option:hover {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* A side panel arriving from the right. A CSS animation, not a frame-timed class swap, so a
+   throttled background tab never leaves the panel invisible. */
+@keyframes hpPanelIn {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 /* Interactive live-play animations (PLAY-8) --------------------- */
 
 @keyframes ixSheetUp {

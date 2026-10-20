@@ -109,9 +109,40 @@ def keeps_frames(retention: str) -> bool:
 
 
 def keeps_audio(retention: str) -> bool:
-    """Whether this mode ever kept the audio. Nothing writes audio yet; the answer is here so
-    the delete path is already right when something does."""
+    """Whether this mode keeps the audio — the recording the browser uploads while the meeting
+    runs (``library/recording.py``)."""
     return retention == "all"
+
+
+def meeting_retention(config: Any, keep_audio: Any = None) -> str:
+    """What one meeting keeps, decided once when it starts and stored on the meeting.
+
+    An operator who set ``MEETINGSENSE_RETENTION`` decided for everyone, and that wins. With it
+    unset the user decides, from Settings → Meetings, and sends the answer as ``keep_audio`` in
+    the start frame. Only an explicit ``False`` keeps less: a client from before the setting
+    sends nothing, and it never uploads a recording either, so "all" keeps nothing extra for it.
+    """
+    if getattr(config, "retention_locked", False):
+        return getattr(config, "retention", "text") or "text"
+    return "text" if keep_audio is False else "all"
+
+
+def _remove_recording(meeting_id: str) -> int:
+    """The meeting's folder in the library's media store — its recording — if there is one."""
+    try:
+        import shutil  # noqa: PLC0415
+
+        from .library.config import media_root  # noqa: PLC0415
+
+        root = media_root().resolve()
+        folder = (root / meeting_id).resolve()
+    except Exception:  # noqa: BLE001 — no library, nothing of the meeting's stored there
+        return 0
+    if folder.parent != root or not folder.is_dir():
+        return 0
+    count = sum(1 for p in folder.rglob("*") if p.is_file())
+    shutil.rmtree(folder, ignore_errors=True)
+    return count
 
 
 def delete_meeting(meeting_id: str) -> Optional[Dict[str, Any]]:
@@ -129,6 +160,9 @@ def delete_meeting(meeting_id: str) -> Optional[Dict[str, Any]]:
     # this meeting's.
     urls = [k.get("url") for k in store.get_keyframes(meeting_id) if k.get("url")]
     files = remove_files(urls)
+    # The recording lives in the library's media store, not the upload directory, and goes
+    # whichever delete path is taken — this one or the library's.
+    files["recording"] = _remove_recording(meeting_id)
     # MS15's third store. A meeting deleted from SQLite but left in the vector index is a
     # meeting that still answers questions after the user deleted it — the worst available
     # reading of "delete", and the one nobody would notice until a persona quoted it back.

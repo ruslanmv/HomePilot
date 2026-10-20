@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { ModalSheet } from '../../components/ModalSheet';
 import { DEFAULT_CAPTURE, MODES, type CaptureOptions } from '../CapturePopover';
-import { consentAcknowledged } from '../ConsentSheet';
+import { consentAcknowledged, withUserRetention } from '../ConsentSheet';
 import { SUMMARY_LENGTHS } from '../MeetingMinutes';
 import { consentSentences } from '../meetingState';
 import { useMeetingControls } from '../MeetingSenseProvider';
@@ -92,8 +92,9 @@ export function StartMeetingWizard({ onClose, onCreated, canRecordLive = true }:
 
     const projectName = projects.find((p) => p.id === projectId)?.name;
     const startsLive = when === 'now' && (plan === 'live' || plan === 'hybrid');
-    const privacy = useMemo(() => consentSentences({ ...(controls?.status || {}), mode: capture.mode } as any),
+    const privacy = useMemo(() => consentSentences({ ...withUserRetention(controls?.status as any), mode: capture.mode } as any),
         [controls?.status, capture.mode]);
+    const keepsAudio = withUserRetention(controls?.status as any).retention === 'all';
     const local = !controls?.status?.stt?.remote;
     const scheduledTs = when === 'now' ? Date.now() : new Date(at).getTime();
 
@@ -255,10 +256,18 @@ export function StartMeetingWizard({ onClose, onCreated, canRecordLive = true }:
                     </label>
 
                     {consentKnown ? (
-                        <p className="flex items-center gap-2 text-xs text-white/50">
-                            <ShieldCheck size={14} className="shrink-0 text-emerald-300" />
-                            Tell everyone on the call that it is recorded.
-                        </p>
+                        <div className="space-y-1.5">
+                            <p className="flex items-center gap-2 text-xs text-white/50">
+                                <ShieldCheck size={14} className="shrink-0 text-emerald-300" />
+                                Tell everyone on the call that it is recorded.
+                            </p>
+                            <p className="flex items-center gap-2 text-xs text-white/45" data-testid="hp-quick-retention">
+                                <HardDrive size={14} className="shrink-0 text-sky-300" />
+                                {keepsAudio
+                                    ? 'The audio is kept with the transcript, so you can play the call back from Meetings.'
+                                    : 'Only the transcript is kept, not the audio.'}
+                            </p>
+                        </div>
                     ) : (
                         <div className="rounded-xl border border-white/10 bg-black/30 p-3">
                             <ul className="space-y-1 text-xs text-white/55">{privacy.map((line) => <li key={line}>• {line}</li>)}</ul>

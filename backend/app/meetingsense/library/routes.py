@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .. import store
 from ..config import load_config
-from . import db, importer, jobs, media, projection, sync
+from . import db, importer, jobs, media, projection, recording, sync
 from .config import load_library_config, media_root
 
 router = APIRouter(tags=["meetings-library"])
@@ -108,6 +108,9 @@ async def library_list(
 ) -> Dict[str, Any]:
     _require_enabled()
     viewer = _viewer(authorization, homepilot_session)
+    # A recording whose browser closed before saying it was complete is completed here, so
+    # the list never shows a meeting as still saving its audio.
+    await asyncio.to_thread(recording.finalize_stale)
     return await asyncio.to_thread(
         projection.list_library, viewer=viewer, tab=tab, q=q.strip(), source=source, project_id=project_id,
         state=state, date_from=date_from, date_to=date_to, sort=sort, cursor=cursor, limit=limit,
@@ -130,6 +133,7 @@ async def library_item(
     """Everything the Meeting Detail page shows, for any kind of library item."""
     _require_enabled()
     viewer = _viewer(authorization, homepilot_session)
+    await asyncio.to_thread(recording.finalize_stale)
     item = await asyncio.to_thread(projection.find_item, library_id, viewer)
     if item is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -260,12 +264,14 @@ async def library_remove(
     for job in db.list_jobs(meeting_id=meeting_id, states=("queued", "running")):
         db.update_job(job["id"], state="cancelled", finished=True)
     library_rows = db.delete_library_rows(meeting_id)
-    result = retention_mod.delete_meeting(meeting_id) or {}
+    # The meeting's own folder first — its copies and its live recording — so the count is
+    # this route's; the retention delete below then finds nothing of it left to remove.
     folder = media_root() / meeting_id
     removed_files = 0
     if folder.is_dir() and folder.resolve().parent == media_root().resolve():
         removed_files = sum(1 for p in folder.rglob("*") if p.is_file())
         shutil.rmtree(folder, ignore_errors=True)
+    result = retention_mod.delete_meeting(meeting_id) or {}
     return {"ok": True, "mode": "delete", "removed": {**result, **library_rows, "files": removed_files}}
 
 
@@ -346,6 +352,41 @@ async def library_media(
                 yield chunk
 
     return StreamingResponse(body(), status_code=status, media_type=mime, headers=headers)
+
+
+@router.post("/v1/meetingsense/library/item/{meeting_id}/recording")
+async def library_recording_piece(
+    meeting_id: str, request: Request, seq: int = Query(..., ge=0), offset_ms: int = Query(0, ge=0),
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """One piece of a live meeting's recording, in order (see ``library/recording.py``)."""
+    _require_enabled()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > recording.CHUNK_MAX_BYTES:
+        return JSONResponse(status_code=413, content=recording.RecordingError(413, "too_large", "That piece is too large.").body())
+    data = await request.body()
+    try:
+        result = await asyncio.to_thread(recording.append, meeting_id, seq, data,
+                                         mime=request.headers.get("content-type", ""), offset_ms=offset_ms)
+    except recording.RecordingError as exc:
+        return JSONResponse(status_code=exc.status, content=exc.body())
+    return JSONResponse(content=result)
+
+
+@router.post("/v1/meetingsense/library/item/{meeting_id}/recording/complete")
+async def library_recording_complete(
+    meeting_id: str,
+    authorization: Optional[str] = Header(default=None), homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """The browser has sent its last piece: make the recording the meeting's audio."""
+    _require_enabled()
+    _owned_entry(meeting_id, _viewer(authorization, homepilot_session))
+    try:
+        asset = await asyncio.to_thread(recording.finalize, meeting_id)
+    except recording.RecordingError as exc:
+        return JSONResponse(status_code=exc.status, content=exc.body())
+    return JSONResponse(content={"ok": asset is not None, "asset": _public_asset(asset) if asset else None})
 
 
 @router.get("/v1/meetingsense/library/item/{meeting_id}/media/{asset_id}/peaks")

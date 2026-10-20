@@ -15,9 +15,11 @@ import {
 } from './cardParts'
 import { displayModelId, suggestedByGateway, type GatewayModel } from './models'
 import {
-  deactivateSource, rememberCatalog, shownModels, sourceKey, useModelShelf, type ShelfModel,
+  deactivateSource, isSuggested, rememberCatalog, shownModels, sourceKey, useModelShelf,
+  type ShelfModel, type ShelfRole,
 } from '../../lib/modelShelf'
 import ModelShelfPicker from '../ModelShelfPicker'
+import { checkKey, useVisionChecks, visionStatus, visionSuggest, type VisionVerdict } from './visionCheck'
 import {
   clearLocalConnected, connectLocalGateway, DEFAULT_LOCAL_GATEWAY, fetchLocalModels, forgetLocalApiKey,
   loadLocalSettings, localChatBaseUrl, normalizeGatewayRoot, saveLocalConnection,
@@ -32,12 +34,15 @@ const RETRYABLE = new Set<LocalErrorKind>(['unreachable', 'timeout', 'http'])
 const SHELF_TITLE = 'OllaBridge Local'
 
 function toShelf(m: GatewayModel): ShelfModel {
-  return { id: m.id, label: m.label, kind: m.kind, group: m.origin, hidden: m.hidden, available: m.available }
+  return { id: m.id, label: m.label, kind: m.kind, group: m.origin, hidden: m.hidden, available: m.available, vision: m.vision }
 }
 
 /** Level 1 of the model shelf: what this gateway offers, recorded for Chat settings to use. */
-function remember(root: string, models: GatewayModel[]): void {
-  rememberCatalog({ title: SHELF_TITLE, provider: 'openai_compat', baseUrl: localChatBaseUrl(root) }, models.map(toShelf))
+function remember(root: string, models: GatewayModel[], role: ShelfRole): void {
+  rememberCatalog(
+    { title: SHELF_TITLE, provider: 'openai_compat', baseUrl: localChatBaseUrl(root), role },
+    models.map(toShelf),
+  )
 }
 
 type ConnectMode = 'manual' | 'restore' | 'retry'
@@ -48,9 +53,14 @@ export interface OllaBridgeLocalCardProps {
   /** HomePilot backend — used only as a same-machine fallback when CORS blocks the browser. */
   backendUrl?: string
   backendApiKey?: string
+  /** `vision`: Models → Multimodal — its own model list, and every model is checked first. */
+  role?: ShelfRole
 }
 
-export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backendApiKey }: OllaBridgeLocalCardProps) {
+export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backendApiKey, role = 'chat' }: OllaBridgeLocalCardProps) {
+  const vision = role === 'vision'
+  const { checks, running, run } = useVisionChecks()
+  const [visionNote, setVisionNote] = useState<{ model: string; verdict: VisionVerdict } | null>(null)
   const [initial] = useState(loadLocalSettings)
   const [draftUrl, setDraftUrl] = useState(initial.url)
   const [apiKey, setApiKey] = useState(initial.apiKey)
@@ -102,7 +112,7 @@ export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backe
       if (mode === 'manual') setDraftUrl(target)
       setVia(res.via)
       setModels(res.models)
-      remember(target, res.models)
+      remember(target, res.models, role)
       setError(null)
       setStatus('connected')
       saveLocalConnection(target, key)
@@ -135,7 +145,7 @@ export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backe
   const disconnect = () => {
     seqRef.current++
     clearLocalConnected()
-    if (rootRef.current) deactivateSource(sourceKey('openai_compat', localChatBaseUrl(rootRef.current)))
+    if (rootRef.current) deactivateSource(sourceKey('openai_compat', localChatBaseUrl(rootRef.current), role))
     setStatus('disconnected')
     setRoot(null)
     setModels(null)
@@ -154,7 +164,7 @@ export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backe
     setFetching(false)
     if (res.ok) {
       setModels(res.models)
-      remember(root, res.models)
+      remember(root, res.models, role)
       saveLocalConnection(root, apiKey)
       return
     }
@@ -174,20 +184,47 @@ export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backe
   const unavailable = connected && isActive && !!selected && models !== null && !selectedModel
   const showConnect = !connected || draftRoot !== root
   const connectBusy = status === 'connecting' || switching
-  // The models offered in chat: the user's choice for this gateway (Choose models), else the
-  // gateway's own suggestion. The full catalog stays one click away.
-  const shelfSource = shelf[sourceKey('openai_compat', chatBase)]
+  // The models offered: the user's choice for this gateway (Choose models), else the gateway's
+  // own suggestion — for Multimodal, further narrowed by the vision check. The full catalog
+  // stays one click away.
+  const verdictOf = (id: string) => checks[checkKey(chatBase, id)]
+  const checkingId = (id: string) => !!running[checkKey(chatBase, id)]
+  const suggest = vision ? visionSuggest(verdictOf) : isSuggested
+  const shelfSource = shelf[sourceKey('openai_compat', chatBase, role)]
   const offeredIds = new Set(
-    shelfSource ? shownModels(shelfSource).map((m) => m.id) : (models || []).filter(suggestedByGateway).map((m) => m.id),
+    shelfSource
+      ? shownModels(shelfSource, suggest).map((m) => m.id)
+      : (models || []).filter(vision ? (m) => suggestedByGateway(m) && suggest(toShelf(m)) : suggestedByGateway).map((m) => m.id),
   )
   const offered = (models || []).filter((m) => offeredIds.has(m.id))
   const multiOrigin = new Set(offered.map((m) => m.origin)).size > 1
+  const labelOf = (m: GatewayModel) => (vision ? `${m.label} — ${visionStatus(m, verdictOf(m.id), checkingId(m.id))}` : m.label)
 
   const options: SelectOption[] = []
   if (unavailable) options.push({ value: selected, label: `${displayModelId(selected)} — unavailable`, disabled: true })
   // The current choice stays visible even when it is not on the list any more.
-  if (selectedModel && !offeredIds.has(selectedModel.id)) options.push({ value: selectedModel.id, label: selectedModel.label })
-  for (const m of offered) options.push({ value: m.id, label: m.label, group: multiOrigin ? m.origin : undefined })
+  if (selectedModel && !offeredIds.has(selectedModel.id)) options.push({ value: selectedModel.id, label: labelOf(selectedModel) })
+  for (const m of offered) options.push({ value: m.id, label: labelOf(m), group: multiOrigin ? m.origin : undefined })
+
+  /**
+   * Multimodal: a model is checked before images go to it. A pass routes it; a failure says why
+   * and offers "Use anyway" for a model the person knows better than the check does.
+   */
+  const choose = async (id: string, force = false) => {
+    if (!vision || force) {
+      setVisionNote(null)
+      onSelect(chatBase, id)
+      return
+    }
+    const known = verdictOf(id)
+    const verdict = known?.sees ? known : await run({ backendUrl, backendApiKey, baseUrl: chatBase, model: id, apiKey: apiKeyRef.current || undefined })
+    if (verdict.sees) {
+      setVisionNote(null)
+      onSelect(chatBase, id)
+    } else {
+      setVisionNote({ model: id, verdict })
+    }
+  }
 
   const placeholder = !connected
     ? 'Connect first to load models'
@@ -259,7 +296,7 @@ export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backe
             options={options}
             disabled={!connected || (models?.length ?? 0) === 0}
             placeholder={placeholder}
-            onChange={(v) => { if (v) onSelect(chatBase, v) }}
+            onChange={(v) => { if (v) void choose(v) }}
           />
           {connected && models !== null && models.length > 0 && (
             <p className="mt-1.5 text-[11px] text-white/45">
@@ -282,7 +319,20 @@ export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backe
       </form>
 
       {choosing && connected && shelfSource && (
-        <ModelShelfPicker source={shelfSource} onClose={() => setChoosing(false)} />
+        <ModelShelfPicker
+          source={shelfSource}
+          onClose={() => setChoosing(false)}
+          suggest={suggest}
+          {...(vision ? {
+            title: 'Models offered for images',
+            hint: 'Each model is checked with a test image when you add it.',
+            statusOf: (m: ShelfModel) => visionStatus(m, verdictOf(m.id), checkingId(m.id)),
+            // A newly ticked model is checked straight away, so nothing unverified is offered.
+            onAdded: (m: ShelfModel) => {
+              if (!verdictOf(m.id)) void run({ backendUrl, backendApiKey, baseUrl: chatBase, model: m.id, apiKey: apiKeyRef.current || undefined })
+            },
+          } : {})}
+        />
       )}
 
       {showKey && (
@@ -350,9 +400,34 @@ export default function OllaBridgeLocalCard({ route, onSelect, backendUrl, backe
         </WarnLine>
       )}
 
+      {vision && visionNote && (
+        <WarnLine
+          action={
+            <button
+              type="button"
+              onClick={() => void choose(visionNote.model, true)}
+              className="text-amber-100 underline underline-offset-2 hover:text-white"
+            >
+              Use anyway
+            </button>
+          }
+        >
+          “{displayModelId(visionNote.model)}” did not pass the image check — {visionNote.verdict.reason || 'it did not describe the test image.'}
+        </WarnLine>
+      )}
+
+      {vision && connected && Object.keys(running).some((k) => k.startsWith(`${chatBase.toLowerCase().replace(/\/+$/, '')}|`)) && (
+        <p className="mt-3 flex items-center gap-1.5 text-xs text-white/55" role="status">
+          <Loader2 size={13} className="animate-spin" aria-hidden /> Checking with a test image…
+        </p>
+      )}
+
       {connected && selectedModel && (
         <p className="mt-3 flex items-center gap-1.5 text-xs text-emerald-300/90">
-          <CheckCircle2 size={13} aria-hidden /> Chat uses {selectedModel.label} through this gateway.
+          <CheckCircle2 size={13} aria-hidden />
+          {vision
+            ? <>Images are read by {selectedModel.label} through this gateway.</>
+            : <>Chat uses {selectedModel.label} through this gateway.</>}
         </p>
       )}
 
