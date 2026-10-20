@@ -10,19 +10,28 @@ from .storage import get_messages
 
 async def web_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
     """
-    Perform web search using a search provider
+    Search the web through HomePilot's web-search MCP server (SearXNG by default, Tavily
+    optional — ``web_search.py``). Used by the persona agent's ``web_search`` tool and the
+    ``search`` mode.
 
-    TODO: Integrate with real search API (SerpAPI, Brave Search, etc.)
-    For now, returns mock results
+    Returns ``[]`` when search is not available, so a caller reports "no results" rather than
+    presenting anything made up. (This used to return a fixed example.com result.)
     """
-    # Mock results - replace with real search API
+    from . import web_search as web_search_mod
+
+    try:
+        results = await web_search_mod.search(query, limit=max(1, min(int(max_results or 5), 20)),
+                                              recency_days=3 if web_search_mod.wants_fresh(query) else 0)
+    except web_search_mod.SearchUnavailable:
+        return []
     return [
         {
-            "title": f"Result for: {query}",
-            "url": "https://example.com/search",
-            "snippet": f"This is a mock search result for '{query}'. Integrate with SerpAPI, Brave Search, or DuckDuckGo API for real results.",
-            "published_date": "2026-01-18"
+            "title": s.title,
+            "url": s.url,
+            "snippet": s.snippet,
+            "published_date": s.published or None,
         }
+        for s in web_search_mod.select_sources(results, keep=max_results)
     ]
 
 
@@ -45,7 +54,7 @@ async def summarize_results(query: str, results: List[Dict[str, Any]], provider:
 
     - Cite sources using [1], [2], etc.
     - Be direct and informative
-    - If results are limited/mock, acknowledge it
+    - If the results do not answer the question, say so instead of guessing
     - Maintain a helpful, Grok-like tone
     """
 

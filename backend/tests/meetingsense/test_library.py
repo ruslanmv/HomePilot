@@ -90,6 +90,9 @@ def lib(tmp_path, monkeypatch):
     for name in ("MEETINGSENSE_ENABLED", "MEETINGS_SYNC_ALLOWED_ROOTS"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MEETINGS_LIBRARY_UPGRADE", "1")
+    # Insights are on by default; these tests are about the library alone and count the
+    # jobs an import queues. test_intelligence.py covers the analysis job.
+    monkeypatch.setenv("MEETINGS_INTELLIGENCE", "0")
     monkeypatch.setenv("MEETINGS_LIBRARY_WORKER", "0")
     monkeypatch.setenv("MEETINGS_LIBRARY_DIR", str(tmp_path / "media"))
     monkeypatch.setenv("MEETINGS_SYNC_STABILITY_S", "0")

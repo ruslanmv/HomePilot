@@ -12,7 +12,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AlertTriangle, ArrowLeft, Bot, CalendarDays, CheckSquare, ChevronDown, Clock3, Download, ExternalLink, FileText,
+    AlertTriangle, ArrowLeft, ArrowRight, Bot, CalendarDays, CheckSquare, ChevronDown, Clock3, Download, ExternalLink, FileText,
     Folder, Info, Lightbulb, ListChecks, Loader2, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, RefreshCw,
     Presentation, Send, Sparkles, Users, X,
 } from 'lucide-react';
@@ -20,8 +20,11 @@ import {
     LibraryError, libraryApi, mediaUrl, transcriptUrl, type LibraryDetail, type LibraryItem, type Segment,
 } from './api';
 import {
-    TONE_CLASSES, bytes, clock, formatDate, formatDateTime, formatDuration, isFallbackSummary, overviewSummary, plainText, statusChip,
+    TONE_CLASSES, bytes, clock, formatDate, formatDateTime, formatDuration, formatWhen, isFallbackSummary, overviewSummary, quickSummary, statusChip,
 } from './format';
+import { MeetingMinutes } from '../MeetingMinutes';
+import type { MeetingSummaryDoc } from '../meetingRecord';
+import { KeyScreens, usableScreens, type KeyScreensHandle } from './KeyScreens';
 import { SummaryMarkdown } from './SummaryMarkdown';
 import { WaveformPlayer, type PlayerHandle } from './WaveformPlayer';
 import { ProcessingPanel } from './ProcessingPanel';
@@ -34,7 +37,7 @@ const PANEL_WIDTH_KEY = 'hp_meeting_details_width';
 const PANEL_MIN = 280;
 const PANEL_MAX = 520;
 
-type Tab = 'overview' | 'visual' | 'transcript' | 'actions' | 'audio' | 'summary' | 'chat' | 'properties';
+type Tab = 'overview' | 'visual' | 'transcript' | 'actions' | 'summary' | 'chat' | 'properties';
 
 /** The line being spoken at `ms`: the last segment that starts at or before it. */
 function indexAt(segments: Segment[], ms: number): number {
@@ -86,13 +89,27 @@ function noteItems(list: any[] | undefined): Array<{ text: string; owner?: strin
         .filter((it) => it.text.trim());
 }
 
-export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpenTeamsRoom, onOpenProject }: {
+export function MeetingDetailPage({
+    libraryId, onBack, onOpenConversation, onOpenTeamsRoom, onOpenProject, variant = 'library', onUnavailable, onOpenLibrary,
+}: {
     libraryId: string;
     onBack: () => void;
     onOpenConversation?: (conversationId: string) => void;
     onOpenTeamsRoom?: (roomId: string) => void;
     onOpenProject?: (projectId: string) => void;
+    /**
+     * `recap`: the page a meeting opens on the moment it ends. The same page, with the parts
+     * only a just-finished meeting needs on its Overview — the full summary with its versions,
+     * asking the meeting, and the screens it captured.
+     */
+    variant?: 'library' | 'recap';
+    /** The library cannot show this meeting (switched off, or not there yet); the caller
+     *  falls back to its own view rather than showing an error page. */
+    onUnavailable?: () => void;
+    /** "Meetings" in the breadcrumb, when it should go somewhere other than Back. */
+    onOpenLibrary?: () => void;
 }) {
+    const recap = variant === 'recap';
     const [detail, setDetail] = useState<LibraryDetail | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [tab, setTab] = useState<Tab>('overview');
@@ -114,13 +131,26 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
     const narrow = useNarrow();
     const player = useRef<PlayerHandle>(null);
     const toggleRef = useRef<HTMLButtonElement>(null);
+    const keyScreensRef = useRef<KeyScreensHandle>(null);
+    // A failed refresh of a page already on screen is not "unavailable" — only a first load is.
+    const detailRef = useRef<LibraryDetail | null>(null);
+    detailRef.current = detail;
+    const unavailableRef = useRef(onUnavailable);
+    unavailableRef.current = onUnavailable;
 
     const load = useCallback(async () => {
         try {
             const body = await libraryApi.item(libraryId);
+            // A reply with no meeting in it (an older server, a proxy page) is not a meeting
+            // to show; waiting on it would leave the spinner up for good.
+            if (!body || !body.item) throw new Error('no meeting in the reply');
             setDetail(body);
             setError(null);
         } catch (e) {
+            if (unavailableRef.current && !detailRef.current) {
+                unavailableRef.current();
+                return;
+            }
             setError(e instanceof LibraryError ? (e.status === 404 ? 'This meeting no longer exists.' : e.message) : 'The meeting could not be loaded.');
         }
     }, [libraryId]);
@@ -138,7 +168,8 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
         return () => { cancelled = true; };
     }, [meetingId, audio?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const working = !!item && (['queued', 'transcribing'].includes(item.transcript_state) || item.summary_state === 'pending' || item.live);
+    const working = !!item && (['queued', 'transcribing'].includes(item.transcript_state) || item.summary_state === 'pending'
+        || item.recording_state === 'saving' || item.live);
     useEffect(() => {
         if (!working) return undefined;
         const t = setInterval(() => void load(), 4000);
@@ -162,12 +193,17 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
     const decisions = noteItems(notes?.decisions);
     const actions = noteItems(notes?.actions);
     const overview = overviewSummary(detail?.summaries, notes?.summary, item?.description);
-    const overviewText = overview.markdown ? plainText(overview.text) : overview.text;
+    const overviewText = quickSummary(overview);
     const segments = detail?.segments || [];
     const speakers = useMemo(() => Array.from(new Set(segments.map((s) => s.speaker).filter(Boolean) as string[])), [segments]);
     const timed = (detail?.versions || []).find((v) => v.active)?.timing !== 'none';
 
-    const seekTo = (ms: number) => player.current?.seek(ms);
+    // A live meeting's own recording starts `offset_ms` into the capture clock every transcript
+    // time is on (later for the second part of a call that survived a server restart), so the
+    // two are lined up here: transcript time → player time, and back.
+    const audioOffset = Math.max(0, Number(audio?.metadata?.offset_ms) || 0);
+    const seekTo = (ms: number) => player.current?.seek(Math.max(0, ms - audioOffset));
+    const onPlayerTime = useCallback((ms: number) => setActiveMs(ms + audioOffset), [audioOffset]);
     // "View source" from the visual summary: open the transcript on that line and, when there
     // is a recording, play from it.
     const viewSource = (ms: number) => {
@@ -217,7 +253,10 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
         />
     );
 
-    const showPanelInline = panelOpen && !narrow;
+    // On wide screens the assistant is a column of this layout, in the details column's place,
+    // so the meeting beside it stays exactly as it was; on small screens it is a full view.
+    const chatInline = askOpen && !narrow && !!meetingId && !teamsRoom;
+    const showPanelInline = panelOpen && !narrow && !chatInline;
 
     return (
         <div className="flex h-full flex-col bg-black text-white" data-testid="meeting-detail">
@@ -226,7 +265,7 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                     <ArrowLeft size={16} /> Back
                 </button>
                 <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-2 text-sm text-white/55 sm:flex">
-                    <button type="button" onClick={onBack} className="hover:text-white">Meetings</button>
+                    <button type="button" onClick={onOpenLibrary || onBack} className="hover:text-white">Meetings</button>
                     <span aria-hidden>›</span>
                     <span className="truncate text-white/90">{item.title}</span>
                 </nav>
@@ -268,21 +307,35 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                         <span className={`mt-1 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm ${TONE_CLASSES[statusPill.tone]}`}>
                             <span className="h-2 w-2 rounded-full bg-current" aria-hidden /> {statusPill.label}
                         </span>
-                        <button
-                            ref={toggleRef}
-                            type="button"
-                            onClick={() => (narrow ? setDrawerOpen(true) : setPanelOpen((o) => !o))}
-                            aria-expanded={narrow ? drawerOpen : panelOpen}
-                            aria-controls="meeting-details-panel"
-                            className="ml-auto inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white/80 hover:bg-white/[0.08]"
-                            data-testid="details-toggle"
-                        >
-                            {(narrow ? drawerOpen : panelOpen) ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-                            {(narrow ? drawerOpen : panelOpen) ? 'Hide details' : 'Show details'}
-                        </button>
+                        {chatInline ? (
+                            // The chat holds the details column while it is open; this hands it back.
+                            <button
+                                type="button"
+                                onClick={() => setAskOpen(false)}
+                                aria-expanded
+                                aria-controls="meeting-assistant-panel"
+                                className="ml-auto inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white/80 hover:bg-white/[0.08]"
+                                data-testid="details-toggle"
+                            >
+                                <PanelRightClose size={16} /> Hide chat
+                            </button>
+                        ) : (
+                            <button
+                                ref={toggleRef}
+                                type="button"
+                                onClick={() => (narrow ? setDrawerOpen(true) : setPanelOpen((o) => !o))}
+                                aria-expanded={narrow ? drawerOpen : panelOpen}
+                                aria-controls="meeting-details-panel"
+                                className="ml-auto inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm text-white/80 hover:bg-white/[0.08]"
+                                data-testid="details-toggle"
+                            >
+                                {(narrow ? drawerOpen : panelOpen) ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+                                {(narrow ? drawerOpen : panelOpen) ? 'Hide details' : 'Show details'}
+                            </button>
+                        )}
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-white/60">
-                        <span className="inline-flex items-center gap-1.5"><CalendarDays size={15} /> {formatDate(item.started_at || item.scheduled_for)}</span>
+                        <span className="inline-flex items-center gap-1.5"><CalendarDays size={15} /> {formatWhen(item.started_at || item.scheduled_for)}</span>
                         <span className="inline-flex items-center gap-1.5"><Clock3 size={15} /> {formatDuration(item.duration_ms)}</span>
                         {project ? (
                             <button type="button" onClick={() => onOpenProject?.(project.id)} className="inline-flex items-center gap-1.5 hover:text-white"><Folder size={15} /> {project.name}</button>
@@ -312,12 +365,18 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                     ) : null}
 
                     {audio && meetingId && !teamsRoom ? (
-                        <div className="mt-5">
+                        <div className="mt-4">
                             {/* One player for the whole page: playback continues across tabs, and every
-                                timestamp — transcript, insights, assistant — seeks the same recording. */}
+                                timestamp — transcript, insights, assistant — seeks the same recording.
+                                A compact row until opened, so the summary stays near the top. */}
                             <WaveformPlayer ref={player} src={mediaUrl(meetingId, audio.id)} peaks={peaks}
-                                durationMs={audio.media_duration_ms} downloadUrl={mediaUrl(meetingId, audio.id, true)} onTime={setActiveMs} />
+                                durationMs={audio.media_duration_ms} downloadUrl={mediaUrl(meetingId, audio.id, true)} onTime={onPlayerTime} />
                         </div>
+                    ) : item.recording_state === 'saving' && !teamsRoom ? (
+                        <p className="mt-5 flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/65"
+                            role="status" data-testid="recording-saving">
+                            <Loader2 size={15} className="animate-spin text-violet-300" /> Saving the recording… It plays here in a moment.
+                        </p>
                     ) : null}
 
                     {teamsRoom ? (
@@ -336,12 +395,13 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                                 </TabButton>
                                 <div className="relative ml-auto">
                                     <button type="button" onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}
-                                        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-2 text-[13px] sm:px-3 sm:text-sm ${['audio', 'summary', 'chat', 'properties'].includes(tab) ? 'bg-violet-600/30 text-white' : 'text-white/70 hover:bg-white/[0.06]'}`}>
+                                        className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-2 text-[13px] sm:px-3 sm:text-sm ${['summary', 'chat', 'properties'].includes(tab) ? 'bg-violet-600/30 text-white' : 'text-white/70 hover:bg-white/[0.06]'}`}>
                                         <MoreHorizontal size={16} className="hidden sm:block" aria-hidden /> More <ChevronDown size={14} aria-hidden />
                                     </button>
                                     {moreOpen ? (
                                         <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-white/10 bg-[#121218] py-1 text-sm shadow-2xl" role="menu">
-                                            {([['audio', 'Audio'], ['summary', 'Summary'], ['chat', 'AI Chat'], ['properties', 'Properties']] as const).map(([id, label]) => (
+                                            {/* No "Audio" here: the recording is the row at the top of the page. */}
+                                            {([['summary', 'Summary'], ['chat', 'AI Chat'], ['properties', 'Properties']] as const).map(([id, label]) => (
                                                 <button key={id} type="button" role="menuitem" onClick={() => { setTab(id); setMoreOpen(false); }}
                                                     className="block w-full px-3 py-2 text-left text-white/85 hover:bg-white/[0.06]">{label}</button>
                                             ))}
@@ -378,14 +438,51 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                                                 </ol>
                                             </Card>
                                         ) : null}
-                                        <Card icon={<FileText size={18} />} title="Transcript preview"
-                                            action={segments.length ? <button type="button" onClick={() => setTab('transcript')} className="text-sm text-violet-300 hover:text-violet-200">View full transcript →</button> : null}>
-                                            {segments.length ? (
-                                                <ul className="space-y-3">
-                                                    {segments.slice(0, 3).map((s, i) => <TranscriptLine key={s.id || i} seg={s} timed={timed} speakers={speakers.length > 0} onSeek={audio ? (ms) => player.current?.seek(ms) : undefined} />)}
-                                                </ul>
-                                            ) : <TranscriptEmpty item={item} />}
-                                        </Card>
+                                        {recap && meetingId ? (
+                                            <>
+                                                {/* The document written from the whole transcript, with every version
+                                                    kept — the same component the live recap used, in this page's style. */}
+                                                <MeetingMinutes
+                                                    meetingId={meetingId}
+                                                    documents={(detail.summaries || []) as MeetingSummaryDoc[]}
+                                                    hasTranscript={!!segments.length}
+                                                    writing={item.summary_state === 'pending'}
+                                                    appearance="page"
+                                                />
+                                                <AskCard
+                                                    disabled={!segments.length}
+                                                    onAsk={(q) => { setAskSeed(q); setAskOpen(true); }}
+                                                />
+                                            </>
+                                        ) : null}
+                                        {(() => {
+                                            const transcriptCard = (
+                                                <Card icon={<FileText size={18} />} title="Transcript preview"
+                                                    action={segments.length ? <button type="button" onClick={() => setTab('transcript')} className="text-sm text-violet-300 hover:text-violet-200">View full transcript →</button> : null}>
+                                                    {segments.length ? (
+                                                        <ul className="space-y-3">
+                                                            {segments.slice(0, 3).map((s, i) => <TranscriptLine key={s.id || i} seg={s} timed={timed} speakers={speakers.length > 0} onSeek={audio ? seekTo : undefined} />)}
+                                                        </ul>
+                                                    ) : <TranscriptEmpty item={item} />}
+                                                </Card>
+                                            );
+                                            if (!recap) return transcriptCard;
+                                            const screens = usableScreens(detail.keyframes);
+                                            return (
+                                                <div className="grid gap-4 xl:grid-cols-2">
+                                                    <Card icon={<Presentation size={18} />} title="Key screens"
+                                                        action={screens.length ? (
+                                                            <button type="button" onClick={() => keyScreensRef.current?.openViewer(0)}
+                                                                className="inline-flex items-center gap-1 text-sm text-violet-300 hover:text-violet-200">
+                                                                View all ({screens.length}) <ArrowRight size={14} aria-hidden />
+                                                            </button>
+                                                        ) : null}>
+                                                        <KeyScreens ref={keyScreensRef} screens={screens} onSeek={audio ? seekTo : undefined} />
+                                                    </Card>
+                                                    {transcriptCard}
+                                                </div>
+                                            );
+                                        })()}
                                     </>
                                 ) : null}
                                 {tab === 'visual' ? (
@@ -402,16 +499,6 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                                         onSaved={() => { setNotice('Saved as a new transcript version.'); void load(); }} />
                                 ) : null}
                                 {tab === 'actions' ? <ActionsTab meetingId={meetingId || libraryId} actions={actions} item={item} /> : null}
-                                {tab === 'audio' ? (
-                                    audio && meetingId ? (
-                                        <>
-                                            <Card title="Audio" icon={<FileText size={18} />}>
-                                                <p className="text-sm text-white/60">The player stays at the top of the page, so playback continues while you read any tab.</p>
-                                            </Card>
-                                            <FilesList detail={detail} meetingId={meetingId} />
-                                        </>
-                                    ) : <Card title="Audio" icon={<FileText size={18} />}><p className="text-sm text-white/60">This meeting has no recording.</p></Card>
-                                ) : null}
                                 {tab === 'summary' ? (
                                     <SummaryTab detail={detail} onWrite={meetingId && segments.length ? (style, length) => act(() => libraryApi.summarize(meetingId, { outputs: { style, length } }), 'Writing a summary…') : undefined} />
                                 ) : null}
@@ -445,6 +532,13 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
                         <aside id="meeting-details-panel" aria-label="Meeting details" className="h-full overflow-y-auto px-4 py-5">{details}</aside>
                     </div>
                 ) : null}
+
+                {chatInline && meetingId ? (
+                    <div id="meeting-assistant-panel" className="hidden h-full w-[420px] shrink-0 lg:block">
+                        <AssistantDrawer layout="inline" meetingId={meetingId} open onClose={() => setAskOpen(false)} seed={askSeed}
+                            onSeeded={() => setAskSeed(null)} onSeek={audio ? seekTo : undefined} hasTranscript={!!segments.length} title={item.title} />
+                    </div>
+                ) : null}
             </div>
 
             {narrow && drawerOpen ? (
@@ -466,11 +560,58 @@ export function MeetingDetailPage({ libraryId, onBack, onOpenConversation, onOpe
             {meetingId && !teamsRoom ? (
                 <>
                     <AssistantLauncher hidden={askOpen || !segments.length} onOpen={() => setAskOpen(true)} />
-                    <AssistantDrawer meetingId={meetingId} open={askOpen} onClose={() => setAskOpen(false)} seed={askSeed}
-                        onSeeded={() => setAskSeed(null)} onSeek={audio ? seekTo : undefined} hasTranscript={!!segments.length} title={item.title} />
+                    {narrow ? (
+                        <AssistantDrawer layout="sheet" meetingId={meetingId} open={askOpen} onClose={() => setAskOpen(false)} seed={askSeed}
+                            onSeeded={() => setAskSeed(null)} onSeek={audio ? seekTo : undefined} hasTranscript={!!segments.length} title={item.title} />
+                    ) : null}
                 </>
             ) : null}
         </div>
+    );
+}
+
+/**
+ * "Ask this meeting" on the Overview. The answer opens in the meeting assistant — the same
+ * private conversation as the floating button — so there is one place questions and their
+ * citations live, and nothing asked here is written into the meeting.
+ */
+function AskCard({ disabled, onAsk }: { disabled: boolean; onAsk: (question: string) => void }) {
+    const [text, setText] = useState('');
+    const submit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const q = text.trim();
+        if (!q || disabled) return;
+        onAsk(q);
+        setText('');
+    };
+    return (
+        <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 sm:p-5" aria-labelledby="ask-meeting-title" data-testid="ask-meeting-card"
+            // Asking here opens the assistant; a press on it is never "outside" the open panel.
+            data-assistant-trigger="">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+                <span className="text-violet-300"><Sparkles size={18} /></span>
+                <h3 id="ask-meeting-title" className="flex-1 font-semibold">Ask this meeting</h3>
+                <span className="text-xs text-white/45">
+                    <b className="font-medium text-white/60">Private to you.</b> Answered from this meeting’s transcript; never added to it.
+                </span>
+            </div>
+            <form onSubmit={submit} className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 py-1.5 pl-3 pr-1.5 focus-within:border-violet-400/50">
+                <Bot size={16} className="shrink-0 text-violet-300" aria-hidden />
+                <label htmlFor="ask-meeting-input" className="sr-only">Ask this meeting</label>
+                <input
+                    id="ask-meeting-input"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    disabled={disabled}
+                    placeholder={disabled ? 'Questions open once this meeting has a transcript.' : 'Ask anything about what was said in this meeting — “what did they decide?”'}
+                    className="min-w-0 flex-1 bg-transparent py-1.5 text-sm text-white outline-none placeholder:text-white/35 disabled:cursor-not-allowed"
+                />
+                <button type="submit" disabled={disabled || !text.trim()} aria-label="Ask"
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40">
+                    <Send size={15} />
+                </button>
+            </form>
+        </section>
     );
 }
 

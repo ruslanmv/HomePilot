@@ -38,11 +38,29 @@ import shutil
 
 try:
     import requests
+except ImportError:
+    print("ERROR: Missing required package. Install with:")
+    print("  pip install requests")
+    sys.exit(1)
+
+try:
     from tqdm import tqdm
 except ImportError:
-    print("ERROR: Missing required packages. Install with:")
-    print("  pip install requests tqdm")
-    sys.exit(1)
+    # The progress bar is a nicety, not a requirement: a Python without tqdm (often the system
+    # one) still downloads, reporting progress as plain percentages.
+    class tqdm:  # type: ignore[no-redef]
+        def __init__(self, total: int = 0, initial: int = 0, desc: str = "", **_: Any) -> None:
+            self.total, self.n, self.desc, self._last = max(1, int(total or 0)), int(initial or 0), desc, -1
+
+        def update(self, amount: int) -> None:
+            self.n += amount
+            pct = int(self.n * 100 / self.total)
+            if pct >= self._last + 5 or pct == 100:
+                self._last = pct
+                print(f"  {self.desc}: {min(pct, 100)}%", flush=True)
+
+        def close(self) -> None:
+            pass
 
 # Optional dependency: only required for HF-based installs (model packs)
 try:

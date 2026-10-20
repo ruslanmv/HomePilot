@@ -10,6 +10,7 @@ import {
   isFallbackSummary,
   overviewSummary,
   plainText,
+  quickSummary,
   statusChip,
 } from '../ui/meetingsense/library/format'
 import { MeetingsHome } from '../ui/meetingsense/library/MeetingsHome'
@@ -89,6 +90,21 @@ describe('summaries', () => {
     expect(out.text).toContain('React Native')
     expect(out.text).not.toContain('meeting in order')
     expect(plainText(out.text)).toBe('Summary\n\nWe chose React Native.')
+  })
+
+  it('treats a document flagged extractive as a fallback, whatever its text says', () => {
+    const extractive = { text: '00:00:03 — Hallo. How are you?', degraded: 'extractive' }
+    expect(isFallbackSummary(extractive)).toBe(true)
+    expect(overviewSummary([extractive], '', '')).toEqual({ text: '', markdown: false })
+    expect(isFallbackSummary({ text: 'A written summary.', degraded: null })).toBe(false)
+  })
+
+  it('the quick summary is the opening paragraph, not the whole document', () => {
+    const doc = { text: '## Summary\n\nLaunch set for **Nov 18**.\n\n## Decisions\n\n- Ship offline mode.' }
+    expect(quickSummary(overviewSummary([doc]))).toBe('Launch set for Nov 18.')
+    expect(quickSummary(overviewSummary([{ text: '## Summary\nWe chose React Native.' }]))).toBe('We chose React Native.')
+    expect(quickSummary(overviewSummary([{ text: '- only a list' }]))).toBe('• only a list')
+    expect(quickSummary({ text: 'Notes summary.', markdown: false })).toBe('Notes summary.')
   })
 
   it('maps the chosen outputs to a summary style', () => {

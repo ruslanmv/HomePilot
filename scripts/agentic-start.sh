@@ -35,6 +35,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Background processes write here, not to this script's stdout: `make start` reads that
+# stdout through a pipe (`$(… | tail -1)`), and a child still holding it open kept the
+# pipe from ever closing — `make start` hung at "Starting MCP Context Forge Gateway".
+LOG_DIR="${HOMEPILOT_LOG_DIR:-$ROOT/.logs}"
+mkdir -p "$LOG_DIR"
 AGENTIC_DIR="$ROOT/agentic"
 
 # Python — prefer the backend venv (has httpx, pyyaml, fastapi, uvicorn)
@@ -91,7 +97,10 @@ cleanup() {
     done
     echo "  All MCP servers stopped"
 }
-trap cleanup EXIT INT TERM
+# Ctrl+C or a kill only. Not EXIT: this script starts the servers and hands their PIDs to
+# its caller (`echo "$PIDS"` at the end) — stopping them when the script returns killed
+# every server it had just started.
+trap cleanup INT TERM
 
 # ── Helper: start a uvicorn process ──────────────────────────────────────────
 start_server() {
@@ -101,7 +110,8 @@ start_server() {
 
     echo "  Starting $label on port $port..."
     PYTHONPATH="$ROOT" "$PYTHON" -m uvicorn "$module" \
-        --host 127.0.0.1 --port "$port" --log-level warning &
+        --host 127.0.0.1 --port "$port" --log-level warning \
+        >>"$LOG_DIR/$(printf '%s' "$label" | tr -c '[:alnum:]-' '_').log" 2>&1 &
     PIDS="$PIDS $!"
 }
 

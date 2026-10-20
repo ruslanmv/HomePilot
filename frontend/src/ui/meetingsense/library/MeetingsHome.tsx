@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { LibraryError, libraryApi, type LibraryItem, type LibraryPage, type LibraryStatus } from './api';
 import {
-    SORTS, STATE_FILTERS, TABS, TONE_CLASSES, categoryTone, footerPlace, formatDate, formatDuration, isWorking, statusChip,
+    SORTS, STATE_FILTERS, TABS, TONE_CLASSES, categoryTone, footerPlace, formatDuration, formatWhen, isWorking, statusChip,
 } from './format';
 import { ImportDialog } from './ImportDialog';
 import { FolderSyncPanel } from './FolderSyncPanel';
@@ -327,6 +327,11 @@ function EmptyState({ tab, filtered, onImport, onNew, onSync }: {
     );
 }
 
+/** Machine-readable start time for `<time dateTime>`; empty when there is none. */
+function whenIso(ts: number | null | undefined): string | undefined {
+    return ts ? new Date(ts * 1000).toISOString() : undefined;
+}
+
 export function LibraryCard({ item, onOpen, onChanged }: {
     item: LibraryItem; onOpen: () => void; onChanged?: (message?: string) => void;
 }) {
@@ -374,8 +379,11 @@ export function LibraryCard({ item, onOpen, onChanged }: {
                 {item.description || (item.recording_state === 'awaiting' ? 'Waiting for its recording.' : item.warnings[0] || '\u00a0')}
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-white/55">
-                <span className="inline-flex items-center gap-1.5"><CalendarDays size={14} /> {formatDate(item.started_at || item.scheduled_for)}</span>
-                <span className="inline-flex items-center gap-1.5"><Clock3 size={14} /> {formatDuration(item.duration_ms)}</span>
+                <span className="inline-flex items-center gap-1.5" title="Started">
+                    <CalendarDays size={14} />
+                    <time dateTime={whenIso(item.started_at || item.scheduled_for)}>{formatWhen(item.started_at || item.scheduled_for)}</time>
+                </span>
+                <span className="inline-flex items-center gap-1.5" title="Duration"><Clock3 size={14} /> {formatDuration(item.duration_ms)}</span>
                 <span className="inline-flex min-w-0 items-center gap-1.5"><PlaceIcon size={14} /> <span className="truncate">{place.label}</span></span>
             </div>
             {meetingId ? (

@@ -14,6 +14,16 @@
 
 /* Focus ring */
 --hp-focus-ring: rgba(168, 85, 247, 0.55);
+
+/* ── HomePilot design tokens (src/ui/ds/README.md) ─────────────────────────
+   RGB triples, so Tailwind can add opacity: `bg-hp-accent/15`. One violet for the whole
+   product — the Meetings pages set it — instead of #9b5cff, purple-500 and violet-600 side by
+   side. Pages use these through the shared components in src/ui/ds rather than directly. */
+--hp-accent: 124 58 237;        /* violet-600: primary buttons, active states */
+--hp-accent-hover: 139 92 246;  /* violet-500 */
+--hp-accent-fg: 196 181 253;    /* violet-300: icons and links on dark */
+--hp-canvas: 0 0 0;             /* page background */
+--hp-surface: 18 18 24;         /* menus, sheets, popovers (#121218) */
 }
 
 /* ── Mobile hygiene (Android Chrome / iOS Safari) ──────────────────────────
@@ -131,6 +141,13 @@ select option:hover {
 @keyframes accountMenuIn {
   from { opacity: 0; transform: translateY(8px) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* A side panel arriving from the right. A CSS animation, not a frame-timed class swap, so a
+   throttled background tab never leaves the panel invisible. */
+@keyframes hpPanelIn {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 /* Interactive live-play animations (PLAY-8) --------------------- */
@@ -870,3 +887,7 @@ select option:hover {
   #hp-print-root button { border: 0 !important; background: transparent !important; }
   @page { margin: 12mm; }
 }
+
+/* A meeting workspace covers the chat. The chat's fixed header buttons (Call, Chat settings,
+   New chat) act on the chat underneath and sat on top of the meeting's End button. */
+body.hp-meeting-open .hp-chat-header-actions { display: none !important; }

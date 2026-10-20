@@ -69,6 +69,9 @@ def app():
     os.environ["LLM_MODEL"] = "mock-model"
     os.environ["OLLAMA_BASE_URL"] = "http://ollama:11434"
     os.environ["OLLAMA_MODEL"] = "mock-ollama"
+    # Model discovery probes loopback and the WSL/Docker host by default; a developer's
+    # real Ollama must never answer a test. Only the (unreachable) URL above is probed.
+    os.environ["OLLAMA_DISCOVERY"] = "off"
     os.environ["COMFY_BASE_URL"] = "http://comfyui:8188"
     os.environ["MEDIA_BASE_URL"] = "http://media:8002"
     os.environ["TOOL_TIMEOUT_S"] = "5"

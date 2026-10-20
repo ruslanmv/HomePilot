@@ -6,6 +6,18 @@ content: ["./index.html", "./src/**/*.{ts,tsx}"],
 future: { hoverOnlyWhenSupported: true },
 theme: {
 extend: {
+// HomePilot design tokens — values are CSS variables in src/ui/styles.css (:root), used
+// through the shared components in src/ui/ds. `bg-hp-accent`, `text-hp-accent-fg/80`, …
+colors: {
+  hp: {
+    accent: "rgb(var(--hp-accent) / <alpha-value>)",
+    "accent-hover": "rgb(var(--hp-accent-hover) / <alpha-value>)",
+    "accent-fg": "rgb(var(--hp-accent-fg) / <alpha-value>)",
+    canvas: "rgb(var(--hp-canvas) / <alpha-value>)",
+    surface: "rgb(var(--hp-surface) / <alpha-value>)",
+  },
+},
+borderRadius: { card: "1rem" },
 boxShadow: { soft: "0 10px 30px rgba(0,0,0,0.35)" },
 keyframes: {
 floaty: { "0%,100%": { transform: "translateY(0)" }, "50%": { transform: "translateY(-4px)" } },

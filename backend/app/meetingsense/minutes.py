@@ -873,6 +873,7 @@ async def autogenerate(
     recorded a perfectly good transcript must end cleanly even if the summariser cannot run,
     and the transcript is the part that cannot be rebuilt.
     """
+    expect_summary(meeting_id)
     try:
         opts = options or prefs(meeting_id)
         document = await summarise(meeting_id, call=call, options=opts)
@@ -883,6 +884,30 @@ async def autogenerate(
     except Exception:  # noqa: BLE001
         log.exception("meetingsense: could not summarise %s", meeting_id)
         return None
+    finally:
+        summary_done(meeting_id)
+
+
+#: Meetings whose end-of-meeting document is being written right now, in this process.
+#:
+#: A local model can take minutes over a long transcript, and the recap used to say "No
+#: summary for this meeting" for all of them — the reader concluded there would be none and
+#: left. The meeting read (`GET /v1/meetingsense/{id}`) reports this as ``summary_writing``,
+#: and the recap shows "Writing the summary…" and looks again until it lands.
+_WRITING: set = set()
+
+
+def expect_summary(meeting_id: str) -> None:
+    """Mark a meeting's document as on its way. Called as soon as the meeting ends."""
+    _WRITING.add(meeting_id)
+
+
+def summary_done(meeting_id: str) -> None:
+    _WRITING.discard(meeting_id)
+
+
+def is_writing(meeting_id: str) -> bool:
+    return meeting_id in _WRITING
 
 
 # ── store access, kept dull and failure-tolerant ────────────────────────────

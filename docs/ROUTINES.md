@@ -411,13 +411,15 @@ unless that context is actually available.
 
 ## Scheduler
 
-Automatic scheduling is deliberately opt-in at the HomePilot server level.
+Automatic scheduling is **on by default**: an enabled routine runs at its time. Each routine
+has its own on/off switch on the Routines page. To stop every scheduled run on a server:
 
 ```bash
-ROUTINES_EXECUTION_ENABLED=true
+ROUTINES_EXECUTION_ENABLED=false
 ```
 
-Restart HomePilot after changing the flag.
+Restart HomePilot after changing the flag. (Before this release scheduling was opt-in and
+needed `ROUTINES_EXECUTION_ENABLED=true`; that value still works.)
 
 When disabled:
 

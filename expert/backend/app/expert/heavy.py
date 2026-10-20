@@ -18,6 +18,7 @@ import os
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from .config import EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE, EXPERT_SYSTEM_PROMPT
+from . import grounding
 from .router import dispatch, dispatch_stream, extract_dispatch_meta, ProviderName
 
 logger = logging.getLogger("expert.heavy")
@@ -105,7 +106,7 @@ async def heavy(
 
     def _msg(system: str, user: str) -> List[Dict[str, str]]:
         return [
-            {"role": "system", "content": system},
+            {"role": "system", "content": grounding.apply(system)},
             {"role": "user", "content": user},
         ]
 
@@ -196,7 +197,7 @@ async def stream_heavy(
 
     def _msg(system: str, user: str) -> List[Dict[str, str]]:
         return [
-            {"role": "system", "content": system},
+            {"role": "system", "content": grounding.apply(system)},
             {"role": "user", "content": user},
         ]
 

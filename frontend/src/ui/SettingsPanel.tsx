@@ -24,8 +24,11 @@ import {
   Cpu,
   Sparkles,
   MessageSquare,
+  CalendarDays,
 } from "lucide-react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
+import ModelDownloadCard from "./components/ModelDownloadCard";
+import { fetchModelResolution, type Remedy } from "./lib/modelResolution";
 import OllaBridgeLink from "./components/OllaBridgeLink";
 // Account & Computers (Batch 3) — ADDITIVE, feature-flagged.
 import AccountComputers from "./account/AccountComputers";
@@ -39,6 +42,7 @@ import ModelExecutionSelector from "./components/compute/ModelExecutionSelector"
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import { MotionGallery } from "./motion/MotionGallery";
 import { ChatAppearanceSettings } from "./components/ChatAppearanceSettings";
+import { MeetingsSettings } from "./meetingsense/MeetingsSettings";
 import { lastCheck, useAdvisorPrefs, writeAdvisorPrefs, type AdvisorPrefs } from "./modelAdvisor";
 
 function AdvisorSwitch({ id, label, hint, checked, disabled, onChange }: {
@@ -399,6 +403,7 @@ const SECTIONS = [
   { id: "generation", label: "Generation", Icon: SlidersHorizontal },
   { id: "memory", label: "Memory & Safety", Icon: ShieldCheck },
   { id: "voice", label: "Voice", Icon: AudioLines },
+  { id: "meetings", label: "Meetings", Icon: CalendarDays },
   { id: "vision", label: "Vision", Icon: Eye },
   { id: "teams", label: "Teams", Icon: Users },
   { id: "tools", label: "Tools & Agents", Icon: Wrench },
@@ -514,6 +519,8 @@ export default function SettingsPanel({
   const [health, setHealth] = useState<any>(null);
   const [healthErr, setHealthErr] = useState<string | null>(null);
   const [dismissOllamaBanner, setDismissOllamaBanner] = useState(false);
+  // What the backend would do for chat right now (remedy when it cannot).
+  const [modelRemedy, setModelRemedy] = useState<Remedy | null>(null);
 
   // Voice state
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -606,6 +613,15 @@ export default function SettingsPanel({
       const res = await fetch(`${resolveBackendUrl(value.backendUrl)}/health`);
       const data = await res.json();
       setHealth(data);
+      try {
+        const snap = await fetchModelResolution(resolveBackendUrl(value.backendUrl), {
+          configured: value.modelChat,
+          baseUrl: value.baseUrlChat || undefined,
+        });
+        setModelRemedy(snap?.chat?.remedy || null);
+      } catch {
+        setModelRemedy(null);
+      }
     } catch (e: any) {
       setHealthErr(e?.message || String(e));
     }
@@ -650,7 +666,10 @@ export default function SettingsPanel({
       if (!data.ok) throw new Error(data.message || "Failed to fetch models");
       setModels((prev) => ({ ...prev, [stateKey]: data.models || [] }));
       if (!data.models || data.models.length === 0) {
-        setModelsErr((m) => ({ ...m, [stateKey]: "No models returned by provider." }));
+        setModelsErr((m) => ({
+          ...m,
+          [stateKey]: data?.remedy?.message || data?.error || "No models returned by provider.",
+        }));
       }
     } catch (e: any) {
       setModelsErr((m) => ({ ...m, [stateKey]: e?.message || String(e) }));
@@ -913,8 +932,10 @@ export default function SettingsPanel({
 
   const ollamaDown =
     ollamaSelected && health?.providers?.ollama && health.providers.ollama.ok === false;
+  // A reachable Ollama without a usable chat model blocks chat just the same.
+  const ollamaNeedsModel = value.providerChat === "ollama" && !!modelRemedy;
 
-  const showOllamaBanner = !!ollamaDown && !dismissOllamaBanner;
+  const showOllamaBanner = (!!ollamaDown || ollamaNeedsModel) && !dismissOllamaBanner;
 
   // ── Control builders (dark-themed, reused across sections) ─────────────
   function providerSelectRow(label: string, description: string, provider: ProviderKey, setProvider: (k: ProviderKey) => void) {
@@ -980,7 +1001,12 @@ export default function SettingsPanel({
             value={modelValue}
             onChange={(e) => setModel(e.target.value)}
           >
-            {modelValue && !list.includes(modelValue) ? <option value={modelValue}>{modelValue} (current)</option> : null}
+            {providerKey === 'ollama' ? <option value="">Auto — best installed model</option> : null}
+            {modelValue && !list.includes(modelValue) ? (
+              <option value={modelValue}>
+                {modelValue}{list.length ? ' (not installed)' : ' (current)'}
+              </option>
+            ) : null}
             {list.map((m) => (
               <option key={m} value={m}>
                 {m}
@@ -997,6 +1023,19 @@ export default function SettingsPanel({
           </button>
         </div>
         {err ? <div className="mt-2 text-[11px] text-red-400">{err}</div> : null}
+        {providerKey === 'ollama' && (!modelType || modelType === 'multimodal') ? (
+          <ModelDownloadCard
+            backendUrl={resolveBackendUrl(value.backendUrl)}
+            role={modelType === 'multimodal' ? 'vision' : 'chat'}
+            configured={modelValue}
+            baseUrl={baseUrlOverride || undefined}
+            onInstalled={(name) => {
+              fetchModelsFor(providerKey, baseUrlOverride, modelType);
+              if (!modelValue) setModel(name);
+              setModelRemedy(null);
+            }}
+          />
+        ) : null}
         {modelValue ? (
           <div className="mt-2 pt-2 border-t border-white/[0.06]">
             <ModelExecutionSelector
@@ -1672,6 +1711,15 @@ export default function SettingsPanel({
       case "generation": return renderGeneration();
       case "memory": return renderMemory();
       case "voice": return renderVoice();
+      case "meetings": return (
+        <SettingsCard
+          title="Meetings"
+          description="How meetings are recorded and transcribed on this computer. Applies right away — no need to Save."
+          icon={<CalendarDays size={16} />}
+        >
+          <MeetingsSettings />
+        </SettingsCard>
+      );
       case "vision": return renderVision();
       case "teams": return renderTeams();
       case "tools": return renderTools();
@@ -1803,6 +1851,10 @@ export default function SettingsPanel({
           <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-5 space-y-4 bg-[#151619]">
             <OllamaHealthBanner
               show={showOllamaBanner}
+              remedy={modelRemedy}
+              vllmAvailable={!!health?.providers?.openai_compat?.ok}
+              onDownloadModel={() => setActiveSection("models")}
+              onRetry={() => { void fetchHealth(); }}
               onDismiss={() => setDismissOllamaBanner(true)}
               onSwitchToVllm={() => {
                 commit({

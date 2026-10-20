@@ -327,10 +327,15 @@ class TestAudio:
         assert left == [1, 2, 3]
         assert right == [-1, -2, -3]
 
-    def test_the_two_channels_do_not_dedupe_against_each_other(self, client, enabled, stt):
+    def test_the_two_channels_do_not_dedupe_against_each_other(self, client, enabled, stt, monkeypatch):
         # Both people say the same words — bleed, or simply agreement. One shared assembler
         # would drop the second and attribute the line to whichever channel was transcribed
         # first, which is arbitrary.
+        #
+        # The *assemblers* are what is under test, so the echo guard is off: with it on, the
+        # microphone repeating the call word for word at the same moment is exactly what it
+        # removes (see test_call_reliability.py::TestEcho).
+        monkeypatch.setenv("MEETINGSENSE_ECHO_GUARD", "0")
         stt.script = [
             [{"t0": 0.0, "t1": 1.0, "text": "yes exactly that", "conf": 0.9}],
             [{"t0": 0.0, "t1": 1.0, "text": "yes exactly that", "conf": 0.9}],

@@ -281,12 +281,13 @@ describe('the live meeting workspace', () => {
 
         expect(screen.getByTestId('ms-transcript-count').textContent).toBe('2');
 
-        // Still counted after switching away. The Timeline is a semantic view and shows no
-        // transcript, so without the count it reads as "nothing is happening" — which is the
-        // whole bug this replaced.
-        fireEvent.click(screen.getByText(/Timeline/));
+        // Still counted after switching to the private Ask lane, which shows no transcript —
+        // without the count it would read as "nothing is happening".
+        fireEvent.click(screen.getByTestId('ms-tab-ask'));
         expect(screen.getByTestId('ms-transcript-count').textContent).toBe('2');
         expect(workspace.textContent).not.toContain('the launch moves');
+        // There is no Timeline tab any more: two lanes, what was said and your questions.
+        expect(screen.queryByText(/Timeline/)).toBeNull();
     });
 
     it('offers no way to close while it is still recording', async () => {

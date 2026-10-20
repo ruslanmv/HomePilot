@@ -48,6 +48,8 @@ from .schemas import (
     ProductionReadinessResponse,
     ReadinessCheckItem,
 )
+from . import grounding
+from . import target as target_mod
 from .readiness import build_readiness_report
 from .mcp_catalog import ESSENTIAL_MCP_SERVERS, TOOL_MAPPING, mcp_key_to_env, mcp_key_to_forge_tool_env
 from .mcp_gateway import MCPGateway
@@ -91,6 +93,15 @@ async def expert_info() -> ExpertInfoResponse:
 # POST /v1/expert/chat  (non-streaming, full response)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _provider_for(req: ExpertChatRequest, chosen) -> str:
+    """The provider to start from. With the user's own chat model chosen (``target``), 'auto'
+    means that model — a complex question is not a reason to send it to a cloud provider the
+    user did not pick."""
+    if chosen is not None and req.provider == "auto":
+        return "local"
+    return select_provider(req.query, preferred=req.provider)
+
+
 @router.post("/chat", response_model=ExpertChatResponse, summary="Expert chat (sync)")
 async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
     """
@@ -101,9 +112,18 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
       'think' → analyze → plan → solve  (3 chained LLM calls)
       'heavy' → research → reason → synthesize → validate  (4-agent pipeline)
       'auto'  → complexity score decides which pipeline to use
+
+    ``target`` (the user's chosen chat model) is in force for every step of the pipeline.
     """
+    chosen = target_mod.from_request(req.target)
+    # Today's date (and any web sources HomePilot found) reach every step's system prompt.
+    with target_mod.using(chosen), grounding.using(req.client_timezone, req.context):
+        return await _expert_chat(req, chosen)
+
+
+async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
     complexity = _compute_request_complexity(req)
-    provider = select_provider(req.query, preferred=req.provider)
+    provider = _provider_for(req, chosen)
     started = time.perf_counter()
 
     temperature = req.temperature if req.temperature is not None else EXPERT_TEMPERATURE
@@ -127,7 +147,7 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
     print(
         f"[EXPERT CHAT {trace_id}] start requested_mode={req.thinking_mode!r} "
         f"resolved_mode={mode!r} strategy={strategy!r} provider={provider!r} "
-        f"model={req.model!r} complexity={complexity} history={len(req.history)} "
+        f"model={req.model!r} target={chosen!r} complexity={complexity} history={len(req.history)} "
         f"history_chars={history_chars} query_chars={len(req.query or '')} "
         f"max_tokens={max_tokens} temperature={temperature}"
     )
@@ -245,7 +265,8 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
       event: error     → {error: str}
     """
     complexity = _compute_request_complexity(req)
-    provider = select_provider(req.query, preferred=req.provider)
+    chosen = target_mod.from_request(req.target)
+    provider = _provider_for(req, chosen)
     temperature = req.temperature if req.temperature is not None else EXPERT_TEMPERATURE
     max_tokens = req.max_tokens if req.max_tokens is not None else EXPERT_MAX_TOKENS
 
@@ -340,8 +361,15 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
             yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
         yield "data: [DONE]\n\n"
 
+    async def with_target():
+        # Set inside the generator: the response body is iterated after this function has
+        # returned, so a context set around the return would already be gone.
+        with target_mod.using(chosen), grounding.using(req.client_timezone, req.context):
+            async for item in event_generator():
+                yield item
+
     return StreamingResponse(
-        event_generator(),
+        with_target(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )

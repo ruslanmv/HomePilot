@@ -847,6 +847,8 @@ async def orchestrate(
     user_id: Optional[str] = None,  # Per-user isolation: scope memory reads/writes
     incognito: bool = False,  # Incognito mode: skip memory storage + profile injection
     system_initiated: bool = False,  # This turn was started by HomePilot, not typed by the user
+    web_search: bool = False,  # Standard chat: answer from current web results (web_search.py)
+    client_timezone: Optional[str] = None,  # The browser's IANA zone, for "today" in the prompt
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -1866,6 +1868,7 @@ async def orchestrate(
     personality_agent = None
     memory = None
     is_voice_mode = voice_system_prompt is not None or personality_id is not None
+    _standard_chat = False
 
     # Companion-grade: LTM + session summary context for persona projects
     ltm_context = ""
@@ -1925,6 +1928,10 @@ async def orchestrate(
         system = voice_system_prompt
     else:
         system = BASE_SYSTEM + ("\n" + FUN_SYSTEM if fun_mode else "")
+        # The standard chat — no personality, no persona project (those take run_project_chat),
+        # no voice prompt. Only this branch gets today's date and web search below; personas
+        # keep their own prompt, which already carries the time.
+        _standard_chat = True
 
     # ================================================================
     # COMPANION-GRADE: Session tracking + LTM injection (additive)
@@ -2037,6 +2044,33 @@ async def orchestrate(
     if extra_system_context:
         system = system + "\n\n" + extra_system_context.strip()
 
+    # Standard chat: today's date always (a model otherwise answers "which day is it?" from its
+    # training data), and — with this chat's "Search the web" switch on — current web sources
+    # it must cite. See web_search.py for the whole step.
+    web_ctx = None
+    if _standard_chat:
+        from . import web_search as web_search_mod
+
+        system = system + "\n\n" + web_search_mod.current_time_context(client_timezone)
+        if web_search and not is_voice_mode and not system_initiated and text_in:
+            _plan_provider: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
+
+            async def _plan_chat(plan_messages):
+                out = await route_chat(
+                    plan_messages,
+                    provider=_plan_provider,
+                    temperature=0.0,
+                    max_tokens=400 if is_thinking_model(provider_model or "") else 48,
+                    base_url=provider_base_url,
+                    model=provider_model,
+                )
+                return ((out.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "")
+
+            web_ctx = await web_search_mod.gather(text_in, history, chat=_plan_chat)
+            print(f"[WEB SEARCH] status={web_ctx.status} query={web_ctx.query!r} "
+                  f"sources={len(web_ctx.sources)} took_ms={web_ctx.took_ms}")
+            system = system + "\n\n" + web_search_mod.system_block(web_ctx)
+
     messages = [{"role": "system", "content": system}]
     # The routine's own turn is **stored** as `system`, so the record never attributes it to
     # somebody who did not type it. The model is a different audience: it needs a user turn
@@ -2107,6 +2141,13 @@ async def orchestrate(
     except Exception as e:
         llm_elapsed_ms = int((time.perf_counter() - llm_started) * 1000)
         print(f"[CHAT TRACE {trace_id}] llm_error elapsed_ms={llm_elapsed_ms} error={type(e).__name__}: {e}")
+        from .model_resolver import NoLocalModelError as _NoLocalModel
+        if isinstance(e, _NoLocalModel):
+            # Nothing can answer: hand the UI a structured error with the fix
+            # (download / start / bridge) and keep it out of the conversation
+            # history, which is for real replies.
+            body = e.payload()
+            return {"conversation_id": cid, "text": body["message"], "media": None, "error": body}
         # Don't crash the API; return a stable response
         err = f"LLM error ({prov}): {str(e)}"
         add_message(cid, "assistant", err)
@@ -2173,7 +2214,10 @@ async def orchestrate(
         pass
 
     print(f"[CHAT TRACE {trace_id}] assistant_final len={len(text or '')} preview={str(text or '')[:120]!r} media={bool(text_media)}")
-    add_message(cid, "assistant", text, media=text_media)
+    # The sources are kept with the reply, so they are still there when the chat is reopened.
+    web_public = web_ctx.public() if web_ctx is not None else None
+    stored_media = {**(text_media or {}), "web": web_public} if web_public else text_media
+    add_message(cid, "assistant", text, media=stored_media)
 
     # Additive: Memory V2 ingestion after response (persona projects only)
     try:
@@ -2197,12 +2241,15 @@ async def orchestrate(
     except Exception:
         pass
 
-    return {
+    reply: Dict[str, Any] = {
         "conversation_id": cid,
         "text": text,
         "media": text_media,
         "compute": _compute_diag(_route_report),
     }
+    if web_public:
+        reply["web_search"] = web_public
+    return reply
 
 
 async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2419,4 +2466,6 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             user_id=payload.get("user_id"),
             incognito=payload.get("incognito", False),
             system_initiated=payload.get("system_initiated", False),
+            web_search=bool(payload.get("web_search")),
+            client_timezone=payload.get("client_timezone") or None,
         )

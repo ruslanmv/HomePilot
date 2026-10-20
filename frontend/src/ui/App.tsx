@@ -56,7 +56,7 @@ import {
 } from './media/sttRuntime'
 import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
-import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
+import { getDefaultBackendUrl, resolveBackendUrl, saveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
 import { useBackToClose } from './lib/useBackToClose'
@@ -79,6 +79,7 @@ import { useRemoteChatTarget, useSelectedOfflineNode } from './account/useRemote
 // BFF session flag (Batch 7) — when on, the browser stops sending the cloud
 // token; the backend injects it server-side.
 import { isBffSessionEnabled } from './account/featureFlags'
+import { localGatewayApiKeyFor } from './components/ollabridge/ollabridgeLocal'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
@@ -102,9 +103,12 @@ import { CreatorStudioHost } from './CreatorStudioHost'
 import {
   ChatSettingsPopover,
   DEFAULT_CHAT_SETTINGS,
+  OPEN_MODELS_EVENT,
+  parseChatModelChoice,
   type ChatScopedSettings,
 } from './components/ChatSettingsPopover'
 import { MessageMarkdown } from './components/MessageMarkdown'
+import { WebSources, WebSearchToggleContext, linkCitations, parseWebSearch } from './components/WebSources'
 import RouteBadge from './components/compute/RouteBadge'
 import { ChatEmptyState } from './components/ChatEmptyState'
 import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
@@ -195,6 +199,8 @@ export type Msg = {
     active_angle?: 'front' | 'left' | 'right' | 'back'
     available_views?: Array<'front' | 'left' | 'right' | 'back'>
     interactive_preview?: boolean
+    /** The web sources this answer was written from (`web_search.py`); read with parseWebSearch. */
+    web?: unknown
   } | null
   // Compute routing diagnostics (P0-2): which device served this reply, and
   // whether it fell back. Raw shape from /chat (snake_case, not camelized).
@@ -239,6 +245,15 @@ export type Msg = {
  * For every other media shape (images, video_url, …) this returns
  * ``{ media: raw }`` unchanged, so regular messages are untouched.
  */
+/** The browser's IANA time zone ("Europe/Rome"), so the chat's "today" is the user's. */
+function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined
+  } catch {
+    return undefined
+  }
+}
+
 function hydratePersistedMessageMedia(raw: unknown): {
   media: Msg['media']
   callMemory?: Msg['callMemory']
@@ -368,9 +383,12 @@ type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'anim
  * relay (base URL ends in /ollama/v1), attach the user's Cloud token so the
  * relay resolves the user and serves inference from THEIR linked GPU node.
  * Returns undefined for every other provider — nothing else changes.
+ * OllaBridge Local: the optional key from the Local card, only for that exact
+ * gateway (<root>/v1) — the Cloud never receives it.
  */
 function cloudProviderApiKey(baseUrl?: string): string | undefined {
-  if (!baseUrl || !baseUrl.includes('/ollama/v1')) return undefined
+  if (!baseUrl) return undefined
+  if (!baseUrl.includes('/ollama/v1')) return localGatewayApiKeyFor(baseUrl)
   // Batch 7 (BFF): when the backend holds the cloud token server-side it injects
   // it into the relay call; the browser sends nothing. Off → legacy behavior.
   if (isBffSessionEnabled()) return undefined
@@ -2663,7 +2681,9 @@ function ChatState({
       {/* Phones: a soft scrim under the menu button and header icons so text
           scrolling past never runs underneath them. */}
       <div className="md:hidden pointer-events-none fixed inset-x-0 top-0 z-30 h-16 hp-top-scrim" aria-hidden />
-      <div className="fixed top-3 right-3 sm:right-5 z-50">
+      {/* `hp-chat-header-actions` steps aside while a meeting workspace is open (styles.css):
+          these act on the chat underneath, and sat on top of the meeting's End button. */}
+      <div className="hp-chat-header-actions fixed top-3 right-3 sm:right-5 z-50">
         <div className="relative flex items-center gap-2">
           {/* Live computer/presence pill (Batch 4). Null unless the Account &
               Computers flag is on and a computer exists. */}
@@ -2712,6 +2732,8 @@ function ChatState({
             onClose={() => setChatSettingsOpen(false)}
             settings={chatSettings}
             onChange={onUpdateChatSettings}
+            // Personas keep the model chosen in Models with their own setup.
+            modelPicker={!allowPersonaMode}
           />
         </div>
       </div>
@@ -2841,13 +2863,25 @@ function ChatState({
                         }
                         onProgress={keepPinned}
                         onDone={() => markRevealed(m.id)}
-                        render={(visible) => (
-                          <MessageMarkdown text={visible} onImageClick={setLightbox} backendUrl={backendUrl} />
-                        )}
+                        render={(visible) => {
+                          // [n] in a web-grounded answer opens source n.
+                          const web = m.role === 'assistant' ? parseWebSearch(m.media?.web) : null
+                          return (
+                            <MessageMarkdown
+                              text={web?.sources.length ? linkCitations(visible, web.sources) : visible}
+                              onImageClick={setLightbox}
+                              backendUrl={backendUrl}
+                            />
+                          )
+                        }}
                       />
                     </div>
                   )}
                 </div>
+
+                {m.role === 'assistant' && !m.pending && parseWebSearch(m.media?.web) ? (
+                  <WebSources web={parseWebSearch(m.media?.web)!} />
+                ) : null}
 
                 {/* Grok-style icon action row */}
                 {!m.pending ? (
@@ -3198,6 +3232,8 @@ export default function App() {
             ? 'quality'
             : 'fast',
         incognito: !!parsed.incognito,
+        model: parseChatModelChoice(parsed.model),
+        webSearch: parsed.webSearch === true,
       }
     } catch {
       return DEFAULT_CHAT_SETTINGS
@@ -3223,6 +3259,8 @@ export default function App() {
             ? 'quality'
             : 'fast',
         incognito: !!parsed.incognito,
+        model: parseChatModelChoice(parsed.model),
+        webSearch: parsed.webSearch === true,
       })
     } catch {
       setChatSettings(DEFAULT_CHAT_SETTINGS)
@@ -3283,7 +3321,10 @@ export default function App() {
     const backendUrl = resolveBackendUrl()
     const provider = (localStorage.getItem('homepilot_provider') as Provider) || 'backend'
     const ollamaUrl = localStorage.getItem('homepilot_ollama_url') || 'http://localhost:11434'
-    const ollamaModel = localStorage.getItem('homepilot_ollama_model') || 'llama3:8b'
+    // Empty means "auto": the backend uses the configured model when it is
+    // installed, otherwise the best installed one. A literal default here
+    // used to make fresh installs ask for a model nobody had pulled.
+    const ollamaModel = localStorage.getItem('homepilot_ollama_model') || ''
     const apiKey = localStorage.getItem('homepilot_api_key') || ''
     const funMode = localStorage.getItem('homepilot_funmode') === '1'
 
@@ -3729,6 +3770,23 @@ export default function App() {
     return () => window.removeEventListener('homepilot:use-gpu-node', onUseGpuNode)
   }, [])
 
+  // Models → Multimodal → OllaBridge: a model that passed the vision check reads images from
+  // now on. The multimodal settings only — chat keeps its own model.
+  useEffect(() => {
+    function onUseVisionModel(e: Event) {
+      const d = (e as CustomEvent).detail || {}
+      if (!d.baseUrl || !d.model) return
+      setSettingsDraft((prev) => ({
+        ...prev,
+        providerMultimodal: d.provider || 'openai_compat',
+        baseUrlMultimodal: d.baseUrl,
+        modelMultimodal: d.model,
+      }))
+    }
+    window.addEventListener('homepilot:use-vision-model', onUseVisionModel)
+    return () => window.removeEventListener('homepilot:use-vision-model', onUseVisionModel)
+  }, [])
+
 
   // Batch 5: transparent remote-LLM routing. When the Account & Computers flag
   // is on and the user picked an online remote computer, this resolves the cloud
@@ -3751,6 +3809,26 @@ export default function App() {
     return () => window.removeEventListener('homepilot:open-settings', onOpen)
   }, [setShowSettings])
 
+  // Chat settings → "Manage models" opens Models, where the offered models are chosen.
+  useEffect(() => {
+    const onOpen = () => setMode('models')
+    window.addEventListener(OPEN_MODELS_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_MODELS_EVENT, onOpen)
+  }, [])
+
+  // The meeting recap's "Meetings" breadcrumb opens the Meetings library.
+  useEffect(() => {
+    const onOpen = () => setMode('meetings')
+    window.addEventListener('homepilot:open-meetings', onOpen)
+    return () => window.removeEventListener('homepilot:open-meetings', onOpen)
+  }, [])
+
+  // This chat's own model (Chat settings), read at send time like everything below. Ordinary
+  // chats only: a persona project keeps the model chosen in Models together with its own
+  // instructions and knowledge, untouched by a per-chat choice.
+  const chatModelRef = useRef(chatSettings.model)
+  chatModelRef.current = currentProject?.project_type === 'persona' ? null : chatSettings.model
+
   const currentChatSelection = useCallback(() => {
     // If a remote computer is selected, swap the target to the cloud relay bound
     // to that node's model (same wire shape as "Use for Chat"). The cloud token
@@ -3758,6 +3836,11 @@ export default function App() {
     const remote = remoteChatTargetRef.current
     if (remote) {
       return { providerChat: 'openai_compat', modelChat: remote.model, baseUrlChat: remote.baseUrl }
+    }
+    // A model picked for this chat only, from the ones offered in Models.
+    const own = chatModelRef.current
+    if (own && own.model) {
+      return { providerChat: own.provider, modelChat: own.model, baseUrlChat: own.baseUrl }
     }
     const providerChat = localStorage.getItem('homepilot_provider_chat') || settingsDraft.providerChat || 'ollama'
     const modelChat = localStorage.getItem('homepilot_model_chat') || settingsDraft.modelChat || ''
@@ -3775,10 +3858,31 @@ export default function App() {
   useEffect(() => {
     if (autoDetectRanRef.current) return
     const hasExistingSettings = localStorage.getItem('homepilot_model_chat')
-    if (hasExistingSettings) return  // User already has saved settings
+    const backendUrl = resolveBackendUrl(settingsDraft.backendUrl)
+    if (hasExistingSettings) {
+      // A saved model that is no longer installed must not pin chat to a 404
+      // forever (docs/design/LOCAL_MODEL_RESOLUTION.md): ask the backend once
+      // per load and fall back to Auto when it is gone.
+      autoDetectRanRef.current = true
+      // That check is against the local Ollama runtime; a model picked on
+      // another provider (an OllaBridge gateway or the Cloud relay) is not an
+      // Ollama install and must survive the reload.
+      if ((localStorage.getItem('homepilot_provider_chat') || 'ollama') !== 'ollama') return
+      fetch(`${backendUrl}/v1/models/resolution?configured=${encodeURIComponent(hasExistingSettings)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const chat = data?.chat
+          if (chat && chat.runtime_url && chat.configured_installed === false) {
+            console.warn(`[AutoDetect] Saved chat model "${hasExistingSettings}" is not installed — using Auto (${chat.model || 'no model yet'})`)
+            localStorage.removeItem('homepilot_model_chat')
+            setSettingsDraft((prev) => ({ ...prev, modelChat: '' }))
+          }
+        })
+        .catch(() => { /* backend not up yet — nothing to reconcile */ })
+      return
+    }
     autoDetectRanRef.current = true
 
-    const backendUrl = resolveBackendUrl(settingsDraft.backendUrl)
     fetch(`${backendUrl}/auto-detect`)
       .then((r) => r.json())
       .then((data) => {
@@ -3877,7 +3981,8 @@ export default function App() {
   }, [mode])
 
   useEffect(() => {
-    localStorage.setItem('homepilot_backend_url', settings.backendUrl)
+    // The app's own copy of the address it resolved — not a choice (lib/backendUrl.ts).
+    saveBackendUrl(settings.backendUrl, false)
     localStorage.setItem('homepilot_provider', settings.provider)
     localStorage.setItem('homepilot_ollama_url', settings.ollamaUrl)
     localStorage.setItem('homepilot_ollama_model', settings.ollamaModel)
@@ -3950,6 +4055,19 @@ export default function App() {
     return Object.keys(headers).length ? headers : undefined
   }, [settings.apiKey])
 
+  // This chat's "Search the web" (+ menu and Chat settings share it). Standard chat only:
+  // persona and project chats go through their own pipeline, which this does not touch.
+  const webSearchToggle = useMemo(() => ({
+    available: mode === 'chat' && !currentProject,
+    on: chatSettings.webSearch === true,
+    setOn: (next: boolean) => updateChatSettings({ ...chatSettings, webSearch: next }),
+    check: async () => {
+      const res = await fetch(`${settings.backendUrl.replace(/\/+$/, '')}/v1/web-search/status`, { headers: authHeaders })
+      if (!res.ok) return { available: false, hint: 'Could not ask the backend whether web search is available.' }
+      return res.json()
+    },
+  }), [mode, currentProject, chatSettings, updateChatSettings, settings.backendUrl, authHeaders])
+
   const onNewConversation = useCallback(() => {
     // New UUID → backend auto-creates fresh personality memory.
     // Old conversation stays in SQLite (browsable via History panel).
@@ -3998,8 +4116,8 @@ export default function App() {
   }, [])
 
   const onSaveSettings = useCallback(() => {
-    // Save new settings to localStorage
-    localStorage.setItem('homepilot_backend_url', settingsDraft.backendUrl)
+    // Save new settings to localStorage. Settings → Save is the user's choice of backend.
+    saveBackendUrl(settingsDraft.backendUrl, true)
     localStorage.setItem('homepilot_api_key', settingsDraft.apiKey)
     localStorage.setItem('homepilot_provider_chat', settingsDraft.providerChat)
     localStorage.setItem('homepilot_provider_images', settingsDraft.providerImages)
@@ -4145,7 +4263,7 @@ export default function App() {
         baseUrlChat: localStorage.getItem('homepilot_base_url_chat') || '',
         baseUrlImages: localStorage.getItem('homepilot_base_url_images') || '',
         baseUrlVideo: localStorage.getItem('homepilot_base_url_video') || '',
-        modelChat: localStorage.getItem('homepilot_model_chat') || 'local-model',
+        modelChat: localStorage.getItem('homepilot_model_chat') || '',
         modelImages: localStorage.getItem('homepilot_model_images') || '',
         modelVideo: localStorage.getItem('homepilot_model_video') || '',
         preset: (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med',
@@ -4624,14 +4742,24 @@ export default function App() {
       // user-visible message stays as typed; request uses mode prefixes
       const requestText = buildMessageForMode(mode, trimmed)
 
-      const user: Msg = { id: uuid(), role: 'user', text: trimmed }
-      const tmpId = uuid()
-      const pending: Msg = { id: tmpId, role: 'assistant', text: '', pending: true }
-
-      setMessages((prev) => [...prev, user, pending])
-
       // Get current project ID from localStorage if user selected one
       const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+
+      // "Search the web" applies to chats outside projects (persona and project chats keep their
+      // own pipeline), answered by the standard chat or by Expert (Fast / Expert / Heavy —
+      // grounded through /v1/web-search/context below), and not to a message carrying an image.
+      const webSearchOn =
+        chatSettings?.webSearch === true &&
+        mode === 'chat' &&
+        !currentProjectId &&
+        !currentProject &&
+        !(pendingFile || pendingPreviewUrl)
+
+      const user: Msg = { id: uuid(), role: 'user', text: trimmed }
+      const tmpId = uuid()
+      const pending: Msg = { id: tmpId, role: 'assistant', text: webSearchOn ? 'Searching the web…' : '', pending: true }
+
+      setMessages((prev) => [...prev, user, pending])
 
       // ─── Phase 4 (additive): agentic invoke with dynamic capabilities ──
       // Agent projects ALWAYS route agentically (regardless of chatSettings toggle).
@@ -4842,6 +4970,7 @@ export default function App() {
                 provider: settingsDraft.providerMultimodal || 'ollama',
                 base_url: settingsDraft.baseUrlMultimodal || undefined,
                 model: settingsDraft.modelMultimodal || undefined,
+                api_key: cloudProviderApiKey(settingsDraft.baseUrlMultimodal),
                 mode: 'both',
                 user_prompt: trimmed,
                 nsfw_mode: settingsDraft.nsfwMode || false,
@@ -5232,12 +5361,38 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
-        const data = canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type)
+        const expertPath = canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type)
+        // Expert (Fast / Expert / Heavy) builds its own prompts, so with "Search the web" on the
+        // sources are found here first and handed to it as grounding; the answer then shows
+        // them like any web-grounded reply. Search failing never blocks the answer.
+        let expertWeb: { web_search?: unknown; context?: string } | null = null
+        if (expertPath && webSearchOn) {
+          expertWeb = await postJson<any>(
+            settings.backendUrl,
+            '/v1/web-search/context',
+            {
+              query: requestText,
+              history: messages.filter((m) => !m.pending).slice(-8).map((m) => ({ role: m.role, content: m.text })),
+            },
+            authHeaders,
+          ).catch(() => ({
+            web_search: {
+              status: 'unavailable', query: requestText, sources: [],
+              message: "Web search isn't available right now, so this answer may be out of date.",
+              hint: 'The backend could not run the search.',
+            },
+            context: undefined,
+          }))
+        }
+        const reply = expertPath
           ? await postJson<any>(
               settings.backendUrl,
               '/v1/expert/chat',
               {
                 query: requestText,
+                // Today's date in the user's zone, and the web sources when searched (grounding.py).
+                client_timezone: browserTimeZone(),
+                context: expertWeb?.context || undefined,
                 provider: 'auto',
                 thinking_mode: toThinkingMode(chatReasoningMode),
                 with_critique: false,
@@ -5248,6 +5403,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 session_id: conversationId || undefined,
                 has_attachments: Boolean(pendingFile || pendingPreviewUrl),
                 feature_hints: { budgetTier: 'normal' },
+                // The chat model picked in Models / Settings. Without it Expert answered from
+                // its own default Ollama model, whatever the user had selected — an OllaBridge
+                // gateway model included.
+                target: {
+                  provider: chatSelection.providerChat || 'ollama',
+                  base_url: chatSelection.baseUrlChat || undefined,
+                  model: chatSelection.modelChat || undefined,
+                  api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
+                },
               },
               authHeaders
             )
@@ -5295,14 +5459,32 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 // (backend needs this separately from provider_model which may be image model)
                 ollama_model: chatSelection.providerChat === 'ollama' ? chatSelection.modelChat : undefined,
                 llm_model: chatSelection.providerChat === 'openai_compat' ? chatSelection.modelChat : undefined,
+                // This chat's "Search the web", and the browser's zone so "today" is the user's.
+                web_search: webSearchOn || undefined,
+                client_timezone: browserTimeZone(),
               },
               authHeaders
             )
+        // Expert answers with the sources found above; the standard chat returns its own.
+        const data = expertWeb?.web_search ? { ...reply, web_search: expertWeb.web_search } : reply
 
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
-              ? { ...m, pending: false, animate: true, text: (data.text ?? data.content ?? '…'), media: data.media ?? null, compute: data.compute ?? null }
+              ? {
+                  ...m,
+                  pending: false,
+                  animate: !data.error,
+                  text: (data.text ?? data.content ?? '…'),
+                  // The sources ride on the media, as they are stored, so a reloaded chat shows them too.
+                  media: data.web_search ? { ...(data.media ?? {}), web: data.web_search } : (data.media ?? null),
+                  compute: data.compute ?? null,
+                  // A structured error (e.g. no local model) renders as an error
+                  // bubble with Retry, not as a normal-looking reply.
+                  ...(data.error
+                    ? { error: true, retry: { requestText, mode, projectId: currentProjectId } }
+                    : {}),
+                }
               : m
           )
         )
@@ -5456,6 +5638,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               provider: settingsDraft.providerMultimodal || 'ollama',
               base_url: settingsDraft.baseUrlMultimodal || undefined,
               model: settingsDraft.modelMultimodal || undefined,
+              api_key: cloudProviderApiKey(settingsDraft.baseUrlMultimodal),
               mode: 'both',
               user_prompt: multimodal.userPrompt || undefined,
               nsfw_mode: settingsDraft.nsfwMode || false,
@@ -5766,6 +5949,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               provider: settingsDraft.providerMultimodal || 'ollama',
               base_url: settingsDraft.baseUrlMultimodal || undefined,
               model: settingsDraft.modelMultimodal || undefined,
+              api_key: cloudProviderApiKey(settingsDraft.baseUrlMultimodal),
               mode: 'both',
               user_prompt: userPrompt || undefined,
               nsfw_mode: settingsDraft.nsfwMode || false,
@@ -6248,6 +6432,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
   }
 
   return (
+    <WebSearchToggleContext.Provider value={webSearchToggle}>
     <MeetingSenseProvider
       conversationId={conversationId}
       status={meetingStatus}
@@ -7259,5 +7444,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       ) : null}
     </div>
     </MeetingSenseProvider>
+    </WebSearchToggleContext.Provider>
   )
 }

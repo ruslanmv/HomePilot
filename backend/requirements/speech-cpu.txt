@@ -14,6 +14,11 @@
 # There is a test asserting these stay pinned.
 
 faster-whisper==1.2.1
+# PyAV decodes every recording before Whisper sees it. faster-whisper 1.2.1 only says
+# `av>=11`, and PyAV 19 removed the `metadata_errors` argument it passes to `av.open`, so an
+# unpinned resolve breaks all transcription ("open() got an unexpected keyword argument
+# 'metadata_errors'"). 18.1.0 is the newest release that still accepts it.
+av==18.1.0
 # CTranslate2 is faster-whisper's runtime and the piece with the native ABI. Named here as
 # well as inherited so a version bump is a decision somebody makes rather than one that
 # arrives with a transitive resolve.

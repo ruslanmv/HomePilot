@@ -63,6 +63,9 @@ _UNREACHABLE_ERRORS = frozenset({
     "ReadTimeout",
     "TimeoutException",
     "WriteTimeout",
+    # app.model_resolver: no reachable runtime, or one with no usable model. For a
+    # meeting that is the same ordinary state as "Ollama is not running".
+    "NoLocalModelError",
 })
 
 

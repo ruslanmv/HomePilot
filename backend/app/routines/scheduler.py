@@ -15,12 +15,14 @@ _task: Optional[asyncio.Task] = None
 
 
 def execution_enabled() -> bool:
-    return os.getenv("ROUTINES_EXECUTION_ENABLED", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    """Scheduled runs are on unless the server turns them off.
+
+    On by default: a routine someone creates and leaves enabled is a routine they expect to run
+    at its time. Each one still has its own on/off switch, and ``ROUTINES_EXECUTION_ENABLED``
+    set to ``false`` (or 0/no/off) stops every scheduled run — Run now keeps working either way.
+    """
+    raw = os.getenv("ROUTINES_EXECUTION_ENABLED", "true").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 def _parse_time(value: str) -> dt_time:

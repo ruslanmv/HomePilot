@@ -97,6 +97,81 @@ endpoints.)
 Everything is **additive and opt-in**: without an OllaBridge link, HomePilot
 uses its local providers (Ollama, ComfyUI, …) exactly as before.
 
+### Models → Chat → OllaBridge: Local and Cloud
+
+With the **OllaBridge** provider selected on the **Chat** tab, Model Management
+shows two independent cards (other providers and Model Types are unchanged):
+
+| Card | Connects to | Chat route when you pick a model |
+|---|---|---|
+| **OllaBridge Local** | your own gateway, default `http://localhost:11435` (root URL, no `/v1`) | `openai_compat` @ `<gateway>/v1` |
+| **OllaBridge Cloud** | your OllaBridge account (`https://app.ollabridge.com`), sign-in as above | `openai_compat` @ `<cloud>/ollama/v1` |
+
+- **Connect Local** checks `GET <gateway>/health`, then lists `GET <gateway>/v1/models`
+  from the browser and labels each model with its origin (`deepseek-r1 (Ollama)`).
+  No Cloud sign-in is needed. An API key (⋯ → API key) is sent only if you enter
+  one — a gateway in `local-trust` mode needs none — and only to that gateway.
+- The browser calls the gateway directly, so the gateway must allow HomePilot's
+  origin: add it (e.g. `http://localhost:3001`) to `CORS_ORIGINS` in OllaBridge's
+  `.env`. While it doesn't, and only when HomePilot's backend runs on the same
+  machine (a loopback backend URL), the list is read through the backend's
+  existing `GET /models?provider=openai_compat` instead and the card says so.
+- Both cards remember their connection, re-check it on load and when the tab
+  regains focus, and retry with backoff (5 s → 60 s) while the endpoint is down.
+  A saved Cloud session counts as connected only after the Cloud accepts it again.
+- Picking a model reuses the `homepilot:use-gpu-node` route (“Use for Chat”) and
+  stores `homepilot_provider_chat` / `homepilot_base_url_chat` /
+  `homepilot_model_chat`; the base URL decides which connection serves chat, so
+  the same model id on both cards stays unambiguous. A model that disappears
+  after **Fetch Models** stays selected and is flagged *unavailable*.
+- Chat completions are sent by the HomePilot backend, so the gateway URL must be
+  reachable from that server too — true when both run on your machine.
+
+#### Which models are offered, and which one a chat uses
+
+Two levels, and no hardcoded model list anywhere (`frontend/src/ui/lib/modelShelf.ts`):
+
+1. **Models decides what is available.** Each connection records the catalog it fetched.
+   By default a card offers the gateway's own suggestion — base models that are available
+   and not hidden, as the gateway itself describes them (`preset`, `category`, `hidden`,
+   `status`; Open WebUI assistants arrive as `preset: true`). **Choose models** under the
+   Model dropdown lets you tick any model or assistant, search a long list, or go back to
+   *Suggested*. A new base model appears by itself; a new assistant waits to be picked.
+   Disconnecting or signing out stops offering a connection but keeps your choice.
+2. **Chat settings picks one for this chat.** The chat's settings button lists the models
+   offered in Models, grouped by connection, beside *Default* (the model chosen in Models).
+   The choice applies to that chat only. It is not offered in **persona projects**: a
+   persona keeps the model chosen in Models together with its own instructions and knowledge.
+
+The Expert reasoning modes (Fast, Think, Heavy) answer from the same chat model, sent to
+`/v1/expert/chat` as `target`, instead of Expert's own default Ollama model. They remain
+their own workflow and never run in persona projects.
+
+#### Multimodal (images) through OllaBridge
+
+**Models → Multimodal → OllaBridge** shows the same Local and Cloud cards, with their own
+list and route: a pick there sets `homepilot_*_multimodal` (image analysis) and never chat.
+
+- **Every model is checked before images go to it.** Choosing one sends it a known test
+  image — two flat colours, yellow left and blue right — through `POST /v1/multimodal/check`
+  (`backend/app/vision_check.py`), the same path every real image takes. It passes only if it
+  names both colours in order. A gateway's `vision: true` is shown as *claims vision · not
+  checked* until then: one real gateway flagged a text-only model and left genuine vision
+  models unflagged, and a model that never received the picture still answered
+  ("LEFT=blue, RIGHT=red"). A model that fails is not used unless you press **Use anyway**.
+- **Choose models** works as on Chat, and a model you add is checked straight away. The
+  verdicts are remembered per connection and model.
+- Images travel as OpenAI `image_url` parts (`multimodal.analyze_image`, provider
+  `openai_compat`). This needs **OllaBridge with image pass-through**: older gateways
+  flattened every message to text and dropped the picture. The gateway now keeps images for
+  Open WebUI and the other OpenAI-compatible providers, sends Ollama its own `images` field,
+  Gemini `inline_data`, and paired devices the Ollama shape; it refuses with `501
+  unsupported_capability` on routes that cannot carry images rather than answering blind.
+  Requests relayed by **OllaBridge Cloud** (Ollama's `images` beside the text) are accepted
+  too — that field used to be dropped on arrival.
+- The `ext-*` models behind Open WebUI are external services (Claude, Gemini, OpenAI): an
+  image sent to them leaves your machine.
+
 ---
 
 ## Two HomePilot editions

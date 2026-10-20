@@ -37,9 +37,39 @@
  * correct lesson when there is nothing to learn. That means the menu's own length is not known
  * here, which is why it has no fixed height.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, MonitorUp, Paperclip, Plus, Square } from 'lucide-react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Camera, Check, Globe, MonitorUp, Paperclip, Plus, Square } from 'lucide-react';
 import { MeetingMenuItem } from '../meetingsense/MeetingMenuItem';
+import { WebSearchToggleContext } from './WebSources';
+
+/**
+ * "Search the web" for this chat — the same switch as Chat settings, here because it is what
+ * the next message should look at. A checkbox item, so the menu stays open state-free: one
+ * press turns it on or off and closes the menu. Absent outside the standard chat.
+ */
+function WebSearchMenuItem({ onDone }: { onDone: () => void }) {
+    const web = useContext(WebSearchToggleContext);
+    if (!web?.available) return null;
+    return (
+        <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={web.on}
+            data-testid="composer-plus-web"
+            onClick={() => { web.setOn(!web.on); onDone(); }}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-white/80 transition-colors duration-100 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25"
+        >
+            <span className={`shrink-0 ${web.on ? 'text-sky-300' : 'text-white/45'}`} aria-hidden="true"><Globe size={16} /></span>
+            <span className="min-w-0 flex-1">
+                <span className="block text-[13px] leading-5">Search the web</span>
+                <span className="block text-[11px] leading-4 text-white/35">
+                    {web.on ? 'On for this chat · answers cite current sources' : 'Answer from current web pages'}
+                </span>
+            </span>
+            {web.on ? <Check size={15} className="shrink-0 text-sky-300" aria-hidden="true" /> : null}
+        </button>
+    );
+}
 
 export interface ComposerPlusMenuProps {
     /** Opens the composer's existing file picker. The same call the paperclip made. */
@@ -226,7 +256,7 @@ export function ComposerPlusMenu({ onAddFile, onScreenshot }: ComposerPlusMenuPr
                 aria-label="Add"
                 aria-expanded={open}
                 aria-haspopup="menu"
-                title="Add files, screen or a meeting"
+                title="Add files, screen, web search or a meeting"
                 data-testid="composer-plus-button"
                 className={[
                     'hp-icon-btn h-10 w-10 rounded-full grid place-items-center transition-colors',
@@ -290,6 +320,9 @@ export function ComposerPlusMenu({ onAddFile, onScreenshot }: ComposerPlusMenuPr
                             />
                         )
                     ) : null}
+
+                    {/* Renders nothing outside the standard chat. */}
+                    <WebSearchMenuItem onDone={close} />
 
                     <div className="my-1 h-px bg-white/[0.07]" aria-hidden="true" />
 

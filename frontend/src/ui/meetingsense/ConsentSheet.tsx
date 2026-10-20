@@ -15,12 +15,21 @@
  */
 import React, { useCallback, useEffect, useRef } from 'react';
 import { consentSentences } from './meetingState';
+import { effectiveRetention, readMeetingPrefs } from './meetingPrefs';
 
 export const CONSENT_STORAGE_KEY = 'meetingsense_consent_ack';
 
 export interface ConsentStatus {
     stt?: { provider?: string | null; remote?: boolean; segments?: boolean };
     retention?: string;
+    /** The operator's MEETINGSENSE_RETENTION, or null when each user chooses. */
+    retention_policy?: string | null;
+}
+
+/** The status as this user's next meeting will see it: their Settings → Meetings choice of
+ *  keeping the audio applied, unless the operator's policy decides instead. */
+export function withUserRetention<T extends ConsentStatus>(status: T | null | undefined): T {
+    return { ...(status || {}), retention: effectiveRetention(status, readMeetingPrefs().keepAudio) } as T;
 }
 
 export interface ConsentSheetProps {
@@ -50,7 +59,7 @@ export function rememberConsent(storage?: Storage): void {
 export function ConsentSheet({ status, onAccept, onCancel }: ConsentSheetProps) {
     const sheet = useRef<HTMLDivElement | null>(null);
     const remember = useRef<HTMLInputElement | null>(null);
-    const sentences = consentSentences(status);
+    const sentences = consentSentences(withUserRetention(status));
 
     const onKeyDown = useCallback(
         (event: React.KeyboardEvent) => {

@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import { progressLabel, useInstallProgress } from './lib/installProgress'
 import { ProgressBar, Skeleton } from './motion'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink,
   MessageSquare, ScanEye, Image as ImageIcon, Pencil, Video, Sparkles, Layers, Puzzle } from 'lucide-react'
 import OllaBridgeModels from './components/OllaBridgeModels'
+import OllaBridgeChatPanel from './components/ollabridge/OllaBridgeChatPanel'
+import { isOllaBridgeChatRoute } from './components/ollabridge/chatRoute'
 import { isAccountsUxEnabled } from './account/featureFlags'
 import { GENERATED_CATALOGS } from '../generated/modelCatalog'
 import { ModelAdvisorCard } from './components/ModelAdvisorCard'
@@ -341,11 +344,18 @@ export default function ModelsView(props: ModelsParams) {
   const [providersError, setProvidersError] = useState<string | null>(null)
 
   const [modelType, setModelType] = useState<'chat' | 'multimodal' | 'image' | 'video' | 'edit' | 'enhance' | 'addons' | 'lora'>('chat')
-  const [provider, setProvider] = useState<string>(props.providerChat || 'ollama')
+  // Chat routed to an OllaBridge connection (openai_compat @ the Local gateway
+  // or the Cloud relay) reopens on the OllaBridge provider, where it was picked.
+  const chatProviderDefault = () =>
+    isOllaBridgeChatRoute(props.providerChat, props.baseUrlChat) ? 'ollabridge' : (props.providerChat || 'ollama')
+  const [provider, setProvider] = useState<string>(chatProviderDefault)
   // Latest provider for effects that only depend on [modelType] but must not
   // clobber a manual OllaBridge selection when the user switches tabs.
   const providerRef = React.useRef(provider)
   React.useEffect(() => { providerRef.current = provider }, [provider])
+  // OllaBridge on the Chat and Multimodal tabs shows the Local + Cloud connection cards — on
+  // Multimodal with its own (vision-checked) model list and route, never chat's.
+  const ollaBridgeChat = provider === 'ollabridge' && (modelType === 'chat' || modelType === 'multimodal') && !isAccountsUxEnabled()
 
   const defaultBaseUrl = useMemo(() => {
     if (modelType === 'chat') return props.baseUrlChat || ''
@@ -372,6 +382,10 @@ export default function ModelsView(props: ModelsParams) {
 
   // Install/delete jobs — optional endpoint (we degrade if not present)
   const [installBusy, setInstallBusy] = useState<string | null>(null)
+  // A suggestion being installed from the advisor card (its model id), for the toast.
+  const [advisorBusy, setAdvisorBusy] = useState<string | null>(null)
+  // Live percent, size and speed of whichever install is running (lib/installProgress.ts).
+  const installProgress = useInstallProgress(backendUrl, authKey, installBusy || advisorBusy)
   const [deleteBusy, setDeleteBusy] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -452,7 +466,7 @@ export default function ModelsView(props: ModelsParams) {
     // When modelType changes, update provider + baseUrl defaults
     if (modelType === 'chat') {
       // Switch to a chat provider (prefer the one from settings, or default to ollama)
-      const newProvider = props.providerChat || 'ollama'
+      const newProvider = chatProviderDefault()
       setProvider(newProvider)
       setBaseUrl(props.baseUrlChat || '')
     } else if (modelType === 'multimodal') {
@@ -1578,6 +1592,9 @@ export default function ModelsView(props: ModelsParams) {
             {providersError ? <div className="mt-2 text-xs text-rose-400/80">{providersError}</div> : null}
           </div>
 
+          {/* OllaBridge on Chat has its own Gateway URL / Base URL fields in the
+              Local and Cloud cards below; the override does not apply to it. */}
+          {!ollaBridgeChat && (
           <div className="min-w-0">
             <label htmlFor="hp-models-base-url" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Base URL Override</label>
             <input
@@ -1591,6 +1608,7 @@ export default function ModelsView(props: ModelsParams) {
               Optional. Leave empty to use default configuration.
             </div>
           </div>
+          )}
         </div>
       </div>
 
@@ -1860,7 +1878,16 @@ export default function ModelsView(props: ModelsParams) {
               synced from the user's linked HomePilot / GPU nodes (relay), shown
               for whichever Model Type tab is active. When selected it replaces
               the local catalog for this tab. */}
-          {provider === 'ollabridge' && !isAccountsUxEnabled() ? (
+          {ollaBridgeChat ? (
+            /* Chat / Multimodal: two independent connections — OllaBridge Local
+               (your own gateway) and OllaBridge Cloud (your account's machines). */
+            <OllaBridgeChatPanel
+              key={modelType}
+              backendUrl={backendUrl}
+              backendApiKey={authKey}
+              role={modelType === 'multimodal' ? 'vision' : 'chat'}
+            />
+          ) : provider === 'ollabridge' && !isAccountsUxEnabled() ? (
             <OllaBridgeModels filterType={modelType} />
           ) : (
           <>
@@ -1874,6 +1901,7 @@ export default function ModelsView(props: ModelsParams) {
               current={props.currentModels}
               onToast={setToast}
               onInstalled={() => { void refreshInstalled() }}
+              onBusyChange={setAdvisorBusy}
               defaultCollapsed
             />
           ) : null}
@@ -2117,7 +2145,7 @@ export default function ModelsView(props: ModelsParams) {
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                   </svg>
-                                  <span>Downloading...</span>
+                                  <span>Downloading{installProgress?.state === 'running' && installProgress.percent !== null ? ` ${installProgress.percent}%` : '...'}</span>
                                 </>
                               ) : (
                                 <>
@@ -2913,11 +2941,11 @@ export default function ModelsView(props: ModelsParams) {
           )}
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-white/90 truncate">{toast}</div>
-            {installBusy && (
-              <div className="text-[10px] text-white/50 mt-1 font-medium">
-                Large models may take several minutes...
+            {installBusy || advisorBusy ? (
+              <div className="text-[10px] text-white/50 mt-1 font-medium" data-testid="install-toast-progress">
+                {installProgress?.percent != null ? progressLabel(installProgress) : 'Large models may take several minutes...'}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       ) : null}

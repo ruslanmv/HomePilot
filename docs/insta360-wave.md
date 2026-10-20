@@ -56,7 +56,6 @@ on the Wave's storage, and whether the device's own transcript is stored beside 
 ## Setup
 
 1. **Allow the inbox for Folder Sync** (server side). In the HomePilot environment set
-   `MEETINGS_LIBRARY_UPGRADE=1`, `MEETINGS_INTELLIGENCE=1` and
    `MEETINGS_SYNC_ALLOWED_ROOTS=/mnt/c/Users/<you>/HomePilot` (WSL) or
    `C:\Users\<you>\HomePilot` (native Windows). Restart HomePilot.
 2. **Connect the inbox** in Meetings › Folder Sync: path `C:\Users\<you>\HomePilot\WaveInbox`,

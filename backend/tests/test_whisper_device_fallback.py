@@ -18,10 +18,15 @@ import pytest
 
 
 @pytest.fixture
-def providers():
+def providers(monkeypatch):
     # Imported through the fixture rather than at module scope: several fixtures in this
     # suite purge and re-import `app.*`.
-    return importlib.import_module("app.voice.providers")
+    module = importlib.import_module("app.voice.providers")
+    # These tests drive the load-time and inference-time fallbacks themselves. On a machine
+    # with a real GPU and no CUDA runtime, the up-front check (TestGpuRuntimePreflight)
+    # would send `auto` straight to the CPU and skip what they test.
+    monkeypatch.setattr(module, "_cuda_runtime_problem", lambda: None)
+    return module
 
 
 class _FakeInner:
@@ -252,3 +257,96 @@ class TestLazyCudaFailureAtInference:
 
         assert [c["device"] for c in calls] == ["cuda"]
         assert provider.load_error is None
+
+
+class TestGpuRuntimePreflight:
+    """`auto` on a machine whose GPU is visible but whose CUDA 12 runtime is missing.
+
+    Seen under WSL: the driver provides libcuda only, so CTranslate2 picked the GPU, loaded,
+    failed on the first chunk of a meeting ("Library libcublas.so.12 is not found"), and
+    rebuilt on the CPU in float32 — the slowest CPU mode. The check runs before the load.
+    """
+
+    @pytest.fixture
+    def mod(self):
+        return importlib.import_module("app.voice.providers")
+
+    @staticmethod
+    def _fake_ctranslate2(monkeypatch, gpus):
+        fake = type(importlib)("ctranslate2")
+        fake.get_cuda_device_count = lambda: gpus  # type: ignore[attr-defined]
+        fake.get_supported_compute_types = lambda device: {"int8", "float32"}  # type: ignore[attr-defined]
+        monkeypatch.setitem(importlib.sys.modules, "ctranslate2", fake)
+
+    def test_a_missing_runtime_goes_straight_to_cpu_int8(self, mod, monkeypatch):
+        monkeypatch.setenv("WHISPER_DEVICE", "auto")
+        monkeypatch.setenv("WHISPER_COMPUTE", "default")
+        monkeypatch.setattr(mod, "_cuda_runtime_problem",
+                            lambda: "GPU visible, libcublas.so.12 missing. run: make install-speech-gpu")
+        monkeypatch.setattr(mod, "_cpu_supports", lambda compute: compute == "int8")
+        calls: list = []
+        _install_fake(monkeypatch, mod, record=calls)
+
+        provider = mod.WhisperLocalSTTProvider()
+        provider._ensure_model()
+
+        assert calls == [{"device": "cpu", "compute_type": "int8"}]
+        assert provider.device == "cpu"
+        assert "make install-speech-gpu" in provider.load_error
+
+    def test_a_cpu_without_int8_keeps_default(self, mod, monkeypatch):
+        monkeypatch.setenv("WHISPER_DEVICE", "auto")
+        monkeypatch.setattr(mod, "_cuda_runtime_problem", lambda: "missing runtime")
+        monkeypatch.setattr(mod, "_cpu_supports", lambda compute: False)
+        calls: list = []
+        _install_fake(monkeypatch, mod, record=calls)
+        mod.WhisperLocalSTTProvider()._ensure_model()
+        assert calls == [{"device": "cpu", "compute_type": "default"}]
+
+    def test_an_explicit_device_is_never_second_guessed(self, mod, monkeypatch):
+        monkeypatch.setenv("WHISPER_DEVICE", "cuda")
+        monkeypatch.setenv("WHISPER_COMPUTE", "float16")
+
+        def _must_not_run():
+            raise AssertionError("the preflight is for `auto` only")
+
+        monkeypatch.setattr(mod, "_cuda_runtime_problem", _must_not_run)
+        calls: list = []
+        _install_fake(monkeypatch, mod, record=calls)
+        mod.WhisperLocalSTTProvider()._ensure_model()
+        assert calls[0] == {"device": "cuda", "compute_type": "float16"}
+
+    @pytest.mark.skipif(not importlib.sys.platform.startswith("linux"), reason="Linux check")
+    def test_no_gpu_is_not_a_problem(self, mod, monkeypatch):
+        self._fake_ctranslate2(monkeypatch, gpus=0)
+
+        def _must_not_probe(*a):
+            raise AssertionError("no GPU, nothing to probe")
+
+        monkeypatch.setattr(mod, "_load_cuda_lib", _must_not_probe)
+        assert mod._cuda_runtime_problem() is None
+
+    @pytest.mark.skipif(not importlib.sys.platform.startswith("linux"), reason="Linux check")
+    def test_a_gpu_without_the_runtime_names_what_is_missing(self, mod, monkeypatch):
+        self._fake_ctranslate2(monkeypatch, gpus=1)
+        monkeypatch.setattr(mod, "_load_cuda_lib", lambda soname, package: soname != "libcublas.so.12")
+        message = mod._cuda_runtime_problem()
+        assert "libcublas.so.12" in message and "libcudnn" not in message
+        assert "make install-speech-gpu" in message
+
+    @pytest.mark.skipif(not importlib.sys.platform.startswith("linux"), reason="Linux check")
+    def test_a_gpu_with_the_runtime_is_left_to_auto(self, mod, monkeypatch):
+        self._fake_ctranslate2(monkeypatch, gpus=1)
+        monkeypatch.setattr(mod, "_load_cuda_lib", lambda soname, package: True)
+        assert mod._cuda_runtime_problem() is None
+
+    def test_a_library_that_does_not_exist_is_not_loadable(self, mod):
+        assert mod._load_cuda_lib("libhp-definitely-absent.so.1", "hp_no_such_package") is False
+
+    @pytest.mark.parametrize("requested,expected", [
+        ("default", "int8"), ("", "int8"), ("float16", "int8"), ("int8_float16", "int8"),
+        ("float32", "float32"), ("int8", "int8"),
+    ])
+    def test_cpu_fast_compute(self, mod, monkeypatch, requested, expected):
+        monkeypatch.setattr(mod, "_cpu_supports", lambda compute: True)
+        assert mod._cpu_fast_compute(requested) == expected

@@ -3,6 +3,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
+// Meeting cards show the hour a meeting started, in local time. Pinned so a snapshot taken in
+// one timezone passes in another (CI runs in UTC); an explicit TZ still wins.
+process.env.TZ = process.env.TZ || 'UTC'
+
 const FRONTEND_DIR = path.dirname(fileURLToPath(import.meta.url))
 const PACKAGES_DIR = path.resolve(FRONTEND_DIR, '../packages')
 

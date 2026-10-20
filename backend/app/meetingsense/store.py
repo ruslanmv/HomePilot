@@ -433,6 +433,57 @@ def end_meeting(meeting_id: str, *, ended_at: Optional[float] = None, summary: A
         con.close()
 
 
+def close_orphaned_meetings(keep: Iterable[str] = (), *, started_before: Optional[float] = None) -> int:
+    """End meetings that a previous server process left ``live`` or ``suspended``.
+
+    Sessions live in memory (see ``session._SESSIONS``): after a restart nothing can resume
+    them, yet their rows still said "in progress" — forever, in the library and on the
+    conversation card. Called once at startup, when by definition no session of this process
+    exists yet. Single-process servers only, which is how HomePilot runs; switch it off with
+    ``MEETINGSENSE_CLOSE_ORPHANS=0`` for anything else.
+
+    The end time is the truest one available: when the socket dropped, else the end of the
+    last line transcribed, else the start (an empty meeting has no duration to invent).
+    Returns how many meetings were closed.
+
+    Also called while the server runs, by the library (see ``library/projection.py``): a row
+    still "in progress" whose session this process does not hold — ``keep`` lists the ones it
+    does — can never be continued, and saying "Recording" over it is the stale card the
+    library showed. ``started_before`` spares a meeting whose row is written but whose session
+    is a moment from being registered.
+    """
+    keep = [str(k) for k in keep if k]
+    clauses = ["ended_at IS NULL", "status IN ('live', 'suspended')"]
+    params: List[Any] = []
+    if keep:
+        clauses.append(f"id NOT IN ({','.join('?' for _ in keep)})")
+        params.extend(keep)
+    if started_before is not None:
+        clauses.append("started_at < ?")
+        params.append(float(started_before))
+    con = _connect()
+    try:
+        cur = con.execute(
+            """
+            UPDATE ms_meetings
+               SET status = 'ended',
+                   ended_at = COALESCE(
+                       suspended_at,
+                       started_at + (
+                           SELECT MAX(COALESCE(s.t1_ms, s.t0_ms)) FROM ms_segments s
+                            WHERE s.meeting_id = ms_meetings.id
+                       ) / 1000.0,
+                       started_at
+                   )
+             WHERE """ + " AND ".join(clauses),
+            params,
+        )
+        con.commit()
+        return int(cur.rowcount or 0)
+    finally:
+        con.close()
+
+
 def suspend_meeting(meeting_id: str, *, suspended_at: Optional[float] = None) -> None:
     """Mark a meeting as droppped-but-resumable (D10).
 

@@ -195,7 +195,7 @@ TRANSCRIPT_STATES = (
     "none", "imported", "queued", "transcribing", "ready", "ready_warnings",
     "failed", "needs_setup", "no_speech", "transcript_only",
 )
-RECORDING_STATES = ("none", "awaiting", "recording", "present", "unavailable")
+RECORDING_STATES = ("none", "awaiting", "recording", "paused", "present", "unavailable")
 JOB_STATES = ("queued", "running", "done", "failed", "cancelled", "needs_setup")
 
 _migrated_paths: set = set()
@@ -408,6 +408,17 @@ def get_entry(meeting_id: str) -> Optional[Dict[str, Any]]:
     try:
         row = con.execute("SELECT * FROM ms_library_entries WHERE meeting_id = ?", (meeting_id,)).fetchone()
         return _entry_row(row) if row else None
+    finally:
+        con.close()
+
+
+def meetings_with_recording_state(state: str) -> List[str]:
+    """Meeting ids whose entry is in this recording state (``uploading``: a live recording is
+    still arriving, or was cut off before the browser said it was complete)."""
+    con = _connect()
+    try:
+        rows = con.execute("SELECT meeting_id FROM ms_library_entries WHERE recording_state = ?", (state,)).fetchall()
+        return [r[0] for r in rows]
     finally:
         con.close()
 

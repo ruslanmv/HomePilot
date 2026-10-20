@@ -211,7 +211,11 @@ async def meetingsense_status() -> Dict[str, Any]:
     return {
         "enabled": cfg.enabled,
         "ready": ready,
-        "retention": cfg.retention,
+        # What a new meeting keeps when its user has not said otherwise, and — when the
+        # operator set MEETINGSENSE_RETENTION — the policy every meeting keeps instead
+        # (`retention_policy`; null means each user chooses in Settings → Meetings).
+        "retention": cfg.retention if cfg.retention_locked else "all",
+        "retention_policy": cfg.retention if cfg.retention_locked else None,
         "flags": cfg.flags.as_dict(),
         "stt": stt,
         "vision": vision,
@@ -234,16 +238,44 @@ class WebSocketTransport:
     The whole implementation is two forwarding methods, which is the point: MS2's core was
     written against this protocol precisely so the second transport (MS7, over the avatar
     session OllaBridge proxies) is another two methods rather than a second copy of the core.
+
+    **Guarded.** A socket the browser has already closed raises on send — Starlette's
+    ``RuntimeError('Cannot call "send" once a close message has been sent')``, uvicorn's
+    ``ClientDisconnected`` — and that raise used to land inside the frame loop's error handler,
+    which then tried to *send an error frame* down the same dead socket and raised again: the
+    traceback from the reported meeting. Every one of those is now one
+    :class:`WebSocketDisconnect`, the loop's single way out, and once the socket is known to be
+    gone no further write touches it.
     """
+
+    #: Exception names that mean "the peer is gone", from the ASGI servers HomePilot runs on.
+    _GONE = frozenset({"ClientDisconnected", "ConnectionClosed", "ConnectionClosedOK",
+                       "ConnectionClosedError"})
 
     def __init__(self, websocket: WebSocket) -> None:
         self._ws = websocket
+        self.closed = False
 
     async def send(self, frame: Dict[str, Any]) -> None:
-        await self._ws.send_json(frame)
+        if self.closed:
+            raise WebSocketDisconnect(code=1006)
+        try:
+            await self._ws.send_json(frame)
+        except WebSocketDisconnect:
+            self.closed = True
+            raise
+        except Exception as exc:  # noqa: BLE001 — classified below, re-raised otherwise
+            if isinstance(exc, (RuntimeError, OSError)) or type(exc).__name__ in self._GONE:
+                self.closed = True
+                raise WebSocketDisconnect(code=1006) from exc
+            raise
 
     async def close(self) -> None:
-        await self._ws.close()
+        if self.closed:
+            return
+        self.closed = True
+        with contextlib.suppress(Exception):
+            await self._ws.close()
 
 
 def _stt_bridge(provider):
@@ -252,9 +284,19 @@ def _stt_bridge(provider):
     One provider is held for the whole connection, the way ``voice/routes.py`` holds one:
     the model lives on the instance, so fetching a provider per utterance reloads it. MS1's
     cache makes a second fetch cheap rather than catastrophic, and this makes it unnecessary.
-    """
 
-    async def transcribe(data: bytes, *, fmt: str = "wav", duration_s=None):
+    ``language`` is the meeting's (see :mod:`.language`), passed on only to a provider that
+    takes it — a remote or older provider simply detects, as every provider did before.
+    """
+    takes_language = session_mod._accepts_keyword(
+        getattr(provider, "transcribe_segments", None), "language"
+    )
+
+    async def transcribe(data: bytes, *, fmt: str = "wav", duration_s=None, language=None):
+        if language and takes_language:
+            return await provider.transcribe_segments(
+                data, fmt=fmt, duration_s=duration_s, language=language
+            )
         return await provider.transcribe_segments(data, fmt=fmt, duration_s=duration_s)
 
     return transcribe
@@ -381,11 +423,15 @@ async def meetingsense_session(websocket: WebSocket) -> None:
     except Exception as exc:  # noqa: BLE001
         log.warning("meetingsense: no speech provider (%s)", exc)
 
+    # One transport for this socket, shared by whichever session it ends up carrying, so
+    # "this socket is gone" is learned once and believed everywhere.
+    transport = WebSocketTransport(websocket)
+
     # A resume attaches this socket to a session that already exists, so the one built here
     # is only used if the client starts a new meeting. Building it up front keeps the frame
     # loop's error handling in one shape.
     session = session_mod.MeetingSession(
-        transport=WebSocketTransport(websocket),
+        transport=transport,
         config=cfg,
         # None when nothing can transcribe. The session then reports `stt: false` in `ready`
         # and refuses audio with a code — a meeting that records slides and markers without a
@@ -409,6 +455,9 @@ async def meetingsense_session(websocket: WebSocket) -> None:
         while True:
             message = await websocket.receive_json()
             kind = (message or {}).get("type")
+            # When this socket was last heard from — what tells a half-open socket from a live
+            # one when a resume arrives for its meeting on another (see `_handle_resume`).
+            session.last_heard = time.monotonic()
 
             try:
                 if kind == "start":
@@ -428,9 +477,10 @@ async def meetingsense_session(websocket: WebSocket) -> None:
                     await session.on_mute(message)
 
                 elif kind == "resume":
-                    resumed = await _handle_resume(websocket, session, message, cfg)
+                    resumed = await _handle_resume(transport, session, message, cfg)
                     if resumed is not None:
                         session = resumed
+                        session.last_heard = time.monotonic()
                         channels = session.audio_channels or channels
 
                 elif kind == "ask":
@@ -452,68 +502,116 @@ async def meetingsense_session(websocket: WebSocket) -> None:
                     break
 
                 elif kind == "ping":
-                    await websocket.send_json({"type": "pong"})
+                    await transport.send({"type": "pong"})
 
                 # Anything else is ignored on purpose — `marker` and `ask` belong to waves
                 # that are not built, and a client sending them early should not be hung up
                 # on mid-meeting.
 
-            except audio_wire.AudioFrameError as exc:
-                await session.send_error(exc.code, exc.detail)
-            except session_mod.MeetingSessionError as exc:
-                await session.send_error(exc.code, exc.detail)
+            except WebSocketDisconnect:
+                # The socket went while this frame was being handled. Not a frame failure —
+                # and an error frame down the same socket would only raise again.
+                raise
+            except (audio_wire.AudioFrameError, session_mod.MeetingSessionError) as exc:
+                await _refuse(transport, exc.code, exc.detail)
             except Exception as exc:  # noqa: BLE001
                 # One bad frame must not end a recording in progress. The socket stays up and
                 # the client is told which frame failed.
                 log.exception("meetingsense: %s frame failed", kind)
-                await session.send_error("frame_failed", f"{kind} failed: {exc}")
+                await _refuse(transport, "frame_failed", f"{kind} failed: {exc}")
 
     except WebSocketDisconnect:
         pass
     finally:
-        await _on_disconnect(session, cfg)
+        await _on_disconnect(session, cfg, transport)
 
 
-async def _handle_resume(websocket: WebSocket, current, message: Dict[str, Any], cfg):
+#: How long a live meeting's socket must have delivered nothing before a resume on another
+#: socket may take the meeting over (see `_handle_resume`). The browser only resumes after its
+#: own socket died, and the keepalive that kills a stalled one takes 20–40 s; a socket that
+#: spoke within this window is alive, and its meeting stays its own.
+TAKEOVER_IDLE_S = 15.0
+
+
+async def _refuse(transport: WebSocketTransport, code: str, detail: str) -> None:
+    """Answer a frame with an error, on the socket that sent it.
+
+    This socket's own transport rather than the session's: after a takeover (see
+    `_handle_resume`) the session belongs to the newer socket, and an error about a frame
+    the old socket sent is not news to that one.
+    """
+    await transport.send({"type": "error", "code": code, "msg": detail})
+
+
+async def _handle_resume(transport: WebSocketTransport, current, message: Dict[str, Any], cfg):
     """Re-attach this socket to a meeting that was dropped, per D10.
 
     Returns the session to carry on with, or ``None`` when the resume was refused — refused
     with an error frame and an open socket, never a close, because a client that reconnected
     only to be hung up on has no way to tell "too late" from "wrong server" and will keep
     trying.
+
+    **A resume may arrive before the server has noticed the drop.** A stalled proxy or a
+    sleeping laptop leaves the old socket half-open: the browser has given up on it and
+    reconnected, but this process still holds the meeting as live on it. Refusing then is
+    what split one call into a new "Untitled meeting" every forty seconds. The newest socket
+    wins instead: the old one is detached exactly as a disconnect would detach it, and this
+    one resumes. When the old frame loop finally notices its socket is gone, it finds the
+    meeting is no longer its own and leaves it alone (see `_on_disconnect`).
     """
     meeting_id = str(message.get("meeting_id") or "").strip()
     if not meeting_id:
-        await current.send_error("meeting_required", "resume needs a meeting_id")
+        await _refuse(transport, "meeting_required", "resume needs a meeting_id")
         return None
 
     existing = session_mod.get(meeting_id)
+    if (
+        existing is not None
+        and existing.state == session_mod.MeetingState.LIVE
+        and existing.transport is not transport
+        # Only a socket gone quiet. A live socket that is still delivering frames is not taken
+        # out from under itself by a second connection that happens to know the meeting id.
+        and time.monotonic() - float(getattr(existing, "last_heard", 0.0) or 0.0) >= TAKEOVER_IDLE_S
+    ):
+        log.info("meetingsense: %s resumed on a new socket before the old one closed; "
+                 "taking it over", meeting_id)
+        existing.suspend()
+
     if existing is None or existing.state != session_mod.MeetingState.SUSPENDED:
         # Either the grace window closed, the process restarted, or the id is wrong. All three
         # mean the same thing to a client: this meeting cannot be continued, start a new one.
-        await current.send_error("not_resumable", "that meeting is not resumable")
+        await _refuse(transport, "not_resumable", "that meeting is not resumable")
         return None
 
     try:
         await existing.resume(
-            WebSocketTransport(websocket),
+            transport,
             last_seq=int(message.get("last_seq") or 0),
             max_replay=cfg.resume.max_replay,
         )
     except session_mod.MeetingSessionError as exc:
-        await current.send_error(exc.code, exc.detail)
+        await _refuse(transport, exc.code, exc.detail)
         return None
     return existing
 
 
-async def _on_disconnect(session, cfg) -> None:
+async def _on_disconnect(session, cfg, transport=None) -> None:
     """The socket died. Suspend rather than end, and arm the timer that ends it (D10).
 
     MS3 ended the meeting here, which is right for the store — no row saying "in progress"
     forever — and wrong for a person whose Wi-Fi blinked in the middle of a board meeting. A
     grace of zero restores MS3's behaviour exactly, and is the honest setting for anyone who
     would rather a drop be final.
+
+    ``transport`` is the socket that died. A meeting another socket has taken over (see
+    `_handle_resume`) is that socket's now, and this one's death is not its business.
     """
+    if (
+        transport is not None
+        and session.transport is not transport
+        and session.state in (session_mod.MeetingState.LIVE, session_mod.MeetingState.SUSPENDED)
+    ):
+        return
     if session.state != session_mod.MeetingState.LIVE:
         session_mod.unregister(session.meeting_id)
         return
@@ -660,6 +758,9 @@ async def get_meeting(meeting_id: str) -> Dict[str, Any]:
         # them. Carried on the hydrate rather than fetched separately so that reopening a
         # meeting from History shows the summary in the same paint as the transcript.
         "summaries": minutes_mod.summaries(meeting_id),
+        # The end-of-meeting document is being written right now (a local model can take
+        # minutes): the recap says so and looks again instead of reporting "No summary".
+        "summary_writing": minutes_mod.is_writing(meeting_id),
         # A live meeting is one with a socket attached right now, which the store cannot know.
         "live": session_mod.get(meeting_id) is not None
         and session_mod.get(meeting_id).state == session_mod.MeetingState.LIVE,
