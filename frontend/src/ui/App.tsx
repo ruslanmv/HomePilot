@@ -56,7 +56,7 @@ import {
 } from './media/sttRuntime'
 import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
-import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
+import { getDefaultBackendUrl, resolveBackendUrl, saveBackendUrl } from './lib/backendUrl'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
 import { useBackToClose } from './lib/useBackToClose'
@@ -3981,7 +3981,8 @@ export default function App() {
   }, [mode])
 
   useEffect(() => {
-    localStorage.setItem('homepilot_backend_url', settings.backendUrl)
+    // The app's own copy of the address it resolved — not a choice (lib/backendUrl.ts).
+    saveBackendUrl(settings.backendUrl, false)
     localStorage.setItem('homepilot_provider', settings.provider)
     localStorage.setItem('homepilot_ollama_url', settings.ollamaUrl)
     localStorage.setItem('homepilot_ollama_model', settings.ollamaModel)
@@ -4115,8 +4116,8 @@ export default function App() {
   }, [])
 
   const onSaveSettings = useCallback(() => {
-    // Save new settings to localStorage
-    localStorage.setItem('homepilot_backend_url', settingsDraft.backendUrl)
+    // Save new settings to localStorage. Settings → Save is the user's choice of backend.
+    saveBackendUrl(settingsDraft.backendUrl, true)
     localStorage.setItem('homepilot_api_key', settingsDraft.apiKey)
     localStorage.setItem('homepilot_provider_chat', settingsDraft.providerChat)
     localStorage.setItem('homepilot_provider_images', settingsDraft.providerImages)

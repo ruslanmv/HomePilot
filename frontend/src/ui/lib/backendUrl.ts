@@ -106,6 +106,12 @@ export function resolveBackendUrl(override?: string | null): string {
           // The default backend: :8000, or wherever `make start` put it.
           return getDefaultBackendUrl();
         }
+        // An address `make start` picked (saved because it was the default then) is not a
+        // choice: it follows the backend to wherever this start put it. Without this, a run
+        // that moved the backend to :8002 left every later run — back on :8000 — unreachable.
+        if (storedIsLocal && wasAutomatic(clean, storedPort)) {
+          return getDefaultBackendUrl();
+        }
         return followMovedDevBackend(clean);
       }
     } catch {
@@ -117,6 +123,46 @@ export function resolveBackendUrl(override?: string | null): string {
 
 function stripTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+/** Whether the saved backend address was the user's choice or the default at the time. */
+const ORIGIN_KEY = "homepilot_backend_url_origin";
+
+/**
+ * The saved address was the automatic one, not a choice: marked so when it was saved, or —
+ * saved before that mark existed — a local port `make start` moves the backend to (8001-8019,
+ * the next free ones after :8000) that is not today's default.
+ */
+function wasAutomatic(clean: string, port: string): boolean {
+  let origin: string | null = null;
+  try {
+    origin = window.localStorage.getItem(ORIGIN_KEY);
+  } catch {
+    origin = null;
+  }
+  if (origin === "user") return false;
+  if (clean === getDefaultBackendUrl()) return false;
+  if (origin === "auto") return true;
+  const n = Number(port);
+  return Number.isInteger(n) && n >= 8001 && n <= 8019;
+}
+
+/**
+ * Save the backend address. `chosenByUser` is true for Settings → Save; the app's own
+ * persistence of the address it resolved passes false. The default address is always marked
+ * automatic, so it keeps following `make start`; a typed one is kept as typed.
+ */
+export function saveBackendUrl(url: string, chosenByUser: boolean): void {
+  try {
+    const clean = stripTrailingSlash((url || "").trim());
+    if (!clean) return;
+    window.localStorage.setItem("homepilot_backend_url", clean);
+    const previous = window.localStorage.getItem(ORIGIN_KEY);
+    const origin = clean === getDefaultBackendUrl() ? "auto" : chosenByUser ? "user" : previous === "user" ? "user" : "auto";
+    window.localStorage.setItem(ORIGIN_KEY, origin);
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 /**
