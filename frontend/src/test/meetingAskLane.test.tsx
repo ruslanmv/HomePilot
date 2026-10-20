@@ -303,6 +303,19 @@ describe('asking after the meeting ends', () => {
     notes: null,
   };
 
+  // These cover the workspace's own recap — what an ended meeting shows when the Meetings
+  // library is switched off (the library answers 404). With the library on, the recap is the
+  // Meeting details page (meetingRecapPage.test.tsx). Library requests are answered here so
+  // they never use up the one-off answers the tests below set for the ask request.
+  beforeEach(() => {
+    const answer = fetchMock;
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: unknown) => (
+      String(input).includes('/v1/meetingsense/library/')
+        ? { ok: false, status: 404, json: async () => ({ detail: 'not found' }) }
+        : answer(input as never, init as never)
+    )));
+  });
+
   it('lets the meeting’s own stored model answer once it has ended', async () => {
     /*
      * MS34-a. No compute override once the meeting is over.

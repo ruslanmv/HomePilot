@@ -90,6 +90,12 @@ export interface MeetingView {
      *  shows a number and the card shows the list. */
     queued: number;
     error: string | null;
+    /**
+     * Something the user should know that is not an error — for example that the server
+     * restarted and the recording went on as a new part. Optional so older constructors of a
+     * view stay valid.
+     */
+    notice?: string | null;
 }
 
 export const EMPTY_VIEW: MeetingView = {
@@ -109,6 +115,7 @@ export const EMPTY_VIEW: MeetingView = {
     mode: null,
     queued: 0,
     error: null,
+    notice: null,
 };
 
 /**
@@ -324,10 +331,12 @@ export function consentSentences(status: {
     );
     lines.push(
         status?.retention === 'all'
-            ? 'The transcript, the slide images and the audio are kept until you delete the meeting.'
+            ? 'The transcript, the audio and any slide images are kept until you delete the meeting, so you can play it back.'
             : status?.retention === 'text+frames'
               ? 'The transcript and slide images are kept until you delete the meeting; the audio is not.'
-              : 'Only the transcript is kept. No audio and no images are stored.',
+              // Slides captured from a shared screen are uploaded whatever the mode, so this
+              // must not claim that no image is kept.
+              : 'Only the transcript is kept, with any slides captured from a shared screen. The audio is not stored.',
     );
     // MS27. What the mode adds, in the mode's own terms. A consent sheet that described only
     // the recording would be describing a different feature from the one about to run: Coach

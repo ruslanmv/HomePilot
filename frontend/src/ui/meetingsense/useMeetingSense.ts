@@ -133,9 +133,31 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
             if (typeof detail.waiting === 'number') patch({ queued: detail.waiting });
         };
         const onReconnecting = () => patch({ phase: 'reconnecting' });
-        const onResumed = () => patch({ phase: 'live', error: null });
+        const onResumed = () => patch({ phase: 'live', error: null, notice: null });
+        // The server lost the meeting (it restarted) while capture was still running; the
+        // recorder starts a new meeting in the same conversation on the same socket.
+        const onRestarting = () => patch({
+            phase: 'reconnecting',
+            error: null,
+            notice: 'The HomePilot server restarted. Continuing the recording…',
+        });
+        const onRestarted = (event: Event) => {
+            const detail = (event as CustomEvent).detail || {};
+            patch({
+                phase: 'live',
+                error: null,
+                ...(detail.meeting_id ? { meetingId: String(detail.meeting_id) } : {}),
+                notice: 'Recording continues. What was said before the restart is saved as its own meeting.',
+            });
+        };
         const onAudioLost = (event: Event) => {
             patch({ audioMode: (event as CustomEvent).detail?.audioMode ?? null });
+        };
+        // Advice from the server, e.g. that the microphone keeps repeating the call because it
+        // is coming out of the speakers. Shown in the same banner as the restart notice.
+        const onNotice = (event: Event) => {
+            const msg = (event as CustomEvent).detail?.msg;
+            if (typeof msg === 'string' && msg.trim()) patch({ notice: msg.trim() });
         };
 
         const handlers: Array<[string, EventListener]> = [
@@ -149,7 +171,10 @@ export function useMeetingSense(options: UseMeetingSenseOptions = {}) {
             ['ms:status', onStatus],
             ['ms:reconnecting', onReconnecting],
             ['ms:resumed', onResumed],
+            ['ms:restarting', onRestarting],
+            ['ms:restarted', onRestarted],
             ['ms:audio_lost', onAudioLost],
+            ['ms:notice', onNotice],
         ];
         for (const [name, handler] of handlers) target.addEventListener(name, handler);
         return () => {

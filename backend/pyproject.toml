@@ -62,6 +62,8 @@ docs = [
 # policy. Mirrors requirements/speech-cpu.txt and the packaged container's requirements.
 whisper = [
     "faster-whisper==1.2.1",
+    # PyAV 19 removed av.open(metadata_errors=...), which faster-whisper 1.2.1 passes.
+    "av==18.1.0",
     "ctranslate2==4.8.2",
 ]
 # CrewAI integration — opt-in via `pip install .[crewai]` or `uv pip install -e ".[crewai]"`

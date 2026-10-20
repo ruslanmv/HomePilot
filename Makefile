@@ -23,6 +23,9 @@ MCP_REPO         ?= https://github.com/ruslanmv/mcp-context-forge.git
 MCP_GATEWAY_PORT ?= 4444
 MCP_GATEWAY_HOST ?= 127.0.0.1
 
+# SearXNG for web search in chat (make start-searxng). Not 8080: too many tools take it.
+SEARXNG_PORT     ?= 8899
+
 # New MCP server directories (functional contract servers)
 MCP_NEW_SERVERS := local_notes local_projects web shell_safe gmail google_calendar microsoft_graph slack github notion
 MCP_SERVERS_DIR := agentic/integrations/mcp
@@ -54,7 +57,7 @@ MCP_EXPERT_CORE_SERVERS := web_search doc_retrieval memory_store safety_policy o
         recovery recovery-status recovery-backup recovery-list-users \
         recovery-reset-password recovery-unlock-all recovery-clear-sessions \
         recovery-prune-uploads recovery-images file-manager file-manager-scan \
-        preflight
+        preflight install-ffmpeg install-comfyui install-speech-gpu
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -144,23 +147,23 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	fi
 	@echo ""
 	@# ffmpeg/ffprobe are required at runtime by the Creator Studio MP4
-	@# export path (backend/app/studio/render_mp4.py) and the narration
-	@# upload pipeline. They are system-level packages we cannot safely
-	@# install from make (requires sudo / varies by OS). Detect + print
-	@# a clear platform-appropriate hint rather than silently producing
-	@# a broken install.
-	@echo "✓ Checking media tooling (ffmpeg)..."
-	@if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then \
-		echo "  ✓ ffmpeg + ffprobe found on PATH"; \
-	else \
-		echo "  ⚠ ffmpeg / ffprobe NOT on PATH."; \
-		echo "    Creator Studio MP4 export will return 503 until you install them."; \
-		echo "    Install with:"; \
-		echo "      Ubuntu/Debian:  sudo apt install -y ffmpeg"; \
-		echo "      macOS (brew):   brew install ffmpeg"; \
-		echo "      Windows:        winget install Gyan.FFmpeg   (or download from ffmpeg.org)"; \
-		echo "    Chat, image, and video generation still work without it."; \
-	fi
+	@# export path (backend/app/studio/render_mp4.py), the narration upload
+	@# pipeline and meeting audio decoding, and `make preflight` refuses to
+	@# start without them. scripts/install-ffmpeg.sh installs them with the
+	@# platform's package manager (apt/dnf/pacman/apk/brew, sudo only when
+	@# needed) and prints the manual command where it cannot. Non-fatal here:
+	@# the preflight at the end of install reports anything still missing.
+	@echo "✓ Installing media tooling (ffmpeg + ffprobe)..."
+	@bash scripts/install-ffmpeg.sh || true
+	@echo ""
+	@# Same check `make start` runs. Failing here, with the fix printed next
+	@# to each item, beats discovering the gap at first start.
+	@$(MAKE) --no-print-directory preflight || { \
+		echo ""; \
+		echo "  ❌ make install finished, but preflight found gaps (listed above)."; \
+		echo "     Fix them, then confirm with: make preflight"; \
+		exit 1; \
+	}
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Installation Complete!"
@@ -187,6 +190,17 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 		echo "  To start without MCP: make start-no-agentic"; \
 	fi
 	@echo ""
+
+install-speech-gpu: ## Optional: transcribe meetings on an NVIDIA GPU (adds the CUDA 12 cuBLAS + cuDNN 9 runtime to backend/.venv, about 1.2 GB once)
+	@echo "Installing the CUDA 12 runtime for local speech into backend/.venv (about 1.2 GB, downloaded once)..."
+	@echo "Only needed when a GPU is present but CUDA 12 is not: the speech status then says \"runs on the CPU (int8)\"."
+	@cd backend && uv pip install --python .venv/bin/python "nvidia-cublas-cu12>=12.4,<13" "nvidia-cudnn-cu12>=9.1,<10"
+	@echo ""
+	@echo "Done. Restart HomePilot (make start); the speech status then reports device: cuda."
+	@echo "To undo: cd backend && uv pip uninstall --python .venv/bin/python nvidia-cublas-cu12 nvidia-cudnn-cu12"
+
+install-ffmpeg: ## Install ffmpeg + ffprobe with this OS's package manager (apt/dnf/pacman/apk/brew)
+	@bash scripts/install-ffmpeg.sh
 
 install-comfyui: ## Install ComfyUI alone (shallow clone with retries); rerun this if the network dropped during make install
 	@echo "✓ Installing ComfyUI..."
@@ -434,7 +448,7 @@ preflight: ## Verify install is complete + every critical dep is reachable (no s
 	check_import backend/.venv bcrypt         "bcrypt (password hashing)"; \
 	check_import backend/.venv yaml           "PyYAML"; \
 	check_import backend/.venv fastapi        "fastapi"; \
-	echo "- Media tooling (Creator Studio MP4 export + narration upload need this)"; \
+	echo "- Media tooling (Creator Studio MP4 export, narration upload, meeting audio; fix with: make install-ffmpeg)"; \
 	check_cmd ffmpeg  "ffmpeg"; \
 	check_cmd ffprobe "ffprobe"; \
 	echo "- Helpful but optional (warn only, never fail)"; \
@@ -457,15 +471,13 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@echo "Prerequisites:"
 	@echo "  ✓ Run 'make install' first"
 	@echo "  ✓ Ollama running: ollama serve"
-	@echo "  ✓ Ollama model: ollama pull llama3:8b (or your preferred model)"
+	@echo "  ✓ Ollama model: ollama pull llama3.2:3b (any model works — chat uses what is installed)"
 	@echo ""
-	@echo "Services:"
-	@echo "  Backend:      http://localhost:8000"
-	@echo "  Edit-Session: http://localhost:8010"
-	@echo "  Frontend:     http://localhost:3000"
-	@if [ -f "ComfyUI/main.py" ]; then \
-		echo "  ComfyUI:      http://localhost:8188"; \
-	fi
+	@echo "Ports: HomePilot never stops other programs. A port that is already taken"
+	@echo "(kubectl, Docker, Langfuse, ...) is skipped and the service moves to the next free one."
+	@echo "Override with HOMEPILOT_BACKEND_PORT / HOMEPILOT_EDIT_PORT / HOMEPILOT_FRONTEND_PORT / COMFY_PORT."
+	@echo ""
+	@echo "Other services:"
 	@if [ -f "avatar-service/.venv/bin/uvicorn" ]; then \
 		echo "  Avatar Svc:   http://localhost:8020"; \
 	fi
@@ -481,6 +493,33 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@bash -c ' \
 		set -e; \
 		ROOT="$$(pwd)"; \
+		ports=$$(python3 "$$ROOT/scripts/pick_ports.py" \
+			HOMEPILOT_BACKEND_PORT=$${HOMEPILOT_BACKEND_PORT:-8000}:homepilot \
+			HOMEPILOT_EDIT_PORT=$${HOMEPILOT_EDIT_PORT:-8010} \
+			HOMEPILOT_FRONTEND_PORT=$${HOMEPILOT_FRONTEND_PORT:-3000} \
+			COMFY_PORT=$${COMFY_PORT:-8188}:comfy) || exit 1; \
+		eval "$$ports"; \
+		BP=$$HOMEPILOT_BACKEND_PORT; EP=$$HOMEPILOT_EDIT_PORT; FP=$$HOMEPILOT_FRONTEND_PORT; CP=$$COMFY_PORT; \
+		BACKEND_URL="http://localhost:$$BP"; \
+		# Auto-reload watches only the app/ code. On WSL the watcher polls /mnt/c, and walking \
+		# a whole service folder (its .venv included) over the Windows share every few hundred \
+		# ms ended in "Cannot allocate memory" and took edit-session down. HOMEPILOT_RELOAD=0 \
+		# turns reloading off. \
+		RELOAD="--reload --reload-dir app"; \
+		if [ "$${HOMEPILOT_RELOAD:-1}" = "0" ]; then RELOAD=""; fi; \
+		CORS="$${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001,http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:3001},http://localhost:$$FP,http://127.0.0.1:$$FP"; \
+		PUBLIC="$${PUBLIC_BASE_URL:-}"; \
+		API_URL="$${VITE_API_URL:-}"; \
+		if [ "$$BP" != "8000" ]; then \
+			[ -n "$$PUBLIC" ] || PUBLIC="$$BACKEND_URL"; \
+			[ -n "$$API_URL" ] || API_URL="$$BACKEND_URL"; \
+		fi; \
+		echo "HomePilot:"; \
+		echo "  Frontend:     http://localhost:$$FP   <- open this"; \
+		echo "  Backend:      $$BACKEND_URL"; \
+		echo "  Edit-Session: http://localhost:$$EP"; \
+		if [ -f "$$ROOT/ComfyUI/main.py" ]; then echo "  ComfyUI:      http://localhost:$$CP"; fi; \
+		echo ""; \
 		pids=""; \
 		_cleaned=0; \
 		cleanup() { \
@@ -497,15 +536,20 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		trap cleanup INT TERM EXIT; \
 		\
 		echo "Starting backend..."; \
-		cd "$$ROOT/backend" && INTERACTIVE_ENABLED=$${INTERACTIVE_ENABLED:-true} .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 & \
+		cd "$$ROOT/backend" && CORS_ORIGINS="$$CORS" PUBLIC_BASE_URL="$$PUBLIC" \
+			EDIT_SESSION_URL="$${EDIT_SESSION_URL:-http://localhost:$$EP}" COMFY_BASE_URL="$${COMFY_BASE_URL:-http://localhost:$$CP}" \
+			INTERACTIVE_ENABLED=$${INTERACTIVE_ENABLED:-true} .venv/bin/uvicorn app.main:app $$RELOAD --host 0.0.0.0 --port $$BP & \
 		pids="$$pids $$!"; \
 		\
 		echo "Starting edit-session service..."; \
-		cd "$$ROOT/edit-session" && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8010 & \
+		cd "$$ROOT/edit-session" && HOME_PILOT_BASE_URL="$${HOME_PILOT_BASE_URL:-$$BACKEND_URL}" \
+			.venv/bin/uvicorn app.main:app $$RELOAD --host 0.0.0.0 --port $$EP & \
 		pids="$$pids $$!"; \
 		\
 		echo "Starting frontend..."; \
-		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev & \
+		cd "$$ROOT/frontend" && npm run --silent predev && \
+			HOMEPILOT_BACKEND_URL="$$BACKEND_URL" VITE_API_URL="$$API_URL" VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} \
+			./node_modules/.bin/vite --host 0.0.0.0 --port $$FP --strictPort & \
 		pids="$$pids $$!"; \
 		\
 		if [ -f "$$ROOT/ComfyUI/main.py" ] && [ -f "$$ROOT/ComfyUI/.venv/bin/python" ]; then \
@@ -514,9 +558,13 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 				rm -rf "$$ROOT/ComfyUI/models"; \
 				ln -s "$$ROOT/models/comfy" "$$ROOT/ComfyUI/models"; \
 			fi; \
-			echo "Starting ComfyUI..."; \
-			bash "$$ROOT/scripts/start-comfyui.sh" & \
-			pids="$$pids $$!"; \
+			if [ "$${COMFY_PORT_REUSE:-}" = "1" ]; then \
+				echo "Using the ComfyUI already running on port $$CP."; \
+			else \
+				echo "Starting ComfyUI..."; \
+				COMFY_PORT=$$CP bash "$$ROOT/scripts/start-comfyui.sh" & \
+				pids="$$pids $$!"; \
+			fi; \
 		fi; \
 		\
 		if [ -f "$$ROOT/avatar-service/.venv/bin/uvicorn" ]; then \
@@ -575,6 +623,10 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 			else \
 				echo "  ⚠ A2A Agents: $$a2a_ok/$$a2a_total healthy — check the log above"; \
 			fi; \
+		elif [ "$(AGENTIC)" = "1" ]; then \
+			echo ""; \
+			echo "  ⚠ MCP gateway (Context Forge) is not installed, so Discover MCP Servers stays empty."; \
+			echo "    Install it with:  make install-mcp   — then run make start again."; \
 		fi; \
 		\
 		echo ""; \
@@ -593,7 +645,9 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 		echo ""; \
 		echo "  🎙 MeetingSense is on: press \"Start meeting\" under the chat box."; \
-		echo "     Check it can transcribe:  curl -s localhost:8000/v1/meetingsense/status | jq .ready"; \
+		echo "     Check it can transcribe:  curl -s localhost:$$BP/v1/meetingsense/status | jq .ready"; \
+		echo ""; \
+		echo "  Open HomePilot:  http://localhost:$$FP"; \
 		echo ""; \
 		wait \
 	'
@@ -604,7 +658,7 @@ start-backend: ## Start backend locally with uv
 		echo "Virtual environment not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd backend && INTERACTIVE_ENABLED=$${INTERACTIVE_ENABLED:-true} .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	@cd backend && INTERACTIVE_ENABLED=$${INTERACTIVE_ENABLED:-true} .venv/bin/uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000
 
 start-edit-session: ## Start edit-session sidecar locally (port 8010)
 	@echo "Starting edit-session service..."
@@ -612,7 +666,7 @@ start-edit-session: ## Start edit-session sidecar locally (port 8010)
 		echo "Virtual environment not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd edit-session && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
+	@cd edit-session && .venv/bin/uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8010
 
 start-frontend: ## Start frontend locally
 	@echo "Starting frontend..."
@@ -805,33 +859,14 @@ up: ## Development: Start stack WITHOUT Ollama container (use host Ollama)
 down: ## Stop all containers (including Ollama if running)
 	docker compose -f infra/docker-compose.yml --profile ollama down
 
-stop: ## Stop all local HomePilot processes (kills processes on all service ports)
+stop: ## Stop the HomePilot processes started from this folder (never other programs, whatever their port)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Stopping HomePilot Services"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
-	@# Kill processes by port (works on Linux/macOS/WSL)
-	@# Core: 3000(frontend) 8000(backend) 8010(edit-session) 8188(comfyui)
-	@# MCP:  9101-9105(MCP servers) 9107(meetingsense) 9201-9202(A2A agents)
-	@for port in 3000 8000 8010 8188 9101 9102 9103 9104 9105 9107 9120 9201 9202; do \
-		echo "Checking port $$port..."; \
-		pid=$$(lsof -ti :$$port 2>/dev/null || true); \
-		if [ -n "$$pid" ]; then \
-			echo "  Killing process(es) on port $$port: $$pid"; \
-			echo "$$pid" | xargs -r kill -9 2>/dev/null || true; \
-		else \
-			echo "  No process on port $$port"; \
-		fi; \
-	done
-	@# Also kill by process name as backup (in case lsof misses something)
-	@echo ""
-	@echo "Cleaning up by process name..."
-	@-pkill -9 -f "ComfyUI/main.py" 2>/dev/null && echo "  Killed ComfyUI" || true
-	@-pkill -9 -f "uvicorn app.main:app" 2>/dev/null && echo "  Killed backend" || true
-	@-pkill -9 -f "vite.*--port 3000" 2>/dev/null && echo "  Killed frontend" || true
-	@-pkill -9 -f "mcpgateway.main:app" 2>/dev/null && echo "  Killed MCP Gateway" || true
-	@-pkill -9 -f "server_fastmcp" 2>/dev/null && echo "  Killed MCP servers" || true
-	@echo "  Done"
+	@# Only processes started from this checkout. Other programs on HomePilot's
+	@# default ports (kubectl port-forwards, containers, other uvicorn apps) are left alone.
+	@bash scripts/stop-homepilot.sh
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ All HomePilot services stopped"
@@ -1394,13 +1429,7 @@ start-meetingsense: ## Start the MeetingSense MCP server standalone (port 9107)
 		--host 127.0.0.1 --port 9107 --log-level info
 
 stop-meetingsense: ## Stop the MeetingSense MCP server
-	@pid=$$(lsof -ti :9107 2>/dev/null || true); \
-	if [ -n "$$pid" ]; then \
-		echo "  Stopping MeetingSense MCP server on :9107 ($$pid)"; \
-		echo "$$pid" | xargs -r kill -9 2>/dev/null || true; \
-	else \
-		echo "  Nothing is listening on :9107"; \
-	fi
+	@bash scripts/stop-homepilot.sh --only "meetingsense_server:app" --label "MeetingSense MCP server"
 
 health-meetingsense: ## Check the MeetingSense MCP server's health
 	@curl -sf http://localhost:9107/health \
@@ -1412,6 +1441,26 @@ install-mcp: ## Install MCP Context Forge separately (gateway + servers + agent)
 	@echo "  Installing MCP Context Forge"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@bash scripts/mcp-setup.sh "$(MCP_DIR)"
+
+start-searxng: ## Start SearXNG for web search in chat (Docker, 127.0.0.1:$(SEARXNG_PORT))
+	@command -v docker >/dev/null 2>&1 || { echo "❌ Docker is needed for SearXNG."; exit 1; }
+	@# The port must be free, or already ours: another program there is not a search engine.
+	@if ss -ltnH "( sport = :$(SEARXNG_PORT) )" 2>/dev/null | grep -q . \
+		&& ! docker ps --filter name=^hp-searxng$$ --format '{{.Ports}}' | grep -q ":$(SEARXNG_PORT)->"; then \
+		echo "❌ Port $(SEARXNG_PORT) is taken by another program."; \
+		echo "   Pick another: make start-searxng SEARXNG_PORT=8898, and set SEARXNG_BASE_URL=http://127.0.0.1:8898"; \
+		exit 1; \
+	fi
+	@# A fresh secret each time the container is created; it lives only in the container.
+	@SEARXNG_PORT=$(SEARXNG_PORT) SEARXNG_SECRET=$$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n') \
+		docker compose -f agentic/ops/compose/websearch.compose.yml up -d --no-deps searxng
+	@for i in $$(seq 1 30); do curl -s -m 1 -o /dev/null http://127.0.0.1:$(SEARXNG_PORT)/healthz && break; sleep 1; done
+	@curl -s -m 2 -o /dev/null -w "  SearXNG: http://127.0.0.1:$(SEARXNG_PORT) (%{http_code})\n" http://127.0.0.1:$(SEARXNG_PORT)/healthz || echo "  SearXNG did not answer yet — docker logs hp-searxng"
+	@if [ "$(SEARXNG_PORT)" != "8899" ]; then echo "  Not the default port: set SEARXNG_BASE_URL=http://127.0.0.1:$(SEARXNG_PORT) for the web-search server."; fi
+	@echo "  Chat → + → Search the web uses it through the web-search server on :9105."
+
+stop-searxng: ## Stop SearXNG (web search in chat then says it is unavailable)
+	@docker compose -f agentic/ops/compose/websearch.compose.yml stop searxng 2>/dev/null || true
 
 start-mcp: ## Start only the MCP Gateway (port 4444)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -1463,8 +1512,7 @@ start-mcp: ## Start only the MCP Gateway (port 4444)
 
 stop-mcp: ## Stop MCP Gateway and MCP server processes
 	@echo "Stopping MCP processes..."
-	@-pkill -f "mcpgateway.main:app" 2>/dev/null && echo "  Killed MCP Gateway" || echo "  MCP Gateway not running"
-	@-pkill -f "server_fastmcp" 2>/dev/null && echo "  Killed MCP servers" || echo "  No MCP servers running"
+	@bash scripts/stop-homepilot.sh --only "mcpgateway.main:app|server_fastmcp" --label "MCP Gateway and MCP servers"
 	@echo "  Done"
 
 clean-mcp: stop-mcp ## Wipe MCP Context Forge completely and reinstall fresh (resets password/database)

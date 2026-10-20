@@ -21,4 +21,6 @@ langchain-core>=0.3.0
 # Meeting transcription is built in. Pin the native inference runtime so the
 # backend and packaged HomePilot container do not silently lose local speech.
 faster-whisper==1.2.1
+# PyAV 19 dropped an argument faster-whisper 1.2.1 passes; see requirements/speech-cpu.txt.
+av==18.1.0
 ctranslate2==4.8.2

@@ -92,9 +92,11 @@ class LibraryConfig:
 def load_library_config() -> LibraryConfig:
     """Read per call, like ``meetingsense.config.load_config``, so tests can vary it."""
     return LibraryConfig(
-        enabled=_flag("MEETINGS_LIBRARY_UPGRADE", False),
+        # On by default since 16 Oct 2026: the library is the Meetings section.
+        # MEETINGS_LIBRARY_UPGRADE=0 hides it again; nothing is deleted.
+        enabled=_flag("MEETINGS_LIBRARY_UPGRADE", True),
         processing=_flag("MEETINGS_LIBRARY_PROCESSING", True),
-        intelligence=_flag("MEETINGS_INTELLIGENCE", False),
+        intelligence=_flag("MEETINGS_INTELLIGENCE", True),
         auto_title=_flag("MEETINGS_AUTO_TITLE", True),
         sync_roots=_roots(os.getenv("MEETINGS_SYNC_ALLOWED_ROOTS", "")),
         max_upload_mb=max(1, _int("MEETINGS_IMPORT_MAX_MB", 2048)),

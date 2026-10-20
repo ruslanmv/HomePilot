@@ -16,16 +16,18 @@ from . import config
 # ── Result type ──────────────────────────────────────────────────────────────
 
 class SearchResult:
-    __slots__ = ("title", "url", "snippet", "source")
+    __slots__ = ("title", "url", "snippet", "source", "published")
 
-    def __init__(self, title: str, url: str, snippet: str, source: str):
+    def __init__(self, title: str, url: str, snippet: str, source: str, published: str = ""):
         self.title = title
         self.url = url
         self.snippet = snippet
         self.source = source
+        self.published = published
 
     def to_dict(self) -> Dict[str, str]:
-        return {"title": self.title, "url": self.url, "snippet": self.snippet, "source": self.source}
+        return {"title": self.title, "url": self.url, "snippet": self.snippet, "source": self.source,
+                "published": self.published}
 
 
 # ── SearXNG (home mode) ─────────────────────────────────────────────────────
@@ -44,17 +46,18 @@ class SearxngProvider:
         if domains:
             q += " " + " ".join(f"site:{d}" for d in domains)
 
-        # Map recency to SearXNG time_range (best-effort)
-        if recency_days <= 2:
-            time_range = "day"
-        elif recency_days <= 10:
-            time_range = "week"
-        elif recency_days <= 40:
-            time_range = "month"
-        else:
-            time_range = "year"
-
-        params = {"q": q, "format": "json", "safesearch": 1, "time_range": time_range}
+        params: Dict[str, Any] = {"q": q, "format": "json", "safesearch": 1}
+        # Map recency to SearXNG time_range (best-effort). 0 or less: no date filter at all —
+        # a question that is not about recent events should not lose the best older pages.
+        if recency_days and recency_days > 0:
+            if recency_days <= 2:
+                params["time_range"] = "day"
+            elif recency_days <= 10:
+                params["time_range"] = "week"
+            elif recency_days <= 40:
+                params["time_range"] = "month"
+            else:
+                params["time_range"] = "year"
         url = f"{config.SEARXNG_BASE_URL.rstrip('/')}/search"
 
         async with httpx.AsyncClient(
@@ -74,7 +77,8 @@ class SearxngProvider:
             snippet = (item.get("content") or "").strip()
             if len(snippet) > 300:
                 snippet = snippet[:300] + "..."
-            results.append(SearchResult(title=title, url=link, snippet=snippet, source="searxng"))
+            results.append(SearchResult(title=title, url=link, snippet=snippet, source="searxng",
+                                        published=str(item.get("publishedDate") or "")[:32]))
 
         return results
 
@@ -120,7 +124,8 @@ class TavilyProvider:
             snippet = (item.get("content") or "").strip()
             if len(snippet) > 300:
                 snippet = snippet[:300] + "..."
-            results.append(SearchResult(title=title, url=link, snippet=snippet, source="tavily"))
+            results.append(SearchResult(title=title, url=link, snippet=snippet, source="tavily",
+                                        published=str(item.get("published_date") or "")[:32]))
 
         return results
 

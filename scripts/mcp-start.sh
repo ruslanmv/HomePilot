@@ -22,6 +22,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Background processes write here, not to this script's stdout: `make start` reads that
+# stdout through a pipe (`$(… | tail -1)`), and a child still holding it open kept the
+# pipe from ever closing — `make start` hung at "Starting MCP Context Forge Gateway".
+LOG_DIR="${HOMEPILOT_LOG_DIR:-$ROOT/.logs}"
+mkdir -p "$LOG_DIR"
 MCP_DIR="$ROOT/mcp-context-forge"
 MCP_GATEWAY_PORT="${MCP_GATEWAY_PORT:-4444}"
 MCP_GATEWAY_HOST="${MCP_GATEWAY_HOST:-127.0.0.1}"
@@ -74,7 +80,7 @@ if [ "$FORGE_MODE" = "repo" ]; then
         .venv/bin/python -m uvicorn mcpgateway.main:app \
         --host "$MCP_GATEWAY_HOST" \
         --port "$MCP_GATEWAY_PORT" \
-        --log-level warning &
+        --log-level warning >>"$LOG_DIR/mcp-gateway.log" 2>&1 &
     PIDS="$PIDS $!"
     cd "$ROOT"
 else
@@ -93,7 +99,7 @@ else
         mcpgateway mcpgateway.main:app \
         --host "$MCP_GATEWAY_HOST" \
         --port "$MCP_GATEWAY_PORT" \
-        --log-level warning &
+        --log-level warning >>"$LOG_DIR/mcp-gateway.log" 2>&1 &
     PIDS="$PIDS $!"
 fi
 
@@ -125,7 +131,7 @@ if [ "$WITH_SERVERS" = true ] && [ "$FORGE_MODE" = "repo" ]; then
             cd "$server_path"
             .venv/bin/python -m "${server_name}.server_fastmcp" \
                 --transport http --host 127.0.0.1 --port "$PORT" \
-                2>/dev/null &
+                >>"$LOG_DIR/mcp-$server_name.log" 2>&1 &
             PIDS="$PIDS $!"
             STARTED_SERVERS="$STARTED_SERVERS $server_name:$PORT"
             cd "$ROOT"
@@ -146,7 +152,7 @@ if [ "$WITH_AGENT" = true ] && [ "$FORGE_MODE" = "repo" ]; then
         MCP_GATEWAY_URL="http://${MCP_GATEWAY_HOST}:${MCP_GATEWAY_PORT}" \
             .venv/bin/python -m uvicorn app:app \
             --host 127.0.0.1 --port "$MCP_AGENT_PORT" \
-            --log-level warning 2>/dev/null &
+            --log-level warning >>"$LOG_DIR/mcp-langchain-agent.log" 2>&1 &
         PIDS="$PIDS $!"
         cd "$ROOT"
     else

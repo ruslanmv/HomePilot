@@ -433,6 +433,11 @@ app.include_router(agent_router)
 # Include Community Gallery proxy routes (/community/*)
 app.include_router(community_router)
 
+# Model discovery + resolution (/v1/models/resolution, /v1/models/pull, …).
+# Design: docs/design/LOCAL_MODEL_RESOLUTION.md
+from .model_resolver_routes import router as model_resolver_router
+app.include_router(model_resolver_router)
+
 # Include OpenAI-compatible persona endpoint (/v1/chat/completions, /v1/models)
 # Enables external tools (OllaBridge, 3D-Avatar-Chatbot) to chat with personas
 # Controlled at runtime via /settings/ollabridge toggle
@@ -1235,6 +1240,18 @@ def _startup() -> None:
     _ensure_db_path_is_writable()
     # Database
     init_db()
+    # Meetings a previous process left "live"/"suspended" can never be resumed (sessions are
+    # in memory), so close them now instead of showing them as in progress forever.
+    if os.getenv("MEETINGSENSE_CLOSE_ORPHANS", "1").strip().lower() not in ("0", "false", "off"):
+        try:
+            from .meetingsense import store as _ms_store
+            _closed = _ms_store.close_orphaned_meetings()
+            if _closed:
+                logging.getLogger("homepilot.meetingsense").info(
+                    "closed %d meeting(s) left open by a previous server process", _closed,
+                )
+        except Exception as _exc:  # noqa: BLE001 — never block startup on this
+            logging.getLogger("homepilot.meetingsense").warning("could not close orphaned meetings: %s", _exc)
     # Initialize game mode database tables
     init_game_db()
     # Initialize story mode database tables
@@ -1262,8 +1279,8 @@ def _startup() -> None:
     if os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", "yes"):
         asyncio.get_event_loop().create_task(_start_agentic_servers())
 
-    # Routines scheduler is opt-in at the server level so upgrading from the
-    # original definition-only release cannot unexpectedly execute saved rows.
+    # Routines scheduler: on by default (each routine has its own switch);
+    # ROUTINES_EXECUTION_ENABLED=false turns every scheduled run off.
     try:
         from .routines.scheduler import start_scheduler
         routine_task = start_scheduler()
@@ -1271,7 +1288,7 @@ def _startup() -> None:
             logging.getLogger("homepilot.startup").info("Routines scheduler started")
         else:
             logging.getLogger("homepilot.startup").info(
-                "Routines scheduler disabled (set ROUTINES_EXECUTION_ENABLED=true to enable)"
+                "Routines scheduler off (ROUTINES_EXECUTION_ENABLED=false); Run now still works"
             )
     except Exception as exc:
         logging.getLogger("homepilot.startup").warning(
@@ -1448,12 +1465,16 @@ async def health() -> JSONResponse:
         "version": app.version,
     }
 
-    # Check Ollama
+    # Check Ollama through discovery, so an Ollama on the WSL/Docker host
+    # counts as available (docs/design/LOCAL_MODEL_RESOLUTION.md).
     ollama_ok = False
+    ollama_url = OLLAMA_BASE_URL
+    ollama_model_count = 0
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
-            ollama_ok = (r.status_code == 200)
+        from .model_resolver import active_runtime as _active_runtime
+        _rt, _ = await _active_runtime()
+        if _rt is not None:
+            ollama_ok, ollama_url, ollama_model_count = True, _rt.url, len(_rt.models)
     except Exception:
         ollama_ok = False
 
@@ -1467,7 +1488,7 @@ async def health() -> JSONResponse:
         vllm_ok = False
 
     status["providers"] = {
-        "ollama": {"ok": ollama_ok, "base_url": OLLAMA_BASE_URL},
+        "ollama": {"ok": ollama_ok, "base_url": ollama_url, "model_count": ollama_model_count},
         "openai_compat": {"ok": vllm_ok, "base_url": LLM_BASE_URL},
     }
 
@@ -1671,23 +1692,21 @@ async def auto_detect() -> JSONResponse:
         "detected": {},
     }
 
-    # ── 1. Probe Ollama ──────────────────────────────────────────────────
+    # ── 1. Probe Ollama: any reachable runtime (loopback, WSL/Docker host) ──
+    from .model_resolver import active_runtime as _active_runtime, resolve as _resolve_model
+    from .config import OLLAMA_MODEL as _configured_chat_model
     ollama_models: list[str] = []
     ollama_ok = False
+    ollama_url = OLLAMA_BASE_URL
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
-            if r.status_code == 200:
-                ollama_ok = True
-                ollama_models = [
-                    m.get("name", "") for m in r.json().get("models", [])
-                ]
+        _rt, _ = await _active_runtime()
+        if _rt is not None:
+            ollama_ok, ollama_url, ollama_models = True, _rt.url, _rt.model_names
     except Exception:
         pass
-
     result["detected"]["ollama"] = {
         "ok": ollama_ok,
-        "url": OLLAMA_BASE_URL,
+        "url": ollama_url,
         "models": ollama_models,
     }
 
@@ -1725,25 +1744,19 @@ async def auto_detect() -> JSONResponse:
 
     # ── 4. Pick best chat provider + model ───────────────────────────────
     # Priority: Ollama (local, free) > vLLM > fallback
-    CHAT_MODEL_PRIORITY = [
-        "llama3.2:3b", "llama3.2", "llama3.1", "llama3:8b",
-        "mistral-nemo", "qwen2.5", "gemma2", "mistral:7b",
-        "phi4", "deepseek-r1:latest",
-    ]
+    # (chat priority table: model_resolver.CHAT_MODEL_PRIORITY)
 
     if ollama_ok and ollama_models:
         result["providerChat"] = "ollama"
         result["baseUrlChat"] = ""
-        # Pick best available chat model by priority
-        picked = ""
-        for preferred in CHAT_MODEL_PRIORITY:
-            for available in ollama_models:
-                if available == preferred or available.startswith(preferred + ":"):
-                    picked = available
-                    break
-            if picked:
-                break
-        result["modelChat"] = picked or ollama_models[0]
+        # Same rules as every chat turn: the configured model when installed,
+        # otherwise the best installed text model (never vision/embedding).
+        try:
+            _chat_res = await _resolve_model("chat", _configured_chat_model)
+            result["modelChat"] = _chat_res.model or ollama_models[0]
+            result["detected"]["ollama"]["resolution"] = _chat_res.to_dict()
+        except Exception:
+            result["modelChat"] = ollama_models[0]
     elif vllm_ok and vllm_models:
         result["providerChat"] = "openai_compat"
         result["baseUrlChat"] = LLM_BASE_URL
@@ -2446,7 +2459,37 @@ async def list_models(
             )
         prov: ProviderName = provider  # type: ignore
 
-        models, err = await list_models_for_provider(prov, base_url=base_url)
+        # Ollama: list from whichever runtime discovery found (loopback, WSL or
+        # Docker host) unless the caller pinned a base URL. When the list is
+        # empty, say why and what to do (remedy), not just "no models".
+        remedy_extra: Dict[str, Any] = {}
+        if provider == "ollama":
+            from .model_resolver import active_runtime_url as _active_runtime_url
+            from .model_resolver import resolve as _resolve_model
+            if not base_url:
+                base_url = await _active_runtime_url()
+
+        # OpenAI-compatible endpoints (an OllaBridge gateway) also say *what* each model is —
+        # a base model or an assistant built on one — which a picker needs to choose a
+        # sensible default list. Additive: `models` stays the plain id list it always was.
+        details_extra: Dict[str, Any] = {}
+        if provider == "openai_compat":
+            from .model_catalog import list_openai_compat_details
+
+            details, err = await list_openai_compat_details(base_url=base_url)
+            models = [d["id"] for d in details]
+            if not err:
+                details_extra = {"models_detail": details}
+        else:
+            models, err = await list_models_for_provider(prov, base_url=base_url)
+        if provider == "ollama" and (err or not models):
+            try:
+                _res = await _resolve_model(
+                    "vision" if model_type == "multimodal" else "chat", "", base_url=base_url,
+                )
+                remedy_extra = {"remedy": _res.remedy, "runtime_url": _res.runtime_url}
+            except Exception:
+                remedy_extra = {}
         if err:
             # For Ollama/chat providers, return 200 with empty list + warning
             # instead of 503 — the provider may simply not be running yet
@@ -2460,6 +2503,7 @@ async def list_models(
                         "models": [],
                         "count": 0,
                         "error": err,
+                        **remedy_extra,
                     },
                 )
             return JSONResponse(status_code=503, content=_safe_err(err, code="models_unavailable"))
@@ -2479,6 +2523,8 @@ async def list_models(
                 "base_url": (base_url or ""),
                 "models": models,
                 "count": len(models),
+                **remedy_extra,
+                **details_extra,
             },
         )
 
@@ -2706,6 +2752,95 @@ class ModelInstallRequest(BaseModel):
     civitai_api_key: Optional[str] = Field(None, description="Optional Civitai API key for restricted/NSFW downloads")
 
 
+def _run_streaming(cmd, env=None, logger=None, on_line=None):
+    """Run ``cmd``, logging each output line as it comes. Returns (returncode, lines).
+    Blocking — call it through ``asyncio.to_thread``. ``on_line`` sees every line (progress)."""
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    )
+    import sys as _sys
+
+    lines = []
+    for line in iter(process.stdout.readline, ""):
+        line = line.rstrip()
+        if line:
+            if logger is not None:
+                logger.info(f"  {line}")
+            lines.append(line)
+            if on_line is not None:
+                try:
+                    on_line(line)
+                except Exception:  # noqa: BLE001 — progress is a nicety; the install goes on
+                    pass
+            _sys.stdout.flush()
+    process.wait()
+    return process.returncode, lines
+
+
+# ── Install progress ────────────────────────────────────────────────────────
+# The download script prints its stages ("[3/3] Downloading model...") and a progress bar
+# ("name:  42%|████  | 2.7G/6.46G [01:02<01:24, 5.81MB/s]"; the text pipe turns each "\r"
+# update into its own line). The latest one per model is kept here, so the Models page — the
+# catalog rows and the suggestions alike — can show real progress while the request runs.
+_INSTALL_PROGRESS: Dict[str, Dict[str, Any]] = {}
+_TQDM_LINE = _re.compile(
+    r"(\d{1,3})%\|[^|]*\|\s*([\d.]+\s?[kMGTP]?i?B?)/([\d.]+\s?[kMGTP]?i?B?)"
+    r"(?:\s*\[[^\],]*,\s*([\d.?]+\s?[kMGTP]?i?B/s|\?B/s))?"
+)
+# `ollama pull`: "pulling 6a07…  42% ▕██████      ▏ 2.0 GB/4.7 GB   25 MB/s   1m48s"
+_OLLAMA_LINE = _re.compile(
+    r"(\d{1,3})%\s*\S*.*?([\d.]+\s?[KMGT]?B)\s*/\s*([\d.]+\s?[KMGT]?B)(?:\s+([\d.]+\s?[KMGT]?B/s))?"
+)
+_PLAIN_PCT = _re.compile(r":\s*(\d{1,3})%\s*$")  # download.py's fallback without tqdm
+_STAGE_LINE = _re.compile(r"\[(\d)/(\d)\]\s*\W*\s*(.+?)\.*$")
+
+
+def _note_install_progress(model_id: str, line: str) -> None:
+    entry = _INSTALL_PROGRESS.setdefault(model_id, {"state": "running", "percent": None})
+    entry["updated_at"] = time.time()
+    bar = _TQDM_LINE.search(line) or _OLLAMA_LINE.search(line)
+    if bar:
+        entry.update(percent=min(100, int(bar.group(1))), done=bar.group(2).strip(),
+                     total=bar.group(3).strip(), rate=(bar.group(4) or "").strip() or None,
+                     stage="Downloading")
+        return
+    plain = _PLAIN_PCT.search(line)
+    if plain:
+        entry.update(percent=min(100, int(plain.group(1))), stage="Downloading")
+        return
+    stage = _STAGE_LINE.search(line)
+    if stage:
+        entry["stage"] = stage.group(3).strip()[:60]
+
+
+def _start_install_progress(model_id: str) -> None:
+    _INSTALL_PROGRESS[model_id] = {"state": "running", "percent": None, "stage": "Starting",
+                                   "started_at": time.time(), "updated_at": time.time()}
+
+
+def _finish_install_progress(model_id: str, ok: bool) -> None:
+    entry = _INSTALL_PROGRESS.setdefault(model_id, {})
+    entry.update(state="done" if ok else "failed", updated_at=time.time())
+    if ok:
+        entry["percent"] = 100
+
+
+@app.get("/models/install/progress")
+async def install_progress(model_id: str = Query("")) -> JSONResponse:
+    """The latest progress of a running (or just finished) install — one model, or all."""
+    cutoff = time.time() - 3600
+    for key in [k for k, v in _INSTALL_PROGRESS.items() if v.get("updated_at", 0) < cutoff]:
+        _INSTALL_PROGRESS.pop(key, None)
+    if model_id:
+        return JSONResponse(content={"model_id": model_id, **(_INSTALL_PROGRESS.get(model_id) or {"state": "idle"})})
+    return JSONResponse(content={"installs": _INSTALL_PROGRESS})
+
+
 @app.post("/models/install")
 async def install_model(req: ModelInstallRequest) -> JSONResponse:
     """
@@ -2743,8 +2878,10 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
 
         logger.info(f"Starting model installation: provider={req.provider}, model={req.model_id}")
 
-        # Build command based on provider
-        cmd = ["python3", str(script_path)]
+        # Build command based on provider. The backend's own interpreter, not `python3` from
+        # PATH: that is often the system Python, without the venv's requests/tqdm/huggingface_hub,
+        # and the install failed with "Missing required packages" (studio/bundles.py does the same).
+        cmd = [sys.executable or "python3", str(script_path)]
 
         if req.provider == "civitai":
             # Experimental Civitai download
@@ -2771,24 +2908,14 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             logger.info(f"Pulling Ollama model: {req.model_id}")
             pull_cmd = ["ollama", "pull", req.model_id]
 
-            # Use Popen to stream output to logs
-            process = subprocess.Popen(
-                pull_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
+            # Streamed to the logs, on a worker thread: a multi-GB pull must not freeze the
+            # event loop (and every other request) until it finishes.
+            _start_install_progress(req.model_id)
+            returncode, output_lines = await asyncio.to_thread(
+                _run_streaming, pull_cmd, None, logger, lambda line: _note_install_progress(req.model_id, line))
+            _finish_install_progress(req.model_id, returncode == 0)
 
-            output_lines = []
-            for line in iter(process.stdout.readline, ""):
-                line = line.rstrip()
-                if line:
-                    logger.info(f"  {line}")
-                    output_lines.append(line)
-            process.wait()
-
-            if process.returncode == 0:
+            if returncode == 0:
                 logger.info(f"Successfully pulled Ollama model: {req.model_id}")
                 return JSONResponse(
                     status_code=200,
@@ -2831,28 +2958,14 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
 
         logger.info(f"Running download script: {' '.join(cmd)}")
 
-        # Use Popen to stream output in real-time
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env,
-        )
+        # Streamed in real time, on a worker thread: a 4 GB checkpoint used to block the event
+        # loop — chat and every other request — for the whole download.
+        _start_install_progress(req.model_id)
+        returncode, output_lines = await asyncio.to_thread(
+            _run_streaming, cmd, env, logger, lambda line: _note_install_progress(req.model_id, line))
+        _finish_install_progress(req.model_id, returncode == 0)
 
-        output_lines = []
-        for line in iter(process.stdout.readline, ""):
-            line = line.rstrip()
-            if line:
-                logger.info(f"  {line}")
-                output_lines.append(line)
-                # Flush stdout to ensure logs appear immediately
-                sys.stdout.flush()
-
-        process.wait()
-
-        if process.returncode == 0:
+        if returncode == 0:
             logger.info(f"Successfully installed model: {req.model_id}")
             return JSONResponse(
                 status_code=200,
@@ -2877,6 +2990,7 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             )
 
     except subprocess.TimeoutExpired:
+        _finish_install_progress(req.model_id, False)
         logger.error(f"Installation timed out for model: {req.model_id}")
         return JSONResponse(
             status_code=500,
@@ -2886,6 +3000,7 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             ),
         )
     except Exception as e:
+        _finish_install_progress(req.model_id, False)
         logger.exception(f"Installation error for model {req.model_id}: {e}")
         return JSONResponse(
             status_code=500,
@@ -3246,13 +3361,19 @@ async def append_conversation_message(
         try:
             _existing = get_messages(conversation_id, limit=1, user_id=uid)
             # When user_id is set and the conversation isn't theirs,
-            # get_messages returns []. We still allow the append only
-            # when at least one record exists OR the caller is the
-            # conversation creator — for call-memory the conversation
-            # always has pre-existing turns (the call itself), so an
-            # empty result is a real authorisation miss.
+            # get_messages returns []. An empty result is fine in two
+            # cases: the caller already owns the (still empty) conversation,
+            # or nobody owns it yet — a meeting opens a brand-new conversation
+            # with a client-chosen id and writes its "Meeting started" marker
+            # before any turn exists. The caller then becomes the owner.
+            # A conversation owned by someone else stays a 404 (probe-safe).
             if uid is not None and not _existing:
-                raise HTTPException(status_code=404, detail="Conversation not found")
+                from .storage import ensure_conversation_owner, get_conversation_owner
+                owner = get_conversation_owner(conversation_id)
+                if owner is not None and owner != uid:
+                    raise HTTPException(status_code=404, detail="Conversation not found")
+                if owner is None:
+                    ensure_conversation_owner(conversation_id, uid)
         except HTTPException:
             raise
         except Exception:
@@ -7152,6 +7273,35 @@ async def mcp_server_status() -> JSONResponse:
 # Multimodal Vision Layer (additive — on-demand image understanding)
 # ============================================================================
 
+class MultimodalCheckIn(BaseModel):
+    """Request body for /v1/multimodal/check."""
+    provider: str = Field("ollama", description="'ollama' or 'openai_compat'")
+    base_url: Optional[str] = Field(None, description="Provider base URL (an OllaBridge gateway: <root>/v1)")
+    model: str = Field(..., min_length=1, max_length=300)
+    api_key: Optional[str] = Field(None, max_length=4096, description="Only for that endpoint; never stored")
+
+
+@app.post("/v1/multimodal/check", dependencies=[Depends(require_api_key)])
+async def multimodal_check(inp: MultimodalCheckIn) -> JSONResponse:
+    """Does this model really see images? (see ``vision_check.py``)
+
+    Shows the model a known two-colour test image through the same path every real image
+    takes, and reports whether it named what is in it. Models → Multimodal runs this before a
+    model is offered for images, so a model that only *claims* vision — or a route that drops
+    the picture — is caught before anyone uploads a photo to it.
+    """
+    from .vision_check import check as _vision_check
+
+    try:
+        result = await _vision_check(
+            provider=inp.provider, base_url=inp.base_url, model=inp.model, api_key=inp.api_key,
+        )
+    except Exception as e:  # noqa: BLE001 — a check that cannot run is a failed check
+        result = {"ok": True, "sees_images": False, "answer": "", "reason": f"The check could not run: {e}",
+                  "error_code": "check_failed", "model": inp.model}
+    return JSONResponse(status_code=200, content=result)
+
+
 class MultimodalAnalyzeIn(BaseModel):
     """Request body for /v1/multimodal/analyze."""
     image_url: str = Field(..., description="URL of the image to analyze (local /files/... or remote)")
@@ -7163,6 +7313,10 @@ class MultimodalAnalyzeIn(BaseModel):
     mode: Optional[str] = Field("both", description="Analysis mode: caption | ocr | both")
     user_prompt: Optional[str] = Field(None, description="Custom prompt for the vision model")
     nsfw_mode: Optional[bool] = Field(False, description="Enable unrestricted analysis")
+    api_key: Optional[str] = Field(
+        None, max_length=4096, repr=False,
+        description="Key for the vision endpoint (an OllaBridge Cloud token, a gateway key); never stored",
+    )
     persist: Optional[bool] = Field(
         True,
         description="If true (default), store analysis in conversation history. If false, return only.",
@@ -7194,6 +7348,7 @@ async def multimodal_analyze(inp: MultimodalAnalyzeIn) -> JSONResponse:
             user_prompt=inp.user_prompt,
             nsfw_mode=bool(inp.nsfw_mode),
             mode=inp.mode or "both",
+            api_key=inp.api_key,
         )
 
         if not result.get("ok"):
@@ -7287,6 +7442,38 @@ async def multimodal_attach(inp: MultimodalAttachIn) -> JSONResponse:
             status_code=500,
             content={"ok": False, "error": f"Failed to attach multimodal analysis: {str(e)}"},
         )
+
+
+@app.get("/v1/web-search/status", dependencies=[Depends(require_api_key)])
+async def web_search_status() -> JSONResponse:
+    """Whether a chat's "Search the web" can run: the web-search server (:9105) answers and its
+    engine (SearXNG, or a Tavily key) is there. Says what to start when it is not."""
+    from .web_search import status as _web_status
+
+    return JSONResponse(content=await _web_status())
+
+
+@app.post("/v1/web-search/context", dependencies=[Depends(require_api_key)])
+async def web_search_context(body: Dict[str, Any]) -> JSONResponse:
+    """Search the web for one chat message and return the grounding for it.
+
+    For chats answered by Expert (Fast / Expert / Heavy), which builds its own prompts: the
+    browser asks here first and hands Expert ``context`` (the numbered sources and how to cite
+    them — the same block the standard chat gets), then shows ``web_search`` under the answer.
+    Never fails: an unavailable search comes back as ``status: "unavailable"``.
+    """
+    from . import web_search as _ws
+
+    query = str((body or {}).get("query") or "").strip()[:2000]
+    if not query:
+        return JSONResponse(status_code=400, content={"detail": "query is required"})
+    history = [
+        (str(m.get("role") or ""), str(m.get("content") or ""))
+        for m in ((body or {}).get("history") or [])
+        if isinstance(m, dict)
+    ][-8:]
+    ctx = await _ws.gather(query, history, chat=None)
+    return JSONResponse(content={"web_search": ctx.public(), "context": _ws.system_block(ctx)})
 
 
 @app.get("/v1/multimodal/status", dependencies=[Depends(require_api_key)])

@@ -50,3 +50,6 @@ mcp.db-wal
 /recovery-backups/
 # `make recovery-images` exports per-user images (files / ZIPs) here.
 /recovery-images/
+
+# Logs of background services started by make start (scripts/mcp-start.sh, agentic-start.sh)
+.logs/

@@ -8,21 +8,11 @@
  * silent one says "No speech".
  */
 import type { LibraryItem } from './api';
+import { TONE_CLASSES, type Tone } from '../../ds';
 
-export type Tone = 'violet' | 'blue' | 'indigo' | 'teal' | 'green' | 'amber' | 'red' | 'slate' | 'pink' | 'sky';
-
-export const TONE_CLASSES: Record<Tone, string> = {
-    violet: 'bg-violet-500/15 text-violet-200 border-violet-400/25',
-    blue: 'bg-blue-500/15 text-blue-200 border-blue-400/25',
-    indigo: 'bg-indigo-500/20 text-indigo-200 border-indigo-400/25',
-    teal: 'bg-teal-500/15 text-teal-200 border-teal-400/25',
-    green: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/25',
-    amber: 'bg-amber-500/15 text-amber-200 border-amber-400/30',
-    red: 'bg-rose-500/15 text-rose-300 border-rose-400/30',
-    slate: 'bg-white/[0.06] text-white/70 border-white/10',
-    pink: 'bg-fuchsia-500/15 text-fuchsia-200 border-fuchsia-400/25',
-    sky: 'bg-sky-500/15 text-sky-200 border-sky-400/25',
-};
+// The badge colours are HomePilot's, shared by every page (ui/ds); re-exported here because
+// the Meetings code reads them from this module.
+export { TONE_CLASSES, type Tone };
 
 const CATEGORY_TONES: Array<[RegExp, Tone]> = [
     [/project/i, 'violet'],
@@ -43,6 +33,9 @@ export interface Chip { label: string; tone: Tone; busy?: boolean; title?: strin
 /** The status chip for a card: recording first (it is happening now), then the transcript. */
 export function statusChip(item: Pick<LibraryItem, 'transcript_state' | 'recording_state' | 'media_present' | 'live' | 'origin_type' | 'warnings'>): Chip {
     if (item.live || item.recording_state === 'recording') return { label: 'Recording', tone: 'red', busy: true };
+    if (item.recording_state === 'paused') {
+        return { label: 'Reconnecting', tone: 'amber', busy: true, title: 'The connection dropped. Recording continues when the browser reconnects.' };
+    }
     switch (item.transcript_state) {
         case 'ready':
         case 'imported':
@@ -73,6 +66,19 @@ export function statusChip(item: Pick<LibraryItem, 'transcript_state' | 'recordi
 export function formatDate(ts: number | null | undefined, locale?: string): string {
     if (!ts) return '—';
     return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(ts * 1000));
+}
+
+/** The time of day a meeting started, in the viewer's locale: "10:27 AM", or "10:27". */
+export function formatTime(ts: number | null | undefined, locale?: string): string {
+    if (!ts) return '';
+    return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(new Date(ts * 1000));
+}
+
+/** Date and start time for a card: "10/20/2026 · 10:27 AM". The hour is what tells one day's
+ *  meetings apart, so a card never shows the date alone. */
+export function formatWhen(ts: number | null | undefined, locale?: string): string {
+    if (!ts) return '—';
+    return `${formatDate(ts, locale)} · ${formatTime(ts, locale)}`;
 }
 
 export function formatDateTime(ts: number | null | undefined, locale?: string): string {
@@ -146,8 +152,9 @@ export const STATE_FILTERS: Array<{ id: string; label: string }> = [
 ];
 
 /** Which list items mean "keep polling" — something is still changing. */
-export function isWorking(item: Pick<LibraryItem, 'transcript_state' | 'summary_state' | 'live'>): boolean {
-    return item.live || item.transcript_state === 'queued' || item.transcript_state === 'transcribing' || item.summary_state === 'pending';
+export function isWorking(item: Pick<LibraryItem, 'transcript_state' | 'summary_state' | 'live'> & Partial<Pick<LibraryItem, 'recording_state'>>): boolean {
+    return item.live || item.transcript_state === 'queued' || item.transcript_state === 'transcribing'
+        || item.summary_state === 'pending' || item.recording_state === 'saving';
 }
 
 export type SummaryDoc = { text?: string; degraded?: string | null; [k: string]: unknown };
@@ -155,9 +162,12 @@ export type SummaryDoc = { text?: string; degraded?: string | null; [k: string]:
 const FALLBACK_MARK = /^\s*\*No language model was reachable/;
 const OUTLINE_HEADING = /\n#{1,3}\s*The meeting in order\b[\s\S]*$/;
 
-/** A document assembled from the meeting's own words because no language model answered. */
+/**
+ * A document assembled from the meeting's own words because no language model answered —
+ * flagged `degraded: "extractive"` by the server, or (older documents) marked in its text.
+ */
 export function isFallbackSummary(doc: SummaryDoc | null | undefined): boolean {
-    return !!doc && FALLBACK_MARK.test(doc.text || '');
+    return !!doc && (doc.degraded === 'extractive' || FALLBACK_MARK.test(doc.text || ''));
 }
 
 /**
@@ -172,6 +182,19 @@ export function overviewSummary(docs: SummaryDoc[] | undefined, notesSummary?: s
     if (latest) return { text: (latest.text || '').replace(OUTLINE_HEADING, '').trim(), markdown: true };
     const plain = (notesSummary || description || '').trim();
     return { text: plain, markdown: false };
+}
+
+/**
+ * The paragraph a "Quick summary" shows: a written document's opening prose — not its headings,
+ * lists or later sections, which the Overview shows in full — or the plain fallback text as is.
+ */
+export function quickSummary(overview: { text: string; markdown: boolean }): string {
+    if (!overview.markdown) return overview.text;
+    const prose = overview.text
+        .split(/\n\s*\n/)
+        .map((block) => block.replace(/^(\s*#{1,6}\s.*(\n|$))+/, '').trim())
+        .find((block) => block && !/^[-*+]\s|^\d+[.)]\s/.test(block));
+    return plainText(prose || overview.text);
 }
 
 /** Markdown reduced to readable plain text, for short previews. */

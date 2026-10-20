@@ -22,64 +22,16 @@
  * zero prop-drilling into the existing Models plumbing.
  */
 import React, { useCallback, useEffect, useState } from 'react'
-import { isBffSessionEnabled } from '../account/featureFlags'
 import { Cloud, Cpu, Loader2, LogOut, RefreshCw, Zap } from 'lucide-react'
+import { guessModelType as guessType, type CloudDevice as DeviceInfo, type CloudModel } from './ollabridge/models'
+import {
+  clearCloudSession, cloudChatBaseUrl, cloudLogin, fetchCloudInventory, getCloudToken, getCloudUrl, saveCloudSession,
+} from './ollabridge/ollabridgeCloud'
+import { routeChatTo } from './ollabridge/chatRoute'
 
-const LS_CLOUD_TOKEN = 'homepilot_cloud_token'
-const LS_CLOUD_URL = 'homepilot_cloud_url'
-
-export function getCloudUrl(): string {
-  try {
-    const saved = (localStorage.getItem(LS_CLOUD_URL) || '').trim().replace(/\/+$/, '')
-    // Drop known-obsolete cloud URLs so the new default/env value takes over,
-    // while preserving an intentional self-hosted URL. The raw Hugging Face
-    // origin is superseded by the branded app.ollabridge.com host.
-    const legacyUrls = new Set([
-      'https://ruslanmv-ollabridge.hf.space',
-      'https://ruslanmv-ollabridge-cloud.hf.space',
-    ])
-    if (saved && legacyUrls.has(saved)) {
-      localStorage.removeItem(LS_CLOUD_URL)
-    } else if (saved) {
-      return saved
-    }
-  } catch { /* ignore */ }
-  const env: Record<string, string | undefined> =
-    ((import.meta as unknown as { env?: Record<string, string | undefined> }).env) || {}
-  return ((env.VITE_OLLABRIDGE_CLOUD_URL || '').trim() || 'https://app.ollabridge.com').replace(/\/+$/, '')
-}
-
-export function getCloudToken(): string {
-  try { return (localStorage.getItem(LS_CLOUD_TOKEN) || '').trim() } catch { return '' }
-}
-
-interface DeviceInfo {
-  id: string
-  name: string
-  platform?: string | null
-  online: boolean
-  gpu_name?: string | null
-  vram_mb?: number | null
-}
-
-interface CloudModel {
-  id: string
-  owned_by?: string
-  source?: string
-  device_id?: string
-  device_name?: string
-}
-
-/** Loose model-type guess from the model id — drives badges + per-tab filter. */
-function guessType(id: string): string {
-  const s = id.toLowerCase()
-  if (/(llava|vision|-vl|minicpm-v|moondream)/.test(s)) return 'multimodal'
-  if (/(sdxl|flux|stable-diffusion|sd15|sd3|pony|dreamshaper)/.test(s)) return 'image'
-  if (/(svd|ltx|wan|video)/.test(s)) return 'video'
-  if (/(upscal|esrgan|enhance|restore|gfpgan|codeformer)/.test(s)) return 'enhance'
-  if (/lora/.test(s)) return 'LoRA'
-  return 'chat'
-}
+// The Cloud session helpers moved to ./ollabridge/ollabridgeCloud (shared with
+// the Chat tab's OllaBridge Cloud card); re-exported for existing importers.
+export { getCloudToken, getCloudUrl }
 
 /** Does a model's guessed type belong under the given Model Type tab? */
 function matchesTab(filterType: string | undefined, guessed: string): boolean {
@@ -121,26 +73,19 @@ export default function OllaBridgeModels({ filterType }: { filterType?: string }
     setLoading(true)
     setError('')
     try {
-      const auth = { Authorization: `Bearer ${tok}` }
-      const [devRes, modRes] = await Promise.all([
-        fetch(`${cloudUrl}/v1/devices`, { headers: auth }),
-        fetch(`${cloudUrl}/ollama/v1/models`, { headers: auth }),
-      ])
-      if (devRes.status === 401 || modRes.status === 401) {
+      const inv = await fetchCloudInventory(cloudUrl, tok)
+      if (inv.status === 'expired') {
         setError('OllaBridge session expired — reconnect to refresh your nodes.')
         setToken('')
-        try { localStorage.removeItem(LS_CLOUD_TOKEN) } catch { /* ignore */ }
+        clearCloudSession()
         return
       }
-      const devs = devRes.ok ? await devRes.json() : []
-      setDevices(Array.isArray(devs) ? devs : [])
-      const mods = modRes.ok ? await modRes.json() : { data: [] }
-      const list: CloudModel[] = Array.isArray(mods?.data) ? mods.data : []
-      // Own-node models first (relay/shared_device), then the rest.
-      list.sort((a, b) => Number(b.source === 'shared_device') - Number(a.source === 'shared_device'))
-      setModels(list)
-    } catch {
-      setError('Could not reach OllaBridge Cloud.')
+      if (inv.status === 'unreachable') {
+        setError('Could not reach OllaBridge Cloud.')
+        return
+      }
+      setDevices(inv.devices)
+      setModels(inv.models)
     } finally {
       setLoading(false)
     }
@@ -153,33 +98,21 @@ export default function OllaBridgeModels({ filterType }: { filterType?: string }
     setConnecting(true)
     setError('')
     try {
-      const r = await fetch(`${cloudUrl}/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), password }),
-      })
-      const data = await r.json().catch(() => ({}))
-      if (!r.ok || !data.token) {
-        setError(data.detail || 'Invalid OllaBridge email or password')
+      const res = await cloudLogin(cloudUrl, email, password)
+      if (!res.ok) {
+        setError(res.error)
         return
       }
-      try {
-        // Batch 7 (BFF): the token lives in this component's memory for the
-        // session; when BFF is on we no longer persist it in browser storage.
-        if (!isBffSessionEnabled()) localStorage.setItem(LS_CLOUD_TOKEN, data.token)
-        localStorage.setItem(LS_CLOUD_URL, cloudUrl)
-      } catch { /* ignore */ }
-      setToken(data.token)
+      saveCloudSession(cloudUrl, res.token)
+      setToken(res.token)
       setPassword('')
-    } catch {
-      setError('Could not reach OllaBridge Cloud.')
     } finally {
       setConnecting(false)
     }
   }
 
   function handleDisconnect() {
-    try { localStorage.removeItem(LS_CLOUD_TOKEN) } catch { /* ignore */ }
+    clearCloudSession()
     setToken('')
     setDevices([])
     setModels([])
@@ -189,9 +122,7 @@ export default function OllaBridgeModels({ filterType }: { filterType?: string }
     setActiveModel(modelId)
     // App.tsx listens for this and flips chat provider to the OllaBridge relay
     // (openai_compat @ {cloud}/ollama/v1) + persists the choice.
-    window.dispatchEvent(new CustomEvent('homepilot:use-gpu-node', {
-      detail: { baseUrl: `${cloudUrl}/ollama/v1`, model: modelId },
-    }))
+    routeChatTo('ollabridge-cloud', cloudChatBaseUrl(cloudUrl), modelId)
   }
 
   const onlineCount = devices.filter((d) => d.online).length
@@ -318,7 +249,8 @@ export default function OllaBridgeModels({ filterType }: { filterType?: string }
             return (
             <div className="grid gap-1.5">
               {shown.slice(0, 40).map((m) => {
-                const own = m.source === 'shared_device'
+                // The Cloud tags own-node models with `x_source` today (legacy `source`).
+                const own = (m.x_source || m.source) === 'shared_device'
                 const type = guessType(m.id)
                 const isActive = activeModel === m.id
                 return (

@@ -233,11 +233,13 @@ def test_status_carries_no_meeting_content(client, monkeypatch):
     monkeypatch.setenv("MEETINGSENSE_ENABLED", "true")
     body = client.get("/v1/meetingsense/status").json()
     # `remote_ok` (MS8) is a capability boolean like the rest — whether a meeting may arrive
-    # over the avatar session — and says nothing about any meeting.
+    # over the avatar session — and says nothing about any meeting. `retention_policy` is the
+    # operator's MEETINGSENSE_RETENTION, or null when each user chooses: install policy too.
     assert set(body) == {
         "enabled",
         "ready",
         "retention",
+        "retention_policy",
         "flags",
         "stt",
         "vision",

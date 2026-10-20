@@ -346,6 +346,43 @@ async def _retry_with_better_model(
     return retried
 
 
+def _vision_prompt(user_prompt: Optional[str], mode: str, adapted: Any) -> str:
+    """The question put to a vision model — the same for every provider."""
+    if user_prompt:
+        prompt = user_prompt
+    elif mode == "caption":
+        prompt = "Describe this image in detail."
+    elif mode == "ocr":
+        prompt = "Extract and transcribe all text visible in this image. Preserve formatting."
+    else:  # both
+        # Phrased as the question a person would actually type, not as an instruction.
+        #
+        # This is the difference between the two halves of a real report: an upload *with*
+        # "what you can see" was answered fine by `moondream:latest`, and the same image with
+        # no text — which lands here — came back empty. Small caption models are trained on
+        # visual question answering, and an imperative "Describe this image" is off that
+        # distribution in a way "What can you see in this image?" is not.
+        #
+        # It costs the larger models nothing: they answer both identically.
+        prompt = (
+            "What can you see in this image? Describe it in detail. If there is readable "
+            "text, transcribe it exactly and note where it appears."
+        )
+
+    # V5. When detail crops were sent, say what they are. Without this the model is handed five
+    # images with no account of how they relate and treats them as five separate pictures — the
+    # exact failure the multi-image gate exists to keep away from unverified models.
+    if len(adapted.parts) > 1:
+        crops = ", ".join(part.label for part in adapted.parts[1:])
+        prompt = (
+            f"{prompt}\n\n"
+            "These images are one screen, not several. The first is the whole screen; the rest "
+            f"are higher-resolution crops of it ({crops}), and they overlap. Answer about the "
+            "single screen they come from, and read text from the crops, where it is sharper."
+        )
+    return prompt
+
+
 async def analyze_image_ollama(
     image_url: str,
     upload_path: Path,
@@ -443,39 +480,7 @@ async def analyze_image_ollama(
 
     # Build prompt
     system_prompt = _NSFW_SYSTEM_PROMPT if nsfw_mode else _SFW_SYSTEM_PROMPT
-
-    if user_prompt:
-        prompt = user_prompt
-    elif mode == "caption":
-        prompt = "Describe this image in detail."
-    elif mode == "ocr":
-        prompt = "Extract and transcribe all text visible in this image. Preserve formatting."
-    else:  # both
-        # Phrased as the question a person would actually type, not as an instruction.
-        #
-        # This is the difference between the two halves of a real report: an upload *with*
-        # "what you can see" was answered fine by `moondream:latest`, and the same image with
-        # no text — which lands here — came back empty. Small caption models are trained on
-        # visual question answering, and an imperative "Describe this image" is off that
-        # distribution in a way "What can you see in this image?" is not.
-        #
-        # It costs the larger models nothing: they answer both identically.
-        prompt = (
-            "What can you see in this image? Describe it in detail. If there is readable "
-            "text, transcribe it exactly and note where it appears."
-        )
-
-    # V5. When detail crops were sent, say what they are. Without this the model is handed five
-    # images with no account of how they relate and treats them as five separate pictures — the
-    # exact failure the multi-image gate exists to keep away from unverified models.
-    if len(adapted.parts) > 1:
-        crops = ", ".join(part.label for part in adapted.parts[1:])
-        prompt = (
-            f"{prompt}\n\n"
-            "These images are one screen, not several. The first is the whole screen; the rest "
-            f"are higher-resolution crops of it ({crops}), and they overlap. Answer about the "
-            "single screen they come from, and read text from the crops, where it is sharper."
-        )
+    prompt = _vision_prompt(user_prompt, mode, adapted)
 
     # Ollama vision API: /api/chat with images array
     payload = {
@@ -633,6 +638,183 @@ async def analyze_image_ollama(
     }
 
 
+async def analyze_image_openai_compat(
+    image_url: str,
+    upload_path: Path,
+    *,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    user_prompt: Optional[str] = None,
+    nsfw_mode: bool = False,
+    mode: str = "both",
+    purpose: str = "screen",
+    image_b64: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Analyze an image with an OpenAI-compatible vision endpoint.
+
+    The image travels the way the OpenAI Chat Completions API defines it: a ``text`` part and
+    one ``image_url`` part per image, each a base64 ``data:`` URI. That is what an OllaBridge
+    gateway forwards to Open WebUI and the other OpenAI-compatible upstreams, and what vLLM,
+    LM Studio and the OpenAI API accept directly.
+
+    Same preparation (adapter profile, size ceiling, prompt) and the same result shape as
+    :func:`analyze_image_ollama`, so every caller handles both alike. There is no auto-detect:
+    an OpenAI-compatible endpoint does not say which of its models can see, so the model is the
+    one chosen — and checked — in Models → Multimodal.
+    """
+    mdl = (model or "").strip()
+    base = (base_url or "").strip().rstrip("/")
+    if not base or not mdl:
+        return {
+            "ok": False,
+            "error_code": "no_model",
+            "error": "No multimodal model is selected. Choose one in Models → Multimodal.",
+            "analysis_text": "",
+            "meta": {"model": mdl or None, "mode": mode, "provider": "openai_compat"},
+        }
+
+    if image_b64:
+        raw_bytes, mime_type = base64.b64decode(image_b64, validate=False), "image/jpeg"
+    else:
+        raw_bytes, mime_type = await _load_image_bytes(image_url, upload_path)
+
+    adapted = vision_adapter.adapt(raw_bytes, mime_type=mime_type, model=mdl, purpose=purpose, mode=mode)
+    raw_bytes, mime_type = adapted.data, adapted.mime_type
+    over = next((w for w in adapted.warnings if w.startswith("over-limit:")), "")
+    if over:
+        size = over.split(":", 1)[1]
+        return {
+            "ok": False,
+            "error_code": "image_too_large",
+            "error": (
+                f"That image is {size} pixels, which is larger than anything this can safely "
+                "decode. A screenshot of one screen, or a smaller copy, will work."
+            ),
+            "analysis_text": "",
+            "meta": {"model": mdl, "mode": mode, "adapter": adapted.meta(), "provider": "openai_compat"},
+        }
+
+    system_prompt = _NSFW_SYSTEM_PROMPT if nsfw_mode else _SFW_SYSTEM_PROMPT
+    prompt = _vision_prompt(user_prompt, mode, adapted)
+    content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for part in adapted.parts:
+        # The data URI's type must match the bytes: the inline-image path labels everything
+        # JPEG, and an OpenAI-compatible upstream may check.
+        part_mime = _sniff_mime(part.data) or mime_type
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{part_mime};base64,{_image_to_base64(part.data)}"},
+        })
+    payload = {
+        "model": mdl,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 1024,
+        "stream": False,
+    }
+
+    # The key the chat path would send (an OllaBridge Cloud token, a gateway key), unless the
+    # caller passed one: the same Bearer header `llm.chat_openai_compat` uses.
+    key = (api_key or "").strip()
+    if not key:
+        try:
+            from .llm import PROVIDER_API_KEY
+
+            key = (PROVIDER_API_KEY.get() or "").strip()
+        except Exception:  # noqa: BLE001
+            key = ""
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+
+    meta = {
+        "model": mdl,
+        "mode": mode,
+        "provider": "openai_compat",
+        "image_size_bytes": len(raw_bytes),
+        "mime_type": mime_type,
+        "adapter": adapted.meta(),
+    }
+    url = f"{base}/chat/completions"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout=TOOL_TIMEOUT_S, connect=30.0)) as client:
+            r = await client.post(url, json=payload, headers=headers)
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error_code": "unreachable",
+            "error": f"Could not reach {base} for '{mdl}': {e}",
+            "analysis_text": "",
+            "meta": meta,
+        }
+
+    if r.status_code >= 400:
+        detail = _error_detail(r)
+        # OllaBridge refuses images on a route that cannot carry them (501
+        # unsupported_capability) rather than answering blind; that is a property of the
+        # model's route, and the person can act on it by choosing another model.
+        not_supported = r.status_code == 501 or "unsupported_capability" in detail
+        return {
+            "ok": False,
+            "error_code": "images_not_supported" if not_supported else "http_error",
+            "error": (
+                f"'{mdl}' cannot receive images through {base}. Choose another model in "
+                "Models → Multimodal." + (f" ({detail})" if detail else "")
+                if not_supported
+                else f"{base} answered HTTP {r.status_code} for '{mdl}'" + (f": {detail}" if detail else "")
+            ),
+            "analysis_text": "",
+            "meta": meta,
+        }
+
+    try:
+        data = r.json()
+        text = str(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    except Exception:  # noqa: BLE001
+        text = ""
+    if not text:
+        return {
+            "ok": False,
+            "error_code": "empty_model_response",
+            "error": f"{mdl} returned no description of the image.",
+            "analysis_text": "",
+            "meta": meta,
+        }
+    return {"ok": True, "analysis_text": text, "meta": meta}
+
+
+def _sniff_mime(data: bytes) -> Optional[str]:
+    """The image type from its first bytes, for the formats a browser upload can be."""
+    head = bytes(data[:12])
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _error_detail(r: httpx.Response) -> str:
+    """The endpoint's own reason for an error, short and without credentials."""
+    try:
+        body = r.json()
+    except Exception:  # noqa: BLE001
+        return (r.text or "").strip()[:240]
+    if isinstance(body, dict):
+        err = body.get("error") if "error" in body else body.get("detail")
+        if isinstance(err, dict):
+            inner = err.get("error") if isinstance(err.get("error"), dict) else err
+            return str(inner.get("message") or inner.get("type") or "")[:240]
+        if err:
+            return str(err)[:240]
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Provider dispatch (extensible for future providers)
 # ---------------------------------------------------------------------------
@@ -649,10 +831,12 @@ async def analyze_image(
     mode: str = "both",
     image_b64: Optional[str] = None,
     purpose: str = "screen",
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Top-level dispatcher for multimodal image analysis.
-    Currently supports Ollama; extensible to other providers.
+    Ollama (its native `/api/chat`) and OpenAI-compatible endpoints (an OllaBridge gateway,
+    the OllaBridge Cloud relay, vLLM…); extensible to other providers.
 
     ``image_b64`` supplies the image directly and bypasses disk resolution entirely; when it
     is given, *image_url* and *upload_path* are ignored. Added for the avatar director's
@@ -676,9 +860,24 @@ async def analyze_image(
             purpose=purpose,
         )
 
+    if provider in ("openai_compat", "ollabridge"):
+        # An OllaBridge gateway (`<gateway>/v1`), the OllaBridge Cloud relay, vLLM, LM Studio…
+        return await analyze_image_openai_compat(
+            image_url,
+            upload_path,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            user_prompt=user_prompt,
+            nsfw_mode=nsfw_mode,
+            mode=mode,
+            image_b64=image_b64,
+            purpose=purpose,
+        )
+
     return {
         "ok": False,
-        "error": f"Multimodal provider '{provider}' is not supported. Use 'ollama'.",
+        "error": f"Multimodal provider '{provider}' is not supported. Use 'ollama' or 'openai_compat'.",
         "analysis_text": "",
         "meta": {"provider": provider, "model": model, "mode": mode},
     }

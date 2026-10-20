@@ -53,6 +53,62 @@ def _is_deprecated_or_withdrawn(lifecycle: List[Dict[str, Any]]) -> bool:
     return False
 
 
+#: Fields of an OpenAI-compatible ``/models`` entry passed on to the browser. A whitelist:
+#: the entries come from another server and end up in a page. These are the ones a picker
+#: needs — what a model is called, where it comes from, and whether it is a base model or
+#: an assistant built on one (OllaBridge marks Open WebUI presets ``preset: true`` /
+#: ``category: "preset_or_workflow"``).
+_DETAIL_FIELDS = (
+    "id", "name", "owned_by", "source", "source_display_name",
+    "preset", "hidden", "status", "stale", "category",
+)
+_DETAIL_CAPABILITIES = ("chat", "vision", "tools")
+
+
+def _model_detail(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    model_id = entry.get("id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    detail: Dict[str, Any] = {}
+    for key in _DETAIL_FIELDS:
+        value = entry.get(key)
+        if isinstance(value, (str, bool, int, float)):
+            detail[key] = value[:300] if isinstance(value, str) else value
+    caps = entry.get("capabilities")
+    if isinstance(caps, dict):
+        picked = {k: caps[k] for k in _DETAIL_CAPABILITIES if isinstance(caps.get(k), bool)}
+        if picked:
+            detail["capabilities"] = picked
+    detail["id"] = model_id.strip()
+    return detail
+
+
+async def list_openai_compat_details(
+    *,
+    base_url: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """``(entries, error)`` for an OpenAI-compatible ``GET {base}/models``, one per id, with the
+    whitelisted metadata of :data:`_DETAIL_FIELDS` kept."""
+    url_base = (base_url or os.getenv("LLM_BASE_URL", "")).rstrip("/")
+    if not url_base:
+        return [], "LLM_BASE_URL not configured"
+    url = f"{url_base}/models"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        return [], f"Error listing OpenAI-compatible models from {url}: {e}"
+    rows = data.get("data", []) if isinstance(data, dict) else []
+    seen: Dict[str, Dict[str, Any]] = {}
+    for raw in rows:
+        detail = _model_detail(raw) if isinstance(raw, dict) else None
+        if detail is not None and detail["id"] not in seen:
+            seen[detail["id"]] = detail
+    return [seen[k] for k in sorted(seen)], None
+
+
 async def list_models_for_provider(
     provider: ProviderName,
     *,
@@ -74,19 +130,10 @@ async def list_models_for_provider(
             return [], f"Error listing Ollama models from {url}: {e}"
 
     if provider == "openai_compat":
-        url_base = (base_url or os.getenv("LLM_BASE_URL", "")).rstrip("/")
-        if not url_base:
-            return [], "LLM_BASE_URL not configured"
-        url = f"{url_base}/models"
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.get(url)
-                r.raise_for_status()
-                data = r.json()
-            models = sorted({m.get("id", "") for m in data.get("data", []) if isinstance(m, dict) and m.get("id")})
-            return models, None
-        except Exception as e:
-            return [], f"Error listing OpenAI-compatible models from {url}: {e}"
+        details, err = await list_openai_compat_details(base_url=base_url)
+        if err:
+            return [], err
+        return sorted({d["id"] for d in details}), None
 
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "").strip()

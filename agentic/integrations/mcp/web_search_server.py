@@ -30,7 +30,9 @@ async def tool_web_search(args: Json) -> Json:
 
     limit = int(args.get("limit", 5) or 5)
     limit = max(1, min(limit, 20))
-    recency_days = int(args.get("recency_days", 30) or 30)
+    # 0 means "any date" (the provider then sends no time filter); absent keeps the old 30.
+    raw_recency = args.get("recency_days")
+    recency_days = 30 if raw_recency is None else max(0, min(int(raw_recency or 0), 3650))
     domains = args.get("domains") or None
 
     provider = get_provider()
@@ -55,7 +57,11 @@ async def tool_web_search(args: Json) -> Json:
             lines.append(f"   - {r.snippet}")
         lines.append("")
 
-    return _text("\n".join(lines).strip())
+    # The text is for models and people; `structuredContent` (MCP 2025-06) is the same list as
+    # data, so a program never has to parse the prose back into results.
+    out = _text("\n".join(lines).strip())
+    out["structuredContent"] = {"provider": PROVIDER, "results": [r.to_dict() for r in results]}
+    return out
 
 
 async def tool_web_fetch(args: Json) -> Json:
@@ -94,8 +100,8 @@ TOOLS: List[ToolDef] = [
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
                 "limit": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20},
-                "recency_days": {"type": "integer", "default": 30, "minimum": 1, "maximum": 365,
-                                 "description": "Recency filter in days (best-effort)"},
+                "recency_days": {"type": "integer", "default": 30, "minimum": 0, "maximum": 3650,
+                                 "description": "Recency filter in days (best-effort); 0 for any date"},
                 "domains": {"type": "array", "items": {"type": "string"},
                             "description": "Optional domain allow-list"},
             },

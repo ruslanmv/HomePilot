@@ -307,6 +307,32 @@ def verbatim(
     return [s for s in segments if (s.get("text") or "").strip()][-min_rows:]
 
 
+#: Words of the earlier meeting that stand in for a recap when there is none yet.
+OVERVIEW_WORDS = 260
+
+
+def overview(segments: Sequence[Dict[str, Any]], *, before_ms: int, words: int = OVERVIEW_WORDS) -> str:
+    """Evenly spaced lines from the whole meeting before ``before_ms``, for a meeting with no
+    written recap yet.
+
+    The recap is the only tier that covers the parts of a meeting outside the last ninety
+    seconds, and it is written by the notes model — which may be slow, switched off in
+    Settings → Meetings, or unreachable. Without it a broad question ("what are they talking
+    about?") had the last ninety seconds and a keyword search that matches nothing, and the
+    honest answer it produced — "the meeting does not appear to cover this" — was wrong about
+    a meeting the user could see. A sample of the meeting's own lines, timestamps included, is
+    a recap's floor: bounded, citable, and never invented.
+    """
+    rows = [s for s in segments
+            if (s.get("text") or "").strip() and int(s.get("t0_ms") or 0) < before_ms]
+    if not rows:
+        return ""
+    total = sum(len(str(s.get("text") or "").split()) for s in rows)
+    step = max(1, -(-total // max(1, words)))  # ceil: keep about `words` words in all
+    picked = rows[::step] if step > 1 else rows
+    return "Lines from across the meeting (no written recap yet):\n" + _render(picked)
+
+
 def _render(rows: Sequence[Dict[str, Any]]) -> str:
     lines = []
     for row in rows:
@@ -521,6 +547,8 @@ async def answer(
 
     verbatim_rows = verbatim(segments, now_ms=end_ms)
     floor = max(0, end_ms - VERBATIM_MS)
+    # The model's recap tier; the extractive fallback below keeps using the written recap only.
+    prompt_recap = recap or overview(segments, before_ms=floor)
     keyword_rows = retrieve(segments, keyframes, question, limit=limit, exclude_after_ms=floor)
 
     # MS15. A live meeting is not indexed yet — indexing happens on stop — so this is empty
@@ -543,7 +571,7 @@ async def answer(
 
     messages = build_prompt(
         question,
-        recap=recap,
+        recap=prompt_recap,
         verbatim_rows=verbatim_rows,
         retrieved_rows=retrieved_rows,
         attachments=attached,

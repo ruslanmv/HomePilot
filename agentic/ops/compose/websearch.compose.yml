@@ -9,9 +9,17 @@ services:
     image: searxng/searxng:latest
     container_name: hp-searxng
     ports:
-      - "8080:8080"
+      # This computer only: a search engine on the LAN is somebody else's search engine.
+      # 8899 by default rather than 8080, which so many tools take; SEARXNG_PORT changes it
+      # (then point SEARXNG_BASE_URL at the same port).
+      - "127.0.0.1:${SEARXNG_PORT:-8899}:8080"
+    volumes:
+      # Turns the JSON API on (off in a stock install) — see the file.
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
-      - BASE_URL=http://localhost:8080/
+      - BASE_URL=http://127.0.0.1:${SEARXNG_PORT:-8899}/
+      # Generated when the container is created (`make start-searxng`); never written to a file.
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET, or use make start-searxng}
     cap_drop:
       - ALL
     cap_add:

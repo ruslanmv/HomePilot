@@ -81,6 +81,8 @@ export interface MeetingRecord {
     keyframes?: Array<Record<string, unknown>> | null;
     notes?: unknown;
     summaries?: MeetingSummaryDoc[] | null;
+    /** The server is writing the end-of-meeting document right now. */
+    summary_writing?: boolean;
     live?: boolean;
 }
 

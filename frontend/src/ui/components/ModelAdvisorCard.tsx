@@ -12,6 +12,8 @@
  *   recommendation stays visible above the model list (`defaultCollapsed`).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useInstallProgress } from '../lib/installProgress'
+import { DownloadingButtonContent, InstallProgressBar } from './InstallProgress'
 import { Check, ChevronDown, Copy, Cpu, Download, ExternalLink, Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import {
   ADVISOR_KINDS,
@@ -78,6 +80,7 @@ export function ModelAdvisorCard({
   current,
   onToast,
   onInstalled,
+  onBusyChange,
   defaultCollapsed = false,
 }: {
   backendUrl: string
@@ -88,6 +91,8 @@ export function ModelAdvisorCard({
   onToast?: (message: string) => void
   /** Called after an install succeeds, so the page can refresh its installed list. */
   onInstalled?: () => void
+  /** The model id being installed (null when done), so the page's toast can show progress. */
+  onBusyChange?: (modelId: string | null) => void
   /** Start as the one-line summary until the user expands it (the choice is remembered). */
   defaultCollapsed?: boolean
 }) {
@@ -102,6 +107,9 @@ export function ModelAdvisorCard({
   const [plan, setPlan] = useState('')
   const [confirm, setConfirm] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  // The install's model id: what the backend keys progress by (not the suggestion's id).
+  const [busyModel, setBusyModel] = useState<string | null>(null)
+  const progress = useInstallProgress(backendUrl, apiKey, busyModel)
   const [collapsed, setCollapsed] = useState(() => {
     if (focusKind) return false
     let stored: string | null = null
@@ -180,6 +188,8 @@ export function ModelAdvisorCard({
   const install = async (s: Suggestion) => {
     setConfirm(null)
     setBusy(s.id)
+    setBusyModel(s.install.model_id)
+    onBusyChange?.(s.install.model_id)
     onToast?.(`Installing ${s.name}… this can take a while.`)
     try {
       const res = await fetch(`${backendUrl.replace(/\/+$/, '')}/models/install`, {
@@ -197,6 +207,8 @@ export function ModelAdvisorCard({
       onToast?.(`Couldn't install ${s.name}: ${e?.message || e}`)
     } finally {
       setBusy(null)
+      setBusyModel(null)
+      onBusyChange?.(null)
     }
   }
 
@@ -344,6 +356,8 @@ export function ModelAdvisorCard({
                         {s.license ? <span className="text-[11px] text-white/40">{s.license}</span> : null}
                       </div>
                       <p className="mt-0.5 text-xs leading-snug text-white/55">{s.reasons.join(' · ')}</p>
+                      {/* The same download look as the catalog rows: live percent, size and speed. */}
+                      {busy === s.id ? <InstallProgressBar progress={progress} /> : null}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       {s.hf_id ? (
@@ -384,10 +398,12 @@ export function ModelAdvisorCard({
                           type="button"
                           onClick={() => setConfirm(s.id)}
                           disabled={busy !== null}
-                          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.05] px-2.5 text-xs font-semibold text-white/85 hover:bg-white/[0.1] disabled:opacity-50"
+                          title={busy === s.id ? 'Downloading model... Please wait' : undefined}
+                          className={busy === s.id
+                            ? 'relative inline-flex h-8 cursor-wait items-center overflow-hidden rounded-lg bg-blue-600 px-2.5 text-xs font-semibold text-white shadow-lg shadow-blue-600/30'
+                            : 'inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.05] px-2.5 text-xs font-semibold text-white/85 hover:bg-white/[0.1] disabled:opacity-50'}
                         >
-                          {busy === s.id ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                          {busy === s.id ? 'Installing…' : 'Install'}
+                          {busy === s.id ? <DownloadingButtonContent progress={progress} compact /> : <><Download size={13} /> Install</>}
                         </button>
                       )}
                     </div>

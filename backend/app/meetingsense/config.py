@@ -164,6 +164,10 @@ class MeetingSenseConfig:
 
     enabled: bool = True
     retention: str = "text"
+    #: ``MEETINGSENSE_RETENTION`` was set, so ``retention`` is the operator's policy for every
+    #: meeting. Unset, each meeting keeps what its user chose in Settings → Meetings — the
+    #: audio by default — and ``retention`` is only the fallback for a value nobody can read.
+    retention_locked: bool = False
     flags: SubFlags = field(default_factory=SubFlags)
     notes: NotesConfig = field(default_factory=NotesConfig)
     summary: SummaryConfig = field(default_factory=SummaryConfig)
@@ -201,7 +205,8 @@ class MeetingSenseConfig:
 def load_config() -> MeetingSenseConfig:
     """Build the config from the environment. Called per request by the status route and
     once per session later — never at import, so tests can vary the environment."""
-    retention = os.getenv("MEETINGSENSE_RETENTION", "text").strip().lower() or "text"
+    raw_retention = os.getenv("MEETINGSENSE_RETENTION")
+    retention = (raw_retention or "text").strip().lower() or "text"
     if retention not in RETENTION_MODES:
         # An unreadable retention setting must not silently keep *more* than the operator
         # asked for. Falling back to the strictest mode is the safe direction to be wrong in.
@@ -220,6 +225,9 @@ def load_config() -> MeetingSenseConfig:
         # without being asked for. This one cannot.
         enabled=_flag("MEETINGSENSE_ENABLED", True),
         retention=retention,
+        # Any non-blank value is a decision, including one that could not be read: that one
+        # locks every meeting to the strictest mode rather than handing the choice back.
+        retention_locked=bool((raw_retention or "").strip()),
         flags=SubFlags(
             remote=_flag("MEETINGSENSE_REMOTE", False),
             # MS30. On by default for the same reason: it only does anything while a meeting

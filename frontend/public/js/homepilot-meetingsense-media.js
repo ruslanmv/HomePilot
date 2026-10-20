@@ -184,7 +184,7 @@
             }
 
             if (plan.meetingAudio && !display.getAudioTracks().length) {
-                var noAudio = 'Meeting audio was enabled, but the shared source has no audio track. Share a browser tab and enable “Share audio”, or turn Meeting audio off.';
+                var noAudio = 'Meeting audio was enabled, but the shared source has no audio track. For the Slack, Zoom or Teams app, share your Entire screen with “Share system audio” on; for a call in a browser tab, share that tab with “Share tab audio” on. Or turn Meeting audio off.';
                 sourceEvent('meeting_audio', true, 'error', null, 0, noAudio);
                 if (plan.screen) screenEvent(display, true, 'receiving', null);
                 stopStream(display);

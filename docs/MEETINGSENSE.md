@@ -135,7 +135,7 @@ the recorder on never turns on something a later wave built.
 
 | Variable | Default | What it tunes |
 |---|---|---|
-| `MEETINGSENSE_RETENTION` | `text` | `text` \| `text+frames` \| `all`. An unreadable value falls back to `text` — the safe direction to be wrong in is keeping less |
+| `MEETINGSENSE_RETENTION` | *(unset)* | Unset: each user chooses in Settings → Meetings → Keep the audio recording (on by default), and a meeting keeps `all` or `text`. Set to `text` \| `text+frames` \| `all` to decide for everyone. An unreadable value locks to `text` — the safe direction to be wrong in is keeping less. `all` is the only mode that keeps the audio (`docs/meetings-library.md`, "Listening back to a recorded call") |
 | `MEETINGSENSE_NOTES_INTERVAL_S` | `60` | How often the notes engine runs (W4) |
 | `MEETINGSENSE_NOTES_MAX_WORDS` | `400` | …or how many words, whichever comes first |
 | `MEETINGSENSE_NOTES_MODEL` | *(chat default)* | LLM for notes and the final summary |

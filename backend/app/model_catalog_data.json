@@ -650,7 +650,7 @@
           "description": "Classic SD 1.5 model. Fast, lightweight.",
           "size_gb": 4.27,
           "resolution": "512x512",
-          "download_url": "https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",
+          "download_url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",
           "install_path": "checkpoints/"
         },
         {

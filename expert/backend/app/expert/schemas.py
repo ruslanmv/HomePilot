@@ -11,6 +11,14 @@ class ExpertMessage(BaseModel):
     content: str
 
 
+class ExpertTarget(BaseModel):
+    """The chat model the user picked in Models / Settings (see ``target.py``)."""
+    provider: str = Field(default="", max_length=40, description="'ollama', 'openai_compat', …")
+    base_url: Optional[str] = Field(default=None, max_length=500)
+    model: Optional[str] = Field(default=None, max_length=300)
+    api_key: Optional[str] = Field(default=None, max_length=4096, repr=False)
+
+
 class ExpertChatRequest(BaseModel):
     """Request body for POST /v1/expert/chat (non-streaming)."""
     query: str = Field(..., min_length=1, description="User's message / question")
@@ -46,6 +54,14 @@ class ExpertChatRequest(BaseModel):
         default=None,
         description="Override the default Expert system prompt.",
     )
+    client_timezone: Optional[str] = Field(
+        default=None, max_length=64,
+        description="The browser's IANA time zone, so the prompt's 'today' is the user's (grounding.py).",
+    )
+    context: Optional[str] = Field(
+        default=None, max_length=40000,
+        description="Grounding for this request — e.g. HomePilot's numbered web sources — added to every system prompt.",
+    )
     session_id: Optional[str] = Field(
         default=None,
         description="Session identifier for memory/trace linkage.",
@@ -57,6 +73,13 @@ class ExpertChatRequest(BaseModel):
     feature_hints: Dict[str, Any] = Field(
         default_factory=dict,
         description="Optional non-authoritative hints from UI (e.g. budget tier, tool-use preference).",
+    )
+    target: Optional[ExpertTarget] = Field(
+        default=None,
+        description=(
+            "The user's chosen chat model. When set, 'local' (and 'auto') answer from it — "
+            "an Ollama model or an OpenAI-compatible endpoint such as an OllaBridge gateway."
+        ),
     )
 
 

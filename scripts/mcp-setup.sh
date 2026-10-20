@@ -21,8 +21,23 @@ if [ -d "$MCP_PATH/.git" ]; then
     cd "$ROOT"
 else
     echo "  Cloning MCP Context Forge from $MCP_REPO ..."
-    rm -rf "$MCP_PATH"
-    git clone --depth 1 "$MCP_REPO" "$MCP_PATH"
+    # Three tries with a pause: one dropped connection used to end the install here, and
+    # `make install` carries on without the gateway (Discover MCP Servers then stays empty).
+    cloned=false
+    for attempt in 1 2 3; do
+        rm -rf "$MCP_PATH"
+        if git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 clone --depth 1 "$MCP_REPO" "$MCP_PATH"; then
+            cloned=true
+            break
+        fi
+        echo "  ⚠  clone failed (attempt $attempt/3) — retrying in $((attempt * 10))s..."
+        sleep $((attempt * 10))
+    done
+    if [ "$cloned" != true ]; then
+        rm -rf "$MCP_PATH"
+        echo "  ✗ Could not clone $MCP_REPO. Check the network, then run: make install-mcp"
+        exit 1
+    fi
 fi
 
 echo "  ✓ Repository ready at $MCP_DIR/"

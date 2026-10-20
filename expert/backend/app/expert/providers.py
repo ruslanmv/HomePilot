@@ -27,17 +27,89 @@ _STREAM_TIMEOUT = httpx.Timeout(timeout=300.0, connect=15.0)
 # match exactly.
 _LOCAL_AUTO_FALLBACK = os.getenv("EXPERT_LOCAL_AUTO_FALLBACK", "true").lower() != "false"
 
+# Where Ollama may live besides EXPERT_OLLAMA_URL: loopback, and the Windows /
+# Docker host when this service runs inside WSL or a container. The first URL
+# that answers /api/tags with models wins and is remembered for a short time
+# (same rules as HomePilot's backend/app/model_resolver.py; this service is
+# deliberately isolated, so the 40 lines are copied rather than imported).
+_OLLAMA_CACHE: Dict[str, Any] = {"url": "", "ts": 0.0, "models": []}
+_OLLAMA_CACHE_TTL_S = 30.0
+
+
+def _read_text(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def _host_gateway_ips() -> List[str]:
+    out: List[str] = []
+    for line in _read_text("/proc/net/route").splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 3 and parts[1] == "00000000":
+            try:
+                raw = int(parts[2], 16)
+                out.append(".".join(str((raw >> (8 * i)) & 0xFF) for i in range(4)))
+            except ValueError:
+                pass
+    for line in _read_text("/etc/resolv.conf").splitlines():
+        p = line.split()
+        if len(p) >= 2 and p[0] == "nameserver" and p[1].count(".") == 3 and p[1] not in out:
+            out.append(p[1])
+    return [ip for ip in out if not ip.startswith("127.")]
+
+
+def _ollama_candidates() -> List[str]:
+    urls = [EXPERT_OLLAMA_URL, "http://127.0.0.1:11434", "http://localhost:11434"]
+    in_wsl = bool(os.environ.get("WSL_DISTRO_NAME")) or "microsoft" in _read_text("/proc/version").lower()
+    if in_wsl:
+        urls += [f"http://{ip}:11434" for ip in _host_gateway_ips()]
+    if os.path.exists("/.dockerenv"):
+        urls += ["http://host.docker.internal:11434", "http://172.17.0.1:11434"]
+    seen: List[str] = []
+    for u in urls:
+        u = (u or "").rstrip("/")
+        if u and u not in seen:
+            seen.append(u)
+    return seen
+
+
+def _ollama_base() -> str:
+    """Runtime URL the last successful probe found (EXPERT_OLLAMA_URL until then)."""
+    return _OLLAMA_CACHE["url"] or EXPERT_OLLAMA_URL
+
 
 async def _ollama_pulled_models() -> List[str]:
-    """Return the list of model tags currently pulled in Ollama. Empty on error."""
+    """Model tags of the first reachable Ollama among ``_ollama_candidates()``
+    that has models. Remembers which URL answered so chat_local/stream_local
+    talk to the same runtime. Empty when nothing answers."""
+    import time as _time
+    now = _time.monotonic()
+    if _OLLAMA_CACHE["url"] and _OLLAMA_CACHE["models"] and now - _OLLAMA_CACHE["ts"] < _OLLAMA_CACHE_TTL_S:
+        return list(_OLLAMA_CACHE["models"])
+    best_url, best_models = "", []
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
-            r = await client.get(f"{EXPERT_OLLAMA_URL}/api/tags")
-            r.raise_for_status()
-            data = r.json()
-        return [m.get("name") or m.get("model") for m in data.get("models", []) if isinstance(m, dict)]
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:
+            for url in _ollama_candidates():
+                try:
+                    r = await client.get(f"{url}/api/tags")
+                    r.raise_for_status()
+                    data = r.json()
+                except Exception:
+                    continue
+                models = [m.get("name") or m.get("model") for m in data.get("models", []) if isinstance(m, dict)]
+                if models:
+                    best_url, best_models = url, models
+                    break
+                if not best_url:
+                    best_url = url
     except Exception:
-        return []
+        pass
+    if best_url:
+        _OLLAMA_CACHE.update(url=best_url, ts=now, models=best_models)
+    return best_models
 
 
 async def _resolve_local_model(requested: str) -> str:
@@ -46,10 +118,11 @@ async def _resolve_local_model(requested: str) -> str:
     it. Behavior controlled by ``EXPERT_LOCAL_AUTO_FALLBACK``."""
     pulled = await _ollama_pulled_models()
     if not pulled:
+        probed = ", ".join(_ollama_candidates())
         raise RuntimeError(
-            f"Ollama at {EXPERT_OLLAMA_URL} has no models pulled. "
-            f"Run `ollama pull {requested}` (or set EXPERT_LOCAL_MODEL / "
-            f"EXPERT_LOCAL_FAST_MODEL to a pulled model) and retry."
+            f"No Ollama with models answered (tried {probed}). Open Settings → Models in "
+            f"HomePilot to download one, or run `ollama pull {requested}`. If Ollama runs on "
+            f"Windows and this service runs in WSL, enable WSL mirrored networking."
         )
     if requested in pulled:
         return requested
@@ -292,8 +365,76 @@ async def stream_gemini(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OpenAI-compatible endpoint the user chose for chat (OllaBridge gateway, Cloud relay, vLLM…)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def chat_openai_compat(
+    messages: List[Dict[str, Any]],
+    *,
+    base_url: str,
+    model: str = "",
+    api_key: str = "",
+    temperature: float = EXPERT_TEMPERATURE,
+    max_tokens: int = EXPERT_MAX_TOKENS,
+    provider_label: str = "openai_compat",
+) -> Dict[str, Any]:
+    """``POST {base_url}/chat/completions`` — the same request HomePilot's ordinary chat sends
+    (``app.llm.chat_openai_compat``), kept here because Expert is loaded as its own top-level
+    package and cannot import the backend's modules relatively.
+
+    Failures carry the endpoint's own explanation: a gateway that refuses a model says why in
+    its body, and "HTTP 500" alone sends the user looking in the wrong place.
+    """
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    payload: Dict[str, Any] = {
+        "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+        "stream": False,
+    }
+    if model:
+        payload["model"] = model
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            r = await client.post(url, json=payload, headers=headers)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            f"Could not reach {base_url} for {model or 'the selected model'} "
+            f"({type(exc).__name__}). Is it running?"
+        ) from exc
+    if r.status_code >= 400:
+        detail = ""
+        try:
+            body = r.json()
+            err = body.get("error") if isinstance(body, dict) else None
+            detail = str((err.get("message") if isinstance(err, dict) else err) or body.get("detail") or "")
+        except Exception:  # noqa: BLE001
+            detail = (r.text or "").strip()
+        raise RuntimeError(
+            f"{model or 'The selected model'} at {base_url} answered HTTP {r.status_code}"
+            + (f": {detail[:240]}" if detail else "")
+        )
+    data = r.json()
+    return _openai_wrap(_extract_content(data), str(data.get("model") or model), provider_label)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Local Ollama  (free, on-premises, no API key needed)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _ollama_failure(r: httpx.Response, mdl: str) -> RuntimeError:
+    """Ollama's own reason for a 5xx, which is usually the useful part ("model requires more
+    system memory", "llama runner process has terminated") and was hidden behind a bare
+    ``500 Internal Server Error``."""
+    reason = ""
+    try:
+        reason = str((r.json() or {}).get("error") or "")
+    except Exception:  # noqa: BLE001
+        reason = (r.text or "").strip()
+    reason = reason[:240] or r.reason_phrase or "server error"
+    return RuntimeError(f"Ollama could not run '{mdl}' (HTTP {r.status_code}): {reason}")
+
 
 async def chat_local(
     messages: List[Dict[str, Any]],
@@ -302,11 +443,16 @@ async def chat_local(
     fast: bool = False,
     temperature: float = EXPERT_TEMPERATURE,
     max_tokens: int = EXPERT_MAX_TOKENS,
+    base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Ollama local inference — zero cost, fully sovereign."""
+    """Ollama local inference — zero cost, fully sovereign.
+
+    ``base_url`` is an Ollama the user chose for chat; its model is used as given, since the
+    installed-model check below is about the default Ollama, not that one.
+    """
     requested = model or (EXPERT_LOCAL_FAST_MODEL if fast else EXPERT_LOCAL_MODEL)
-    mdl = await _resolve_local_model(requested)
-    url = f"{EXPERT_OLLAMA_URL}/api/chat"
+    mdl = requested if (base_url and model) else await _resolve_local_model(requested)
+    url = f"{(base_url or _ollama_base()).rstrip('/')}/api/chat"
     payload = {
         "model": mdl,
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
@@ -323,6 +469,8 @@ async def chat_local(
                 f"Ollama rejected model '{mdl}' with 404. Run "
                 f"`ollama pull {mdl}` and retry (or set EXPERT_LOCAL_MODEL)."
             )
+        if r.status_code >= 500:
+            raise _ollama_failure(r, mdl)
         r.raise_for_status()
         data = r.json()
 
@@ -337,11 +485,12 @@ async def stream_local(
     fast: bool = False,
     temperature: float = EXPERT_TEMPERATURE,
     max_tokens: int = EXPERT_MAX_TOKENS,
+    base_url: Optional[str] = None,
 ) -> AsyncIterator[str]:
-    """Stream tokens from Ollama."""
+    """Stream tokens from Ollama. ``base_url``: as in :func:`chat_local`."""
     requested = model or (EXPERT_LOCAL_FAST_MODEL if fast else EXPERT_LOCAL_MODEL)
-    mdl = await _resolve_local_model(requested)
-    url = f"{EXPERT_OLLAMA_URL}/api/chat"
+    mdl = requested if (base_url and model) else await _resolve_local_model(requested)
+    url = f"{(base_url or _ollama_base()).rstrip('/')}/api/chat"
     payload = {
         "model": mdl,
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages],

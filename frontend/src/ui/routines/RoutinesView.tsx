@@ -1,23 +1,29 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   Bell,
+  Bookmark,
   Bot,
+  CalendarCheck,
   CalendarClock,
+  CalendarDays,
   Check,
   CheckCircle2,
   Clock3,
   Folder,
+  Globe2,
   History,
-  AlertCircle,
-  Loader2,
+  MessageSquare,
   Newspaper,
   Pencil,
   Play,
   Plus,
+  RotateCw,
   Sparkles,
   Trash2,
   UserRound,
+  Users,
   X,
+  Zap,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -36,6 +42,26 @@ import {
 import type { Routine, RoutineActionType, RoutineDraft, RoutineRun } from './types'
 import { applyPreset, availablePresets, type RoutinePreset } from './presets'
 import { TargetPicker, TaskField, TemplateMenu, parametersFor, taskKindLabel } from './EditorControls'
+import { ModalSheet } from '../components/ModalSheet'
+import {
+  Button,
+  Card,
+  EmptyState,
+  FIELD,
+  FIELD_LABEL,
+  IconButton,
+  IconTile,
+  InlineAlert,
+  Page,
+  PageHeader,
+  SheetFooter,
+  SheetHeader,
+  SkeletonRows,
+  StatTile,
+  StatusBadge,
+  Switch,
+  type Tone,
+} from '../ds'
 
 const DAYS = [
   { id: 1, short: 'M', label: 'Monday' },
@@ -118,6 +144,27 @@ function actionLabel(type: RoutineActionType): string {
   return taskKindLabel(type)
 }
 
+/**
+ * What a routine's badge says. Honest about the server: with scheduled execution off, an
+ * enabled routine only runs when somebody presses Run now, and the badge says so rather
+ * than "Active". Unknown (the capabilities call failed) claims neither.
+ */
+export function routineStatus(enabled: boolean, schedulerEnabled: boolean | null): { label: string; tone: Tone; title?: string } {
+  if (!enabled) return { label: 'Paused', tone: 'slate', title: 'Paused: it does not run until you turn it back on.' }
+  if (schedulerEnabled === false) {
+    return { label: 'Manual only', tone: 'amber', title: 'Scheduled runs are off on this server. Run now still works.' }
+  }
+  if (schedulerEnabled === true) return { label: 'Active', tone: 'green', title: 'Runs at its scheduled time.' }
+  return { label: 'Enabled', tone: 'green' }
+}
+
+export function runStatus(status: RoutineRun['status']): { label: string; tone: Tone; busy?: boolean } {
+  if (status === 'success') return { label: 'Succeeded', tone: 'green' }
+  if (status === 'failed') return { label: 'Failed', tone: 'red' }
+  if (status === 'missed') return { label: 'Missed', tone: 'amber' }
+  return { label: 'Running', tone: 'violet', busy: true }
+}
+
 function RoutineEditor({
   initial,
   targets,
@@ -195,24 +242,27 @@ function RoutineEditor({
     (draft.action.type !== 'assistant_prompt' || prompt.trim().length > 0) &&
     (draft.target.type === 'assistant' || Boolean(draft.target.project_id))
 
+  const isWeekdays = (days: number[]) => days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))
+
   return (
-    <div className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#121212] shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-5 border-b border-white/[0.06] bg-[#121212]/95 backdrop-blur">
-          <div className="min-w-0">
-            <div className="text-lg font-semibold text-white">
-              {initial ? 'Edit routine' : 'New routine'}
-            </div>
-            <div className="text-sm text-white/45 mt-1">Choose when it happens and what HomePilot should prepare.</div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Templates live in the header, as one button.
-                As a section they were the first thing on the page and the largest — nine
-                cards to scan before reaching the Name field, which makes an optional
-                shortcut read as a required step. Editing shows none of this: filling the
-                form in one click is helpful on a blank form and destructive on a routine
-                that has been running for a month. */}
-            {!initial ? (
+    <ModalSheet
+      labelledBy="routine-editor-title"
+      onRequestClose={onClose}
+      className="hp-sheet--wide"
+      header={(
+        <SheetHeader
+          id="routine-editor-title"
+          icon={CalendarClock}
+          title={initial ? 'Edit routine' : 'New routine'}
+          subtitle="Choose when it happens and what HomePilot should prepare."
+          onClose={onClose}
+          closeLabel="Close routine editor"
+          actions={
+            /* Templates live in the header, as one button. As a section they were the first
+               thing on the page and the largest, which made an optional shortcut read as a
+               required step. Editing shows none of this: filling the form in one click is
+               helpful on a blank form and destructive on a routine that has run for a month. */
+            !initial ? (
               <TemplateMenu
                 presets={presets}
                 applied={pickedPreset}
@@ -225,230 +275,346 @@ function RoutineEditor({
                   setDraft(defaultDraft())
                 }}
               />
-            ) : null}
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-9 w-9 rounded-xl grid place-items-center text-white/45 hover:text-white hover:bg-white/[0.06]"
-              aria-label="Close routine editor"
-            >
-              <X size={18} />
-            </button>
+            ) : null
+          }
+        />
+      )}
+      footer={(
+        <SheetFooter>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" icon={Check} loading={saving} disabled={!valid} onClick={() => onSave(draft)}>
+            {initial ? 'Save changes' : 'Create routine'}
+          </Button>
+        </SheetFooter>
+      )}
+    >
+      <div className="space-y-6 px-5 py-5 sm:px-6">
+        {/* One line, not a card: the template has already done its job by filling the
+            fields below, and repeating it as a panel would put the weight straight back. */}
+        {pickedPreset ? (
+          <div className="text-xs text-white/45" data-testid="routine-template-applied">
+            <span className="text-white/70">{pickedPreset.title}</span> template applied ·
+            Everything below is editable.
           </div>
-        </div>
+        ) : null}
 
-        <div className="p-6 space-y-6">
-          {/* One line, not a card: the template has already done its job by filling the
-              fields below, and repeating it as a panel would put the weight straight back. */}
-          {pickedPreset ? (
-            <div className="text-[11px] text-white/35" data-testid="routine-template-applied">
-              <span className="text-white/55">{pickedPreset.title}</span> template applied ·
-              Everything below is editable.
-            </div>
-          ) : null}
+        <section>
+          <label htmlFor="routine-name" className={FIELD_LABEL}>Name</label>
+          <input
+            id="routine-name"
+            value={draft.name}
+            onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+            className={`${FIELD} mt-2`}
+            placeholder="Morning briefing"
+            autoFocus
+          />
+        </section>
 
-          <section>
-            <label className="text-xs font-semibold uppercase tracking-wider text-white/40">Name</label>
-            <input
-              value={draft.name}
-              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-white/25"
-              placeholder="Morning briefing"
-              autoFocus
-            />
-          </section>
-
-          {/* The four action types, as suggestions under one field rather than a second
-              grid of cards. They used to be four large targets directly under nine template
-              cards, and the two sets overlapped: "Morning news" then "Today's news" is the
-              same decision twice, and reads as the form not having listened. */}
-          <TaskField
-            action={draft.action}
-            onChangeKind={setAction}
-            onChangeText={(value) =>
-              setDraft((prev) => ({
-                ...prev,
-                action: {
-                  ...prev.action,
-                  parameters: {
-                    ...prev.action.parameters,
-                    [prev.action.type === 'reminder' ? 'message' : 'prompt']: value,
-                  },
+        {/* The four action types, as suggestions under one field rather than a second
+            grid of cards. */}
+        <TaskField
+          action={draft.action}
+          onChangeKind={setAction}
+          onChangeText={(value) =>
+            setDraft((prev) => ({
+              ...prev,
+              action: {
+                ...prev.action,
+                parameters: {
+                  ...prev.action.parameters,
+                  [prev.action.type === 'reminder' ? 'message' : 'prompt']: value,
                 },
-              }))
-            }
-            onChangeLocation={(value) =>
-              setDraft((prev) => ({
-                ...prev,
-                action: { ...prev.action, parameters: { ...prev.action.parameters, location: value } },
-              }))
-            }
-          />
+              },
+            }))
+          }
+          onChangeLocation={(value) =>
+            setDraft((prev) => ({
+              ...prev,
+              action: { ...prev.action, parameters: { ...prev.action.parameters, location: value } },
+            }))
+          }
+        />
 
+        {/* A searchable picker rather than a <select>: an install with forty personas
+            makes a native dropdown unusable. */}
+        <TargetPicker
+          target={draft.target}
+          projects={targets}
+          onChange={(next) => setDraft((prev) => ({ ...prev, target: next }))}
+          hint={
+            pickedPreset
+            && pickedPreset.targetHint !== 'assistant'
+            && draft.target.type === 'assistant'
+              ? `${pickedPreset.title} works best with ${
+                pickedPreset.targetHint === 'persona' ? 'a persona' : 'a project'
+              }, so it can draw on that context.`
+              : null
+          }
+        />
 
-          {/* A searchable picker rather than a <select>: an install with forty personas
-              makes a native dropdown unusable, and this list is the user's whole project
-              space. The template's preference appears as one line under it — advice,
-              because a template cannot know anybody's project ids. */}
-          <TargetPicker
-            target={draft.target}
-            projects={targets}
-            onChange={(next) => setDraft((prev) => ({ ...prev, target: next }))}
-            hint={
-              pickedPreset
-              && pickedPreset.targetHint !== 'assistant'
-              && draft.target.type === 'assistant'
-                ? `${pickedPreset.title} works best with ${
-                  pickedPreset.targetHint === 'persona' ? 'a persona' : 'a project'
-                }, so it can draw on that context.`
-                : null
-            }
-          />
+        <section>
+          <div className={`${FIELD_LABEL} mb-3`}>When?</div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="How often">
+            {([
+              ['daily', 'Every day'],
+              ['weekdays', 'Weekdays'],
+              ['custom', 'Custom days'],
+            ] as const).map(([id, label]) => {
+              const schedule = draft.schedule
+              const active =
+                id === 'daily'
+                  ? schedule.type === 'daily'
+                  : id === 'weekdays'
+                    ? schedule.type === 'weekly' && isWeekdays(schedule.days)
+                    : schedule.type === 'weekly' && !isWeekdays(schedule.days)
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setCadence(id)}
+                  className={[
+                    'h-10 rounded-xl border px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-hp-accent-fg/70',
+                    active
+                      ? 'border-violet-400/40 bg-hp-accent/20 font-semibold text-white'
+                      : 'border-white/10 bg-white/[0.02] text-white/60 hover:bg-white/[0.05] hover:text-white',
+                  ].join(' ')}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
 
-          <section>
-            <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">When?</div>
-            <div className="flex flex-wrap gap-2">
-              {[
-                ['daily', 'Every day'],
-                ['weekdays', 'Weekdays'],
-                ['custom', 'Custom days'],
-              ].map(([id, label]) => {
-                const schedule = draft.schedule
-                const active =
-                  id === 'daily'
-                    ? schedule.type === 'daily'
-                    : id === 'weekdays'
-                      ? schedule.type === 'weekly' && schedule.days.length === 5 && [1, 2, 3, 4, 5].every((d) => schedule.days.includes(d))
-                      : schedule.type === 'weekly' && !(schedule.days.length === 5 && [1, 2, 3, 4, 5].every((d) => schedule.days.includes(d)))
+          {draft.schedule.type === 'weekly' ? (
+            <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Routine days">
+              {DAYS.map((day) => {
+                const active = selectedDays.includes(day.id)
                 return (
                   <button
-                    key={id}
+                    key={day.id}
                     type="button"
-                    onClick={() => setCadence(id as 'daily' | 'weekdays' | 'custom')}
+                    aria-pressed={active}
+                    aria-label={day.label}
+                    onClick={() => toggleDay(day.id)}
+                    title={day.label}
                     className={[
-                      'rounded-xl border px-3.5 py-2 text-sm transition-colors',
-                      active
-                        ? 'border-white/20 bg-white/10 text-white'
-                        : 'border-white/[0.07] text-white/50 hover:bg-white/[0.05] hover:text-white/75',
+                      'h-10 w-10 rounded-full text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-hp-accent-fg/70',
+                      active ? 'bg-hp-accent text-white' : 'bg-white/[0.05] text-white/55 hover:bg-white/10 hover:text-white',
                     ].join(' ')}
                   >
-                    {label}
+                    {day.short}
                   </button>
                 )
               })}
             </div>
+          ) : null}
 
-            {draft.schedule.type === 'weekly' ? (
-              <div className="flex gap-2 mt-3" aria-label="Routine days">
-                {DAYS.map((day) => {
-                  const active = selectedDays.includes(day.id)
-                  return (
-                    <button
-                      key={day.id}
-                      type="button"
-                      onClick={() => toggleDay(day.id)}
-                      title={day.label}
-                      className={[
-                        'h-9 w-9 rounded-full text-xs font-semibold transition-colors',
-                        active ? 'bg-white text-black' : 'bg-white/[0.05] text-white/45 hover:bg-white/10',
-                      ].join(' ')}
-                    >
-                      {day.short}
-                    </button>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label>
+              <span className="text-xs text-white/55">Time</span>
+              <input
+                type="time"
+                value={draft.schedule.type === 'once' ? '08:00' : draft.schedule.time}
+                onChange={(e) =>
+                  setDraft((prev) =>
+                    prev.schedule.type === 'once'
+                      ? prev
+                      : { ...prev, schedule: { ...prev.schedule, time: e.target.value } },
                   )
-                })}
-              </div>
-            ) : null}
+                }
+                className={`${FIELD} mt-1.5`}
+              />
+            </label>
+            <label>
+              <span className="text-xs text-white/55">Timezone</span>
+              <input
+                value={draft.timezone}
+                onChange={(e) => setDraft((prev) => ({ ...prev, timezone: e.target.value }))}
+                className={`${FIELD} mt-1.5`}
+              />
+            </label>
+          </div>
+        </section>
 
-            <div className="grid gap-3 sm:grid-cols-2 mt-4">
-              <label>
-                <span className="text-xs text-white/40">Time</span>
-                <input
-                  type="time"
-                  value={draft.schedule.type === 'once' ? '08:00' : draft.schedule.time}
-                  onChange={(e) =>
-                    setDraft((prev) =>
-                      prev.schedule.type === 'once'
-                        ? prev
-                        : { ...prev, schedule: { ...prev.schedule, time: e.target.value } },
-                    )
-                  }
-                  className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none focus:border-white/25"
-                />
-              </label>
-              <label>
-                <span className="text-xs text-white/40">Timezone</span>
-                <input
-                  value={draft.timezone}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, timezone: e.target.value }))}
-                  className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white outline-none focus:border-white/25"
-                />
-              </label>
-            </div>
-          </section>
-
-          <section>
-            <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-3">Delivery</div>
-            <div className="space-y-2">
-              <div className="flex items-start gap-3 rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.025] px-4 py-3">
-                <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-300/70" />
-                <span>
-                  <span className="block text-sm text-white/80">Save as a conversation</span>
-                  <span className="block text-xs text-white/40 mt-0.5">
-                    Always on. Every routine result is a native HomePilot conversation you can open and continue.
-                  </span>
+        <section>
+          <div className={`${FIELD_LABEL} mb-3`}>Delivery</div>
+          <div className="space-y-2">
+            <div className="flex items-start gap-3 rounded-xl border border-violet-400/20 bg-hp-accent/[0.06] px-4 py-3">
+              <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-hp-accent-fg" aria-hidden />
+              <span>
+                <span className="block text-sm text-white/85">Save as a conversation</span>
+                <span className="mt-0.5 block text-xs text-white/50">
+                  Always on. Every routine result is a native HomePilot conversation you can open and continue.
                 </span>
-              </div>
-              {[
-                ['notification', 'Show a notification', 'Surface a non-disruptive notification when the run is ready.'],
-                ['speak_if_active', 'Speak when a companion is active', 'Lets a voice/avatar client present it naturally.'],
-                ['catch_up', 'Catch up after downtime', 'Run useful missed work when HomePilot starts again.'],
-              ].map(([key, title, description]) => {
-                const checked = Boolean(draft.delivery[key as keyof RoutineDraft['delivery']])
-                return (
-                  <label key={key} className="flex items-start gap-3 rounded-2xl border border-white/[0.07] px-4 py-3 cursor-pointer hover:bg-white/[0.025]">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) =>
-                        setDraft((prev) => ({
-                          ...prev,
-                          delivery: { ...prev.delivery, [key]: e.target.checked, create_conversation: true },
-                        }))
-                      }
-                      className="mt-0.5"
-                    />
-                    <span>
-                      <span className="block text-sm text-white/80">{title}</span>
-                      <span className="block text-xs text-white/40 mt-0.5">{description}</span>
-                    </span>
-                  </label>
-                )
-              })}
+              </span>
             </div>
-          </section>
-        </div>
-
-        <div className="sticky bottom-0 flex items-center justify-end gap-2 px-6 py-4 border-t border-white/[0.06] bg-[#121212]/95 backdrop-blur">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl px-4 py-2.5 text-sm text-white/55 hover:text-white hover:bg-white/[0.05]"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!valid || saving}
-            onClick={() => onSave(draft)}
-            className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black disabled:opacity-40"
-          >
-            {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-            {initial ? 'Save changes' : 'Create routine'}
-          </button>
-        </div>
+            {([
+              ['notification', 'Show a notification', 'Surface a non-disruptive notification when the run is ready.'],
+              ['speak_if_active', 'Speak when a companion is active', 'Lets a voice/avatar client present it naturally.'],
+              ['catch_up', 'Catch up after downtime', 'Run useful missed work when HomePilot starts again.'],
+            ] as const).map(([key, title, description]) => (
+              <div key={key} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
+                <span className="min-w-0">
+                  <span className="block text-sm text-white/85">{title}</span>
+                  <span className="mt-0.5 block text-xs text-white/50">{description}</span>
+                </span>
+                <Switch
+                  label={title}
+                  checked={Boolean(draft.delivery[key])}
+                  onChange={(next) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      delivery: { ...prev.delivery, [key]: next, create_conversation: true },
+                    }))
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
+    </ModalSheet>
+  )
+}
+
+/** The routine list's empty state: a calendar with a "+" and two quiet sparkles. */
+function EmptyArt() {
+  return (
+    <div className="relative" aria-hidden>
+      <span className="grid h-20 w-20 place-items-center rounded-2xl border border-violet-400/25 bg-hp-accent/15 text-hp-accent-fg">
+        <CalendarDays size={38} strokeWidth={1.6} />
+      </span>
+      <span className="absolute -bottom-2 -right-2 grid h-9 w-9 place-items-center rounded-full bg-hp-accent text-white shadow-lg shadow-violet-950/60">
+        <Plus size={18} />
+      </span>
+      <Sparkles size={13} className="absolute -left-6 top-7 text-violet-300/70" />
+      <Sparkles size={15} className="absolute -right-8 -top-2 text-violet-300/70" />
     </div>
+  )
+}
+
+function RoutineCard({
+  routine,
+  latest,
+  targetName,
+  schedulerEnabled,
+  running,
+  onToggle,
+  onRun,
+  onOpenLatest,
+  onHistory,
+  onEdit,
+  onRemove,
+}: {
+  routine: Routine
+  latest?: RoutineRun
+  targetName: string
+  schedulerEnabled: boolean | null
+  running: boolean
+  onToggle: () => void
+  onRun: () => void
+  onOpenLatest: () => void
+  onHistory: () => void
+  onEdit: () => void
+  onRemove: () => void
+}) {
+  const [confirming, setConfirming] = useState(false)
+  const ActionIcon = ACTION_ICONS[routine.action.type] || Sparkles
+  const status = routineStatus(routine.enabled, schedulerEnabled)
+  const TargetIcon = routine.target?.type === 'persona' ? UserRound : routine.target?.type === 'project' ? Folder : Bot
+  const lastRun = latest ? runStatus(latest.status) : null
+
+  return (
+    <Card as="article" padded={false} className="p-4 transition-colors hover:border-white/20 sm:p-5" >
+      <div className="flex items-start gap-4" data-testid="routine-card">
+        <IconTile icon={ActionIcon} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-semibold text-white">{routine.name}</h2>
+            <StatusBadge tone={status.tone} title={status.title}>{status.label}</StatusBadge>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/55">
+            <span className="inline-flex items-center gap-1.5"><Clock3 size={13} aria-hidden />{scheduleLabel(routine)}</span>
+            <span>{actionLabel(routine.action.type)}</span>
+            <span className="inline-flex items-center gap-1.5"><Globe2 size={13} aria-hidden />{routine.timezone}</span>
+            <span className="inline-flex items-center gap-1.5 text-hp-accent-fg/90"><TargetIcon size={13} aria-hidden />{targetName}</span>
+          </div>
+          {latest && lastRun ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-white/50">
+              <span>Last run</span>
+              <StatusBadge tone={lastRun.tone} busy={lastRun.busy}>{lastRun.label}</StatusBadge>
+              <span>{new Date(latest.created_at).toLocaleString()}</span>
+            </div>
+          ) : null}
+        </div>
+        <Switch checked={routine.enabled} label={routine.enabled ? 'Pause routine' : 'Enable routine'} onChange={onToggle} />
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/[0.06] pt-3">
+        {confirming ? (
+          <>
+            <span className="mr-1 text-xs text-white/70">Remove “{routine.name}”? Its past runs stay in your conversations.</span>
+            <Button size="sm" variant="secondary" icon={Trash2} className="text-rose-200 hover:text-rose-100" onClick={() => { setConfirming(false); onRemove() }}>
+              Remove
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+          </>
+        ) : (
+          <>
+            <Button size="sm" variant="secondary" icon={Play} loading={running} onClick={onRun}>Run now</Button>
+            {latest?.conversation_id ? (
+              <Button size="sm" variant="ghost" icon={MessageSquare} onClick={onOpenLatest}>Open latest</Button>
+            ) : null}
+            <Button size="sm" variant="ghost" icon={History} onClick={onHistory}>History</Button>
+            <Button size="sm" variant="ghost" icon={Pencil} onClick={onEdit}>Edit</Button>
+            <Button size="sm" variant="danger" icon={Trash2} className="ml-auto" onClick={() => setConfirming(true)}>Remove</Button>
+          </>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function HistorySheet({ routine, runs, onClose, onOpen }: {
+  routine: Routine
+  runs: RoutineRun[]
+  onClose: () => void
+  onOpen: (run: RoutineRun) => void
+}) {
+  const mine = runs.filter((run) => run.routine_id === routine.id)
+  return (
+    <ModalSheet
+      labelledBy="routine-history-title"
+      onRequestClose={onClose}
+      className="hp-sheet--wide"
+      header={<SheetHeader id="routine-history-title" icon={History} title={routine.name} subtitle="Run history" onClose={onClose} closeLabel="Close history" />}
+    >
+      <div className="space-y-2 px-5 py-5 sm:px-6">
+        {mine.length === 0 ? (
+          <div className="py-10 text-center text-sm text-white/50">No runs yet. Use Run now to try it.</div>
+        ) : mine.map((run) => {
+          const status = runStatus(run.status)
+          return (
+            <Card key={run.id} padded={false} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge tone={status.tone} busy={status.busy}>{status.label}</StatusBadge>
+                    <span className="text-xs text-white/50">{new Date(run.created_at).toLocaleString()}</span>
+                  </div>
+                  {run.result_preview ? <p className="mt-2 text-sm leading-6 text-white/65">{run.result_preview}</p> : null}
+                  {run.error ? <p className="mt-2 text-sm leading-6 text-rose-200/80">{run.error}</p> : null}
+                </div>
+                {run.conversation_id ? (
+                  <Button size="sm" variant="ghost" icon={MessageSquare} onClick={() => onOpen(run)}>Open</Button>
+                ) : null}
+              </div>
+            </Card>
+          )
+        })}
+      </div>
+    </ModalSheet>
   )
 }
 
@@ -474,6 +640,7 @@ export default function RoutinesView({
   const [creating, setCreating] = useState(false)
 
   const enabledCount = useMemo(() => routines.filter((routine) => routine.enabled).length, [routines])
+  const pausedCount = routines.length - enabledCount
   const targetNames = useMemo(
     () => new Map(targets.map((target) => [target.id, target.name])),
     [targets],
@@ -485,6 +652,8 @@ export default function RoutinesView({
     }
     return map
   }, [runs])
+  // null: unknown (the capabilities call failed) — then nothing claims either way.
+  const schedulerEnabled = capabilities ? Boolean(capabilities.scheduler_enabled) : null
 
   const refresh = async () => {
     setLoading(true)
@@ -578,246 +747,105 @@ export default function RoutinesView({
     onOpenConversation?.(run)
   }
 
+  const targetName = (routine: Routine) =>
+    routine.target?.type === 'assistant'
+      ? 'HomePilot'
+      : targetNames.get(routine.target?.project_id || '') || (routine.target?.type === 'persona' ? 'Persona' : 'Project')
+
   return (
-    <div className="h-full overflow-y-auto bg-[#0d0d0d] text-white">
-      <div className="mx-auto max-w-6xl px-5 py-8 sm:px-8 sm:py-10">
-        <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="hp-clear-nav -mt-4 sm:mt-0 flex items-center gap-2.5 text-white/55 text-sm">
-              <CalendarClock size={17} />
-              Personal automation
-            </div>
-            <h1 className="text-3xl font-semibold tracking-tight mt-2">Routines</h1>
-            <p className="text-sm leading-6 text-white/45 mt-2 max-w-2xl">
-              Define reusable moments for HomePilot — news, briefings, reminders and assistant prompts.
-              The same routine definitions are available to optional companion clients such as the 3D Avatar.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black hover:bg-white/90"
-          >
-            <Plus size={16} />
-            New routine
-          </button>
-        </header>
+    <Page>
+      <PageHeader
+        eyebrow="Personal automation"
+        eyebrowIcon={CalendarClock}
+        title="Routines"
+        description={(
+          <>
+            Define reusable moments for HomePilot — news, briefings, reminders and assistant prompts.
+            The same routine definitions are available to optional companion clients such as the 3D Avatar.
+          </>
+        )}
+        actions={<Button variant="primary" size="lg" icon={Plus} onClick={() => setCreating(true)}>New routine</Button>}
+      />
 
-        <div className="grid gap-3 sm:grid-cols-3 mt-8">
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
-            <div className="text-xs uppercase tracking-wider text-white/35">Active</div>
-            <div className="text-2xl font-semibold mt-1">{enabledCount}</div>
-          </div>
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
-            <div className="text-xs uppercase tracking-wider text-white/35">Saved</div>
-            <div className="text-2xl font-semibold mt-1">{routines.length}</div>
-          </div>
-          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
-            <div className="text-xs uppercase tracking-wider text-white/35">Companion ready</div>
-            <div className="text-sm font-medium text-white/80 mt-2">Shared API contract</div>
-          </div>
-        </div>
-
-        <div className={[
-          'mt-7 rounded-2xl border px-4 py-3 text-xs leading-5',
-          capabilities?.scheduler_enabled
-            ? 'border-emerald-300/15 bg-emerald-300/[0.035] text-white/55'
-            : 'border-amber-300/15 bg-amber-300/[0.035] text-white/50',
-        ].join(' ')}>
-          {capabilities?.scheduler_enabled ? (
-            <>
-              Automatic scheduling is active. Enabled routines run at their configured local time, and you can also use <strong className="text-white/70">Run now</strong>.
-            </>
-          ) : (
-            <>
-              <strong className="text-white/65">Run now is available.</strong> Automatic time-based execution is disabled on this HomePilot server.
-              Set <code className="mx-1 text-white/65">ROUTINES_EXECUTION_ENABLED=true</code> and restart HomePilot to activate scheduled runs.
-            </>
-          )}
-        </div>
-
-        {error ? (
-          <div className="mt-5 rounded-2xl border border-red-400/20 bg-red-400/[0.06] px-4 py-3 text-sm text-red-100/80">
-            {error}
-          </div>
-        ) : null}
-
-        <main className="mt-7">
-          {loading ? (
-            <div className="py-20 flex items-center justify-center gap-2 text-white/40">
-              <Loader2 size={17} className="animate-spin" />
-              Loading routines…
-            </div>
-          ) : routines.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-white/10 px-6 py-16 text-center">
-              <div className="mx-auto h-12 w-12 rounded-2xl bg-white/[0.05] grid place-items-center text-white/50">
-                <CalendarClock size={22} />
-              </div>
-              <div className="text-base font-semibold text-white/85 mt-4">No routines yet</div>
-              <p className="text-sm text-white/40 mt-2 max-w-md mx-auto">
-                Start with a morning news digest or daily briefing. You can pause or remove it at any time.
-              </p>
-              <button
-                type="button"
-                onClick={() => setCreating(true)}
-                className="mt-5 inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-4 py-2.5 text-sm text-white/80 hover:bg-white/[0.08]"
-              >
-                <Plus size={15} />
-                Create your first routine
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {routines.map((routine) => {
-                const ActionIcon = ACTION_ICONS[routine.action.type] || Sparkles
-                return (
-                  <article key={routine.id} className="rounded-2xl border border-white/[0.075] bg-white/[0.025] p-4 sm:p-5">
-                    <div className="flex items-start gap-4">
-                      <div className="h-11 w-11 rounded-2xl bg-white/[0.055] grid place-items-center text-white/60 shrink-0">
-                        <ActionIcon size={20} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <h2 className="font-semibold text-white/90">{routine.name}</h2>
-                            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/40">
-                              <span className="inline-flex items-center gap-1.5">
-                                <Clock3 size={13} />
-                                {scheduleLabel(routine)}
-                              </span>
-                              <span>{actionLabel(routine.action.type)}</span>
-                              <span>{routine.timezone}</span>
-                              <span className="inline-flex items-center gap-1.5 text-violet-200/65">
-                                {routine.target?.type === 'persona' ? <UserRound size={13} /> : routine.target?.type === 'project' ? <Folder size={13} /> : <Bot size={13} />}
-                                {routine.target?.type === 'assistant'
-                                  ? 'HomePilot'
-                                  : targetNames.get(routine.target?.project_id || '') || (routine.target?.type === 'persona' ? 'Persona' : 'Project')}
-                              </span>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={routine.enabled}
-                            onClick={() => void toggle(routine)}
-                            className={[
-                              'relative h-7 w-12 rounded-full transition-colors',
-                              routine.enabled ? 'bg-emerald-400/80' : 'bg-white/10',
-                            ].join(' ')}
-                            title={routine.enabled ? 'Pause routine' : 'Enable routine'}
-                          >
-                            <span className={[
-                              'absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform',
-                              routine.enabled ? 'translate-x-6' : 'translate-x-1',
-                            ].join(' ')} />
-                          </button>
-                        </div>
-
-                        {(() => {
-                          const latest = latestRuns.get(routine.id)
-                          if (!latest) return null
-                          return (
-                            <div className="mt-3 flex items-center gap-2 text-xs text-white/40">
-                              {latest.status === 'success' ? <CheckCircle2 size={13} className="text-emerald-300/70" /> : latest.status === 'failed' ? <AlertCircle size={13} className="text-red-300/70" /> : <Clock3 size={13} />}
-                              <span>
-                                Last run: {latest.status} · {new Date(latest.created_at).toLocaleString()}
-                              </span>
-                            </div>
-                          )
-                        })()}
-
-                        <div className="mt-4 flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void runNow(routine)}
-                            disabled={runningId === routine.id}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.035] px-2.5 py-1.5 text-xs text-white/65 hover:bg-white/[0.07] disabled:opacity-40"
-                          >
-                            {runningId === routine.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-                            Run now
-                          </button>
-                          {latestRuns.get(routine.id)?.conversation_id ? (
-                            <button
-                              type="button"
-                              onClick={() => openRun(latestRuns.get(routine.id))}
-                              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-cyan-200/70 hover:bg-cyan-300/[0.06] hover:text-cyan-100"
-                            >
-                              Open latest
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() => setHistoryRoutine(routine)}
-                            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-white/45 hover:bg-white/[0.05] hover:text-white/75"
-                          >
-                            <History size={13} />
-                            History
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditing(routine)}
-                            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-white/50 hover:bg-white/[0.05] hover:text-white/80"
-                          >
-                            <Pencil size={13} />
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void remove(routine)}
-                            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-white/35 hover:bg-red-400/[0.06] hover:text-red-200/75"
-                          >
-                            <Trash2 size={13} />
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                )
-              })}
-            </div>
-          )}
-        </main>
+      {/* Two up on a phone (the counts are short), three across from tablet width. */}
+      <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <StatTile
+          icon={CalendarCheck}
+          label="Active"
+          value={enabledCount}
+          caption={schedulerEnabled === false ? 'Enabled · run with Run now' : 'Routines running'}
+        />
+        <StatTile icon={Bookmark} label="Saved" value={routines.length} caption={pausedCount ? `${pausedCount} paused` : 'All routines you have saved'} />
+        <StatTile icon={Users} label="Companion ready" value="Shared API contract" caption="Available for 3D Avatar" className="col-span-2 sm:col-span-1" />
       </div>
 
-      {historyRoutine ? (
-        <div className="fixed inset-0 z-[85] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#121212] shadow-2xl">
-            <div className="sticky top-0 flex items-center justify-between border-b border-white/[0.06] bg-[#121212]/95 px-6 py-5">
-              <div>
-                <div className="text-lg font-semibold">{historyRoutine.name}</div>
-                <div className="text-xs text-white/40 mt-1">Execution history</div>
-              </div>
-              <button type="button" onClick={() => setHistoryRoutine(null)} className="h-9 w-9 rounded-xl grid place-items-center text-white/45 hover:bg-white/[0.06] hover:text-white">
-                <X size={17} />
-              </button>
+      {schedulerEnabled === true ? (
+        <InlineAlert tone="success" title="Scheduled runs are on." className="mt-6">
+          Enabled routines run at their local time, and Run now works any time.
+        </InlineAlert>
+      ) : schedulerEnabled === false ? (
+        <InlineAlert tone="warning" icon={Zap} title="Run now is available." className="mt-6">
+          Scheduled runs are turned off on this HomePilot server with{' '}
+          <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-white/85">ROUTINES_EXECUTION_ENABLED=false</code>.
+          Remove that setting, or set it to <code className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[12px] text-white/85">true</code>,
+          and restart HomePilot to run routines at their time.
+        </InlineAlert>
+      ) : !loading ? (
+        <InlineAlert tone="info" className="mt-6">
+          Could not check whether scheduled runs are on for this server. Run now always works.
+        </InlineAlert>
+      ) : null}
+
+      {error ? (
+        <InlineAlert
+          tone="danger"
+          className="mt-4"
+          action={(
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="secondary" icon={RotateCw} onClick={() => void refresh()}>Try again</Button>
+              <IconButton size="sm" label="Dismiss" icon={X} onClick={() => setError('')} />
             </div>
-            <div className="p-4 space-y-2">
-              {runs.filter((run) => run.routine_id === historyRoutine.id).length === 0 ? (
-                <div className="py-10 text-center text-sm text-white/35">No runs yet.</div>
-              ) : runs.filter((run) => run.routine_id === historyRoutine.id).map((run) => (
-                <div key={run.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2 text-sm text-white/75">
-                        {run.status === 'success' ? <CheckCircle2 size={14} className="text-emerald-300" /> : run.status === 'failed' ? <AlertCircle size={14} className="text-red-300" /> : <Clock3 size={14} />}
-                        <span className="capitalize">{run.status}</span>
-                      </div>
-                      <div className="mt-1 text-xs text-white/35">{new Date(run.created_at).toLocaleString()}</div>
-                      {run.result_preview ? <p className="mt-2 text-xs leading-5 text-white/50">{run.result_preview}</p> : null}
-                      {run.error ? <p className="mt-2 text-xs leading-5 text-red-200/60">{run.error}</p> : null}
-                    </div>
-                    {run.conversation_id ? (
-                      <button type="button" onClick={() => openRun(run)} className="rounded-lg px-2.5 py-1.5 text-xs text-cyan-200/70 hover:bg-cyan-300/[0.06]">
-                        Open
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
+          )}
+        >
+          {error}
+        </InlineAlert>
+      ) : null}
+
+      <main className="mt-6" aria-label="Your routines">
+        {loading ? (
+          <SkeletonRows count={3} label="Loading routines" />
+        ) : routines.length === 0 ? (
+          <EmptyState
+            art={<EmptyArt />}
+            title="No routines yet"
+            action={<Button variant="primary" size="lg" icon={Plus} onClick={() => setCreating(true)}>Create your first routine</Button>}
+          >
+            Start with a morning news digest or daily briefing. You can pause or remove it at any time.
+          </EmptyState>
+        ) : (
+          <div className="space-y-3">
+            {routines.map((routine) => (
+              <RoutineCard
+                key={routine.id}
+                routine={routine}
+                latest={latestRuns.get(routine.id)}
+                targetName={targetName(routine)}
+                schedulerEnabled={schedulerEnabled}
+                running={runningId === routine.id}
+                onToggle={() => void toggle(routine)}
+                onRun={() => void runNow(routine)}
+                onOpenLatest={() => openRun(latestRuns.get(routine.id))}
+                onHistory={() => setHistoryRoutine(routine)}
+                onEdit={() => setEditing(routine)}
+                onRemove={() => void remove(routine)}
+              />
+            ))}
           </div>
-        </div>
+        )}
+      </main>
+
+      {historyRoutine ? (
+        <HistorySheet routine={historyRoutine} runs={runs} onClose={() => setHistoryRoutine(null)} onOpen={openRun} />
       ) : null}
 
       {(creating || editing) ? (
@@ -833,6 +861,6 @@ export default function RoutinesView({
           saving={saving}
         />
       ) : null}
-    </div>
+    </Page>
   )
 }
