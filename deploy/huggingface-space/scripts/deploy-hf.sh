@@ -74,6 +74,15 @@ touch "$STAGE_DIR/backend/app/__init__.py"
 find "$STAGE_DIR/backend" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$STAGE_DIR/backend" -name '*.pyc' -delete 2>/dev/null || true
 
+# The model downloader and the Expert package: the Dockerfile copies both into the image
+# (the backend finds them next to its package — app/download_script.py, app/main.py).
+echo ">> copying scripts/download.py + expert/"
+mkdir -p "$STAGE_DIR/scripts" "$STAGE_DIR/expert/backend/app"
+install -m 0755 "$REPO_ROOT/scripts/download.py" "$STAGE_DIR/scripts/download.py"
+cp -R "$REPO_ROOT/expert/backend/app/expert" "$STAGE_DIR/expert/backend/app/expert"
+find "$STAGE_DIR/expert" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE_DIR/expert" -name '*.pyc' -delete 2>/dev/null || true
+
 echo ">> copying frontend/"
 mkdir -p "$STAGE_DIR/frontend"
 while IFS= read -r -d '' entry; do

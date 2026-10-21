@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { followMovedDevBackend, getDefaultBackendUrl, resolveBackendUrl } from '../ui/lib/backendUrl'
+import { followMovedDevBackend, getDefaultBackendUrl, resolveBackendUrl, saveBackendUrl } from '../ui/lib/backendUrl'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -43,5 +43,41 @@ describe('backend that make start moved to another port', () => {
   it('never redirects to a remote configured address', () => {
     vi.stubEnv('VITE_API_URL', 'https://pilot.example.com')
     expect(followMovedDevBackend('http://localhost:8000')).toBe('http://localhost:8000')
+  })
+})
+
+describe('a saved address from an earlier start', () => {
+  it('follows the backend back to :8000 when the app saved it automatically', () => {
+    vi.stubEnv('VITE_API_URL', '')
+    // An earlier `make start` put the backend on :8002 and the app saved that address.
+    localStorage.setItem('homepilot_backend_url', 'http://localhost:8002')
+    localStorage.setItem('homepilot_backend_url_origin', 'auto')
+    expect(resolveBackendUrl()).toBe('http://localhost:8000')
+  })
+
+  it('treats an unmarked :8001-:8019 from before the marker existed as automatic', () => {
+    vi.stubEnv('VITE_API_URL', '')
+    localStorage.setItem('homepilot_backend_url', 'http://localhost:8002/')
+    expect(resolveBackendUrl()).toBe('http://localhost:8000')
+    localStorage.setItem('homepilot_backend_url', 'http://localhost:9000')
+    expect(resolveBackendUrl()).toBe('http://localhost:9000')
+  })
+
+  it('keeps an address the user chose in Settings', () => {
+    vi.stubEnv('VITE_API_URL', '')
+    saveBackendUrl('http://localhost:8002', true)
+    expect(localStorage.getItem('homepilot_backend_url_origin')).toBe('user')
+    expect(resolveBackendUrl()).toBe('http://localhost:8002')
+    // The app re-saving it afterwards does not turn the choice into a default.
+    saveBackendUrl('http://localhost:8002', false)
+    expect(resolveBackendUrl()).toBe('http://localhost:8002')
+  })
+
+  it('marks the default as automatic, so it keeps following make start', () => {
+    vi.stubEnv('VITE_API_URL', 'http://localhost:8002')
+    saveBackendUrl('http://localhost:8002', true)
+    expect(localStorage.getItem('homepilot_backend_url_origin')).toBe('auto')
+    vi.stubEnv('VITE_API_URL', '')
+    expect(resolveBackendUrl()).toBe('http://localhost:8000')
   })
 })

@@ -57,6 +57,7 @@ import {
 import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl, saveBackendUrl } from './lib/backendUrl'
+import { isMissingRoute } from './lib/expertRoute'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
 import { useBackToClose } from './lib/useBackToClose'
@@ -3959,6 +3960,10 @@ export default function App() {
     return () => window.removeEventListener('switch-to-animate', handleSwitchToAnimate)
   }, [])
 
+  // Set once a chat finds this HomePilot has no Expert (POST /v1/expert/chat is not there):
+  // from then on the standard chat answers directly (lib/expertRoute.ts).
+  const expertMissingRef = useRef(false)
+
   // Reset conversation when switching between incompatible mode groups
   // to prevent chat history from bleeding into edit/animate sessions
   const prevModeRef = useRef<Mode>(mode)
@@ -5361,7 +5366,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
-        const expertPath = canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type)
+        const expertPath = canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type) && !expertMissingRef.current
         // Expert (Fast / Expert / Heavy) builds its own prompts, so with "Search the web" on the
         // sources are found here first and handed to it as grounding; the answer then shows
         // them like any web-grounded reply. Search failing never blocks the answer.
@@ -5384,38 +5389,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             context: undefined,
           }))
         }
-        const reply = expertPath
-          ? await postJson<any>(
-              settings.backendUrl,
-              '/v1/expert/chat',
-              {
-                query: requestText,
-                // Today's date in the user's zone, and the web sources when searched (grounding.py).
-                client_timezone: browserTimeZone(),
-                context: expertWeb?.context || undefined,
-                provider: 'auto',
-                thinking_mode: toThinkingMode(chatReasoningMode),
-                with_critique: false,
-                history: messages
-                  .filter((m) => !m.pending)
-                  .slice(-8)
-                  .map((m) => ({ role: m.role, content: m.text })),
-                session_id: conversationId || undefined,
-                has_attachments: Boolean(pendingFile || pendingPreviewUrl),
-                feature_hints: { budgetTier: 'normal' },
-                // The chat model picked in Models / Settings. Without it Expert answered from
-                // its own default Ollama model, whatever the user had selected — an OllaBridge
-                // gateway model included.
-                target: {
-                  provider: chatSelection.providerChat || 'ollama',
-                  base_url: chatSelection.baseUrlChat || undefined,
-                  model: chatSelection.modelChat || undefined,
-                  api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
-                },
-              },
-              authHeaders
-            )
-          : await postJson<any>(
+        // The standard chat (/chat) — and Expert's fallback when this HomePilot has none.
+        const legacyChat = () => postJson<any>(
               settings.backendUrl,
               '/chat',
               {
@@ -5465,6 +5440,45 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               },
               authHeaders
             )
+        const reply = expertPath
+          ? await postJson<any>(
+              settings.backendUrl,
+              '/v1/expert/chat',
+              {
+                query: requestText,
+                // Today's date in the user's zone, and the web sources when searched (grounding.py).
+                client_timezone: browserTimeZone(),
+                context: expertWeb?.context || undefined,
+                provider: 'auto',
+                thinking_mode: toThinkingMode(chatReasoningMode),
+                with_critique: false,
+                history: messages
+                  .filter((m) => !m.pending)
+                  .slice(-8)
+                  .map((m) => ({ role: m.role, content: m.text })),
+                session_id: conversationId || undefined,
+                has_attachments: Boolean(pendingFile || pendingPreviewUrl),
+                feature_hints: { budgetTier: 'normal' },
+                // The chat model picked in Models / Settings. Without it Expert answered from
+                // its own default Ollama model, whatever the user had selected — an OllaBridge
+                // gateway model included.
+                target: {
+                  provider: chatSelection.providerChat || 'ollama',
+                  base_url: chatSelection.baseUrlChat || undefined,
+                  model: chatSelection.modelChat || undefined,
+                  api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
+                },
+              },
+              authHeaders
+            ).catch((err: unknown) => {
+              // No Expert on this HomePilot (a packaged image that did not ship it): the
+              // standard chat answers this turn and every later one — not an "HTTP 405" bubble.
+              if (!isMissingRoute(err)) throw err
+              expertMissingRef.current = true
+              expertWeb = null
+              return legacyChat()
+            })
+          : await legacyChat()
         // Expert answers with the sources found above; the standard chat returns its own.
         const data = expertWeb?.web_search ? { ...reply, web_search: expertWeb.web_search } : reply
 

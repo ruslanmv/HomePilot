@@ -92,7 +92,7 @@ jobs:
         run: npx vitest run src/test/modelDownloadCard.test.tsx src/test/backendUrlMovedPort.test.ts
         working-directory: frontend
       - name: Model Management OllaBridge Local / Cloud cards regression tests
-        run: npx vitest run src/test/ollabridgeModelManagement.test.tsx src/test/modelShelf.test.tsx src/test/ollabridgeVision.test.tsx src/test/chatWebSearch.test.tsx
+        run: npx vitest run src/test/ollabridgeModelManagement.test.tsx src/test/modelShelf.test.tsx src/test/ollabridgeVision.test.tsx src/test/chatWebSearch.test.tsx src/test/modelsAdvisorHidden.test.tsx src/test/modelsInstallResume.test.tsx src/test/expertRoute.test.ts src/test/installProgress.test.tsx
         working-directory: frontend
       - name: MeetingSense live transcript, Close navigation and audio-only capture regression tests
         run: >-

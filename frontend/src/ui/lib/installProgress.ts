@@ -4,7 +4,7 @@
  * line per model). Shared by the Models catalog rows and the suggestions card, so both show the
  * same "Downloading 42% · 2.7 GB of 6.5 GB · 5.8 MB/s".
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export type InstallProgress = {
   state: 'idle' | 'running' | 'done' | 'failed'
@@ -82,4 +82,58 @@ export function useInstallProgress(backendUrl: string, apiKey: string | undefine
     }
   }, [backendUrl, apiKey, modelId])
   return progress
+}
+
+/** Every install the backend knows of (running, or finished within the hour), by model id. */
+export async function fetchInstalls(backendUrl: string, apiKey?: string): Promise<Record<string, InstallProgress>> {
+  const base = (backendUrl || '').replace(/\/+$/, '')
+  const res = await fetch(`${base}/models/install/progress`, {
+    headers: apiKey ? { 'x-api-key': apiKey } : undefined,
+    credentials: 'include',
+  })
+  if (!res.ok) return {}
+  const body = (await res.json().catch(() => null)) as { installs?: Record<string, unknown> } | null
+  const out: Record<string, InstallProgress> = {}
+  for (const [id, raw] of Object.entries(body?.installs || {})) {
+    const p = parseInstallProgress(raw)
+    if (p) out[id] = p
+  }
+  return out
+}
+
+/**
+ * The installs still running on the backend when a page mounts. An install keeps going after
+ * the Models page is left — the backend runs it — so coming back (or reloading) must show it
+ * again, same button and bar, instead of a page that has forgotten. Read once per mount; the
+ * per-model poll above takes over from there.
+ */
+export function useRunningInstalls(backendUrl: string, apiKey?: string): string[] {
+  const [running, setRunning] = useState<string[]>([])
+  useEffect(() => {
+    let cancelled = false
+    fetchInstalls(backendUrl, apiKey)
+      .then((all) => {
+        if (!cancelled) setRunning(Object.keys(all).filter((id) => all[id].state === 'running'))
+      })
+      .catch(() => { /* nothing to pick up */ })
+    return () => { cancelled = true }
+  }, [backendUrl, apiKey])
+  return running
+}
+
+export type InstallOutcome = 'done' | 'failed' | 'lost'
+
+/**
+ * For an install picked up from the backend rather than started on this page — there is no
+ * request to await — reports once how it ended: done, failed, or lost (the backend no longer
+ * knows it, e.g. it restarted).
+ */
+export function useInstallOutcome(progress: InstallProgress | null, watching: boolean, onFinished: (outcome: InstallOutcome) => void): void {
+  const latest = useRef(onFinished)
+  latest.current = onFinished
+  const state = progress?.state
+  useEffect(() => {
+    if (!watching || !state || state === 'running') return
+    latest.current(state === 'done' ? 'done' : state === 'failed' ? 'failed' : 'lost')
+  }, [watching, state])
 }

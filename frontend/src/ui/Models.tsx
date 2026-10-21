@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react'
-import { progressLabel, useInstallProgress } from './lib/installProgress'
+import { progressLabel, useInstallOutcome, useInstallProgress, useRunningInstalls } from './lib/installProgress'
 import { ProgressBar, Skeleton } from './motion'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink,
   MessageSquare, ScanEye, Image as ImageIcon, Pencil, Video, Sparkles, Layers, Puzzle } from 'lucide-react'
@@ -9,7 +9,7 @@ import { isOllaBridgeChatRoute } from './components/ollabridge/chatRoute'
 import { isAccountsUxEnabled } from './account/featureFlags'
 import { GENERATED_CATALOGS } from '../generated/modelCatalog'
 import { ModelAdvisorCard } from './components/ModelAdvisorCard'
-import { useAdvisorEnabled, type AdvisorKind, type CurrentModels } from './modelAdvisor'
+import { setAdvisorEnabled, useAdvisorEnabled, type AdvisorKind, type CurrentModels } from './modelAdvisor'
 
 /** The Model Type choices, in order, with the icon and label shown for each. */
 const MODEL_TYPES = [
@@ -583,6 +583,33 @@ export default function ModelsView(props: ModelsParams) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, modelType, baseUrl, backendUrl])
+
+  // An install still running on the backend when this page opens — it ran on while the user
+  // was in the chat, or across a reload — shows again: the row's Downloading button, the
+  // toast's progress line, and the usual message when it ends. The suggestions card picks up
+  // its own (and reports it through onBusyChange), so one that it claims is left to it.
+  const running = useRunningInstalls(backendUrl, authKey)
+  const [resumedInstall, setResumedInstall] = useState<string | null>(null)
+  const pickedUp = React.useRef<Set<string>>(new Set())   // each running install is picked up once
+  useEffect(() => {
+    if (installBusy || advisorBusy) return
+    const id = running.find((r) => !pickedUp.current.has(r))
+    if (!id) return
+    pickedUp.current.add(id)
+    setResumedInstall(id)
+    setInstallBusy(id)
+    setToast(`Still downloading ${id}…`)
+  }, [running, installBusy, advisorBusy])
+  useInstallOutcome(installProgress, resumedInstall !== null && resumedInstall === installBusy, (outcome) => {
+    const id = installBusy || resumedInstall || ''
+    setResumedInstall(null)
+    setInstallBusy(null)
+    if (advisorBusy === id) return
+    if (outcome === 'done') setToast(`Successfully installed ${id}`)
+    else if (outcome === 'failed') setToast(`Installation failed for ${id} — the backend log has the details.`)
+    else setToast(`Lost track of the ${id} download — HomePilot restarted. Check Installed.`)
+    refreshInstalled()
+  })
 
   const supportedForSelection: ModelCatalogEntry[] = useMemo(() => {
     let list: ModelCatalogEntry[] = []
@@ -1904,6 +1931,19 @@ export default function ModelsView(props: ModelsParams) {
               onBusyChange={setAdvisorBusy}
               defaultCollapsed
             />
+          ) : ADVISOR_KIND_FOR[modelType] ? (
+            // Hidden by "Hide suggestions" (or Settings → Models). One quiet line, so the way
+            // back is here and not only in a toast that has long gone.
+            <p className="flex items-center gap-2 text-xs text-white/40" data-testid="advisor-hidden">
+              <span>Model suggestions for this computer are hidden.</span>
+              <button
+                type="button"
+                onClick={() => setAdvisorEnabled(true)}
+                className="font-semibold text-violet-300 hover:text-violet-200"
+              >
+                Show them
+              </button>
+            </p>
           ) : null}
           {/* Error messages - hide for Civitai since it's download-only */}
           {installedError && provider !== 'civitai' ? (

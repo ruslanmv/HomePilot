@@ -137,6 +137,30 @@ if [[ "$CUDA_AVAILABLE" == "1" && "${COMFY_FORCE_CPU:-0}" != "1" ]]; then
   if [[ "$VRAM_MODE" == "high" ]]; then
     echo "💾 ComfyUI: --highvram (keeps models resident between calls)"
   fi
+
+  # Dynamic VRAM (ComfyUI 0.4x) streams weights through a page-locked host buffer about
+  # twice the checkpoint's size. With little RAM to spare — a WSL VM shares the laptop's
+  # memory with everything else on it — that buffer cannot be locked, and every image fails
+  # at its first step with "pread failed (errno=12)" / "HostBuffer.read_file_slice failed".
+  # Below 8 GiB available, the classic estimate-based loader is used instead: a checkpoint
+  # that fits the GPU runs as before; a bigger one offloads the old way, slower.
+  # COMFY_DYNAMIC_VRAM=1 / 0 decides outright.
+  DYNAMIC_VRAM="${COMFY_DYNAMIC_VRAM:-auto}"
+  MEM_AVAILABLE_MB="$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+  MEM_AVAILABLE_MB="${MEM_AVAILABLE_MB:-0}"
+  if [[ "$DYNAMIC_VRAM" == "auto" ]]; then
+    if [[ "$MEM_AVAILABLE_MB" -gt 0 && "$MEM_AVAILABLE_MB" -lt 8192 ]]; then
+      DYNAMIC_VRAM="0"
+      echo "💾 ComfyUI: --disable-dynamic-vram — ${MEM_AVAILABLE_MB} MB of RAM is available, and dynamic loading"
+      echo "   pins about twice a checkpoint's size in RAM (here it failed with 'pread failed (errno=12)')."
+      echo "   Free RAM or give WSL more (%USERPROFILE%\\.wslconfig: memory=24GB), or set COMFY_DYNAMIC_VRAM=1."
+    else
+      DYNAMIC_VRAM="1"
+    fi
+  fi
+  case "${DYNAMIC_VRAM,,}" in
+    0|off|false|no) EXTRA_ARGS+=("--disable-dynamic-vram") ;;
+  esac
 fi
 
 cd "$COMFY_DIR"

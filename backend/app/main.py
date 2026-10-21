@@ -126,6 +126,9 @@ from .multimodal import analyze_image, is_vision_intent, VISION_MODEL_PATTERNS
 # OpenAI-compatible endpoint (additive — exposes personas as /v1/chat/completions)
 from .openai_compat_endpoint import router as openai_compat_router
 
+# Where scripts/download.py is — the repo's, or the copy a packaged image ships.
+from .download_script import download_script
+
 # ── Access-log noise filter ──────────────────────────────────────────────────
 # The Interactive runtime polls GET /v1/interactive/play/sessions/{id}/pending
 # once per 1.5–5 s to pick up scene-render updates. Uvicorn logs every hit at
@@ -403,10 +406,18 @@ try:
         import sys as _expert_sys
         from pathlib import Path as _ExpertPath
 
-        _expert_pkg_dir = (
-            _ExpertPath(__file__).resolve().parents[2]
-            / "expert" / "backend" / "app" / "expert"
-        )
+        _expert_here = _ExpertPath(__file__).resolve()
+        _expert_candidates = [
+            _expert_here.parents[2] / "expert" / "backend" / "app" / "expert",   # the repo
+            # A packaged image has no repo around it: the Hugging Face Space ships the
+            # package next to this one (/app/expert). Without it the chat's default path,
+            # POST /v1/expert/chat, did not exist there and every chat came back HTTP 405.
+            _expert_here.parents[1] / "expert",
+        ]
+        if os.getenv("EXPERT_PACKAGE_DIR"):
+            _expert_candidates.insert(0, _ExpertPath(os.environ["EXPERT_PACKAGE_DIR"]))
+        _expert_pkg_dir = next((p for p in _expert_candidates if (p / "__init__.py").is_file()),
+                               _expert_candidates[0])
         _expert_init = _expert_pkg_dir / "__init__.py"
         if not _expert_init.is_file():
             raise FileNotFoundError(f"Expert package not found at {_expert_init}")
@@ -2864,17 +2875,9 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
         logger.addHandler(handler)
 
     try:
-        script_path = Path(__file__).parent.parent.parent / "scripts" / "download.py"
-
-        if not script_path.exists():
-            logger.error(f"Download script not found at {script_path}")
-            return JSONResponse(
-                status_code=500,
-                content=_safe_err(
-                    "Download script not found. Please ensure scripts/download.py exists.",
-                    code="script_not_found",
-                ),
-            )
+        # Only ComfyUI and Civitai installs run the script (checked below, once an Ollama pull
+        # has returned): requiring it up front failed every install on the Space, pulls included.
+        script_path = download_script()
 
         logger.info(f"Starting model installation: provider={req.provider}, model={req.model_id}")
 
@@ -2951,6 +2954,17 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             )
 
         # Run download script for comfyui and civitai
+        if not script_path.is_file():
+            logger.error(f"Download script not found at {script_path}")
+            return JSONResponse(
+                status_code=500,
+                content=_safe_err(
+                    f"Download script not found at {script_path}. Set HOMEPILOT_DOWNLOAD_SCRIPT "
+                    "to the repo's scripts/download.py.",
+                    code="script_not_found",
+                ),
+            )
+
         # Pass Civitai API key via environment variable (secure - not visible in process list)
         env = os.environ.copy()
         if req.civitai_api_key and req.provider == "civitai":

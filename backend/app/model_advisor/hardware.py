@@ -81,12 +81,43 @@ def _nvidia() -> Optional[Dict[str, Any]]:
             "note": "" if bw else "Unlisted GPU — speed estimates are unavailable; fit is still exact."}
 
 
-def _total_ram_gb() -> float:
+# The memory limit of the container HomePilot runs in (Docker, Kubernetes, a Hugging Face
+# Space) — cgroup v2, then v1. psutil reports the host's RAM: a 16 GB Space read 132.9 GB,
+# and FitLab called a 20B model a fit for it.
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+_CGROUP_LIMIT_FILES = ("memory.max", "memory/memory.limit_in_bytes")
+
+
+def _host_ram_gb() -> float:
     try:
         import psutil
         return psutil.virtual_memory().total / 1e9
     except Exception:
         return 0.0
+
+
+def _cgroup_limit_gb(root: Optional[Path] = None) -> Optional[float]:
+    """The memory limit of this process's cgroup, in GB; None when there is none."""
+    for name in _CGROUP_LIMIT_FILES:
+        try:
+            raw = ((root or CGROUP_ROOT) / name).read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not raw.isdigit():            # "max": no limit at this level
+            continue
+        limit = int(raw)
+        if 0 < limit < 1 << 60:          # v1 writes a near-2^63 sentinel when unlimited
+            return limit / 1e9
+    return None
+
+
+def _total_ram_gb() -> float:
+    """Memory this HomePilot can use: the host's RAM, or the container's limit when smaller."""
+    host = _host_ram_gb()
+    limit = _cgroup_limit_gb()
+    if limit is not None and (not host or limit < host):
+        return limit
+    return host
 
 
 def _apple() -> Optional[Dict[str, Any]]:
@@ -108,10 +139,17 @@ def detect() -> Dict[str, Any]:
     if hw:
         return {**hw, "detected": True}
     ram = _total_ram_gb()
-    return {"kind": "cpu", "name": platform.processor() or platform.machine() or "CPU",
-            "vram_gb": 0.0, "ram_gb": round(ram, 1), "bandwidth_gbs": CPU_BANDWIDTH_GBS,
-            "profile_id": "cpu-only", "detected": True,
-            "note": "No GPU found — chat models are sized for system RAM; image and video need a GPU."}
+    host = _host_ram_gb()
+    cpu = {"kind": "cpu", "name": platform.processor() or platform.machine() or "CPU",
+           "vram_gb": 0.0, "ram_gb": round(ram, 1), "bandwidth_gbs": CPU_BANDWIDTH_GBS,
+           "profile_id": "cpu-only", "detected": True,
+           "note": "No GPU found — chat models are sized for system RAM; image and video need a GPU."}
+    if host and ram < host - 0.5:
+        # In a container: its limit is what counts, and the page says so.
+        cpu.update(host_ram_gb=round(host, 1), ram_source="container",
+                   note=f"No GPU found — chat models are sized for this container's {ram:.0f} GB memory "
+                        f"limit (the host has {host:.0f} GB); image and video need a GPU.")
+    return cpu
 
 
 def with_override(hw: Dict[str, Any], vram_gb: Optional[float]) -> Dict[str, Any]:
