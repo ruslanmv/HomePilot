@@ -1,7 +1,12 @@
 import React, { useCallback, useMemo, useState, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 import { Check, Copy } from 'lucide-react'
+import { fileAuthToken } from '../lib/fileUrl'
+import { normalizeCitations } from './WebSources'
 
 function useCopy(timeoutMs = 900) {
   const [copied, setCopied] = useState(false)
@@ -109,6 +114,24 @@ function MarkdownImage({ src, alt, rawSrc, onImageClick }: {
  * - Safe by default (no raw HTML).
  * - Code blocks have header + language + copy button.
  */
+/**
+ * Math as models write it, in the form remark-math reads: `\[ … \]` becomes a `$$` block,
+ * `\( … \)` becomes `$ … $`, and a `$` before a digit (a price: "$5 and $10") is escaped so it
+ * never opens inline math. Code — fenced blocks and inline spans — is left exactly as written.
+ */
+export function normalizeMath(text: string): string {
+  const parts = text.split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/g)
+  return parts
+    .map((part, i) => {
+      if (i % 2 === 1) return part                                   // code: untouched
+      return part
+        .replace(/\\\[([\s\S]+?)\\\]/g, (_m, body: string) => `\n$$\n${body.trim()}\n$$\n`)
+        .replace(/\\\(([\s\S]+?)\\\)/g, (_m, body: string) => `$${body.trim()}$`)
+        .replace(/(^|[^\\$])\$(?=\d)/g, '$1\\$')
+    })
+    .join('')
+}
+
 export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: string; onImageClick?: (src: string) => void; backendUrl?: string }) {
   const normalized = useMemo(() => {
     let t = (text ?? '').replace(/\r\n/g, '\n')
@@ -117,7 +140,7 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
     t = t.replace(/(!?\[[^\]]*\]\()([^)]+)\)/g, (_m, prefix, url) =>
       `${prefix}${url.replace(/\s+/g, '')})`
     )
-    return t
+    return normalizeMath(normalizeCitations(t))
   }, [text])
 
   /** Resolve backend-relative image paths (e.g. /comfy/view/..., /files/...) to full URLs.
@@ -128,7 +151,7 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
     src = src.replace(/\s+/g, '')
     // Resolve media:// refs via backend /media/resolve endpoint
     if (src.startsWith('media://') && backendUrl) {
-      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const tok = fileAuthToken(backendUrl)
       const base = backendUrl.replace(/\/+$/, '')
       const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
       // Pass current project_id as fallback so malformed LLM refs
@@ -138,9 +161,9 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
       return `${base}/media/resolve?ref=${encodeURIComponent(src)}${qp}${pidParam}`
     }
     if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:') || src.startsWith('blob:')) {
-      // For absolute backend URLs that contain /files/, append token
+      // For absolute backend URLs that contain /files/, the token — across origins only
       if (backendUrl && src.includes('/files/')) {
-        const tok = localStorage.getItem('homepilot_auth_token') || ''
+        const tok = fileAuthToken(backendUrl)
         if (tok) {
           const sep = src.includes('?') ? '&' : '?'
           return `${src}${sep}token=${encodeURIComponent(tok)}`
@@ -152,9 +175,9 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
       const base = backendUrl.replace(/\/+$/, '')
       const path = src.startsWith('/') ? src : `/${src}`
       const full = `${base}${path}`
-      // Append token for /files/ paths
+      // The token for /files/ paths — across origins only
       if (path.startsWith('/files/')) {
-        const tok = localStorage.getItem('homepilot_auth_token') || ''
+        const tok = fileAuthToken(backendUrl)
         if (tok) {
           const sep = full.includes('?') ? '&' : '?'
           return `${full}${sep}token=${encodeURIComponent(tok)}`
@@ -168,17 +191,38 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
   // Memoize the components object so ReactMarkdown doesn't remount
   // custom elements (especially <img>) on every parent re-render.
   const mdComponents = useMemo(() => ({
-    a: ({ children, href, ...props }: any) => (
-      <a
-        {...props}
-        href={href}
-        target="_blank"
-        rel="noreferrer"
-        className="underline decoration-white/30 hover:decoration-white/70 text-white"
-      >
-        {children}
-      </a>
-    ),
+    a: ({ children, href, title, ...props }: any) => {
+      // A citation ("[n]" linked to its source) is a small numbered pill, as ChatGPT shows it.
+      const label = Array.isArray(children) ? children.join('') : String(children ?? '')
+      const cite = /^\[(\d{1,3})\]$/.exec(label.trim())
+      if (cite) {
+        return (
+          <a
+            {...props}
+            href={href}
+            title={title || href}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="citation"
+            className="hp-cite ml-0.5 inline-flex h-[18px] min-w-[18px] -translate-y-[1px] items-center justify-center rounded-full bg-white/10 px-1.5 align-middle text-[11px] font-medium leading-none text-white/75 no-underline transition-colors hover:bg-violet-500/40 hover:text-white"
+          >
+            {cite[1]}
+          </a>
+        )
+      }
+      return (
+        <a
+          {...props}
+          href={href}
+          title={title}
+          target="_blank"
+          rel="noreferrer"
+          className="underline decoration-white/30 hover:decoration-white/70 text-white"
+        >
+          {children}
+        </a>
+      )
+    },
     code: ({ children, className }: any) => {
       const isBlock = !!className
       const lang = languageFromClassName(className)
@@ -220,7 +264,9 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
   return (
     <div className="prose prose-invert max-w-none prose-p:my-2 prose-pre:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-hr:my-4 prose-blockquote:my-3">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        // throwOnError false: a malformed formula shows as red source text, never breaks the reply.
+        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]}
         components={mdComponents}
       >
         {normalized}

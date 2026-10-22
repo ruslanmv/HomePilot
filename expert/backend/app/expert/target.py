@@ -66,6 +66,11 @@ def from_request(raw: Any) -> Optional[ChatTarget]:
     api_key = str(get("api_key", "") or "").strip()
     if provider in OLLAMA_PROVIDERS and not model and not base_url:
         return None
+    if provider in OLLAMA_PROVIDERS and base_url.lower().endswith("/v1"):
+        # "Ollama" with an OpenAI-style Base URL (OllaBridge's http://localhost:11435/v1, or
+        # Ollama's own /v1): that URL speaks the OpenAI API, not Ollama's — sending
+        # /api/chat there answered 404 and the chat said "Ollama rejected model …".
+        provider = "openai_compat"
     if provider not in OLLAMA_PROVIDERS and not base_url:
         # An OpenAI-compatible provider with nowhere to send it cannot be honoured; Expert's
         # defaults are a better answer than an error about a URL the user never typed.

@@ -12,7 +12,7 @@
  *   recommendation stays visible above the model list (`defaultCollapsed`).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useInstallProgress } from '../lib/installProgress'
+import { useInstallOutcome, useInstallProgress, useRunningInstalls } from '../lib/installProgress'
 import { DownloadingButtonContent, InstallProgressBar } from './InstallProgress'
 import { Check, ChevronDown, Copy, Cpu, Download, ExternalLink, Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import {
@@ -211,6 +211,42 @@ export function ModelAdvisorCard({
       onBusyChange?.(null)
     }
   }
+
+  // An install of one of these suggestions that is still running on the backend — started
+  // before the page was left, or before a reload — shows here again as if it never went away,
+  // and ends the usual way: the backend's progress says when, since there is no request to await.
+  const running = useRunningInstalls(backendUrl, apiKey)
+  const [resumedModel, setResumedModel] = useState<string | null>(null)
+  const pickedUp = useRef<Set<string>>(new Set())   // each running install is picked up once
+  const allSuggestions = useMemo(() => (Object.values(data?.suggestions || {}) as Suggestion[][]).flat(), [data])
+  useEffect(() => {
+    if (busyModel || !running.length) return
+    const s = allSuggestions.find((x) => running.includes(x.install.model_id) && !pickedUp.current.has(x.install.model_id))
+    if (!s) return
+    pickedUp.current.add(s.install.model_id)
+    setResumedModel(s.install.model_id)
+    setBusy(s.id)
+    setBusyModel(s.install.model_id)
+    onBusyChange?.(s.install.model_id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, allSuggestions, busyModel])
+  useInstallOutcome(progress, resumedModel !== null && resumedModel === busyModel, (outcome) => {
+    const name = allSuggestions.find((x) => x.install.model_id === busyModel)?.name || busyModel
+    setResumedModel(null)
+    setBusy(null)
+    setBusyModel(null)
+    onBusyChange?.(null)
+    if (outcome === 'done') {
+      onToast?.(`${name} installed.`)
+      onInstalled?.()
+      void load()
+    } else if (outcome === 'failed') {
+      onToast?.(`Couldn't install ${name}: the download stopped. The backend log has the details.`)
+    } else {
+      onToast?.(`Lost track of the ${name} download — HomePilot restarted. Check what is installed.`)
+      onInstalled?.()
+    }
+  })
 
   const copyCommand = (s: Suggestion) => {
     const cmd = s.install.provider === 'ollama' ? `ollama pull ${s.install.model_id}` : s.install.model_id

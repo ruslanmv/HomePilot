@@ -15,18 +15,24 @@ ADDITIVE ONLY — does not modify any existing module.
 """
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import os
 import sqlite3
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Cookie, Header, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from .config import UPLOAD_DIR, MAX_UPLOAD_MB
-from .storage import _get_db_path
+from .config import UPLOAD_DIR, MAX_UPLOAD_MB  # noqa: F401  (UPLOAD_DIR: kept for importers)
+from . import media_links, media_ops, media_quota, media_validate
+from .media_storage import (StorageKeyError, backend_name, get_storage, local_storage, normalize_key,
+                            storage_for_read, storage_named)
+from .media_storage import upload_root as _storage_root
+from .storage import _get_db_path, ensure_file_assets_columns
 
 # Cache headers for served files — prevents image flickering on React re-renders.
 # Uploaded images are immutable (content-addressed), so long max-age is safe.
@@ -46,31 +52,30 @@ def _db() -> sqlite3.Connection:
 
 
 def _upload_root() -> Path:
-    """Resolve the absolute upload root directory."""
-    p = Path(UPLOAD_DIR)
-    if not p.is_absolute():
-        p = Path(__file__).resolve().parents[1] / "data" / "uploads"
+    """The local upload root (media_storage.upload_root), created. The legacy path-based
+    routes below read this disk directly; everything registered goes through get_storage()."""
+    p = _storage_root()
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
-def _ensure_user_dir(user_id: str, kind: str, project_id: str = "") -> Path:
-    """
-    Create and return the per-user storage directory.
-    Layout: users/<user_id>/{uploads|images|projects/<project_id>}
-    """
-    root = _upload_root() / "users" / user_id
+def _user_key(user_id: str, kind: str, project_id: str = "") -> str:
+    """Where a user's files go, as a storage-key prefix:
+    users/<user_id>/{uploads|images|projects/<project_id>|misc}."""
     if kind == "upload":
-        p = root / "uploads"
+        sub = "uploads"
     elif kind == "image":
-        p = root / "images"
+        sub = "images"
     elif kind == "project_asset":
-        if not project_id:
-            project_id = "unknown"
-        p = root / "projects" / project_id
+        sub = f"projects/{project_id or 'unknown'}"
     else:
-        p = root / "misc"
+        sub = "misc"
+    return f"users/{user_id}/{sub}"
 
+
+def _ensure_user_dir(user_id: str, kind: str, project_id: str = "") -> Path:
+    """The per-user directory on the local disk (kept for callers that still write paths)."""
+    p = _upload_root() / _user_key(user_id, kind, project_id)
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -125,6 +130,30 @@ def _resolve_user(
 # Asset CRUD
 # ---------------------------------------------------------------------------
 
+_backend_column_checked = False
+
+
+def _ensure_backend_column(con: sqlite3.Connection) -> None:
+    """The storage_backend column is added at startup (storage.init_db); a database opened
+    without that — a test, a script — gets it here, once per process."""
+    global _backend_column_checked
+    if not _backend_column_checked:
+        ensure_file_assets_columns(con)
+        _backend_column_checked = True
+
+
+def _now() -> str:
+    """UTC, the way SQLite's CURRENT_TIMESTAMP writes it."""
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
+
+def _store_for(backend: Optional[str], key: str):
+    """The storage holding ``key``: the one a registry row names, or — for a key with no row —
+    whichever has it (media_storage.storage_for_read). None when the row names a backend this
+    HomePilot is not configured for."""
+    return storage_named(backend) if backend else storage_for_read(key)
+
+
 def insert_asset(
     user_id: str,
     kind: str,
@@ -134,74 +163,103 @@ def insert_asset(
     original_name: str = "",
     project_id: str = "",
     conversation_id: str = "",
+    storage_backend: Optional[str] = None,
+    sha256: str = "",
+    visibility: str = "private",
 ) -> str:
-    """Register a file in file_assets. Returns the asset_id."""
+    """Register a file in file_assets. Returns the asset_id.
+
+    ``storage_backend`` is the media backend that holds the bytes — the configured one when
+    not given, which is where every writer in this module just put them. ``sha256`` is of
+    the bytes as written ('' when the caller did not hash them); ``visibility`` is
+    'private' (owner, signed link or API key) or 'public' (anyone)."""
     asset_id = f"f_{uuid.uuid4().hex[:20]}"
+    backend = (storage_backend or get_storage().name).strip().lower()
+    visibility = "public" if visibility == "public" else "private"
     con = _db()
+    _ensure_backend_column(con)
     cur = con.cursor()
     cur.execute(
         """
         INSERT INTO file_assets(
             id, user_id, kind, rel_path, mime, size_bytes,
-            original_name, project_id, conversation_id
+            original_name, project_id, conversation_id, storage_backend, sha256, visibility
         )
-        VALUES (?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (asset_id, user_id, kind, rel_path, mime or "",
          int(size_bytes or 0), original_name or "",
-         project_id or "", conversation_id or ""),
+         project_id or "", conversation_id or "", backend, sha256 or "", visibility),
     )
     con.commit()
     con.close()
     return asset_id
 
 
-def get_asset(asset_id: str) -> Optional[Dict[str, Any]]:
-    """Look up a file asset by id."""
+def get_asset(asset_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
+    """Look up a file asset by id. One in the trash (deleted_at set) is None unless asked for."""
     con = _db()
     cur = con.cursor()
     cur.execute("SELECT * FROM file_assets WHERE id = ?", (asset_id,))
     row = cur.fetchone()
     con.close()
-    return dict(row) if row else None
+    if not row:
+        return None
+    asset = dict(row)
+    if asset.get("deleted_at") and not include_deleted:
+        return None
+    return asset
 
 
-def delete_asset_and_file(asset_id: str) -> bool:
+def _remove_object(rel_path: str, backend: Optional[str] = None) -> bool:
+    """Remove the bytes behind a file_assets row, from the backend the row names. Immediate,
+    as before: soft deletion with deferred removal is the multi-user phase
+    (docs/design/MEDIA_STORAGE.md)."""
+    if not rel_path:
+        return False
+    try:
+        storage = _store_for(backend, rel_path)
+        if storage is None:
+            print(f"[CLEANUP] {rel_path!r} is in media backend {backend!r}, which this HomePilot is not "
+                  f"configured for (MEDIA_STORAGE_BACKEND={backend_name()}); the object was left in place.")
+            return False
+        return storage.delete(rel_path)
+    except Exception as e:
+        print(f"[CLEANUP] Failed to delete file {rel_path}: {e}")
+        return False
+
+
+def _trash_on() -> bool:
+    """Deleted assets go to the trash first (MEDIA_TRASH_RETENTION_DAYS, 7 by default); 0 means
+    bytes and row go at once, as before Phase 4."""
+    return media_ops.trash_retention_days() > 0
+
+
+def delete_asset_and_file(asset_id: str, *, purge: bool = False) -> bool:
     """
-    Delete a file_assets record AND its physical file from disk.
-    Returns True if the DB record was removed.
+    Delete a file asset. The row is marked deleted and disappears from every read; its bytes
+    stay until the trash is purged (media_ops.purge_trash, run by the backend), so a mistaken
+    delete is recoverable for the retention window. ``purge=True`` — or a retention of 0 —
+    removes the bytes and the row now. Returns True if the record was deleted either way.
     """
     if not asset_id:
         return False
     con = _db()
+    _ensure_backend_column(con)
     cur = con.cursor()
-    cur.execute("SELECT id, rel_path FROM file_assets WHERE id = ?", (asset_id,))
+    cur.execute("SELECT id, rel_path, storage_backend, deleted_at FROM file_assets WHERE id = ?", (asset_id,))
     row = cur.fetchone()
     if not row:
         con.close()
         return False
 
-    rel_path = row["rel_path"]
-    root = _upload_root()
-
-    # Delete the physical file
-    if rel_path:
-        abs_path = root / rel_path
-        try:
-            if abs_path.is_file():
-                abs_path.unlink()
-                # Clean up empty parent dirs (but not the root)
-                parent = abs_path.parent
-                try:
-                    if parent != root and not any(parent.iterdir()):
-                        parent.rmdir()
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"[CLEANUP] Failed to delete file {rel_path}: {e}")
-
-    # Delete the DB record
-    cur.execute("DELETE FROM file_assets WHERE id = ?", (asset_id,))
+    if purge or not _trash_on():
+        _remove_object(row["rel_path"], row["storage_backend"] or "local")
+        cur.execute("DELETE FROM file_assets WHERE id = ?", (asset_id,))
+    else:
+        stamp = _now()
+        cur.execute("UPDATE file_assets SET deleted_at = COALESCE(deleted_at, ?), updated_at = ? WHERE id = ?",
+                    (stamp, stamp, asset_id))
     removed = cur.rowcount > 0
     con.commit()
     con.close()
@@ -224,13 +282,9 @@ def save_generated_image_as_asset(
     Returns dict with asset_id and url (/files/<asset_id>).
     """
     ext = "png" if "png" in (mime or "") else "jpg"
-    folder = _ensure_user_dir(user_id, "image", project_id=project_id)
-
     fname = f"{uuid.uuid4().hex}.{ext}"
-    abs_path = folder / fname
-    abs_path.write_bytes(image_bytes)
-
-    rel_path = str(abs_path.relative_to(_upload_root()))
+    rel_path = f"{_user_key(user_id, 'image', project_id=project_id)}/{fname}"
+    get_storage().put(rel_path, image_bytes)
 
     asset_id = insert_asset(
         user_id=user_id,
@@ -241,9 +295,10 @@ def save_generated_image_as_asset(
         original_name=fname,
         project_id=project_id,
         conversation_id=conversation_id,
+        sha256=hashlib.sha256(image_bytes).hexdigest(),
     )
 
-    return {"asset_id": asset_id, "url": f"/files/{asset_id}", "mime": mime or "image/png"}
+    return {"asset_id": asset_id, "url": f"/files/{asset_id}", "mime": mime or "image/png", "rel_path": rel_path}
 
 
 def save_generated_media_as_asset(
@@ -259,21 +314,21 @@ def save_generated_media_as_asset(
     extension = mimetypes.guess_extension((mime or "").split(";", 1)[0].strip())
     allowed_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm"}
     extension = extension if extension in allowed_extensions else ".bin"
-    folder = _ensure_user_dir(user_id, safe_kind, project_id=project_id)
     filename = f"{uuid.uuid4().hex}{extension}"
-    absolute_path = folder / filename
-    absolute_path.write_bytes(media_bytes)
+    rel_path = f"{_user_key(user_id, safe_kind, project_id=project_id)}/{filename}"
+    get_storage().put(rel_path, media_bytes)
     asset_id = insert_asset(
         user_id=user_id,
         kind=safe_kind,
-        rel_path=str(absolute_path.relative_to(_upload_root())),
+        rel_path=rel_path,
         mime=mime or "application/octet-stream",
         size_bytes=len(media_bytes),
         original_name=filename,
         project_id=project_id,
         conversation_id=conversation_id,
+        sha256=hashlib.sha256(media_bytes).hexdigest(),
     )
-    return {"asset_id": asset_id, "url": f"/files/{asset_id}", "mime": mime}
+    return {"asset_id": asset_id, "url": f"/files/{asset_id}", "mime": mime, "rel_path": rel_path}
 
 
 # ---------------------------------------------------------------------------
@@ -442,45 +497,32 @@ def delete_conversation_media(conversation_id: str) -> int:
     projects/<id>/persona/appearance/).
     """
     con = _db()
+    _ensure_backend_column(con)
     cur = con.cursor()
     cur.execute(
-        "SELECT id, rel_path FROM file_assets WHERE conversation_id = ?",
+        "SELECT id, rel_path, storage_backend FROM file_assets WHERE conversation_id = ? AND deleted_at IS NULL",
         (conversation_id,),
     )
     rows = cur.fetchall()
-    root = _upload_root()
     deleted = 0
 
-    for row in rows:
-        asset_id = row["id"]
-        rel_path = row["rel_path"]
-
-        # Delete the file from disk
-        abs_path = root / rel_path
-        try:
-            if abs_path.is_file():
-                abs_path.unlink()
-                deleted += 1
-                # Clean up empty parent dirs (but not the root)
-                parent = abs_path.parent
-                try:
-                    if parent != root and not any(parent.iterdir()):
-                        parent.rmdir()
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"[CLEANUP] Failed to delete file {rel_path}: {e}")
-
-    # Delete all asset records for this conversation
-    if rows:
-        cur.execute(
-            "DELETE FROM file_assets WHERE conversation_id = ?",
-            (conversation_id,),
-        )
+    if _trash_on():
+        # To the trash: gone from every read now, bytes removed when the retention has passed.
+        stamp = _now()
+        for row in rows:
+            cur.execute("UPDATE file_assets SET deleted_at = ?, updated_at = ? WHERE id = ?", (stamp, stamp, row["id"]))
+            deleted += 1
         con.commit()
+    else:
+        for row in rows:
+            if _remove_object(row["rel_path"], row["storage_backend"] or "local"):
+                deleted += 1
+        if rows:
+            cur.execute("DELETE FROM file_assets WHERE conversation_id = ?", (conversation_id,))
+            con.commit()
 
     con.close()
-    print(f"[CLEANUP] Deleted {deleted} files for conversation {conversation_id}")
+    print(f"[CLEANUP] {'Trashed' if _trash_on() else 'Deleted'} {deleted} files for conversation {conversation_id}")
     return deleted
 
 
@@ -562,24 +604,27 @@ async def upload_file(
     if len(data) > max_bytes:
         raise HTTPException(413, f"File too large (max {MAX_UPLOAD_MB}MB)")
 
-    # Choose extension
     original_name = file.filename or ""
     content_type = (file.content_type or "").lower()
+    # Before any byte is stored: what it claims to be, the owner's quota, the scanner if one is set.
+    media_validate.check_image_claim(data[:media_validate.HEAD_BYTES], content_type, original_name)
+    media_quota.check(user["id"], len(data))
+    media_validate.scan_bytes(data, original_name)
+
+    # Choose extension
     ext = ""
     if original_name and "." in original_name:
         ext = original_name.rsplit(".", 1)[1].lower()
     if not ext:
         ext = (mimetypes.guess_extension(content_type) or "").lstrip(".") or "bin"
 
-    # Write file to per-user directory
-    folder = _ensure_user_dir(user["id"], kind, project_id=project_id)
+    # Write to the user's area in media storage
     fname = f"{uuid.uuid4().hex}.{ext}"
-    abs_path = folder / fname
-    abs_path.write_bytes(data)
+    rel_path = f"{_user_key(user['id'], kind, project_id=project_id)}/{fname}"
+    get_storage().put(rel_path, data)
 
     # Store metadata
-    rel_path = str(abs_path.relative_to(_upload_root()))
-    mime = content_type or mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
+    mime = content_type or mimetypes.guess_type(fname)[0] or "application/octet-stream"
     asset_id = insert_asset(
         user_id=user["id"],
         kind=kind,
@@ -589,9 +634,41 @@ async def upload_file(
         original_name=original_name,
         project_id=project_id,
         conversation_id=conversation_id,
+        sha256=hashlib.sha256(data).hexdigest(),
     )
 
     return {"ok": True, "asset_id": asset_id, "url": f"/files/{asset_id}", "mime": mime}
+
+
+@router.get("/v1/files/usage")
+def files_usage(
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+):
+    """How much of their media quota the caller uses (quota_bytes 0: no limit)."""
+    user = _resolve_user(authorization, homepilot_session)
+    if not user:
+        raise HTTPException(401, "Authentication required")
+    return {"ok": True, **media_quota.usage(user["id"])}
+
+
+@router.get("/v1/files/{asset_id}/link")
+def file_link(
+    asset_id: str,
+    ttl: int = Query(default=media_links.DEFAULT_TTL_S, ge=1, le=media_links.MAX_TTL_S),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+):
+    """A short-lived link to one of the caller's files — for an <img> on another origin or a
+    share — that carries no account credential: /files/{id}?exp=…&sig=…"""
+    user = _resolve_user(authorization, homepilot_session)
+    if not user:
+        raise HTTPException(401, "Authentication required")
+    asset = get_asset(asset_id)
+    if not asset or asset.get("user_id") != user["id"]:
+        raise HTTPException(404, "Not found")
+    signed = media_links.sign(asset_id, ttl)
+    return {"ok": True, "asset_id": asset_id, "url": signed["url"], "expires_at": signed["exp"]}
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +685,52 @@ def _is_public_file(name: str) -> bool:
     if "/" in name or ".." in name:
         return False
     return name.startswith(("avatar_", "outfit_", "thumb_"))
+
+
+def _is_user_avatar(name: str) -> bool:
+    """Some account's current profile picture: the login screen shows those before anyone is
+    signed in, so they are public by design."""
+    try:
+        con = _db()
+        row = con.execute("SELECT 1 FROM users WHERE avatar_url = ? LIMIT 1", (f"/files/{name}",)).fetchone()
+        con.close()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _is_public_flat_file(name: str) -> bool:
+    """A flat file served without an account: a user's current avatar, or a persona visual that
+    also lives under a project's appearance folder. Any other avatar_*/outfit_*/thumb_* file
+    now needs an account, a signed link or the API key (audit item A1)."""
+    if not _is_public_file(name):
+        return False
+    return _is_user_avatar(name) or _find_persona_file(name) is not None
+
+
+def _is_persona_visual_path(parts: tuple) -> bool:
+    """projects/<id>/persona/appearance/<avatar_|outfit_|thumb_…>: the persona's own pictures,
+    public by design (the gallery, OllaBridge's VR chatbot)."""
+    return (len(parts) >= 4 and parts[0] == "projects" and "persona" in parts and "appearance" in parts
+            and _is_public_file(parts[-1]))
+
+
+def _owns_path(user: Dict[str, Any], parts: tuple) -> bool:
+    """A path under users/<id>/ belongs to that account alone (audit item A2); anything else on
+    the legacy routes is as before — flat root files, project folders."""
+    if len(parts) >= 2 and parts[0] == "users":
+        return parts[1] == str(user.get("id"))
+    return True
+
+
+def _serve_asset(asset: Dict[str, Any]):
+    key = str(asset.get("rel_path") or "")
+    return _serve_object(
+        key,
+        asset.get("mime") or "application/octet-stream",
+        asset.get("original_name") or os.path.basename(key.replace("\\", "/")),
+        backend=asset.get("storage_backend") or "local",
+    )
 
 
 def _find_persona_file(filename: str) -> Optional[Path]:
@@ -628,49 +751,128 @@ def _find_persona_file(filename: str) -> Optional[Path]:
     return None
 
 
+def _serve_object(key: str, mime: str, filename: str, backend: Optional[str] = None):
+    """Serve an object from media storage — the backend its registry row names, or for a key
+    with no row whichever has it: straight off the disk when that is local (a FileResponse,
+    as before), streamed in 1 MB chunks otherwise."""
+    storage = _store_for(backend, key)
+    if storage is None:
+        print(f"[FILES] {key!r} is in media backend {backend!r}, which this HomePilot is not configured "
+              f"for (MEDIA_STORAGE_BACKEND={backend_name()}); configure it again to serve the file.")
+        raise HTTPException(404, "Not found")
+    try:
+        if not storage.exists(key):
+            raise HTTPException(404, "Not found")
+        local = storage.local_path(key)
+        if local is not None:
+            return FileResponse(path=str(local), media_type=mime, filename=filename, headers=_FILE_CACHE_HEADERS)
+        stream = storage.open(key)
+    except StorageKeyError:
+        raise HTTPException(404, "Not found")
+
+    def _chunks():
+        try:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            stream.close()
+
+    safe_name = filename.replace('"', "")
+    headers = {**_FILE_CACHE_HEADERS, "Content-Disposition": f'inline; filename="{safe_name}"'}
+    return StreamingResponse(_chunks(), media_type=mime, headers=headers)
+
+
+def _object_or_404(key: str, filename: str):
+    """A path-based route's last resort: the object under ``key`` in the configured storage,
+    when that is not this disk (an avatar or background written after a switch to S3)."""
+    try:
+        storage = get_storage()
+        if storage.name != "local" and storage.exists(key):
+            return _serve_object(key, mimetypes.guess_type(filename)[0] or "application/octet-stream", filename)
+    except Exception:
+        pass
+    raise HTTPException(404, "Not found")
+
+
+def resolve_local_file(file_ref: str) -> Optional[Path]:
+    """A readable path on this disk for a ``/files/<ref>`` reference — a flat key or a
+    file_assets id — for code that hands files to ComfyUI or copies them: the object itself
+    when it is on the disk, else a copy fetched from the configured storage into
+    ``<upload root>/.cache/media/<key>`` (kept; the same key resolves to the same path, and
+    re-fetched when the size differs). None when nothing is found."""
+    ref = (file_ref or "").split("?")[0].strip().strip("/")
+    if not ref or ".." in Path(ref.replace("\\", "/")).parts:
+        return None
+    candidates: list = [(ref, None)]                       # a flat key: whichever store has it
+    try:
+        asset = get_asset(ref)
+    except Exception:
+        asset = None
+    if asset and asset.get("rel_path"):                    # a registered asset: its own backend
+        candidates.insert(0, (str(asset["rel_path"]), asset.get("storage_backend") or "local"))
+    for key, backend in candidates:
+        try:
+            storage = _store_for(backend, key)
+            if storage is None or not storage.exists(key):
+                continue
+            local = storage.local_path(key)
+            if local is not None:
+                return local
+            cache_key = f".cache/media/{normalize_key(key)}"
+            disk = local_storage()
+            if not disk.exists(cache_key) or disk.size(cache_key) != storage.size(key):
+                with storage.open(key) as src:
+                    disk.put(cache_key, src)
+            return disk.local_path(cache_key)
+        except StorageKeyError:
+            continue
+        except Exception as e:
+            print(f"[FILES] Could not resolve {key!r} to a local file: {e}")
+            continue
+    return None
+
+
 @router.get("/files/{asset_id}")
 def download_file(
     asset_id: str,
     authorization: str = Header(default=""),
     homepilot_session: Optional[str] = Cookie(default=None),
     token: Optional[str] = Query(default=None, alias="token"),
+    exp: Optional[str] = Query(default=None),
+    sig: Optional[str] = Query(default=None),
 ):
     """
-    Secure file serving.
-    Requires auth and ownership check.
-    This is the endpoint used by <img src="/files/...">.
-    Supports ?token=<session_token> for <img> tags that can't set headers.
-    Exception: persona appearance images (avatar_*, outfit_*, thumb_*) are public.
+    Secure file serving — the endpoint behind <img src="/files/...">.
+
+    A registered asset is served to its owner (session, cookie, or ?token= for an <img> on
+    another origin), to anyone with a signed link for it (?exp=&sig=, GET /v1/files/{id}/link),
+    and to everyone when its visibility is public. A flat file is public only when it is a
+    user's current avatar or a persona visual; other flat files need an account.
     """
-    # Public persona images can be served without auth
-    if _is_public_file(asset_id):
+    asset = get_asset(asset_id)
+    if asset and (asset.get("visibility") == "public" or media_links.verify(asset_id, exp, sig)):
+        return _serve_asset(asset)
+
+    # A public flat file: a login-screen avatar or a persona visual.
+    if not asset and _is_public_flat_file(asset_id):
         safe = Path(asset_id)
         abs_path = _upload_root() / safe
         if abs_path.exists() and abs_path.is_file():
             mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
             return FileResponse(path=str(abs_path), media_type=mime, filename=safe.name, headers=_FILE_CACHE_HEADERS)
-        raise HTTPException(404, "Not found")
+        return _object_or_404(asset_id, safe.name)
 
     user = _resolve_user(authorization, homepilot_session, token_param=token)
     if not user:
         raise HTTPException(401, "Authentication required")
 
-    asset = get_asset(asset_id)
     if asset:
         if asset.get("user_id") != user["id"]:
             raise HTTPException(404, "Not found")
-
-        abs_path = _upload_root() / asset["rel_path"]
-        if not abs_path.exists():
-            raise HTTPException(404, "Not found")
-
-        filename = asset.get("original_name") or os.path.basename(str(abs_path))
-        return FileResponse(
-            path=str(abs_path),
-            media_type=asset.get("mime") or "application/octet-stream",
-            filename=filename,
-            headers=_FILE_CACHE_HEADERS,
-        )
+        return _serve_asset(asset)
 
     # Fallback: serve from flat uploads dir (avatars, legacy files)
     safe = Path(asset_id)
@@ -681,7 +883,7 @@ def download_file(
         mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
         return FileResponse(path=str(abs_path), media_type=mime, filename=safe.name, headers=_FILE_CACHE_HEADERS)
 
-    raise HTTPException(404, "Not found")
+    return _object_or_404(asset_id, safe.name)
 
 
 # ---------------------------------------------------------------------------
@@ -696,19 +898,18 @@ def download_file_legacy(
     token: Optional[str] = Query(default=None, alias="token"),
 ):
     """
-    Fallback for legacy /files/<filename> paths (pre-asset era).
-    Serves files from the flat UPLOAD_DIR if the user is authenticated.
-    This preserves backward compatibility for existing chat history images.
+    Fallback for legacy /files/<path> URLs (pre-asset era) and persona visuals.
+    A persona's own pictures (projects/<id>/persona/appearance/…) are public; a path under
+    users/<id>/ is served to that account only; other paths need an account, as before.
     Supports ?token=<session_token> for <img> tags that can't set headers.
-    Exception: persona appearance images (avatar_*, outfit_*, thumb_*) are public.
     """
     # Prevent path traversal
-    safe = Path(subpath)
+    safe = Path(subpath.replace("\\", "/"))
     if ".." in safe.parts:
         raise HTTPException(400, "Invalid path")
 
-    # Public persona images can be served without auth
-    if _is_public_file(safe.name):
+    # Public without an account: a persona's own pictures, or a public flat file.
+    if _is_persona_visual_path(safe.parts) or (len(safe.parts) == 1 and _is_public_flat_file(safe.name)):
         abs_path = _upload_root() / safe
         if abs_path.exists() and abs_path.is_file():
             mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
@@ -719,18 +920,20 @@ def download_file_legacy(
         if found:
             mime = mimetypes.guess_type(str(found))[0] or "application/octet-stream"
             return FileResponse(path=str(found), media_type=mime, filename=safe.name, headers=_FILE_CACHE_HEADERS)
-        raise HTTPException(404, "Not found")
+        return _object_or_404(subpath, safe.name)
 
     user = _resolve_user(authorization, homepilot_session, token_param=token)
     if not user:
         raise HTTPException(401, "Authentication required")
+    if not _owns_path(user, safe.parts):
+        raise HTTPException(404, "Not found")
 
     abs_path = _upload_root() / safe
     if not abs_path.exists() or not abs_path.is_file():
         # Fallback: search project appearance dirs for the file by name
         found = _find_persona_file(safe.name) if "persona" in safe.parts else None
         if not found:
-            raise HTTPException(404, "Not found")
+            return _object_or_404(subpath, safe.name)
         abs_path = found
 
     mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"

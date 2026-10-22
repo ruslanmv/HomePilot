@@ -81,7 +81,8 @@ if [ "$FORGE_MODE" = "repo" ]; then
         --host "$MCP_GATEWAY_HOST" \
         --port "$MCP_GATEWAY_PORT" \
         --log-level warning >>"$LOG_DIR/mcp-gateway.log" 2>&1 &
-    PIDS="$PIDS $!"
+    GATEWAY_PID=$!
+    PIDS="$PIDS $GATEWAY_PID"
     cd "$ROOT"
 else
     # Pip-installed mode — use the mcpgateway command directly
@@ -100,27 +101,45 @@ else
         --host "$MCP_GATEWAY_HOST" \
         --port "$MCP_GATEWAY_PORT" \
         --log-level warning >>"$LOG_DIR/mcp-gateway.log" 2>&1 &
-    PIDS="$PIDS $!"
+    GATEWAY_PID=$!
+    PIDS="$PIDS $GATEWAY_PID"
 fi
 
 # ── Wait for gateway to be ready ─────────────────────────────────────────────
+# Definitive, not hopeful: the gateway either answers /health, or this script says why it
+# did not and ends with the marker GATEWAY_FAILED on stdout (make start reads the last
+# line), so nobody prints "✓ started" over a process that died on import.
 echo "  Waiting for gateway to be ready..."
-for i in $(seq 1 30); do
+GATEWAY_OK=false
+for i in $(seq 1 40); do
     if curl -sf "http://${MCP_GATEWAY_HOST}:${MCP_GATEWAY_PORT}/health" >/dev/null 2>&1; then
         echo "  ✓ MCP Gateway ready on port $MCP_GATEWAY_PORT"
+        GATEWAY_OK=true
         break
     fi
-    if [ "$i" = "30" ]; then
-        echo "  ⚠  Gateway may still be starting (timeout waiting for health check)"
+    if ! kill -0 "$GATEWAY_PID" 2>/dev/null; then
+        break   # it exited; the log has the traceback
     fi
     sleep 1
 done
+if [ "$GATEWAY_OK" != true ]; then
+    {
+        echo "  ✗ MCP Gateway is not answering on port $MCP_GATEWAY_PORT."
+        echo "    Log: $LOG_DIR/mcp-gateway.log — last lines:"
+        tail -n 6 "$LOG_DIR/mcp-gateway.log" 2>/dev/null | sed 's/^/      /'
+        echo "    An ImportError there usually means a dependency moved on; make install-mcp pins them (mcp<2, fastapi<0.130)."
+    } >&2
+    echo "GATEWAY_FAILED"
+    exit 1
+fi
 
 # ── Optionally start bundled MCP servers (from cloned repo) ───────────────────
 STARTED_SERVERS=""
 if [ "$WITH_SERVERS" = true ] && [ "$FORGE_MODE" = "repo" ]; then
     MCP_SERVERS_PYTHON="$MCP_DIR/mcp-servers/python"
-    MCP_SERVER_BASE_PORT="${MCP_SERVER_BASE_PORT:-9100}"
+    # 9130 upwards: 9100–9105 and 9120 are HomePilot's own agentic servers
+    # (scripts/agentic-start.sh), and two of Forge's samples used to die on them.
+    MCP_SERVER_BASE_PORT="${MCP_SERVER_BASE_PORT:-9130}"
     SERVERS="${MCP_SERVERS:-csv_pandas_chat_server plotly_server python_sandbox_server}"
     PORT=$MCP_SERVER_BASE_PORT
 

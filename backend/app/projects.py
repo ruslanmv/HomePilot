@@ -1150,7 +1150,11 @@ You have access to the project's context. When relevant context from the knowled
 
     # 5b. Hybrid intent detection — inject dynamic hint for photo-related messages
     #     so the LLM gets precise guidance on what to do, without bypassing its reasoning.
-    if project_data and project_data.get("project_type") == "persona":
+    #     Short messages only: a pasted document's "back" or "first" is not a request to turn
+    #     around or show photo 1 (intent_guard.py).
+    from .intent_guard import is_short_command as _is_short_command
+    if (project_data and project_data.get("project_type") == "persona"
+            and _is_short_command(payload.get("message") or "")):
         import re as _hint_re
         _user_msg = (payload.get("message") or "").lower().strip()
 

@@ -131,8 +131,15 @@ cd "$MCP_PATH"
 
 if command -v uv >/dev/null 2>&1; then
     uv pip install -e . --python .venv/bin/python 2>&1 | tail -3
+    # Forge pins its dependencies with floors and no ceilings, so a fresh install resolves to
+    # whatever is newest — which broke it twice: mcp 2.x renamed the client it imports
+    # (streamablehttp_client → streamable_http_client; the gateway died on import, "Context
+    # Forge (port 4444): not responding"), and FastAPI ≥0.14x's lazy routers crash the
+    # Prometheus middleware it ships (every /admin page a 500). Keep the versions of its era.
+    uv pip install "mcp>=1.25,<2" "fastapi>=0.128,<0.130" --python .venv/bin/python 2>&1 | tail -1
 else
     .venv/bin/pip install -e . 2>&1 | tail -3
+    .venv/bin/pip install "mcp>=1.25,<2" "fastapi>=0.128,<0.130" 2>&1 | tail -1
 fi
 
 cd "$ROOT"

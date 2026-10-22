@@ -20,7 +20,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .config import UPLOAD_DIR, SQLITE_PATH
+from .config import UPLOAD_DIR, SQLITE_PATH  # noqa: F401  (UPLOAD_DIR: kept for importers)
+from .media_storage import backend_name as _storage_backend_name
+from .media_storage import upload_root as _storage_root
 
 # Known filename patterns → feature classification
 _FEATURE_PATTERNS = {
@@ -52,9 +54,7 @@ def _db() -> sqlite3.Connection:
 
 
 def _upload_root() -> Path:
-    p = Path(UPLOAD_DIR)
-    if not p.is_absolute():
-        p = Path(__file__).resolve().parents[1] / "data" / "uploads"
+    p = _storage_root()
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -106,19 +106,25 @@ def register_asset(
     sha256: str = "",
     width: int = 0,
     height: int = 0,
+    storage_backend: str = "",
 ) -> str:
     """
     Register a new asset. Returns the asset_id.
-    If an asset with the same storage_key already exists, returns its ID.
+    If an asset with the same (storage_backend, storage_key) already exists, returns its ID.
+
+    ``storage_backend`` is the MediaStorage backend holding the bytes — the configured one
+    when not given (``local`` today). The table always had the column; the queries assumed
+    'local', which is what a second backend trips over.
     """
+    backend = (storage_backend or _storage_backend_name()).strip().lower()
     _ensure_assets_table()
     con = _db()
     cur = con.cursor()
 
     # Check if already exists
     cur.execute(
-        "SELECT id FROM assets WHERE storage_backend = 'local' AND storage_key = ?",
-        (storage_key,),
+        "SELECT id FROM assets WHERE storage_backend = ? AND storage_key = ?",
+        (backend, storage_key),
     )
     row = cur.fetchone()
     if row:
@@ -138,9 +144,9 @@ def register_asset(
             id, kind, mime, storage_backend, storage_key,
             size_bytes, width, height, sha256,
             origin, source_hint, feature, project_id, user_id
-        ) VALUES (?,?,?,'local',?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
-        (asset_id, kind, mime or "", storage_key,
+        (asset_id, kind, mime or "", backend, storage_key,
          size_bytes, width, height, sha256 or "",
          origin, source_hint or "", feature or "",
          project_id or "", user_id or ""),
@@ -161,23 +167,25 @@ def get_asset(asset_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
-def find_asset_id_by_storage_key(storage_key: str) -> Optional[str]:
-    """Reverse-lookup: storage_key → asset_id.
+def find_asset_id_by_storage_key(storage_key: str, storage_backend: str = "") -> Optional[str]:
+    """Reverse-lookup: (storage_backend, storage_key) → asset_id.
 
     Used by the persona-library link phase to backfill the
     ``registry_asset_id`` field on older library rows that were
     saved before that field existed. The ``UNIQUE(storage_backend,
     storage_key)`` constraint on the assets table guarantees at
-    most one row per storage_key, so this is a safe O(1) lookup.
+    most one row per key and backend, so this is a safe O(1) lookup.
+    The configured backend when ``storage_backend`` is not given.
     """
     if not storage_key:
         return None
+    backend = (storage_backend or _storage_backend_name()).strip().lower()
     _ensure_assets_table()
     con = _db()
     cur = con.cursor()
     cur.execute(
-        "SELECT id FROM assets WHERE storage_backend = 'local' AND storage_key = ?",
-        (storage_key,),
+        "SELECT id FROM assets WHERE storage_backend = ? AND storage_key = ?",
+        (backend, storage_key),
     )
     row = cur.fetchone()
     con.close()
@@ -412,10 +420,14 @@ def register_comfy_output(
     project_id: str = "",
     user_id: str = "",
     workflow_name: str = "",
+    storage_backend: str = "local",
+    size_bytes: Optional[int] = None,
 ) -> str:
     """
     Register a file that was downloaded from ComfyUI.
-    Call this right after saving the file to UPLOAD_DIR.
+    Call this right after saving the file to media storage — ``dest_path`` is where it would
+    be on this disk (the key is its path relative to the upload root); ``storage_backend``
+    and ``size_bytes`` say where it actually went when that is not the local disk.
 
     Returns the asset_id.
     """
@@ -426,7 +438,10 @@ def register_comfy_output(
     except ValueError:
         rel_path = str(abs_path)
 
-    size = abs_path.stat().st_size if abs_path.exists() else 0
+    if size_bytes is not None:
+        size = int(size_bytes)
+    else:
+        size = abs_path.stat().st_size if abs_path.exists() else 0
     ext = abs_path.suffix.lower()
     kind = "video" if ext in VIDEO_EXTS else "image"
     mime = mimetypes.guess_type(str(abs_path))[0] or ""
@@ -444,4 +459,5 @@ def register_comfy_output(
         feature=feature,
         project_id=project_id,
         user_id=user_id,
+        storage_backend=storage_backend or "local",
     )

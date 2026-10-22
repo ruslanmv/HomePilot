@@ -54,6 +54,11 @@ beforeEach(() => {
   appShell.className = 'hp-app-shell';
   appShell.appendChild(document.createElement('main'));
   document.body.appendChild(appShell);
+  // No network in a unit test. The provider's backend calls (the start marker, the recap
+  // lookup) resolve to http://localhost:8000 like the rest of the app; unstubbed, this test
+  // depended on whatever listened there and on how fast a refused connection failed — in CI
+  // the stop click landed while the start was still waiting on it, and nothing ended.
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network is off in unit tests'); }));
   (globalThis as Record<string, unknown>).hpMeetingSense = recorder();
 });
 
@@ -61,6 +66,7 @@ afterEach(() => {
   delete (globalThis as Record<string, unknown>).hpMeetingSense;
   appShell?.remove();
   appShell = null;
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -92,7 +98,9 @@ describe('closing an ended MeetingSense workspace', () => {
     expect(meetingConversation).toBeTruthy();
     expect(meetingConversation).not.toBe('chat-before-meeting');
 
-    // End the meeting; once finalization completes the recap exposes Close.
+    // End the meeting; once finalization completes the recap exposes Close. Stop is disabled
+    // until the start has fully settled, as for a person — click it once it is live.
+    await waitFor(() => expect(screen.getByTestId('ms-record-button')).not.toBeDisabled());
     fireEvent.click(screen.getByTestId('ms-record-button'));
     const close = await screen.findByTestId('ms-workspace-close');
     // The meeting workspace shares the app chrome with persistent phone/settings controls.

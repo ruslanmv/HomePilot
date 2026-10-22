@@ -75,13 +75,43 @@ export function parseWebSearch(raw: unknown): WebSearchInfo | null {
 }
 
 /**
+ * Citation markers as models write them, in the one form the chat links: `[n]`. Covers the
+ * browsing style of gpt-oss and o-series models (`【6†L1-L2】`, `【6†source】`, `【6】`), a
+ * stray `[6†L1-L2]`, and grouped markers (`[2, 3]`, `[2,3]` → `[2][3]`). Code is untouched.
+ */
+export function normalizeCitations(text: string): string {
+  if (!text) return text
+  return text
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((part, i) => {
+      if (i % 2 === 1) return part
+      return part
+        .replace(/\s?【(\d{1,3})(?:†[^】]*)?】/g, '[$1]')
+        .replace(/\[(\d{1,3})†[^\]]*\](?!\()/g, '[$1]')
+        .replace(/\[(\d{1,3}(?:\s*,\s*\d{1,3})+)\](?!\()/g, (_m, list: string) =>
+          list.split(',').map((n) => `[${n.trim()}]`).join(''))
+    })
+    .join('')
+}
+
+/** The source numbers an answer cites, in the order it first cites them. */
+export function citedNumbers(text: string): number[] {
+  const seen: number[] = []
+  for (const m of normalizeCitations(text || '').matchAll(/\[\[?(\d{1,3})\]/g)) {
+    const n = Number(m[1])
+    if (!seen.includes(n)) seen.push(n)
+  }
+  return seen
+}
+
+/**
  * The answer's [n] markers as links to their sources, for the markdown renderer. Only numbers
  * that are real sources, never inside code, and never a marker that is already a link.
  */
 export function linkCitations(text: string, sources: WebSource[]): string {
   if (!text || !sources.length) return text
   const byN = new Map(sources.map((s) => [s.n, s]))
-  return text
+  return normalizeCitations(text)
     .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
     .map((part, i) => {
       if (i % 2 === 1) return part // code
@@ -120,8 +150,17 @@ function SourceChip({ source }: { source: WebSource }) {
   )
 }
 
-export function WebSources({ web }: { web: WebSearchInfo }) {
+/** Sources the answer cites first, in citation order; the rest after, in their own order. */
+export function orderSources(sources: WebSource[], cited: number[]): WebSource[] {
+  if (!cited.length) return sources
+  const rank = new Map(cited.map((n, i) => [n, i]))
+  return [...sources].sort((a, b) => (rank.get(a.n) ?? 1e6 + a.n) - (rank.get(b.n) ?? 1e6 + b.n))
+}
+
+export function WebSources({ web: raw, text }: { web: WebSearchInfo; text?: string }) {
   const [all, setAll] = useState(false)
+  // Like ChatGPT: the sources the answer relies on come first, not the search's raw order.
+  const web = text && raw.sources?.length ? { ...raw, sources: orderSources(raw.sources, citedNumbers(text)) } : raw
 
   if (web.status === 'unavailable') {
     return (
@@ -149,7 +188,9 @@ export function WebSources({ web }: { web: WebSearchInfo }) {
       <div className="flex items-center gap-1.5 text-[12px] text-white/45">
         <Globe size={13} aria-hidden />
         <span>
-          Searched the web for <span className="text-white/65">“{web.query}”</span> · {web.sources.length} source{web.sources.length === 1 ? '' : 's'}
+          {web.query?.trim()
+            ? <>Searched the web for <span className="text-white/65">“{web.query}”</span></>
+            : 'Searched the web'} · {web.sources.length} source{web.sources.length === 1 ? '' : 's'}
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-2">

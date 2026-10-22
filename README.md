@@ -417,7 +417,8 @@ graph LR
 ### Data & Storage
 
 * **Metadata:** Stored locally in SQLite.
-* **Media:** Generated outputs are written to disk (`./outputs`).
+* **Media:** Uploads and generated images live on disk under `backend/data/uploads` by default, or in any S3-compatible bucket (`make start-media-s3` + `make use-media-s3`, or your own `S3_*` settings in `.env`).
+* **Media safety:** Every write is checksummed; `make media-verify`, `make media-backup` and `make media-restore` check and recover them. Design: [`docs/design/MEDIA_STORAGE.md`](docs/design/MEDIA_STORAGE.md).
 * **Stories:** Project data and scenes stored in-memory (MVP) or SQLite.
 * **Privacy:** No external telemetry. Services bind to `127.0.0.1` by default.
 

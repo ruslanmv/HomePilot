@@ -300,7 +300,8 @@ def bundle_install_status(bundle: EssayVideoBundle) -> Dict[str, Any]:
 # ── Installation (reinstall-safe: download.py skips files on disk) ──────────
 
 def _download_script() -> Path:
-    return Path(__file__).resolve().parents[3] / "scripts" / "download.py"
+    from ..download_script import download_script   # the repo's, or a packaged image's copy
+    return download_script()
 
 
 def install_plan(bundle: EssayVideoBundle) -> List[List[str]]:

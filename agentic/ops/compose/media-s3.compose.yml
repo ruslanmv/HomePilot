@@ -1,0 +1,45 @@
+# Self-hosted S3-compatible object storage for HomePilot media
+# (Phase 2 of docs/design/MEDIA_STORAGE.md).
+#
+# Usage: make start-media-s3   /   make stop-media-s3
+#
+# HomePilot speaks plain S3, so any server will do. This profile runs MinIO's community image
+# because it is the one most machines already have; that image is frozen (its repository was
+# archived in April 2026), so `latest` no longer moves. MEDIA_S3_IMAGE picks another server
+# (AIStor Free, Garage, RustFS, SeaweedFS…) as long as it takes the same two credentials.
+
+# Its own Compose project: the SearXNG profile lives in this folder too, and sharing the
+# default project name made each file see the other's container as an orphan.
+name: hp-media
+
+services:
+  media-s3:
+    image: ${MEDIA_S3_IMAGE:-minio/minio:latest}
+    container_name: hp-media-s3
+    command: server /data --console-address ":9001"
+    ports:
+      # This computer only. 9400/9401 by default: 9000/9001 are taken by other tools on
+      # many machines; MEDIA_S3_PORT / MEDIA_S3_CONSOLE_PORT change them (then point
+      # S3_ENDPOINT_URL at the same port).
+      - "127.0.0.1:${MEDIA_S3_PORT:-9400}:9000"
+      - "127.0.0.1:${MEDIA_S3_CONSOLE_PORT:-9401}:9001"
+    environment:
+      # Generated once by `make start-media-s3` into backend/data/media-s3.env (mode 600).
+      - MINIO_ROOT_USER=${MEDIA_S3_ACCESS_KEY:?set MEDIA_S3_ACCESS_KEY, or use make start-media-s3}
+      - MINIO_ROOT_PASSWORD=${MEDIA_S3_SECRET_KEY:?set MEDIA_S3_SECRET_KEY, or use make start-media-s3}
+    volumes:
+      # The objects, outside the container and outside the application: backend/data/ is
+      # already git-ignored. Back this folder up like the database.
+      - ../../../backend/data/media-s3:/data
+    restart: unless-stopped
+    networks:
+      - hp-media
+
+networks:
+  hp-media:
+    # Docker's own pick of subnet (172.17–172.31/16) collided with a VPN route on a laptop
+    # (172.30.0.0/24), which left the published port unreachable from the host. A small,
+    # unusual subnet avoids that; MEDIA_S3_SUBNET changes it.
+    ipam:
+      config:
+        - subnet: ${MEDIA_S3_SUBNET:-10.251.9.0/24}

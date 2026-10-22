@@ -109,7 +109,7 @@ export function resolveBackendUrl(override?: string | null): string {
         // An address `make start` picked (saved because it was the default then) is not a
         // choice: it follows the backend to wherever this start put it. Without this, a run
         // that moved the backend to :8002 left every later run — back on :8000 — unreachable.
-        if (storedIsLocal && wasAutomatic(clean, storedPort)) {
+        if (storedIsLocal && wasAutomatic(clean)) {
           return getDefaultBackendUrl();
         }
         return followMovedDevBackend(clean);
@@ -129,22 +129,19 @@ function stripTrailingSlash(url: string): string {
 const ORIGIN_KEY = "homepilot_backend_url_origin";
 
 /**
- * The saved address was the automatic one, not a choice: marked so when it was saved, or —
- * saved before that mark existed — a local port `make start` moves the backend to (8001-8019,
- * the next free ones after :8000) that is not today's default.
+ * The saved address was the automatic one, not a choice: marked so when it was saved. An
+ * address saved before the mark existed is kept as it is — a custom local port is a choice
+ * too often to guess otherwise.
  */
-function wasAutomatic(clean: string, port: string): boolean {
+function wasAutomatic(clean: string): boolean {
   let origin: string | null = null;
   try {
     origin = window.localStorage.getItem(ORIGIN_KEY);
   } catch {
     origin = null;
   }
-  if (origin === "user") return false;
-  if (clean === getDefaultBackendUrl()) return false;
-  if (origin === "auto") return true;
-  const n = Number(port);
-  return Number.isInteger(n) && n >= 8001 && n <= 8019;
+  if (origin !== "auto") return false;
+  return clean !== getDefaultBackendUrl();
 }
 
 /**

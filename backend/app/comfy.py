@@ -469,23 +469,10 @@ def _get_local_file_path(url: str) -> Path | None:
         if not file_ref or '..' in file_ref:
             return None
 
-        # 1) Try direct file in UPLOAD_DIR (legacy flat layout)
-        local_path = Path(UPLOAD_DIR) / file_ref
-        if local_path.exists():
-            return local_path
-
-        # 2) Try resolving as an asset_id via the file_assets DB table
-        try:
-            from .files import get_asset, _upload_root
-            asset = get_asset(file_ref)
-            if asset and asset.get("rel_path"):
-                asset_path = _upload_root() / asset["rel_path"]
-                if asset_path.exists():
-                    return asset_path
-        except Exception:
-            pass
-
-        return None
+        # A flat key or a file_assets id — on this disk, or fetched from the configured
+        # storage into a local cache when the media lives elsewhere (files.py).
+        from .files import resolve_local_file
+        return resolve_local_file(file_ref)
     except Exception:
         return None
 
@@ -602,16 +589,10 @@ def _preprocess_image_paths(variables: Dict[str, Any]) -> Dict[str, Any]:
             elif value.startswith('/files/'):
                 try:
                     file_ref = value.replace('/files/', '', 1).split('?')[0]
-                    # Try direct file first, then asset DB lookup
-                    local_path = Path(UPLOAD_DIR) / file_ref
-                    if not local_path.exists():
-                        try:
-                            from .files import get_asset, _upload_root
-                            asset = get_asset(file_ref)
-                            if asset and asset.get("rel_path"):
-                                local_path = _upload_root() / asset["rel_path"]
-                        except Exception:
-                            pass
+                    # A flat key or a file_assets id, on this disk or fetched from the
+                    # configured storage (files.py).
+                    from .files import resolve_local_file
+                    local_path = resolve_local_file(file_ref) or (Path(UPLOAD_DIR) / file_ref)
 
                     if local_path.exists():
                         # Copy to ComfyUI's input directory

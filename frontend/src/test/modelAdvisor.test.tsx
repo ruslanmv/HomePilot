@@ -160,11 +160,13 @@ describe('ModelAdvisorCard', () => {
     render(<ModelAdvisorCard backendUrl="http://hp" initialKind="image" onInstalled={onInstalled} />)
     await screen.findByText('sdxl')
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))
-    expect(spy.mock.calls.some(([u]) => String(u).includes('/models/install'))).toBe(false)
+    // Nothing installed yet — the card only *reads* /models/install/progress when it mounts.
+    const installCall = () => spy.mock.calls.find(([u, init]) => String(u).endsWith('/models/install') && init?.method === 'POST')
+    expect(installCall()).toBeUndefined()
     expect(screen.getByText('Download ~6.94 GB?')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))
     await waitFor(() => expect(onInstalled).toHaveBeenCalled())
-    const call = spy.mock.calls.find(([u]) => String(u).includes('/models/install'))
+    const call = installCall()
     expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ provider: 'comfyui', model_type: 'image', model_id: 'sdxl:tag' })
   })
 

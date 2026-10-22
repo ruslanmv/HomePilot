@@ -190,8 +190,8 @@ def test_settings_endpoint(client, mock_outbound):
 
 def test_upload_endpoint(client, mock_outbound):
     """Test /upload endpoint."""
-    # Create a mock file
-    file_content = b"fake image content"
+    # A mock file — uploads are checked against their declared type, so it must start like a PNG.
+    file_content = b"\x89PNG\r\n\x1a\n" + b"fake image content"
     files = {"file": ("test.png", file_content, "image/png")}
 
     r = client.post("/upload", files=files)

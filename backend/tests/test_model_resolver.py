@@ -117,11 +117,23 @@ def test_candidates_include_wsl_host_when_under_wsl(mr, monkeypatch):
     monkeypatch.setenv("OLLAMA_DISCOVERY", "auto")
     monkeypatch.setattr(mr, "is_wsl", lambda: True)
     monkeypatch.setattr(mr, "is_docker", lambda: False)
+    monkeypatch.setattr(mr, "wsl_networking_mode", lambda: "nat")
     monkeypatch.setattr(mr, "wsl_host_ips", lambda: ["172.20.16.1"])
     urls = [u for _, u in mr.candidate_urls()]
     assert urls[0] == mr.OLLAMA_BASE_URL.rstrip("/")
     assert "http://172.20.16.1:11434" in urls
     assert len(urls) == len(set(urls))
+
+
+def test_mirrored_wsl_skips_the_host_addresses(mr, monkeypatch):
+    """Mirrored networking shares Windows' loopback: the gateway is the LAN router."""
+    monkeypatch.setenv("OLLAMA_DISCOVERY", "auto")
+    monkeypatch.setattr(mr, "is_wsl", lambda: True)
+    monkeypatch.setattr(mr, "is_docker", lambda: False)
+    monkeypatch.setattr(mr, "wsl_networking_mode", lambda: "mirrored")
+    monkeypatch.setattr(mr, "wsl_host_ips", lambda: ["192.168.1.254", "10.255.255.254"])
+    urls = [u for _, u in mr.candidate_urls()]
+    assert "http://127.0.0.1:11434" in urls and not any("192.168.1.254" in u or "10.255.255.254" in u for u in urls)
 
 
 def test_discovery_off_probes_only_the_configured_url(mr, monkeypatch):
@@ -169,6 +181,7 @@ def test_resolve_falls_back_and_reports_reason(mr, monkeypatch):
 
 def test_resolve_no_runtime_gives_bridge_remedy_under_wsl(mr, monkeypatch):
     monkeypatch.setattr(mr, "is_wsl", lambda: True)
+    monkeypatch.setattr(mr, "wsl_networking_mode", lambda: "nat")
     _stub_runtimes(monkeypatch, mr, [
         mr.Runtime(url="http://localhost:11434", label="configured", error="ConnectError"),
         mr.Runtime(url="http://172.20.16.1:11434", label="wsl-host", error="ConnectError"),
@@ -177,6 +190,24 @@ def test_resolve_no_runtime_gives_bridge_remedy_under_wsl(mr, monkeypatch):
     assert res.source == "none" and res.model == ""
     assert res.remedy["kind"] == "wsl_bridge"
     assert "mirrored" in res.remedy["message"]
+
+
+def test_mirrored_wsl_says_ollama_is_stopped_or_busy_not_unreachable(mr, monkeypatch):
+    monkeypatch.setattr(mr, "is_wsl", lambda: True)
+    monkeypatch.setattr(mr, "wsl_networking_mode", lambda: "mirrored")
+    _stub_runtimes(monkeypatch, mr, [mr.Runtime(url="http://127.0.0.1:11434", label="loopback", error="ReadTimeout")])
+    res = _run(mr.resolve("chat", ""))
+    assert res.remedy["kind"] == "start"
+    msg = res.remedy["message"]
+    assert "mirrored networking" in msg and "Check again" in msg and "networkingMode" not in msg
+
+
+def test_nothing_answered_is_remembered_only_briefly(mr):
+    down = [mr.Runtime(url="http://127.0.0.1:11434", label="loopback")]
+    up = [mr.Runtime(url="http://127.0.0.1:11434", label="loopback", reachable=True)]
+    assert mr._fresh(0.0, down, mr.NEGATIVE_TTL_S - 0.1) and not mr._fresh(0.0, down, mr.NEGATIVE_TTL_S + 0.1)
+    assert mr._fresh(0.0, up, mr.NEGATIVE_TTL_S + 0.1)
+    assert mr.NEGATIVE_TTL_S < mr.CACHE_TTL_S
 
 
 def test_resolve_runtime_without_models_offers_download(mr, monkeypatch):
@@ -263,3 +294,49 @@ def test_resolution_endpoint_shape(client, mr, monkeypatch):
     assert data["runtime_url"] == "http://localhost:11434"
     assert data["fingerprint"].startswith("http://localhost:11434|")
     assert isinstance(data["suggested"], list)
+
+
+# ── an explicit Base URL that is not an Ollama ───────────────────────────────
+
+def test_ollama_root_strips_openai_and_api_paths(mr):
+    assert mr.ollama_root("http://localhost:11434/v1/") == "http://localhost:11434"
+    assert mr.ollama_root("http://localhost:11434/api") == "http://localhost:11434"
+    assert mr.ollama_root("http://host:11434") == "http://host:11434"
+
+
+def test_a_gateway_base_url_falls_back_to_the_real_ollama(mr, monkeypatch):
+    """The chat Base URL holds OllaBridge's /v1 (404 on /api/tags): Ollama on its own port is
+    found and used, and the reason says so — instead of "No Ollama runtime is reachable"."""
+    gateway = mr.Runtime(url="http://localhost:11435", label="explicit", reachable=False, error="HTTP 404")
+    ollama = mr.Runtime(url="http://127.0.0.1:11434", label="loopback", reachable=True,
+                        models=_models(mr, "qwen2.5:1.5b", "llama3:8b", "deepseek-r1:latest"))
+
+    async def fake_url(url, force=False):
+        assert url == "http://localhost:11435"                 # /v1 stripped
+        return gateway
+
+    async def fake_discover(force=False):
+        return [ollama]
+
+    monkeypatch.setattr(mr, "discover_url", fake_url)
+    monkeypatch.setattr(mr, "discover", fake_discover)
+    rt, tried = _run(mr.active_runtime("http://localhost:11435/v1"))
+    assert rt is ollama and tried == [gateway, ollama]
+    res = _run(mr.resolve("chat", "llama3:8b", base_url="http://localhost:11435/v1"))
+    assert res.model == "llama3:8b" and res.runtime_url == "http://127.0.0.1:11434"
+    assert "is not an Ollama runtime" in res.reason and "found Ollama at http://127.0.0.1:11434" in res.reason
+
+
+def test_a_reachable_explicit_url_still_wins(mr, monkeypatch):
+    explicit = mr.Runtime(url="http://10.0.0.5:11434", label="explicit", reachable=True, models=_models(mr, "llama3.2:3b"))
+
+    async def fake_url(url, force=False):
+        return explicit
+
+    async def no_discover(force=False):  # pragma: no cover - must not be reached
+        raise AssertionError("an Ollama that answers is used as it is")
+
+    monkeypatch.setattr(mr, "discover_url", fake_url)
+    monkeypatch.setattr(mr, "discover", no_discover)
+    rt, tried = _run(mr.active_runtime("http://10.0.0.5:11434"))
+    assert rt is explicit and tried == [explicit]

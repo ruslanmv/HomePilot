@@ -173,6 +173,23 @@ structured so adding the iOS lane is additive.
 - [ ] Decide burst policy: leave open (default) or set
       `COMPUTE_BURST_REQUIRES_PREMIUM=true` + entitlement.
 
+**Media (every self-hosted deployment; design in `docs/design/MEDIA_STORAGE.md`):**
+- [ ] Decide where media bytes live: the disk (`local`, the default) or an S3-compatible
+      store (`make start-media-s3` + `make use-media-s3`, or your own `S3_*` settings). A
+      server you expose to others should use a bucket-scoped S3 service account, not the
+      store's root key, and a maintained S3 server behind a private network.
+- [ ] A real admin password — a single passwordless account auto-logs in, which is for a
+      laptop, not a server — and `API_KEY` set for the compat endpoints.
+- [ ] Policy knobs chosen: `MEDIA_TRASH_RETENTION_DAYS` (7), `MEDIA_QUOTA_MB_PER_USER`
+      (0 = none), `MEDIA_SCAN_COMMAND` (e.g. `clamdscan --no-summary`) once other people
+      can upload.
+- [ ] `make media-verify` clean; a `make media-backup` taken to another disk or host, and
+      once restored into an empty environment with `make media-restore` (the test
+      `test_backup_and_restore_round_trip` is the same drill, automated).
+- [ ] Smoke: upload → `make media-verify` shows it; `/files/{id}` serves it to its owner,
+      404 to another account, 401 without one; a `GET /v1/files/{id}/link` URL works
+      without a session; delete → the file is hidden at once and purged after the retention.
+
 **Cloud (the shared HF Space):**
 - [ ] Strong `TOKEN_PEPPER` / `JWT_SECRET` set as HF Space secrets (§5).
 - [ ] Fair-use knobs reviewed (cloud readiness doc §6).

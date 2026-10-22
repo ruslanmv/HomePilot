@@ -167,6 +167,11 @@ def mock_outbound(monkeypatch):
       - Media via requests
     """
 
+    # The model resolver caches runtime discovery for 30 s. This fixture swaps the HTTP layer,
+    # so what an earlier test's layer found must not decide this test's requests: in CI a
+    # cached "no Ollama runtime is reachable" made the compat passthrough answer 502 in 2 ms.
+    _reset_model_discovery()
+
     # ---- requests (media) ----
     try:
         import requests
@@ -256,8 +261,18 @@ def mock_outbound(monkeypatch):
     # AsyncClient is used by the backend in production code.
     monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient, raising=False)
 
+    yield True
 
-    return True
+    # …and what this fixture's stub layer found must not outlive it either.
+    _reset_model_discovery()
+
+
+def _reset_model_discovery() -> None:
+    try:
+        from app import model_resolver
+        model_resolver.invalidate("test HTTP layer changed")
+    except Exception:
+        pass
 
 
 @pytest.fixture()

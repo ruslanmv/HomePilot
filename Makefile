@@ -25,6 +25,16 @@ MCP_GATEWAY_HOST ?= 127.0.0.1
 
 # SearXNG for web search in chat (make start-searxng). Not 8080: too many tools take it.
 SEARXNG_PORT     ?= 8899
+# Self-hosted S3 server for media (make start-media-s3): 9400/9401, since 9000/9001 are
+# so often taken. Credentials live in MEDIA_S3_ENV (generated once, mode 600).
+MEDIA_S3_PORT         ?= 9400
+MEDIA_S3_CONSOLE_PORT ?= 9401
+MEDIA_S3_ENV          ?= backend/data/media-s3.env
+# Its Docker network: an unusual subnet, because Docker's own pick (172.17-172.31/16) can
+# collide with a VPN route and leave the published port unreachable.
+MEDIA_S3_SUBNET       ?= 10.251.9.0/24
+MEDIA_S3_BUCKET       ?= homepilot-media
+MEDIA_STORAGE_ENV     ?= backend/data/media-storage.env
 
 # New MCP server directories (functional contract servers)
 MCP_NEW_SERVERS := local_notes local_projects web shell_safe gmail google_calendar microsoft_graph slack github notion
@@ -90,6 +100,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@# Meeting transcription is a core feature, not a post-install option. The
 	@# whisper extra is pinned and defaults to local CPU/automatic device selection.
 	@cd backend && uv pip install -e ".[whisper]"
+	@cd backend && uv pip install -e ".[s3]"
 	@cd backend && uv pip install --group dev
 	@echo ""
 	@echo "✓ Installing edit-session service with uv..."
@@ -504,9 +515,16 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		# Auto-reload watches only the app/ code. On WSL the watcher polls /mnt/c, and walking \
 		# a whole service folder (its .venv included) over the Windows share every few hundred \
 		# ms ended in "Cannot allocate memory" and took edit-session down. HOMEPILOT_RELOAD=0 \
-		# turns reloading off. \
+		# turns reloading off. On WSL with the repo under /mnt (a Windows drive) it is off by \
+		# default: the watcher cannot see edits made on the Windows side, and under memory \
+		# pressure (ComfyUI loading a model) it still died with "Cannot allocate memory", and \
+		# its exit stopped every service. HOMEPILOT_RELOAD=1 turns it back on there. \
 		RELOAD="--reload --reload-dir app"; \
-		if [ "$${HOMEPILOT_RELOAD:-1}" = "0" ]; then RELOAD=""; fi; \
+		if [ "$${HOMEPILOT_RELOAD:-auto}" = "0" ]; then RELOAD=""; \
+		elif [ "$${HOMEPILOT_RELOAD:-auto}" = "auto" ] && grep -qi microsoft /proc/version 2>/dev/null && [ "$${ROOT#/mnt/}" != "$$ROOT" ]; then \
+			RELOAD=""; \
+			echo "  ↪ Auto-reload is off on WSL under /mnt (it cannot see Windows-side edits, and its watcher crash stopped the stack). HOMEPILOT_RELOAD=1 turns it on; restart to pick up code changes."; \
+		fi; \
 		CORS="$${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001,http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:3001},http://localhost:$$FP,http://127.0.0.1:$$FP"; \
 		PUBLIC="$${PUBLIC_BASE_URL:-}"; \
 		API_URL="$${VITE_API_URL:-}"; \
@@ -534,6 +552,10 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 			echo "All services stopped."; \
 		}; \
 		trap cleanup INT TERM EXIT; \
+		\
+		# Where media bytes go, when the operator switched backends: make use-media-s3 writes \
+		# this file, make use-media-local removes it (docs/design/MEDIA_STORAGE.md). \
+		if [ -f "$$ROOT/backend/data/media-storage.env" ]; then set -a; . "$$ROOT/backend/data/media-storage.env"; set +a; fi; \
 		\
 		echo "Starting backend..."; \
 		cd "$$ROOT/backend" && CORS_ORIGINS="$$CORS" PUBLIC_BASE_URL="$$PUBLIC" \
@@ -576,9 +598,14 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		if [ "$(AGENTIC)" = "1" ] && ([ -d "$$ROOT/$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1); then \
 			echo ""; \
 			echo "Starting MCP Context Forge Gateway on port $(MCP_GATEWAY_PORT)..."; \
-			mcp_pids=$$(bash "$$ROOT/scripts/mcp-start.sh" --with-servers 2>&1 | tail -1); \
+			# The script ends with the PIDs it started, or GATEWAY_FAILED when the gateway never \
+			# answered /health (its stderr, with the log tail, shows above). \
+			mcp_pids=$$(bash "$$ROOT/scripts/mcp-start.sh" --with-servers | tail -1); \
+			case "$$mcp_pids" in \
+				GATEWAY_FAILED*) echo "  ⚠ MCP Gateway did not come up — see .logs/mcp-gateway.log (Discover MCP Servers stays empty)"; mcp_pids="";; \
+				*) echo "  ✓ MCP Gateway started";; \
+			esac; \
 			pids="$$pids $$mcp_pids"; \
-			echo "  ✓ MCP Gateway started"; \
 			\
 			echo ""; \
 			echo "Starting HomePilot agentic servers (MCP + A2A) + seeding Forge..."; \
@@ -599,7 +626,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 			if [ "$$forge_ok" = "true" ]; then \
 				echo "  ✓ Context Forge (port $(MCP_GATEWAY_PORT)): healthy"; \
 			else \
-				echo "  ⚠ Context Forge (port $(MCP_GATEWAY_PORT)): not responding"; \
+				echo "  ⚠ Context Forge (port $(MCP_GATEWAY_PORT)): not responding — see .logs/mcp-gateway.log"; \
 			fi; \
 			mcp_ok=0; mcp_total=6; \
 			for _p in 9101 9102 9103 9104 9105 9120; do \
@@ -1461,6 +1488,71 @@ start-searxng: ## Start SearXNG for web search in chat (Docker, 127.0.0.1:$(SEAR
 
 stop-searxng: ## Stop SearXNG (web search in chat then says it is unavailable)
 	@docker compose -f agentic/ops/compose/websearch.compose.yml stop searxng 2>/dev/null || true
+
+start-media-s3: ## Start a self-hosted S3 server for media (Docker, 127.0.0.1:$(MEDIA_S3_PORT)); credentials in $(MEDIA_S3_ENV)
+	@command -v docker >/dev/null 2>&1 || { echo "❌ Docker is needed for the media S3 server."; exit 1; }
+	@# The port must be free, or already ours.
+	@if ss -ltnH "( sport = :$(MEDIA_S3_PORT) )" 2>/dev/null | grep -q . \
+		&& ! docker ps --filter name=^hp-media-s3$$ --format '{{.Ports}}' | grep -q ":$(MEDIA_S3_PORT)->"; then \
+		echo "❌ Port $(MEDIA_S3_PORT) is taken by another program."; \
+		echo "   Pick another: make start-media-s3 MEDIA_S3_PORT=9410 — and S3_ENDPOINT_URL to match."; \
+		exit 1; \
+	fi
+	@# Credentials are generated once, into a file only you can read, and never printed.
+	@mkdir -p backend/data; if [ ! -f "$(MEDIA_S3_ENV)" ]; then \
+		umask 077; { \
+		  echo "# HomePilot media S3 server (make start-media-s3). Keep private."; \
+		  echo "MEDIA_S3_ACCESS_KEY=homepilot"; \
+		  echo "MEDIA_S3_SECRET_KEY=$$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"; \
+		} > "$(MEDIA_S3_ENV)"; echo "  Credentials written to $(MEDIA_S3_ENV)"; \
+	fi
+	@set -a; . ./$(MEDIA_S3_ENV); set +a; \
+		MEDIA_S3_PORT=$(MEDIA_S3_PORT) MEDIA_S3_CONSOLE_PORT=$(MEDIA_S3_CONSOLE_PORT) MEDIA_S3_SUBNET=$(MEDIA_S3_SUBNET) \
+		docker compose -f agentic/ops/compose/media-s3.compose.yml up -d
+	@for i in $$(seq 1 30); do curl -s -m 1 -o /dev/null http://127.0.0.1:$(MEDIA_S3_PORT)/minio/health/live && break; sleep 1; done
+	@curl -s -m 2 -o /dev/null -w "  Media S3: http://127.0.0.1:$(MEDIA_S3_PORT) (%{http_code}) · console http://127.0.0.1:$(MEDIA_S3_CONSOLE_PORT)\n" http://127.0.0.1:$(MEDIA_S3_PORT)/minio/health/live || echo "  The server did not answer yet — docker logs hp-media-s3"
+	@echo "  To keep HomePilot's media there:  make use-media-s3   (then make start)."
+	@echo "  Media from before the switch stays readable from disk — docs/design/MEDIA_STORAGE.md."
+
+stop-media-s3: ## Stop the media S3 server (its objects stay in backend/data/media-s3)
+	@docker compose -f agentic/ops/compose/media-s3.compose.yml stop media-s3 2>/dev/null || true
+
+use-media-s3: ## Keep media in the S3 server from make start-media-s3 (writes $(MEDIA_STORAGE_ENV); next make start)
+	@test -f "$(MEDIA_S3_ENV)" || { echo "❌ No $(MEDIA_S3_ENV) yet — run make start-media-s3 first."; exit 1; }
+	@# The server's two credentials under the names the backend reads; the file is private.
+	@set -a; . ./$(MEDIA_S3_ENV); set +a; umask 077; { \
+		echo "# HomePilot media storage — written by make use-media-s3; make use-media-local removes it."; \
+		echo "# Sourced by make start for the backend (docs/design/MEDIA_STORAGE.md). Keep private."; \
+		echo "MEDIA_STORAGE_BACKEND=s3"; \
+		echo "S3_ENDPOINT_URL=$${S3_ENDPOINT_URL:-http://127.0.0.1:$(MEDIA_S3_PORT)}"; \
+		echo "S3_BUCKET=$${S3_BUCKET:-$(MEDIA_S3_BUCKET)}"; \
+		echo "S3_ACCESS_KEY_ID=$$MEDIA_S3_ACCESS_KEY"; \
+		echo "S3_SECRET_ACCESS_KEY=$$MEDIA_S3_SECRET_KEY"; \
+	} > "$(MEDIA_STORAGE_ENV)"
+	@echo "  Media storage: s3 — $(MEDIA_STORAGE_ENV) written. Takes effect on the next make start."
+	@echo "  Media from before the switch stays readable from the disk."
+
+use-media-local: ## Keep media on this disk again (the default; removes $(MEDIA_STORAGE_ENV); next make start)
+	@rm -f "$(MEDIA_STORAGE_ENV)"
+	@echo "  Media storage: local (UPLOAD_DIR). Takes effect on the next make start."
+	@echo "  Assets written to S3 keep saying so and answer 404 (with a log line) until you switch back: make use-media-s3."
+
+media-verify: ## Every media asset is where its row says, hashes match (docs/design/MEDIA_STORAGE.md)
+	@cd backend && set -a && { [ -f "../$(MEDIA_STORAGE_ENV)" ] && . "../$(MEDIA_STORAGE_ENV)"; set +a; } && .venv/bin/python -m app.media_ops verify
+
+media-migrate: ## Copy media into the configured backend, verify, flip each row (sources kept; MEDIA_MIGRATE_ARGS=--dry-run|--prune-source)
+	@cd backend && set -a && { [ -f "../$(MEDIA_STORAGE_ENV)" ] && . "../$(MEDIA_STORAGE_ENV)"; set +a; } && .venv/bin/python -m app.media_ops migrate $(MEDIA_MIGRATE_ARGS)
+
+media-backup: ## Portable backup — database copy, every asset, a manifest — into MEDIA_BACKUP_DIR (default backend/data/backups/<timestamp>)
+	@dest="$${MEDIA_BACKUP_DIR:-backend/data/backups/$$(date -u +%Y%m%dT%H%M%SZ)}"; mkdir -p "$$dest"; \
+		cd backend && set -a && { [ -f "../$(MEDIA_STORAGE_ENV)" ] && . "../$(MEDIA_STORAGE_ENV)"; set +a; } && .venv/bin/python -m app.media_ops backup "../$$dest"
+
+media-restore: ## Put a backup's assets back into the configured backend: make media-restore MEDIA_BACKUP_DIR=<dir> (database file: copy homepilot.db back while stopped)
+	@test -n "$(MEDIA_BACKUP_DIR)" || { echo "❌ make media-restore MEDIA_BACKUP_DIR=backend/data/backups/<timestamp>"; exit 1; }
+	@cd backend && set -a && { [ -f "../$(MEDIA_STORAGE_ENV)" ] && . "../$(MEDIA_STORAGE_ENV)"; set +a; } && .venv/bin/python -m app.media_ops restore "../$(MEDIA_BACKUP_DIR)"
+
+media-gc: ## Remove media that has been in the trash longer than MEDIA_TRASH_RETENTION_DAYS (the backend also does this itself)
+	@cd backend && set -a && { [ -f "../$(MEDIA_STORAGE_ENV)" ] && . "../$(MEDIA_STORAGE_ENV)"; set +a; } && .venv/bin/python -m app.media_ops gc
 
 start-mcp: ## Start only the MCP Gateway (port 4444)
 	@echo "════════════════════════════════════════════════════════════════════════════════"

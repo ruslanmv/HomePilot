@@ -13,13 +13,35 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from .config import EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE, EXPERT_SYSTEM_PROMPT
-from . import grounding
-from .router import dispatch, dispatch_stream, extract_dispatch_meta, ProviderName
+from .router import (
+    dispatch, dispatch_stream, extract_dispatch_meta, step_messages, stream_provider_events, ProviderName,
+)
+from .tool_loop import run_with_tools, stream_with_tools
 
 logger = logging.getLogger("expert.thinking")
+
+# Standard effort: the analysis is written (and shown), then answered from — no separate plan.
+_SOLVE_FROM_ANALYSIS_PROMPT = """You are an expert solver. Using the analysis below, give a final, complete answer to the original problem. Speak to the user directly; do not repeat the analysis.
+
+Original problem:
+{input}
+
+Analysis:
+{analysis}
+
+Final answer:"""
+
+
+def _solve_prompt(query: str, *, plan: bool, plan_text: str, analyze: bool, analysis: str) -> str:
+    """The solve step's instruction for the stages that ran before it."""
+    if plan:
+        return _SOLVE_PROMPT.format(input=query, plan=plan_text)
+    if analyze and analysis.strip():
+        return _SOLVE_FROM_ANALYSIS_PROMPT.format(input=query, analysis=analysis.strip())
+    return _SOLVE_DIRECT_PROMPT.format(input=query)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step prompts
@@ -61,6 +83,13 @@ Plan to execute:
 
 Final answer:"""
 
+_SOLVE_DIRECT_PROMPT = """\
+You are an expert solver. Produce a complete, accurate answer to the following problem; show your work where it helps.
+
+Problem: {input}
+
+Final answer:"""
+
 _CRITIQUE_PROMPT = """\
 You are a rigorous critic. Review the following answer and check for:
 - Factual errors
@@ -89,45 +118,58 @@ async def think(
     temperature: float = EXPERT_TEMPERATURE,
     max_tokens: int = EXPERT_MAX_TOKENS,
     with_critique: bool = False,
+    system_prompt: Optional[str] = None,
+    forced_tools: Optional[List[Tuple[str, Dict[str, Any]]]] = None,
+    plan: bool = True,
+    analyze: bool = False,
+    registry: Any = None,
+    tool_rounds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    Run the full analyze → plan → solve pipeline.
+    Run the analyze → plan → solve pipeline, or solve alone when ``plan`` is False (a request
+    below the planning threshold, see policies.effort_for).
     Returns a dict with each step's output plus the final answer.
+    ``system_prompt`` (the persona's or the user's instructions) replaces the Expert default;
+    ``forced_tools`` run before the solve step asks the model anything; ``registry`` is the
+    request's tool set (the shared one when None).
     """
+    base = system_prompt or EXPERT_SYSTEM_PROMPT
+
+    # Each step gets the recent conversation ahead of its instruction (see step_messages).
     def _msg(prompt: str) -> List[Dict[str, str]]:
-        return [
-            {"role": "system", "content": grounding.apply(EXPERT_SYSTEM_PROMPT)},
-            {"role": "user", "content": prompt},
-        ]
+        return step_messages(prompt, system_prompt=base, history=history)
 
     kw = dict(model=model, temperature=temperature, max_tokens=max_tokens)
+    notices: List[str] = []
+    fallback_applied = False
+    analysis = plan_text = ""
 
-    # Step 1: Analyze
-    logger.debug("Thinking step 1: analyze")
-    raw_analysis = await dispatch(
-        _msg(_ANALYZE_PROMPT.format(input=query)), provider, **kw
-    )
-    analysis = _extract(raw_analysis)
-    notices = _collect_notice(raw_analysis)
-    fallback_applied = _fallback(raw_analysis)
+    if plan or analyze:
+        # Step 1: Analyze — the visible reasoning (also alone, at standard effort)
+        logger.debug("Thinking step 1: analyze")
+        raw_analysis = await dispatch(_msg(_ANALYZE_PROMPT.format(input=query)), provider, **kw)
+        analysis = _extract(raw_analysis)
+        notices.extend(_collect_notice(raw_analysis))
+        fallback_applied = _fallback(raw_analysis)
 
-    # Step 2: Plan
-    logger.debug("Thinking step 2: plan")
-    raw_plan = await dispatch(
-        _msg(_PLAN_PROMPT.format(analysis=analysis)), provider, **kw
-    )
-    plan = _extract(raw_plan)
-    notices.extend(_collect_notice(raw_plan))
-    fallback_applied = fallback_applied or _fallback(raw_plan)
+    if plan:
+        # Step 2: Plan
+        logger.debug("Thinking step 2: plan")
+        raw_plan = await dispatch(_msg(_PLAN_PROMPT.format(analysis=analysis)), provider, **kw)
+        plan_text = _extract(raw_plan)
+        notices.extend(_collect_notice(raw_plan))
+        fallback_applied = fallback_applied or _fallback(raw_plan)
 
-    # Step 3: Solve
+    # Step 3: Solve — with the per-turn tool loop, so the answer can check facts
     logger.debug("Thinking step 3: solve")
-    raw_solution = await dispatch(
-        _msg(_SOLVE_PROMPT.format(input=query, plan=plan)), provider, **kw
+    solve_prompt = _solve_prompt(query, plan=plan, plan_text=plan_text, analyze=analyze, analysis=analysis)
+    solved = await run_with_tools(
+        _msg(solve_prompt), provider, call=dispatch, forced=forced_tools, registry=registry,
+        max_rounds=tool_rounds, **kw
     )
-    solution = _extract(raw_solution)
-    notices.extend(_collect_notice(raw_solution))
-    fallback_applied = fallback_applied or _fallback(raw_solution)
+    solution = solved.get("content") or ""
+    notices.extend(solved.get("notices", []))
+    fallback_applied = fallback_applied or bool(solved.get("fallback_applied"))
 
     # Step 4 (optional): Self-critique
     critique = None
@@ -143,16 +185,19 @@ async def think(
     return {
         "final_answer": solution,
         "steps": {
-            "analysis": analysis,
-            "plan": plan,
+            **({"analysis": analysis} if (plan or analyze) else {}),
+            **({"plan": plan_text} if plan else {}),
             "solution": solution,
             **({"critique": critique} if critique else {}),
         },
-        "provider": raw_solution.get("provider", provider),
-        "model": raw_solution.get("model"),
+        "planned": plan,
+        "provider": provider,
+        "model": model,
         "pipeline": "think",
         "fallback_applied": fallback_applied,
         "notices": _dedupe_notices(notices),
+        "tool_trace": solved.get("tool_trace", []),
+        "sources": solved.get("sources", []),
     }
 
 
@@ -169,60 +214,76 @@ async def stream_think(
     temperature: float = EXPERT_TEMPERATURE,
     max_tokens: int = EXPERT_MAX_TOKENS,
     with_critique: bool = False,
-) -> AsyncIterator[Dict[str, str]]:
+    system_prompt: Optional[str] = None,
+    forced_tools: Optional[List[Tuple[str, Dict[str, Any]]]] = None,
+    plan: bool = True,
+    analyze: bool = False,
+    registry: Any = None,
+    tool_rounds: Optional[int] = None,
+) -> AsyncIterator[Dict[str, Any]]:
     """
-    Stream the thinking pipeline step by step.
-    Yields dicts with type='step_start'|'token'|'step_end'|'done'.
+    Stream the thinking pipeline step by step (solve alone when ``plan`` is False).
+    Yields dicts with type='step_start'|'token'|'step_end'|'final'|'done', plus the tool
+    loop's events (tool_start, tool_end, sources, reset, notice) tagged with their step.
+    A step_start carries role='work' or role='answer' (the step whose text is the reply).
 
     The route /v1/expert/stream uses this when thinking_mode='think'.
     The UI can render each step in a collapsible panel.
     """
+    base = system_prompt or EXPERT_SYSTEM_PROMPT
+
     def _msg(prompt: str) -> List[Dict[str, str]]:
-        return [
-            {"role": "system", "content": grounding.apply(EXPERT_SYSTEM_PROMPT)},
-            {"role": "user", "content": prompt},
-        ]
+        return step_messages(prompt, system_prompt=base, history=history)
 
     kw = dict(model=model, temperature=temperature, max_tokens=max_tokens)
+    analysis = plan_text = ""
 
-    # ── Step 1: Analyze ──────────────────────────────────────────────────────
-    yield {"type": "step_start", "step": "analyze", "label": "🔍 Analyzing problem…"}
-    analysis_chunks: List[str] = []
-    async for chunk in dispatch_stream(_msg(_ANALYZE_PROMPT.format(input=query)), provider, **kw):
-        analysis_chunks.append(chunk)
-        yield {"type": "token", "step": "analyze", "content": chunk}
-    analysis = "".join(analysis_chunks)
-    yield {"type": "step_end", "step": "analyze"}
+    if plan or analyze:
+        # ── Step 1: Analyze — the visible reasoning, shown as ChatGPT and Claude show theirs
+        yield {"type": "step_start", "step": "analyze", "label": "🔍 Analyzing problem…", "role": "work"}
+        analysis_chunks: List[str] = []
+        async for chunk in dispatch_stream(_msg(_ANALYZE_PROMPT.format(input=query)), provider, **kw):
+            analysis_chunks.append(chunk)
+            yield {"type": "token", "step": "analyze", "content": chunk}
+        analysis = "".join(analysis_chunks)
+        yield {"type": "step_end", "step": "analyze"}
 
-    # ── Step 2: Plan ─────────────────────────────────────────────────────────
-    yield {"type": "step_start", "step": "plan", "label": "📋 Building plan…"}
-    plan_chunks: List[str] = []
-    async for chunk in dispatch_stream(_msg(_PLAN_PROMPT.format(analysis=analysis)), provider, **kw):
-        plan_chunks.append(chunk)
-        yield {"type": "token", "step": "plan", "content": chunk}
-    plan = "".join(plan_chunks)
-    yield {"type": "step_end", "step": "plan"}
+    if plan:
+        # ── Step 2: Plan ─────────────────────────────────────────────────────
+        yield {"type": "step_start", "step": "plan", "label": "📋 Building plan…", "role": "work"}
+        plan_chunks: List[str] = []
+        async for chunk in dispatch_stream(_msg(_PLAN_PROMPT.format(analysis=analysis)), provider, **kw):
+            plan_chunks.append(chunk)
+            yield {"type": "token", "step": "plan", "content": chunk}
+        plan_text = "".join(plan_chunks)
+        yield {"type": "step_end", "step": "plan"}
 
-    # ── Step 3: Solve ────────────────────────────────────────────────────────
-    yield {"type": "step_start", "step": "solve", "label": "⚡ Solving…"}
-    solve_chunks: List[str] = []
-    async for chunk in dispatch_stream(
-        _msg(_SOLVE_PROMPT.format(input=query, plan=plan)), provider, **kw
+    # ── Step 3: Solve — with the per-turn tool loop ─────────────────────────
+    yield {"type": "step_start", "step": "solve", "label": "⚡ Solving…" if plan else "⚡ Answering…", "role": "answer"}
+    solution_text = ""
+    solve_prompt = _solve_prompt(query, plan=plan, plan_text=plan_text, analyze=analyze, analysis=analysis)
+    async for ev in stream_with_tools(
+        _msg(solve_prompt), provider,
+        stream=stream_provider_events, forced=forced_tools, registry=registry, max_rounds=tool_rounds, **kw
     ):
-        solve_chunks.append(chunk)
-        yield {"type": "token", "step": "solve", "content": chunk}
-    solution_text = "".join(solve_chunks)
+        if ev["type"] == "token":
+            yield {"type": "token", "step": "solve", "content": ev["content"]}
+        elif ev["type"] == "done":
+            solution_text = ev.get("content") or ""
+        else:
+            yield {**ev, "step": "solve"}
     yield {"type": "step_end", "step": "solve"}
 
     # ── Step 4 (optional): Critique ──────────────────────────────────────────
     if with_critique:
-        yield {"type": "step_start", "step": "critique", "label": "🔎 Self-reviewing…"}
+        yield {"type": "step_start", "step": "critique", "label": "🔎 Self-reviewing…", "role": "work"}
         async for chunk in dispatch_stream(
             _msg(_CRITIQUE_PROMPT.format(solution=solution_text)), provider, **kw
         ):
             yield {"type": "token", "step": "critique", "content": chunk}
         yield {"type": "step_end", "step": "critique"}
 
+    yield {"type": "final", "content": solution_text}
     yield {"type": "done"}
 
 

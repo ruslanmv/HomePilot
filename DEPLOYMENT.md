@@ -320,6 +320,11 @@ make uv-run
 make uv-test
 ```
 
+### Media Storage
+
+Uploads and generated images stay on disk (`backend/data/uploads`) unless `MEDIA_STORAGE_BACKEND=s3` points them at an S3-compatible bucket: `make start-media-s3` + `make use-media-s3` for a local one, or your own `S3_*` settings in `.env`.
+`make media-verify` checks every file against its checksum; `make media-backup` / `make media-restore` are the backup drill. Full design: [`docs/design/MEDIA_STORAGE.md`](docs/design/MEDIA_STORAGE.md).
+
 ### Checking Logs (Docker)
 
 ```bash

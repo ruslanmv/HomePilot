@@ -119,7 +119,7 @@ class TestOpenAIChatCompletions:
     def test_chat_default_model(self, client, mock_outbound):
         """Model='default' should do a plain LLM passthrough."""
         resp = self._chat(client, model="default")
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
 
     def test_chat_unknown_persona_404(self, client, mock_outbound):
         resp = self._chat(client, model="persona:nonexistent-id-12345")
@@ -151,7 +151,7 @@ class TestOpenAIChatCompletions:
             "temperature": 0.1,
             "max_tokens": 10,
         })
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
 
 
 # ---------------------------------------------------------------------------

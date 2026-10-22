@@ -222,7 +222,7 @@ export function ChatAppearanceQuick() {
               onClick={() => writeChatAppearance({ thumbnails: o.id })}
               className={[
                 'rounded-xl border px-2 py-2 text-xs font-semibold transition-all',
-                on ? 'border-white/25 bg-white/15 text-white' : 'border-white/10 bg-white/5 text-white/70 hover:border-white/15 hover:bg-white/10',
+                on ? 'border-violet-400/60 bg-violet-600/85 text-white shadow-[0_4px_14px_rgba(124,58,237,0.25)]' : 'border-white/10 bg-white/5 text-white/70 hover:border-white/15 hover:bg-white/10',
               ].join(' ')}
             >
               {o.short}

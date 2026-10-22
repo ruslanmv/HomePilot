@@ -175,6 +175,36 @@ class TestPhotoIntentAngleDetection:
     def test_existing_photo_intents_still_work(self, msg):
         assert self.detect(msg) is True, f"Expected True for: {msg!r}"
 
+    def test_a_pasted_document_is_never_a_photo_request(self):
+        """ "give a summary" + a pasted work log answered with an outfit photo: the paste said
+        "moved HomePilot back to 8002" and "the reply first shows…". Long text goes to the model."""
+        pasted = (
+            "give a summary :\n\n"
+            "All four issues are fixed and checked live.\n"
+            "Compaction now has its own animation. When a long conversation needs summarising, "
+            "the reply first shows three lines condensing.\n"
+            "About port 8000: I moved HomePilot back to 8002. The forward hasn't come back since.\n"
+            "Show me the results in the frontend when you have a moment."
+        )
+        assert self.detect(pasted) is False
+        assert self.detect("show me your back") is True             # the command itself still works
+
+    def test_ordinals_count_only_as_whole_words(self):
+        from app.main import _extract_photo_number
+        assert _extract_photo_number("the second one") == 2
+        assert _extract_photo_number("firstly, thanks") is None
+        assert _extract_photo_number("a thirdparty tool") is None
+
+
+def test_is_short_command_bounds():
+    from app.intent_guard import is_short_command
+    assert is_short_command("show me your back")
+    assert is_short_command("turn around\nslowly please")
+    assert not is_short_command("")
+    assert not is_short_command("a\nb\nc")                            # three lines: composed text
+    assert not is_short_command("x " * 30)                             # more than 24 words
+    assert not is_short_command("y" * 161)
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # 2. Deterministic /chat endpoint — angle routing with view_pack

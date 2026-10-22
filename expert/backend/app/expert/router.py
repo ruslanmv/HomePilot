@@ -11,15 +11,18 @@ from .config import (
     GROK_API_KEY, GROQ_API_KEY, GEMINI_API_KEY,
     EXPERT_LOCAL_THRESHOLD, EXPERT_GROQ_THRESHOLD,
     EXPERT_SYSTEM_PROMPT, EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE, EXPERT_PROVIDER_TIMEOUT_S,
+    EXPERT_HISTORY_MAX_TURNS, EXPERT_HISTORY_MAX_CHARS,
     available_expert_providers,
 )
 from .providers import (
     chat_grok, stream_grok,
     chat_groq, stream_groq,
     chat_gemini, stream_gemini,
-    chat_local, stream_local,
-    chat_openai_compat,
+    chat_local, stream_local, stream_local_events,
+    chat_openai_compat, stream_openai_compat_events,
+    ToolsUnsupported,
 )
+from . import compaction
 from . import grounding
 from . import target as target_mod
 
@@ -157,22 +160,86 @@ def select_provider(query: str, preferred: ProviderName = "auto") -> ProviderNam
     return "local"  # ultimate fallback
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Conversation history
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Prefixed to a pipeline step's instruction when earlier turns precede it, so the step reads
+# the user's latest question against them rather than as a question from nowhere.
+CONTINUATION_NOTE = (
+    "The task below continues the conversation above. Resolve references in it (\"it\", "
+    "\"the second option\", \"as before\"), keep the constraints already agreed, and answer "
+    "in the conversation's language.\n\n"
+)
+
+
+def clean_turns(history: Optional[List[Dict[str, Any]]]) -> List[Dict[str, str]]:
+    """User and assistant turns with text, in order; everything else dropped."""
+    return [
+        {"role": str(m.get("role")), "content": str(m.get("content"))}
+        for m in (history or [])
+        if isinstance(m, dict)
+        and m.get("role") in ("user", "assistant")
+        and str(m.get("content") or "").strip()
+    ]
+
+
+def history_window(
+    history: Optional[List[Dict[str, Any]]],
+    *,
+    max_turns: Optional[int] = None,
+    max_chars: Optional[int] = None,
+) -> List[Dict[str, str]]:
+    """The recent conversation as clean chat turns: user and assistant messages with text,
+    the newest that fit the turn and character budgets, opening on a user turn (providers
+    that enforce role alternation accept the window as it is). The turns before the window
+    are not lost: compaction.py carries them as a note."""
+    max_turns = EXPERT_HISTORY_MAX_TURNS if max_turns is None else max_turns
+    max_chars = EXPERT_HISTORY_MAX_CHARS if max_chars is None else max_chars
+    clean = clean_turns(history)
+    kept: List[Dict[str, str]] = []
+    used = 0
+    for m in reversed(clean):
+        if len(kept) >= max_turns or used + len(m["content"]) > max_chars:
+            break
+        kept.append(m)
+        used += len(m["content"])
+    kept.reverse()
+    while kept and kept[0]["role"] != "user":
+        kept.pop(0)
+    return kept
+
+
 def build_messages(
     user_query: str,
     history: Optional[List[Dict[str, str]]] = None,
     system_prompt: Optional[str] = None,
 ) -> List[Dict[str, str]]:
-    """Assemble the messages list with system prompt + history + new query."""
-    messages: List[Dict[str, str]] = []
-    messages.append({
+    """Assemble the messages list: system prompt, the recent conversation as role-tagged
+    turns, then the new query as the newest user turn — the shape chat models are trained on."""
+    messages: List[Dict[str, str]] = [{
         "role": "system",
-        "content": grounding.apply(system_prompt or EXPERT_SYSTEM_PROMPT),
-    })
-    for msg in (history or []):
-        if msg.get("role") in ("user", "assistant") and msg.get("content"):
-            messages.append({"role": msg["role"], "content": msg["content"]})
+        "content": compaction.apply(grounding.apply(system_prompt or EXPERT_SYSTEM_PROMPT)),
+    }]
+    messages.extend(history_window(history))
     messages.append({"role": "user", "content": user_query})
     return messages
+
+
+def step_messages(
+    instruction: str,
+    *,
+    system_prompt: str,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> List[Dict[str, str]]:
+    """Messages for one call of a multi-step pipeline (think, heavy). Every step sees the
+    conversation the question came from — so a follow-up ("and for the second one?") is
+    understood in the analysis and the final answer matches the thread — while the step's
+    own instruction stays the newest user turn, told that it continues that conversation."""
+    turns = history_window(history)
+    if turns:
+        instruction = CONTINUATION_NOTE + instruction
+    return build_messages(instruction, history=turns, system_prompt=system_prompt)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -186,24 +253,29 @@ async def dispatch(
     model: Optional[str] = None,
     temperature: float = EXPERT_TEMPERATURE,
     max_tokens: int = EXPERT_MAX_TOKENS,
+    tools: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Call the selected provider and return an OpenAI-compatible response dict.
     Includes one fallback level: if provider fails, try local Ollama.
+    ``tools`` (OpenAI shape) reach the local/target path — Ollama and OpenAI-compatible
+    endpoints; the response message then carries ``tool_calls`` when the model used them.
     """
     try:
         raw = await asyncio.wait_for(
-            _call_provider(messages, provider, model=model, temperature=temperature, max_tokens=max_tokens),
+            _call_provider(messages, provider, model=model, temperature=temperature, max_tokens=max_tokens, tools=tools),
             timeout=EXPERT_PROVIDER_TIMEOUT_S,
         )
         return _attach_dispatch_meta(raw, requested_provider=provider, fallback_applied=False)
+    except ToolsUnsupported:
+        raise
     except Exception as e:
         logger.warning("Provider '%s' failed (%s), falling back to local.", provider, e)
         if provider != "local":
             # "local" is the user's chosen chat model when there is one (see target.py) —
             # called directly, so the fallback never re-enters the path that just failed.
             raw = await asyncio.wait_for(
-                _call_local(messages, model=model, temperature=temperature, max_tokens=max_tokens),
+                _call_local(messages, model=model, temperature=temperature, max_tokens=max_tokens, tools=tools),
                 timeout=EXPERT_PROVIDER_TIMEOUT_S,
             )
             return _attach_dispatch_meta(
@@ -222,6 +294,7 @@ async def _call_provider(
     model: Optional[str],
     temperature: float,
     max_tokens: int,
+    tools: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     kwargs = dict(model=model, temperature=temperature, max_tokens=max_tokens)
     if provider == "grok":
@@ -237,7 +310,7 @@ async def _call_provider(
     if provider == "openai":
         from ..llm import chat_openai
         return await chat_openai(messages, **{k: v for k, v in kwargs.items() if v is not None})
-    return await _call_local(messages, **kwargs)
+    return await _call_local(messages, tools=tools, **kwargs)
 
 
 async def _call_local(
@@ -246,9 +319,10 @@ async def _call_local(
     model: Optional[str],
     temperature: float,
     max_tokens: int,
+    tools: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """The chat model the user picked (target.py), else local Ollama."""
-    kwargs = dict(model=model, temperature=temperature, max_tokens=max_tokens)
+    kwargs = dict(model=model, temperature=temperature, max_tokens=max_tokens, tools=tools)
     chosen = target_mod.current()
     if chosen is not None:
         return await _call_target(messages, chosen, **kwargs)
@@ -262,6 +336,7 @@ async def _call_target(
     model: Optional[str],
     temperature: float,
     max_tokens: int,
+    tools: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Answer from the user's chosen chat model: an Ollama model, or an OpenAI-compatible
     endpoint such as an OllaBridge gateway (``http://localhost:11435/v1``) or the Cloud relay.
@@ -273,6 +348,7 @@ async def _call_target(
             base_url=chosen.base_url or None,
             temperature=temperature,
             max_tokens=max_tokens,
+            tools=tools,
         )
     return await chat_openai_compat(
         messages,
@@ -282,6 +358,7 @@ async def _call_target(
         temperature=temperature,
         max_tokens=max_tokens,
         provider_label=chosen.label,
+        tools=tools,
     )
 
 
@@ -344,8 +421,101 @@ async def _stream_provider(
                                         temperature=temperature, max_tokens=max_tokens):
                 yield c
         elif chosen is not None:
-            # One chunk, the way Claude and OpenAI are streamed above.
-            resp = await _call_target(messages, chosen, **kwargs)
-            yield resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+            # Real streaming from the OpenAI-compatible endpoint; a gateway that cannot stream
+            # answers in one chunk, the way Claude and OpenAI are streamed above.
+            yielded = False
+            try:
+                async for ev in stream_openai_compat_events(
+                    messages, base_url=chosen.base_url, model=chosen.model or model or "",
+                    api_key=chosen.api_key, temperature=temperature, max_tokens=max_tokens,
+                ):
+                    if "delta" in ev:
+                        yielded = True
+                        yield ev["delta"]
+            except Exception:
+                if yielded:
+                    raise
+                resp = await _call_target(messages, chosen, **kwargs)
+                yield resp.get("choices", [{}])[0].get("message", {}).get("content", "")
         else:
             async for c in stream_local(messages, **kwargs): yield c
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dispatch — streaming with structure (tokens and tool calls)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def stream_provider_events(
+    messages: List[Dict[str, Any]],
+    provider: ProviderName,
+    *,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    model: Optional[str] = None,
+    temperature: float = EXPERT_TEMPERATURE,
+    max_tokens: int = EXPERT_MAX_TOKENS,
+) -> AsyncIterator[Dict[str, Any]]:
+    """Stream ``{"delta": text}`` / ``{"tool_calls": [...]}`` events, with the same local
+    fallback as :func:`dispatch_stream` (announced as a ``{"notice": ..., "fallback": True}``
+    event). ``tools`` reach the local/target path — Ollama and OpenAI-compatible endpoints;
+    the other providers stream text only. A ToolsUnsupported refusal is passed through so the
+    caller can retry without tools."""
+    try:
+        async for ev in _stream_provider_events(messages, provider, tools=tools, model=model,
+                                                temperature=temperature, max_tokens=max_tokens):
+            yield ev
+    except ToolsUnsupported:
+        raise
+    except Exception as e:
+        if provider == "local":
+            logger.warning("Streaming provider 'local' failed: %s", e)
+            raise
+        logger.warning("Streaming provider '%s' failed (%s), falling back to local.", provider, e)
+        yield {"notice": "Requested provider failed; used local fallback.", "fallback": True}
+        async for ev in _stream_provider_events(messages, "local", tools=tools, model=model,
+                                                temperature=temperature, max_tokens=max_tokens):
+            yield ev
+
+
+async def _stream_provider_events(
+    messages: List[Dict[str, Any]],
+    provider: ProviderName,
+    *,
+    tools: Optional[List[Dict[str, Any]]],
+    model: Optional[str],
+    temperature: float,
+    max_tokens: int,
+) -> AsyncIterator[Dict[str, Any]]:
+    if provider in ("grok", "groq", "gemini", "claude", "openai"):
+        async for c in _stream_provider(messages, provider, model=model, temperature=temperature, max_tokens=max_tokens):
+            yield {"delta": c}
+        return
+    chosen = target_mod.current()
+    kwargs = dict(temperature=temperature, max_tokens=max_tokens, tools=tools)
+    if chosen is not None and not chosen.is_ollama:
+        # Real streaming from the OpenAI-compatible endpoint; when the stream fails before its
+        # first event, the plain request is tried once (a gateway that cannot stream still
+        # answers that). A refusal of the tools field passes through for the retry without.
+        yielded = False
+        try:
+            async for ev in stream_openai_compat_events(
+                messages, base_url=chosen.base_url, model=chosen.model or model or "", api_key=chosen.api_key, **kwargs,
+            ):
+                yielded = True
+                yield ev
+        except ToolsUnsupported:
+            raise
+        except Exception:
+            if yielded:
+                raise
+            raw = await _call_target(messages, chosen, model=model, temperature=temperature, max_tokens=max_tokens, tools=tools)
+            message = ((raw.get("choices") or [{}])[0] or {}).get("message") or {}
+            if message.get("content"):
+                yield {"delta": message["content"]}
+            if message.get("tool_calls"):
+                yield {"tool_calls": message["tool_calls"]}
+    elif chosen is not None:
+        async for ev in stream_local_events(messages, model=chosen.model or model, base_url=chosen.base_url or None, **kwargs):
+            yield ev
+    else:
+        async for ev in stream_local_events(messages, model=model, **kwargs):
+            yield ev

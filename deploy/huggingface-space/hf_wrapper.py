@@ -18,6 +18,7 @@ import uvicorn
 from fastapi import Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Match
 
 # Ensure the app module is importable.
 sys.path.insert(0, "/app")
@@ -155,9 +156,48 @@ def frontend_catchall(full_path: str, request: Request):
     return FileResponse(FRONTEND_INDEX)
 
 
+@app.api_route("/{full_path:path}", methods=["POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+def api_catchall(full_path: str):
+    """An API route that is not there is a 404. Without this, a POST to a path only the GET
+    catch-all above knew came back "405 Method Not Allowed" — which is how a missing Expert
+    package showed up in the chat as `HTTP 405` after "Hello"."""
+    return JSONResponse({"detail": "Not Found", "path": f"/{full_path}"}, status_code=404)
+
+
+# ── Route check ──────────────────────────────────────────
+# What the UI and external clients call. A missing one is logged at boot, instead of being
+# found by a user as an HTTP error (backend/tests/test_required_routes.py checks the same).
+
+REQUIRED_ROUTES = (
+    ("GET", "/health"),
+    ("POST", "/chat"),
+    ("POST", "/v1/chat/completions"),
+    ("GET", "/v1/models"),
+    ("POST", "/models/install"),
+    ("GET", "/models/install/progress"),
+    ("POST", "/v1/expert/chat"),
+)
+
+
+def missing_routes(application=app):
+    """Required routes the app does not serve — asked of the router's own matching, so routers
+    FastAPI includes lazily count too, and the two catch-alls above do not."""
+    catchalls = {frontend_catchall, api_catchall}
+    missing = []
+    for method, path in REQUIRED_ROUTES:
+        scope = {"type": "http", "method": method, "path": path, "root_path": "",
+                 "query_string": b"", "headers": [], "path_params": {}, "app": application}
+        if not any(getattr(r, "endpoint", None) not in catchalls and r.matches(scope)[0] == Match.FULL
+                   for r in application.router.routes):
+            missing.append(f"{method} {path}")
+    return missing
+
+
 # ── Run ──────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    for _route in missing_routes():
+        print(f"[routes] ⚠ missing: {_route}", flush=True)
     port = int(os.environ.get("PORT", "7860"))
     uvicorn.run(
         app,
