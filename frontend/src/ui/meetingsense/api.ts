@@ -10,16 +10,21 @@
  * context, and a meeting must still run against an unauthenticated local backend.
  */
 
-/** The backend origin, with no trailing slash. Empty means same-origin. */
+import { resolveBackendUrl } from '../lib/backendUrl';
+
+/** The backend origin, with no trailing slash — resolved like the rest of the app (a saved
+ *  address, the moved-backend address `make start` hands the dev server, or the origin), so a
+ *  backend that moved off :8000 is followed here too. A deploy's HOMEPILOT_API_BASE still wins
+ *  when nothing is saved. */
 export function backendBase(): string {
+    const fromWindow = (window as typeof window & { HOMEPILOT_API_BASE?: string }).HOMEPILOT_API_BASE || '';
     try {
         const saved = window.localStorage.getItem('homepilot_backend_url') || '';
-        if (saved.trim()) return saved.replace(/\/+$/, '');
+        if (!saved.trim() && fromWindow) return fromWindow.replace(/\/+$/, '');
     } catch {
         // Storage can be unavailable in locked-down contexts.
     }
-    const fromWindow = (window as typeof window & { HOMEPILOT_API_BASE?: string }).HOMEPILOT_API_BASE || '';
-    return fromWindow.replace(/\/+$/, '');
+    return resolveBackendUrl().replace(/\/+$/, '');
 }
 
 /** JSON headers, plus whichever credentials this install has. */

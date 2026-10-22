@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Send,
@@ -35,6 +35,8 @@ import {
   Zap,
   Lightbulb,
   LayoutGrid,
+  Telescope,
+  Square,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { microphoneDebug, microphoneDebugError } from './media/microphoneDebug'
@@ -57,6 +59,8 @@ import {
 import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl, saveBackendUrl } from './lib/backendUrl'
+import { isMissingRoute } from './lib/expertRoute'
+import { fileAuthToken } from './lib/fileUrl'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
 import { useBackToClose } from './lib/useBackToClose'
@@ -68,6 +72,7 @@ import { assistantAvatarSlot, messageGapClass, useChatAppearance } from './chatA
 import { requestFocus, useAdvisorUpdates, type CurrentModels } from './modelAdvisor'
 import { AdvisorUpdateNotice } from './components/AdvisorUpdateNotice'
 import { LoadingDots, StatusText, StreamReveal, motionAllowed, useMotionPrefs } from './motion'
+import { CompactingIndicator, PastedChips, isLongPaste, withPastes } from './components/ComposerExtras'
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
 import { ComputerStatusPill } from './account/ComputerStatusPill'
@@ -109,6 +114,18 @@ import {
 } from './components/ChatSettingsPopover'
 import { MessageMarkdown } from './components/MessageMarkdown'
 import { WebSources, WebSearchToggleContext, linkCitations, parseWebSearch } from './components/WebSources'
+import { ExpertSteps } from './components/ExpertSteps'
+import {
+  applyDeepDone, applyExpertEvent, initialExpertState, parseExpertTrace, resumeDeepResearch, sourcesAsWeb,
+  streamDeepResearch, streamExpert, traceHasWork, type ExpertEvent, type ExpertStreamState, type ExpertTrace,
+} from './lib/expertStream'
+import { forgetDeepJob, pendingDeepJob, rememberDeepJob, type PendingDeepJob } from './lib/deepJobs'
+import {
+  DEEP_RESEARCH_CAPTION, DeepResearchGateContext, UNKNOWN_GATE, deepGateFrom, deepOptionState, fetchExpertCapabilities,
+  type DeepResearchGate,
+} from './lib/expertCapabilities'
+import { ComposerAssistContext, type DeepHint } from './lib/composerAssist'
+import { isTrivialPrompt } from './lib/promptHeuristics'
 import RouteBadge from './components/compute/RouteBadge'
 import { ChatEmptyState } from './components/ChatEmptyState'
 import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
@@ -186,6 +203,10 @@ export type Msg = {
   role: 'user' | 'assistant' | 'system'
   text: string
   pending?: boolean
+  /** The reply streamed in live, so it is shown as it stands and never re-revealed. */
+  streamed?: boolean
+  /** The work behind an Expert reply — steps, tool chips, sources, verdict (ExpertSteps). */
+  expert?: ExpertTrace
   animate?: boolean
   // when true, show recovery UI and allow retry
   error?: boolean
@@ -201,6 +222,8 @@ export type Msg = {
     interactive_preview?: boolean
     /** The web sources this answer was written from (`web_search.py`); read with parseWebSearch. */
     web?: unknown
+    /** An Expert reply's trace, persisted with the message; read with parseExpertTrace. */
+    expert?: unknown
   } | null
   // Compute routing diagnostics (P0-2): which device served this reply, and
   // whether it fell back. Raw shape from /chat (snake_case, not camelized).
@@ -394,7 +417,7 @@ function cloudProviderApiKey(baseUrl?: string): string | undefined {
   if (isBffSessionEnabled()) return undefined
   try { return localStorage.getItem('homepilot_cloud_token') || undefined } catch { return undefined }
 }
-type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy'
+type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy' | 'deep'
 
 const CHAT_REASONING_OPTIONS: Array<{
   id: Exclude<ChatReasoningMode, 'persona'>
@@ -402,13 +425,17 @@ const CHAT_REASONING_OPTIONS: Array<{
   description: string
   icon: any
 }> = [
-  { id: 'fast', label: 'Fast', description: 'Quick responses', icon: Zap },
-  { id: 'expert', label: 'Expert', description: 'Deeper reasoning', icon: Lightbulb },
-  { id: 'heavy', label: 'Heavy', description: 'Multiple expert perspectives', icon: LayoutGrid },
+  { id: 'fast', label: 'Fast', description: 'Quick answers. Minimal overhead.', icon: Zap },
+  { id: 'expert', label: 'Expert', description: 'Live tool-aware thinking and sources.', icon: Lightbulb },
+  { id: 'heavy', label: 'Heavy', description: 'Deeper answer, validation and correction.', icon: LayoutGrid },
+  // Offered only when the connection has a high-end model (DeepResearchGateContext).
+  { id: 'deep', label: 'Deep research', description: DEEP_RESEARCH_CAPTION, icon: Telescope },
 ]
 
 function toThinkingMode(mode: ChatReasoningMode): 'auto' | 'fast' | 'think' | 'heavy' {
   if (mode === 'expert') return 'think'
+  // Deep research runs as its own job; when it cannot (no high-end model), Heavy stands in.
+  if (mode === 'deep') return 'heavy'
   // 'persona' never reaches this (canUseExpertInContext filters it out first),
   // but map to 'auto' as a safe fallback for the Expert backend contract.
   if (mode === 'persona') return 'auto'
@@ -1692,7 +1719,9 @@ function QueryBar({
   mode: Mode
   fileInputRef: React.RefObject<HTMLInputElement>
   canSend: boolean
-  onSend: () => void
+  /** Sends the message; `text` (when given) is what to send instead of `input` — the typed
+   *  text with any long pastes the composer kept as chips. */
+  onSend: (text?: string) => void
   onUpload: (file: File) => void
   placeholderOverride?: string
   pendingPreviewUrl?: string | null
@@ -1705,6 +1734,10 @@ function QueryBar({
   // ---- Drag-and-drop image support ----
   const [isDragging, setIsDragging] = useState(false)
   const dragCounterRef = useRef(0)
+  // Whether "Deep research" can be picked here (measured by the backend; see expertCapabilities.ts).
+  const deepGate = useContext(DeepResearchGateContext)
+  // Stop for a streaming reply, and the one-time Deep research hint (lib/composerAssist.ts).
+  const assist = useContext(ComposerAssistContext)
   // Composer grows with what is typed (up to the 400px cap) instead of
   // scrolling inside a one-line box; resets when the message is sent.
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -1723,12 +1756,33 @@ function QueryBar({
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+  // Long pastes become chips above the field (as in ChatGPT and Claude) instead of a wall of
+  // text that stretches the composer over the conversation; they are sent with the message.
+  const [pastes, setPastes] = useState<string[]>([])
+  const [openPaste, setOpenPaste] = useState<number | null>(null)
+  // The field grows to a cap (about 30 % of the window, at most 260 px) and then scrolls; once
+  // it holds more than a line the pill becomes a rounded rectangle with the controls below.
+  const [multiline, setMultiline] = useState(false)
   React.useLayoutEffect(() => {
     const el = composerRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 400)}px`
+    const cap = typeof window !== 'undefined' ? Math.max(120, Math.min(260, Math.round(window.innerHeight * 0.3))) : 260
+    el.style.height = `${Math.min(el.scrollHeight, cap)}px`
+    setMultiline(input.includes('\n') || el.scrollHeight > 64)
   }, [input])
+  const expanded = multiline || pastes.length > 0 || Boolean(pendingPreviewUrl)
+  const sendable = canSend || pastes.length > 0
+  const sendNow = useCallback(() => {
+    if (!pastes.length) {
+      onSend()
+      return
+    }
+    const combined = withPastes(input, pastes)
+    setPastes([])
+    setOpenPaste(null)
+    onSend(combined)
+  }, [pastes, input, onSend])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -1755,14 +1809,20 @@ function QueryBar({
   // ---- Paste image from clipboard ----
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
-    if (!items) return
-    for (const item of Array.from(items)) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault()
-        const blob = item.getAsFile()
-        if (blob) onUpload(new File([blob], 'pasted-image.png', { type: blob.type }))
-        return
+    if (items) {
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault()
+          const blob = item.getAsFile()
+          if (blob) onUpload(new File([blob], 'pasted-image.png', { type: blob.type }))
+          return
+        }
       }
+    }
+    const text = e.clipboardData?.getData('text/plain') || ''
+    if (isLongPaste(text)) {
+      e.preventDefault()
+      setPastes((prev) => [...prev, text])
     }
   }, [onUpload])
 
@@ -2210,6 +2270,35 @@ function QueryBar({
     >
       {/* The privacy indicator the floating button used to be. Nothing while idle. */}
       <ScreenShareStatus />
+      {assist.deepHint ? (
+        <div
+          role="status"
+          data-testid="deep-hint"
+          className="mb-2 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/75"
+        >
+          <Telescope size={14} className="text-white/60 shrink-0" />
+          <span className="flex-1 min-w-[12rem]">
+            Deep research for a short message? It plans, searches and writes a report, which takes minutes. Fast is usually enough here.
+          </span>
+          <button
+            type="button"
+            onClick={() => assist.chooseDeepHint('fast')}
+            className="rounded-full bg-white text-black px-3 py-1 text-xs font-medium hover:opacity-90"
+          >
+            Use Fast for this
+          </button>
+          <button
+            type="button"
+            onClick={() => assist.chooseDeepHint('deep')}
+            className="rounded-full border border-white/15 px-3 py-1 text-xs text-white/80 hover:bg-white/10"
+          >
+            Run Deep research
+          </button>
+          <button type="button" onClick={() => assist.chooseDeepHint('dismiss')} className="px-1 text-white/40 hover:text-white/80" aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      ) : null}
       <div
         className={[
           'relative w-full overflow-visible',
@@ -2217,12 +2306,14 @@ function QueryBar({
           isDragging
             ? 'ring-2 ring-inset ring-purple-500/60 bg-purple-500/5'
             : 'ring-1 ring-inset ring-white/15 hover:ring-white/20 focus-within:ring-white/25',
-          'rounded-[10rem]',
+          // A pill for one line; a rounded rectangle once it holds more (a 10rem radius on a
+          // tall box made an oval that cut the text off at its curved edges).
+          expanded ? 'rounded-[28px]' : 'rounded-[10rem]',
           'transition-[background-color,box-shadow,border-color] duration-100 ease-in-out',
         ].join(' ')}
       >
         {isDragging && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-purple-500/10 rounded-[10rem] pointer-events-none">
+          <div className={`absolute inset-0 z-30 flex items-center justify-center bg-purple-500/10 ${expanded ? 'rounded-[28px]' : 'rounded-[10rem]'} pointer-events-none`}>
             <span className="text-purple-300 text-sm font-semibold">Drop image to attach</span>
           </div>
         )}
@@ -2233,7 +2324,7 @@ function QueryBar({
             `+` replaces the paperclip rather than joining it: two buttons for one intent make
             the reader work out which is the superset. The file input below is untouched, and
             the menu's first item fires the same click the paperclip did. */}
-        <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
+        <div className={expanded ? 'absolute left-3 bottom-3 z-20' : 'absolute left-3 top-1/2 -translate-y-1/2 z-20'}>
           <ComposerPlusMenu onAddFile={() => fileInputRef.current?.click()} />
           <input
             type="file"
@@ -2280,7 +2371,10 @@ function QueryBar({
                 >
                   {CHAT_REASONING_OPTIONS.map((opt) => {
                     const selected = chatReasoningMode === opt.id
-                    const personaUnavailable = false
+                    // Deep research is disabled, with the reason, until a high-end model is connected.
+                    const deepState = opt.id === 'deep' ? deepOptionState(deepGate) : null
+                    const unavailable = Boolean(deepState?.disabled)
+                    const description = deepState ? deepState.description : opt.description
                     const Icon = opt.icon
                     return (
                       <button
@@ -2288,15 +2382,17 @@ function QueryBar({
                         type="button"
                         role="menuitemradio"
                         aria-checked={selected}
-                        disabled={personaUnavailable}
+                        aria-disabled={unavailable}
+                        disabled={unavailable}
+                        title={unavailable ? description : undefined}
                         onClick={() => {
-                          if (personaUnavailable) return
+                          if (unavailable) return
                           onChatReasoningModeChange(opt.id)
                           setModeMenuOpen(false)
                         }}
                         className={[
                           'w-full text-left rounded-xl px-3 py-2.5 transition-colors flex items-start gap-3',
-                          personaUnavailable ? 'opacity-45 cursor-not-allowed' : '',
+                          unavailable ? 'opacity-45 cursor-not-allowed' : '',
                           selected ? 'bg-white/10' : 'hover:bg-white/10',
                         ].join(' ')}
                       >
@@ -2305,7 +2401,7 @@ function QueryBar({
                         </span>
                         <span className="flex-1 min-w-0">
                           <span className="text-sm font-semibold text-white">{opt.label}</span>
-                          <span className="block text-xs text-white/60 mt-0.5">{personaUnavailable ? 'Open a persona project to use Persona mode' : opt.description}</span>
+                          <span className="block text-xs text-white/60 mt-0.5">{description}</span>
                         </span>
                         {selected ? <Check size={16} className="text-white/80 shrink-0 mt-0.5" /> : null}
                       </button>
@@ -2355,10 +2451,20 @@ function QueryBar({
               <Mic size={18} />
             </button>
           )}
-          {canSend && !isListening && !micTranscribing ? (
+          {assist.streaming ? (
             <button
               type="button"
-              onClick={onSend}
+              onClick={assist.stop}
+              className="hp-icon-btn h-10 w-10 rounded-full bg-white text-black grid place-items-center hover:opacity-90 transition-opacity"
+              aria-label="Stop generating"
+              title="Stop generating"
+            >
+              <Square size={14} strokeWidth={2.5} fill="currentColor" />
+            </button>
+          ) : sendable && !isListening && !micTranscribing ? (
+            <button
+              type="button"
+              onClick={sendNow}
               className="hp-icon-btn h-10 w-10 rounded-full bg-white text-black grid place-items-center hover:opacity-90 transition-opacity"
               aria-label="Submit"
               title="Submit"
@@ -2412,11 +2518,20 @@ function QueryBar({
           </div>
         )}
 
+        <PastedChips
+          pastes={pastes}
+          open={openPaste}
+          onOpen={setOpenPaste}
+          onRemove={(i) => { setPastes((prev) => prev.filter((_, j) => j !== i)); setOpenPaste(null) }}
+        />
+
         {/* Textarea — right padding is responsive: a phone-sized pill can't
             afford 288px of reserved space (it crushed the field to a sliver and
             made typing impossible on mobile), so reserve just enough on small
-            screens and the full amount from `sm:` up. */}
-        <div className="ps-12 pe-24 sm:pe-72">
+            screens and the full amount from `sm:` up. Expanded (more than a line, a paste
+            chip, an image), the text takes the full width and the controls sit in a row
+            below it, as in ChatGPT. */}
+        <div className={expanded ? 'ps-4 pe-4 pb-14' : 'ps-12 pe-24 sm:pe-72'}>
           <textarea
             ref={composerRef}
             value={input}
@@ -2433,7 +2548,7 @@ function QueryBar({
                 typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)')?.matches
               if (e.key === 'Enter' && !e.shiftKey && !coarsePointer) {
                 e.preventDefault()
-                if (canSend) onSend()
+                if (sendable) sendNow()
               }
             }}
             rows={1}
@@ -2441,8 +2556,8 @@ function QueryBar({
             className={[
               'hp-composer-input w-full bg-transparent text-white placeholder:text-white/55',
               'focus:outline-none resize-none',
-              'min-h-14 py-4 px-2',
-              'max-h-[400px] overflow-y-auto',
+              expanded ? 'min-h-14 pt-4 pb-1 px-2' : 'min-h-14 py-4 px-2',
+              'max-h-[260px] overflow-y-auto',
               'text-[16px] leading-relaxed',
             ].join(' ')}
           />
@@ -2627,6 +2742,13 @@ function ChatState({
     const el = scrollerRef.current
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight
   }, [])
+  // A reply streaming in keeps the view pinned only while the reader is already at the end;
+  // someone who scrolled up to read is left where they are.
+  const last = messages[messages.length - 1]
+  const streamedLength = last?.pending && last.streamed ? (last.text?.length ?? 0) + (last.expert?.steps.length ?? 0) : -1
+  useEffect(() => {
+    if (streamedLength >= 0) keepPinned()
+  }, [streamedLength, keepPinned])
   const markRevealed = useCallback((id: string) => {
     revealedRef.current.add(id)
     window.dispatchEvent(new CustomEvent('hp:messageAnimated', { detail: { id } }))
@@ -2646,7 +2768,7 @@ function ChatState({
     src = src.replace(/\s+/g, '')
     // Resolve media:// refs via backend /media/resolve endpoint
     if (src.startsWith('media://')) {
-      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const tok = fileAuthToken(backendUrl)
       const base = backendUrl.replace(/\/+$/, '')
       const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
       return `${base}/media/resolve?ref=${encodeURIComponent(src)}${qp}`
@@ -2659,9 +2781,9 @@ function ChatState({
       fullUrl = `${base}${path}`
     }
 
-    // Append auth token for /files/ paths — <img> tags can't set headers
+    // Across origins only: an <img> cannot set headers, and same-origin has the cookie.
     if (fullUrl.includes('/files/')) {
-      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const tok = fileAuthToken(backendUrl)
       if (tok) {
         const sep = fullUrl.includes('?') ? '&' : '?'
         fullUrl = `${fullUrl}${sep}token=${encodeURIComponent(tok)}`
@@ -2844,12 +2966,36 @@ function ChatState({
                 </div>
               </div>
             ) : (
-              <div className="min-w-0 max-w-full sm:max-w-[85%]">
-                <div className="text-[16px] leading-relaxed text-[#EEE] font-normal tracking-wide">
-                  {m.pending ? (
+              <div className="min-w-0 max-w-full">
+                <div className="text-[16px] leading-[1.8] text-[#EEE] font-normal tracking-wide">
+                  {m.pending && !m.streamed ? (
                     <AssistantSkeleton label={m.text?.trim() ? m.text : undefined} />
+                  ) : m.pending ? (
+                    /* Streaming in: the work strip (steps, tool chips) and the text so far. */
+                    <div>
+                      {m.expert ? <ExpertSteps trace={m.expert} pending showReasoning={chatSettings.showReasoning !== false} /> : null}
+                      {m.text ? (
+                        <div className="relative">
+                          <MessageMarkdown text={m.text} onImageClick={setLightbox} backendUrl={backendUrl} />
+                          <span className="hp-stream-cursor" aria-hidden="true" />
+                        </div>
+                      ) : !traceHasWork(m.expert) ? (
+                        /* No text and no visible work yet: keep thinking, never a blank gap — and
+                           when the provider is busy, say so ("retrying in 8 s…"). While the
+                           earlier conversation is summarized, show that instead. */
+                        m.expert?.compacting ? (
+                          <CompactingIndicator text={m.expert.compacting} />
+                        ) : (
+                          <AssistantSkeleton label={m.expert?.waiting || undefined} />
+                        )
+                      ) : null}
+                    </div>
                   ) : (
                     <div className={motionPrefs.reveal === 'instant' ? undefined : 'animate-fadeIn'}>
+                      {(() => {
+                        const trace = m.expert ?? parseExpertTrace(m.media?.expert)
+                        return trace ? <ExpertSteps trace={trace} showReasoning={chatSettings.showReasoning !== false} /> : null
+                      })()}
                       <StreamReveal
                         text={m.media?.images?.length
                           ? (m.text || '').replace(/!\[[^\]]*\]\(media:\/\/[^)]+\)\s*/g, '').trim()
@@ -2858,6 +3004,7 @@ function ChatState({
                           canAnimate &&
                           motionPrefs.reveal === 'stream' &&
                           !m.error &&
+                          !m.streamed &&
                           (m.animate === true || seenPendingRef.current.has(m.id)) &&
                           !revealedRef.current.has(m.id)
                         }
@@ -2880,7 +3027,7 @@ function ChatState({
                 </div>
 
                 {m.role === 'assistant' && !m.pending && parseWebSearch(m.media?.web) ? (
-                  <WebSources web={parseWebSearch(m.media?.web)!} />
+                  <WebSources web={parseWebSearch(m.media?.web)!} text={m.text} />
                 ) : null}
 
                 {/* Grok-style icon action row */}
@@ -3234,6 +3381,7 @@ export default function App() {
         incognito: !!parsed.incognito,
         model: parseChatModelChoice(parsed.model),
         webSearch: parsed.webSearch === true,
+        showReasoning: parsed.showReasoning !== false,
       }
     } catch {
       return DEFAULT_CHAT_SETTINGS
@@ -3261,6 +3409,7 @@ export default function App() {
         incognito: !!parsed.incognito,
         model: parseChatModelChoice(parsed.model),
         webSearch: parsed.webSearch === true,
+        showReasoning: parsed.showReasoning !== false,
       })
     } catch {
       setChatSettings(DEFAULT_CHAT_SETTINGS)
@@ -3959,6 +4108,10 @@ export default function App() {
     return () => window.removeEventListener('switch-to-animate', handleSwitchToAnimate)
   }, [])
 
+  // Set once a chat finds this HomePilot has no Expert (POST /v1/expert/chat is not there):
+  // from then on the standard chat answers directly (lib/expertRoute.ts).
+  const expertMissingRef = useRef(false)
+
   // Reset conversation when switching between incompatible mode groups
   // to prevent chat history from bleeding into edit/animate sessions
   const prevModeRef = useRef<Mode>(mode)
@@ -4054,6 +4207,103 @@ export default function App() {
     if (token) headers['Authorization'] = `Bearer ${token}`
     return Object.keys(headers).length ? headers : undefined
   }, [settings.apiKey])
+
+  // Deep research is offered only when the connection has a high-end model: the backend
+  // measures it (lib/expertCapabilities.ts); the mode menu shows the option, or the reason.
+  const [deepGate, setDeepGate] = useState<DeepResearchGate>(UNKNOWN_GATE)
+  const chatSelectionKey = JSON.stringify(currentChatSelection())
+  useEffect(() => {
+    if (!EXPERT_CHAT_ENABLED || expertMissingRef.current) return
+    let cancelled = false
+    const sel = currentChatSelection()
+    void fetchExpertCapabilities(settings.backendUrl, {
+      provider: sel.providerChat || 'ollama',
+      base_url: sel.baseUrlChat || undefined,
+      model: sel.modelChat || undefined,
+      api_key: cloudProviderApiKey(sel.baseUrlChat),
+    }, authHeaders).then((caps) => {
+      if (cancelled) return
+      setDeepGate(caps ? deepGateFrom(caps) : {
+        enabled: false,
+        reason: 'Could not check the connected models (is the Expert service up?); Deep research is off until it answers.',
+        model: null,
+      })
+    })
+    return () => { cancelled = true }
+  }, [settings.backendUrl, chatSelectionKey, authHeaders, currentChatSelection])
+  useEffect(() => {
+    // A saved "deep" from a stronger connection falls back to Expert here.
+    if (deepGate.enabled === false && chatReasoningMode === 'deep') setChatReasoningMode('expert')
+  }, [deepGate.enabled, chatReasoningMode])
+
+  // Stop for the streaming reply, and the Deep research hint (lib/composerAssist.ts).
+  const streamAbortRef = useRef<AbortController | null>(null)
+  const [streaming, setStreaming] = useState(false)
+  const [deepHint, setDeepHint] = useState<DeepHint | null>(null)
+  // One-turn answers to the hint: "Use Fast for this" overrides the mode once; "Run Deep
+  // research" confirms once. The menu's choice itself is never changed.
+  const modeOverrideRef = useRef<ChatReasoningMode | null>(null)
+  const deepConfirmedRef = useRef(false)
+
+  // Expert turns are saved by the app (the standard chat saves its own server-side), with
+  // the trace in the assistant message's media, so a reloaded chat shows the same thing.
+  const persistExpertTurn = useCallback(async (convId: string, parts: { user?: string; assistant?: any }) => {
+    const base = settings.backendUrl.replace(/\/+$/, '')
+    const post = (body: unknown) => fetch(`${base}/conversations/${encodeURIComponent(convId)}/messages`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...(authHeaders ?? {}) },
+      body: JSON.stringify(body),
+    })
+    try {
+      if (parts.user) await post({ role: 'user', content: parts.user })
+      const data = parts.assistant
+      if (data) {
+        await post({
+          role: 'assistant',
+          content: data.content ?? '',
+          media: data.web_search ? { ...(data.media ?? {}), web: data.web_search } : (data.media ?? null),
+        })
+      }
+    } catch {
+      /* a reload loses this turn's record; the chat itself is unaffected */
+    }
+  }, [settings.backendUrl, authHeaders])
+
+  // A Deep research job this browser was following when the page went away: reconnect to it
+  // (the server replays its numbered events), finish the message, and save the reply.
+  const resumeDeepJob = useCallback(async (convId: string, job: PendingDeepJob) => {
+    const tmpId = uuid()
+    let state: ExpertStreamState = initialExpertState('deep')
+    setChatMessages((prev) => [...prev, { id: tmpId, role: 'assistant', text: '', pending: true, streamed: true, expert: state.trace }])
+    const paint = () => {
+      const snapshot = state
+      setChatMessages((prev) => prev.map((m) => (m.id === tmpId ? { ...m, text: snapshot.text, expert: snapshot.trace, streamed: true } : m)))
+    }
+    const controller = new AbortController()
+    streamAbortRef.current = controller
+    setStreaming(true)
+    try {
+      await resumeDeepResearch(settings.backendUrl, job.job_id, (ev) => {
+        state = ev.type === 'done' ? applyDeepDone(state, ev.data) : applyExpertEvent(state, ev)
+        paint()
+      }, { headers: authHeaders, signal: controller.signal })
+    } catch (err: unknown) {
+      if (!controller.signal.aborted) state = { ...state, done: true, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      if (streamAbortRef.current === controller) streamAbortRef.current = null
+      setStreaming(false)
+    }
+    forgetDeepJob(convId)
+    const web = sourcesAsWeb(state.trace)
+    const failed = Boolean(state.error) && !state.text
+    const text = state.text || (state.error ? `Deep research could not be resumed: ${state.error}` : 'Stopped.')
+    const media = { expert: state.trace, ...(web ? { web } : {}) }
+    setChatMessages((prev) => prev.map((m) => (m.id === tmpId ? { ...m, pending: false, text, media, error: failed } : m)))
+    if (!failed && state.text) {
+      void persistExpertTurn(convId, { assistant: { content: state.text, media: { expert: state.trace }, web_search: web ?? undefined } })
+    }
+  }, [settings.backendUrl, authHeaders, persistExpertTurn])
 
   // This chat's "Search the web" (+ menu and Chat settings share it). Standard chat only:
   // persona and project chats go through their own pipeline, which this does not touch.
@@ -4363,11 +4613,14 @@ export default function App() {
             }
           })
         )
+        // A Deep research job this conversation was waiting on: reconnect and replay.
+        const waiting = pendingDeepJob(convId)
+        if (waiting) void resumeDeepJob(convId, waiting)
       }
     } catch (err) {
       console.error('Failed to load conversation:', err)
     }
-  }, [settings.backendUrl, authHeaders])
+  }, [settings.backendUrl, authHeaders, resumeDeepJob])
 
   const openRoutineConversation = useCallback(async (run: RoutineRun) => {
     const convId = run.conversation_id
@@ -4711,6 +4964,12 @@ export default function App() {
     async (rawText: string, opts?: { spoken?: boolean }) => {
       const trimmed = rawText.trim()
       if (!trimmed) return
+
+      // A one-turn choice from the Deep research hint ("Use Fast for this"), then back to the
+      // menu's mode for the next message.
+      const reasoningMode: ChatReasoningMode = modeOverrideRef.current ?? chatReasoningMode
+      modeOverrideRef.current = null
+      deepConfirmedRef.current = false
 
       /*
        * A turn that will be *spoken back* rather than read.
@@ -5361,61 +5620,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
-        const expertPath = canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type)
-        // Expert (Fast / Expert / Heavy) builds its own prompts, so with "Search the web" on the
-        // sources are found here first and handed to it as grounding; the answer then shows
-        // them like any web-grounded reply. Search failing never blocks the answer.
-        let expertWeb: { web_search?: unknown; context?: string } | null = null
-        if (expertPath && webSearchOn) {
-          expertWeb = await postJson<any>(
-            settings.backendUrl,
-            '/v1/web-search/context',
-            {
-              query: requestText,
-              history: messages.filter((m) => !m.pending).slice(-8).map((m) => ({ role: m.role, content: m.text })),
-            },
-            authHeaders,
-          ).catch(() => ({
-            web_search: {
-              status: 'unavailable', query: requestText, sources: [],
-              message: "Web search isn't available right now, so this answer may be out of date.",
-              hint: 'The backend could not run the search.',
-            },
-            context: undefined,
-          }))
-        }
-        const reply = expertPath
-          ? await postJson<any>(
-              settings.backendUrl,
-              '/v1/expert/chat',
-              {
-                query: requestText,
-                // Today's date in the user's zone, and the web sources when searched (grounding.py).
-                client_timezone: browserTimeZone(),
-                context: expertWeb?.context || undefined,
-                provider: 'auto',
-                thinking_mode: toThinkingMode(chatReasoningMode),
-                with_critique: false,
-                history: messages
-                  .filter((m) => !m.pending)
-                  .slice(-8)
-                  .map((m) => ({ role: m.role, content: m.text })),
-                session_id: conversationId || undefined,
-                has_attachments: Boolean(pendingFile || pendingPreviewUrl),
-                feature_hints: { budgetTier: 'normal' },
-                // The chat model picked in Models / Settings. Without it Expert answered from
-                // its own default Ollama model, whatever the user had selected — an OllaBridge
-                // gateway model included.
-                target: {
-                  provider: chatSelection.providerChat || 'ollama',
-                  base_url: chatSelection.baseUrlChat || undefined,
-                  model: chatSelection.modelChat || undefined,
-                  api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
-                },
-              },
-              authHeaders
-            )
-          : await postJson<any>(
+        const expertPath = canUseExpertInContext(mode, reasoningMode, currentProject?.project_type) && !expertMissingRef.current
+        // Expert turns are saved by the app under this conversation's id — a new chat gets one now.
+        const convId = conversationId || uuid()
+        if (expertPath && !conversationId) setConversationId(convId)
+        let expertAnswered = false
+        let userTurnPersisted = false
+        // Expert searches the web itself now (its tool loop; "Search the web" on makes it search
+        // first), so the answer shows the sources it actually used. The standard chat still
+        // runs its own search server-side (web_search below).
+        // The standard chat (/chat) — and Expert's fallback when this HomePilot has none.
+        const legacyChat = () => postJson<any>(
               settings.backendUrl,
               '/chat',
               {
@@ -5465,8 +5680,129 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               },
               authHeaders
             )
-        // Expert answers with the sources found above; the standard chat returns its own.
-        const data = expertWeb?.web_search ? { ...reply, web_search: expertWeb.web_search } : reply
+        // Expert streams the reply (lib/expertStream.ts): tokens, steps, tool chips and sources
+        // land in the pending bubble as they arrive. Deep research runs as a background job
+        // followed the same way. "Search the web" asks Expert to search first (feature_hints).
+        const expertBody = (thinkingMode: string) => ({
+          query: requestText,
+          // Today's date in the user's zone (grounding.py).
+          client_timezone: browserTimeZone(),
+          provider: 'auto',
+          thinking_mode: thinkingMode,
+          with_critique: false,
+          // The server keeps the newest turns verbatim and carries the older ones as a note.
+          history: messages
+            .filter((m) => !m.pending)
+            .slice(-60)
+            .map((m) => ({ role: m.role, content: m.text })),
+          session_id: convId,
+          has_attachments: Boolean(pendingFile || pendingPreviewUrl),
+          feature_hints: { budgetTier: 'normal', ...(webSearchOn ? { webSearch: 'force' } : {}) },
+          // The project this chat runs inside: its instructions reach every step and its
+          // documents become a tool (persona projects keep their own path).
+          project: currentProject && currentProject.project_type !== 'persona'
+            ? {
+                id: currentProject.id,
+                name: currentProject.name,
+                instructions: currentProject.instructions || undefined,
+                document_count: currentProject.document_count || 0,
+              }
+            : undefined,
+          // The chat model picked in Models / Settings. Without it Expert answered from
+          // its own default Ollama model, whatever the user had selected — an OllaBridge
+          // gateway model included.
+          target: {
+            provider: chatSelection.providerChat || 'ollama',
+            base_url: chatSelection.baseUrlChat || undefined,
+            model: chatSelection.modelChat || undefined,
+            api_key: cloudProviderApiKey(chatSelection.baseUrlChat),
+          },
+        })
+        const runExpert = async (): Promise<any> => {
+          const wantDeep = reasoningMode === 'deep'
+          let state: ExpertStreamState = initialExpertState(wantDeep ? 'deep' : toThinkingMode(reasoningMode))
+          let lastPaint = 0
+          const paint = (force: boolean) => {
+            const now = Date.now()
+            if (!force && now - lastPaint < 80) return
+            lastPaint = now
+            const snapshot = state
+            setMessages((prev) =>
+              prev.map((m) => (m.id === tmpId ? { ...m, text: snapshot.text, expert: snapshot.trace, streamed: true } : m)),
+            )
+          }
+          const onEvent = (ev: ExpertEvent) => {
+            state = ev.type === 'done' && wantDeep ? applyDeepDone(state, ev.data) : applyExpertEvent(state, ev)
+            paint(ev.type !== 'token')
+          }
+          // Stop aborts the stream; a Deep research job is cancelled on the server as well.
+          const controller = new AbortController()
+          let deepJobId: string | null = null
+          streamAbortRef.current = controller
+          setStreaming(true)
+          const opts = { headers: authHeaders, signal: controller.signal }
+          try {
+            if (wantDeep) {
+              try {
+                await streamDeepResearch(settings.backendUrl, expertBody('heavy'), onEvent, {
+                  ...opts,
+                  onStarted: (job) => {
+                    deepJobId = job.job_id
+                    // Remembered for a refresh, and the question saved now: the job outlives this page.
+                    rememberDeepJob(convId, job.job_id)
+                    userTurnPersisted = true
+                    void persistExpertTurn(convId, { user: trimmed })
+                  },
+                })
+                forgetDeepJob(convId)
+              } catch (err: unknown) {
+                if (controller.signal.aborted || !/^HTTP 403\b/.test(err instanceof Error ? err.message : '')) throw err
+                // The connection lost its high-end model since the menu was drawn: Heavy stands in.
+                state = initialExpertState('heavy')
+                state = { ...state, trace: { ...state.trace, notices: [
+                  'Deep research is not offered on this connection (it needs a high-end model), so Heavy answered instead.',
+                ] } }
+                await streamExpert(settings.backendUrl, expertBody('heavy'), onEvent, opts)
+              }
+            } else {
+              await streamExpert(settings.backendUrl, expertBody(toThinkingMode(reasoningMode)), onEvent, opts)
+            }
+          } catch (err: unknown) {
+            if (controller.signal.aborted) {
+              // Stopped by the user: keep what arrived, say so, no error bubble.
+              forgetDeepJob(convId)
+              if (deepJobId) {
+                void fetch(`${settings.backendUrl.replace(/\/+$/, '')}/v1/expert/deep/${encodeURIComponent(deepJobId)}`, {
+                  method: 'DELETE', credentials: 'include', headers: authHeaders,
+                }).catch(() => undefined)
+              }
+              state = {
+                ...state, done: true, error: null,
+                trace: { ...state.trace, notices: [...state.trace.notices, 'Stopped before the answer was complete.'] },
+              }
+            } else {
+              // No Expert on this HomePilot (a packaged image that did not ship it): the
+              // standard chat answers this turn and every later one — not an "HTTP 405" bubble.
+              if (!isMissingRoute(err) || state.text) throw err
+              expertMissingRef.current = true
+              return legacyChat()
+            }
+          } finally {
+            if (streamAbortRef.current === controller) streamAbortRef.current = null
+            setStreaming(false)
+          }
+          if (state.error) throw new Error(state.error)
+          paint(true)
+          expertAnswered = true
+          const web = sourcesAsWeb(state.trace)
+          return {
+            content: state.text || (controller.signal.aborted ? 'Stopped.' : ''),
+            web_search: web ?? undefined,
+            media: { expert: state.trace },
+          }
+        }
+        const reply = expertPath ? await runExpert() : await legacyChat()
+        const data = reply
 
         setMessages((prev) =>
           prev.map((m) =>
@@ -5488,6 +5824,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               : m
           )
         )
+
+        if (expertAnswered && !data.error) {
+          void persistExpertTurn(convId, { user: userTurnPersisted ? undefined : trimmed, assistant: data })
+        }
 
         // Dispatch assistant message to VoiceModeGrok for typewriter animation
         if (mode === 'voice' && typeof window !== 'undefined') {
@@ -6221,7 +6561,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     setPendingPreviewUrl(null)
   }, [pendingPreviewUrl])
 
-  const onSend = useCallback(() => {
+  const onSend = useCallback((override?: string) => {
     if (pendingFile) {
       // Send the attached image together with whatever the user typed
       void uploadAndSend(pendingFile)
@@ -6230,11 +6570,32 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       setPendingPreviewUrl(null)
       return
     }
-    const v = input
+    // `override`: the composer's typed text with the long pastes it kept as chips.
+    const v = typeof override === 'string' ? override : input
     if (!v.trim()) return
+    // Deep research for a greeting is minutes of work for nothing: ask once, never switch silently.
+    if (chatReasoningMode === 'deep' && mode === 'chat' && isTrivialPrompt(v) && !deepConfirmedRef.current) {
+      setDeepHint({ text: v })
+      return
+    }
     void sendTextOrIntent(v)
     setInput('')
-  }, [input, sendTextOrIntent, pendingFile, pendingPreviewUrl, uploadAndSend])
+  }, [input, sendTextOrIntent, pendingFile, pendingPreviewUrl, uploadAndSend, chatReasoningMode, mode])
+
+  const chooseDeepHint = useCallback((choice: 'fast' | 'deep' | 'dismiss') => {
+    const hint = deepHint
+    setDeepHint(null)
+    if (!hint || choice === 'dismiss') return
+    if (choice === 'fast') modeOverrideRef.current = 'fast'
+    else deepConfirmedRef.current = true
+    void sendTextOrIntent(hint.text)
+    setInput('')
+  }, [deepHint, sendTextOrIntent])
+  const stopStreaming = useCallback(() => { streamAbortRef.current?.abort() }, [])
+  const composerAssist = useMemo(
+    () => ({ streaming, stop: stopStreaming, deepHint, chooseDeepHint }),
+    [streaming, stopStreaming, deepHint, chooseDeepHint],
+  )
 
   // Handle edit from image viewer — navigate to Edit Studio with the image
   const handleEditFromViewer = useCallback(
@@ -6432,6 +6793,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
   }
 
   return (
+    <DeepResearchGateContext.Provider value={deepGate}>
+    <ComposerAssistContext.Provider value={composerAssist}>
     <WebSearchToggleContext.Provider value={webSearchToggle}>
     <MeetingSenseProvider
       conversationId={conversationId}
@@ -7317,7 +7680,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             (pap.selected_filename as string | undefined)
           if (!rel) return null
           const base = settings.backendUrl.replace(/\/+$/, '')
-          const tok = localStorage.getItem('homepilot_auth_token') || ''
+          const tok = fileAuthToken(settings.backendUrl)
           const clean = rel.replace(/^\/+/, '')
           return `${base}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
         })()}
@@ -7445,5 +7808,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     </div>
     </MeetingSenseProvider>
     </WebSearchToggleContext.Provider>
+    </ComposerAssistContext.Provider>
+    </DeepResearchGateContext.Provider>
   )
 }

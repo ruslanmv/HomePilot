@@ -22,6 +22,7 @@ def advisor(tmp_path, monkeypatch):
     monkeypatch.setattr(hardware, "_nvidia", lambda: None)
     monkeypatch.setattr(hardware, "_apple", lambda: None)
     monkeypatch.setattr(hardware, "_total_ram_gb", lambda: 32.0)
+    monkeypatch.setattr(hardware, "_host_ram_gb", lambda: 32.0)
 
     async def no_ollama():
         return set()
@@ -215,3 +216,42 @@ def test_no_upgrade_for_the_best_model_or_one_fitlab_does_not_rank(advisor, clie
     for current in (best["install"]["model_id"], "my-private-finetune:7b"):
         r = client.get("/v1/model-advisor", params={"vram_gb": 12, "current_chat": current}).json()
         assert "chat" not in r["upgrades"]
+
+
+# ── the memory a container really has ──────────────────────────────────────
+
+
+def test_ram_is_the_containers_limit_not_the_hosts(tmp_path, monkeypatch):
+    """A 16 GB Hugging Face Space read 132.9 GB — the host's RAM — and FitLab called a 20B
+    model a fit for it. The cgroup limit is what the container can use."""
+    from app.model_advisor import hardware
+    monkeypatch.setattr(hardware, "_nvidia", lambda: None)
+    monkeypatch.setattr(hardware, "_apple", lambda: None)
+    monkeypatch.setattr(hardware, "_host_ram_gb", lambda: 132.9)
+    monkeypatch.setattr(hardware, "CGROUP_ROOT", tmp_path)
+    (tmp_path / "memory.max").write_text(str(16 * 1024 ** 3))          # cgroup v2, 16 GiB
+    hw = hardware.detect()
+    assert (hw["kind"], hw["ram_gb"], hw["host_ram_gb"], hw["ram_source"]) == ("cpu", 17.2, 132.9, "container")
+    assert "container's 17 GB memory limit (the host has 133 GB)" in hw["note"]
+    assert hardware.chat_memory_gb(hw) == 8.6                           # half of the limit, not 66.5
+
+
+def test_without_a_limit_the_hosts_ram_counts(tmp_path, monkeypatch):
+    from app.model_advisor import hardware
+    monkeypatch.setattr(hardware, "_nvidia", lambda: None)
+    monkeypatch.setattr(hardware, "_apple", lambda: None)
+    monkeypatch.setattr(hardware, "_host_ram_gb", lambda: 64.0)
+    monkeypatch.setattr(hardware, "CGROUP_ROOT", tmp_path)
+    assert hardware._total_ram_gb() == 64.0                             # no cgroup files at all
+    (tmp_path / "memory.max").write_text("max")                         # v2, unlimited
+    assert hardware._total_ram_gb() == 64.0
+    (tmp_path / "memory").mkdir()
+    v1 = tmp_path / "memory" / "memory.limit_in_bytes"
+    v1.write_text("9223372036854771712")                                # v1's "unlimited"
+    assert hardware._total_ram_gb() == 64.0
+    v1.write_text(str(8 * 10 ** 9))                                     # v1, 8 GB
+    assert hardware._total_ram_gb() == 8.0
+    hw = hardware.detect()
+    assert hw["ram_gb"] == 8.0 and hw["host_ram_gb"] == 64.0
+    v1.write_text(str(128 * 10 ** 9))                                   # a limit above the host's RAM
+    assert hardware._total_ram_gb() == 64.0 and "host_ram_gb" not in hardware.detect()

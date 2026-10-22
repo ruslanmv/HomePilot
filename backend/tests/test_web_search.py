@@ -228,6 +228,10 @@ def chat_turn(monkeypatch):
     from app import orchestrator
 
     sent, stored = [], []
+    # The standard chat has no persona session. Stubbed rather than read from the shared test
+    # DB: by the time the full suite reaches this file, another test has pointed the DB
+    # elsewhere and `persona_sessions` is not there ("no such table" in CI).
+    monkeypatch.setattr(orchestrator.persona_sessions_mod, "get_session_by_conversation", lambda cid: None)
     monkeypatch.setattr(orchestrator, "ensure_conversation_owner", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(orchestrator, "add_message", lambda cid, role, content, **k: stored.append((role, content, k)))
     monkeypatch.setattr(orchestrator, "get_recent", lambda cid, limit=8: [("user", "what is new in AI today?")])

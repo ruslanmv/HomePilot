@@ -22,6 +22,7 @@ import type { MeetingRecord } from './meetingRecord';
 import type { MeetingSenseStatus } from './entryPoint';
 import { readMeetingModelTarget } from './api';
 import { readMeetingPrefs, subscribeMeetingPrefs } from './meetingPrefs';
+import { resolveBackendUrl } from '../lib/backendUrl';
 
 export interface MeetingSenseProviderProps {
     conversationId: string | null;
@@ -85,13 +86,10 @@ function browserScreenSense(): ScreenSenseUi | null {
 }
 
 function apiBase(): string {
-    try {
-        const saved = localStorage.getItem('homepilot_backend_url') || '';
-        if (saved.trim()) return saved.replace(/\/+$/, '');
-    } catch {
-        // Relative routes still work when localStorage is unavailable.
-    }
-    return '';
+    // The same resolution as the rest of the app: a saved address, the moved-backend address
+    // `make start` hands the dev server (VITE_API_URL), or the origin. Reading the saved value
+    // raw kept calling :8000 after the backend had moved to :8002 — CORS errors, no meetings.
+    return resolveBackendUrl().replace(/\/+$/, '');
 }
 
 function headers(): Record<string, string> {

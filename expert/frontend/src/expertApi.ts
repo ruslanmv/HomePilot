@@ -207,6 +207,9 @@ export function expertStream(
                 return;
 
               default:
+                // Named events this client does not render (tool, sources, verdict, notice,
+                // reset, done) carry JSON, not text: never append them as tokens.
+                if (currentEvent) break;
                 // Plain token — if no step active, goes to final answer
                 const token = payload.replace(/\\n/g, "\n");
                 if (currentStep) {

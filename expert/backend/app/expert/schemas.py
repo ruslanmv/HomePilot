@@ -19,9 +19,19 @@ class ExpertTarget(BaseModel):
     api_key: Optional[str] = Field(default=None, max_length=4096, repr=False)
 
 
+class ExpertProject(BaseModel):
+    """The project a chat runs inside: its instructions reach every step; its documents become
+    the ``project_search`` tool when the backend's retrieval is reachable."""
+    id: str = Field(..., max_length=120)
+    name: Optional[str] = Field(default=None, max_length=200)
+    instructions: Optional[str] = Field(default=None, max_length=20000)
+    document_count: int = Field(default=0, ge=0)
+
+
 class ExpertChatRequest(BaseModel):
     """Request body for POST /v1/expert/chat (non-streaming)."""
     query: str = Field(..., min_length=1, description="User's message / question")
+    project: Optional[ExpertProject] = Field(default=None, description="The project this chat runs inside.")
     provider: Literal["auto", "local", "groq", "grok", "gemini", "claude", "openai"] = Field(
         default="auto",
         description="Provider to use. 'auto' applies complexity-based routing.",
@@ -127,6 +137,37 @@ class ExpertChatResponse(BaseModel):
         default=None,
         description="Total backend processing latency in milliseconds.",
     )
+    tool_trace: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Tool calls made while answering (name, label, ok, elapsed, source numbers).",
+    )
+    sources: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Numbered sources the answer may cite as [n] (n, title, url, domain, snippet).",
+    )
+    verdict: Optional[str] = Field(
+        default=None,
+        description="Heavy only: the validator's verdict — validated / corrected / needs_review / reviewed.",
+    )
+    verdict_detail: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Heavy only: issues, method and limitations behind the verdict.",
+    )
+    model_escalated: Optional[str] = Field(
+        default=None,
+        description="Heavy only: the stronger model used instead of the selected one, when escalated.",
+    )
+    effort: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="What this request spent: level (direct / standard / full) and why (policies.py).",
+    )
+
+
+class CapabilitiesRequest(BaseModel):
+    """Body for POST /v1/expert/capabilities: which connection and model to assess."""
+    target: Optional[ExpertTarget] = None
+    model: Optional[str] = Field(default=None, max_length=300)
+    probe: bool = Field(default=False, description="Run the one-time tool-calling and JSON probes when not cached.")
 
 
 class ExpertInfoResponse(BaseModel):

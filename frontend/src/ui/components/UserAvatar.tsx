@@ -9,6 +9,7 @@
  */
 import React, { useState } from 'react'
 import { resolveBackendUrl } from '../lib/backendUrl'
+import { fileAuthToken } from '../lib/fileUrl'
 
 interface UserAvatarProps {
   displayName: string
@@ -64,7 +65,7 @@ export default function UserAvatar({
     const backendUrl = resolveBackendUrl()
     let fullUrl = avatarUrl.startsWith('http') ? avatarUrl : `${backendUrl}${avatarUrl}`
     if (fullUrl.includes('/files/')) {
-      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const tok = fileAuthToken(backendUrl)
       if (tok) {
         const sep = fullUrl.includes('?') ? '&' : '?'
         fullUrl = `${fullUrl}${sep}token=${encodeURIComponent(tok)}`

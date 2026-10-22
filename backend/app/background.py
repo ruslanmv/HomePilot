@@ -128,15 +128,11 @@ def _get_image_and_size(url: str) -> Tuple[bytes, Tuple[int, int]]:
 
 
 def _save_image_to_uploads(img_bytes: bytes, prefix: str = "bg", ext: str = "png") -> str:
-    """Save image bytes to uploads directory and return the URL path."""
+    """Save image bytes to media storage (a flat key, as before) and return the URL path."""
+    from .media_storage import get_storage
+
     filename = f"{prefix}_{uuid.uuid4().hex[:8]}.{ext}"
-    upload_path = Path(UPLOAD_DIR)
-    upload_path.mkdir(parents=True, exist_ok=True)
-
-    file_path = upload_path / filename
-    with open(file_path, 'wb') as f:
-        f.write(img_bytes)
-
+    get_storage().put(filename, img_bytes)
     return f"/files/{filename}"
 
 

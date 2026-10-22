@@ -10,11 +10,12 @@
 #
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import time
-from typing import Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -24,6 +25,7 @@ from .config import (
     EXPERT_LOCAL_MODEL, EXPERT_LOCAL_FAST_MODEL,
     GROQ_MODEL, GROK_MODEL, GEMINI_MODEL,
     EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE,
+    EXPERT_HEAVY_ESCALATE, EXPERT_DEEP_TIME_BUDGET_S,
     available_expert_providers,
 )
 from .router import (
@@ -34,10 +36,14 @@ from .router import (
     score_complexity,
     select_provider,
 )
-from .policies import resolve_thinking_mode
+from .tool_loop import run_with_tools, stream_with_tools
+from .policies import effort_for, is_trivial, resolve_thinking_mode
+from .project_context import PROJECT_TOOL, project_system_prompt, project_tool
+from . import tools as tools_mod
 from .thinking import think, stream_think
 from .heavy import heavy, stream_heavy
 from .schemas import (
+    CapabilitiesRequest,
     ExpertChatRequest,
     ExpertChatResponse,
     ExpertInfoResponse,
@@ -48,6 +54,10 @@ from .schemas import (
     ProductionReadinessResponse,
     ReadinessCheckItem,
 )
+from . import capability
+from . import compaction
+from . import config as config_mod
+from . import deep
 from . import grounding
 from . import target as target_mod
 from .readiness import build_readiness_report
@@ -102,6 +112,71 @@ def _provider_for(req: ExpertChatRequest, chosen) -> str:
     return select_provider(req.query, preferred=req.provider)
 
 
+def _model_label(chosen, requested: Optional[str]) -> Optional[str]:
+    """The model a response reports: the chosen target's, else the one the request named."""
+    if chosen is not None and chosen.model:
+        return chosen.model
+    return requested or None
+
+
+async def _escalate_for_heavy(chosen, req: ExpertChatRequest, mode: str, provider: str):
+    """Heavy runs on the strongest model of the user's own connection when that is a clear
+    step up (capability.py) — the same Ollama or gateway, never a provider they did not pick.
+    Returns ``(target to run with, escalated model name or None)``."""
+    if mode != "heavy" or not EXPERT_HEAVY_ESCALATE or provider != "local":
+        return chosen, None
+    if isinstance(req.feature_hints, dict) and req.feature_hints.get("escalate") is False:
+        return chosen, None
+    try:
+        caps = await capability.assess(chosen, req.model)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Heavy escalation skipped: %s", exc)
+        return chosen, None
+    best, selected = caps.get("best"), caps.get("selected") or {}
+    if not best or not capability.stronger(best, selected):
+        return chosen, None
+    if chosen is None:
+        return target_mod.ChatTarget(provider="ollama", base_url="", model=best["name"]), best["name"]
+    return (
+        target_mod.ChatTarget(provider=chosen.provider, base_url=chosen.base_url, model=best["name"], api_key=chosen.api_key),
+        best["name"],
+    )
+
+
+def _project(req: ExpertChatRequest) -> Optional[Dict[str, Any]]:
+    return req.project.model_dump() if req.project is not None else None
+
+
+def _request_tools(req: ExpertChatRequest) -> tools_mod.RequestTools:
+    """The shared tools plus this request's own: the project's documents, when there are any
+    and the backend's retrieval is reachable (project_context.py)."""
+    local = [t for t in (project_tool(_project(req)),) if t is not None]
+    return tools_mod.RequestTools(tools_mod.registry(), local)
+
+
+def _forced_tools(req: ExpertChatRequest, registry: Optional[tools_mod.RequestTools] = None):
+    """What runs before the model is asked anything: the project's documents when the chat is
+    inside a project with documents, and a web search when the chat's "Search the web" switch
+    is on (feature_hints.webSearch = "force") — in every mode."""
+    forced: list = []
+    project = _project(req)
+    if project and int(project.get("document_count") or 0) > 0 and (registry is None or registry.spec(PROJECT_TOOL)):
+        forced.append((PROJECT_TOOL, {"query": req.query}))
+    hints = req.feature_hints if isinstance(req.feature_hints, dict) else {}
+    if str(hints.get("webSearch") or "").lower() in ("force", "on", "true", "1"):
+        forced.append(("hp_web_search", {"query": req.query}))
+    return forced or None
+
+
+def _effort_notice(effort) -> Optional[str]:
+    return None
+
+
+def _escalation_notice(escalated: str, chosen, req: ExpertChatRequest) -> str:
+    was = _model_label(chosen, req.model) or EXPERT_LOCAL_MODEL
+    return f"Heavy used {escalated}, the strongest model on this connection, instead of {was}."
+
+
 @router.post("/chat", response_model=ExpertChatResponse, summary="Expert chat (sync)")
 async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
     """
@@ -125,9 +200,6 @@ async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
     complexity = _compute_request_complexity(req)
     provider = _provider_for(req, chosen)
     started = time.perf_counter()
-
-    temperature = req.temperature if req.temperature is not None else EXPERT_TEMPERATURE
-    max_tokens = req.max_tokens if req.max_tokens is not None else EXPERT_MAX_TOKENS
     include_raw = os.getenv("EXPERT_DEBUG", "").lower() in ("1", "true", "yes")
 
     resolution = resolve_thinking_mode(req.thinking_mode, complexity)
@@ -142,6 +214,28 @@ async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
         mode = "think"
         strategy = "expert-thinking"
 
+    # The request's tools (the project's documents among them), what runs first, and the
+    # effort this message earns inside the mode (policies.effort_for).
+    registry = _request_tools(req)
+    forced = _forced_tools(req, registry)
+    effort = effort_for(mode, complexity, trivial=is_trivial(req.query), forced_tools=bool(forced))
+    temperature = req.temperature if req.temperature is not None else effort.temperature
+    max_tokens = req.max_tokens if req.max_tokens is not None else effort.max_tokens
+    system_prompt = project_system_prompt(req.system_prompt, _project(req))
+    direct = effort.level == "direct"
+    if direct and mode != "fast":
+        strategy = "direct"
+
+    # Compaction: the turns the window keeps go verbatim; the older ones ride as a note.
+    window, note, compaction_notice = await compaction.prepare(
+        [m.model_dump() for m in req.history], session_id=req.session_id, provider=provider, model=req.model,
+    )
+    if compaction_notice:
+        route_notices.append(compaction_notice)
+    run_target, escalated = (chosen, None) if direct else await _escalate_for_heavy(chosen, req, mode, provider)
+    if escalated:
+        route_notices.append(_escalation_notice(escalated, chosen, req))
+
     trace_id = (req.session_id or "expert")[:8]
     history_chars = sum(len(m.content or "") for m in req.history)
     print(
@@ -154,21 +248,24 @@ async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
 
     try:
         # ── heavy pipeline ────────────────────────────────────────────────────
-        if mode == "heavy":
-            result = await heavy(
-                req.query, provider,
-                history=[m.model_dump() for m in req.history],
-                model=req.model, temperature=temperature, max_tokens=max_tokens,
-            )
+        if mode == "heavy" and not direct:
+            with target_mod.using(run_target), compaction.using(note):
+                result = await heavy(
+                    req.query, provider,
+                    history=window, system_prompt=system_prompt, forced_tools=forced,
+                    research=effort.research, registry=registry, tool_rounds=effort.tool_rounds,
+                    model=req.model, temperature=temperature, max_tokens=max_tokens,
+                )
             print(
                 f"[EXPERT CHAT {trace_id}] done mode=heavy provider={result.get('provider', provider)!r} "
                 f"elapsed_ms={int((time.perf_counter() - started) * 1000)} "
-                f"answer_len={len(result.get('final_answer') or '')} fallback={bool(result.get('fallback_applied', False))}"
+                f"answer_len={len(result.get('final_answer') or '')} fallback={bool(result.get('fallback_applied', False))} "
+                f"verdict={result.get('verdict')!r} escalated={escalated!r}"
             )
             return ExpertChatResponse(
                 content=result["final_answer"],
                 provider_used=result.get("provider", provider),
-                model_used=req.model,
+                model_used=_model_label(run_target, req.model),
                 complexity_score=complexity,
                 thinking_mode_used="heavy",
                 steps=result.get("agents"),
@@ -176,16 +273,24 @@ async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
                 fallback_applied=bool(result.get("fallback_applied", False)),
                 notices=[*route_notices, *list(result.get("notices", []))],
                 latency_ms=int((time.perf_counter() - started) * 1000),
+                tool_trace=list(result.get("tool_trace", [])),
+                sources=list(result.get("sources", [])),
+                verdict=result.get("verdict"),
+                verdict_detail=result.get("verdict_detail"),
+                model_escalated=escalated,
+                effort=effort.as_dict(),
             )
 
         # ── think pipeline ────────────────────────────────────────────────────
-        if mode == "think":
-            result = await think(
-                req.query, provider,
-                history=[m.model_dump() for m in req.history],
-                model=req.model, temperature=temperature, max_tokens=max_tokens,
-                with_critique=req.with_critique,
-            )
+        if mode == "think" and not direct:
+            with compaction.using(note):
+                result = await think(
+                    req.query, provider,
+                    history=window, system_prompt=system_prompt, forced_tools=forced,
+                    plan=effort.plan, analyze=effort.analyze, registry=registry, tool_rounds=effort.tool_rounds,
+                    model=req.model, temperature=temperature, max_tokens=max_tokens,
+                    with_critique=req.with_critique,
+                )
             print(
                 f"[EXPERT CHAT {trace_id}] done mode=think provider={result.get('provider', provider)!r} "
                 f"elapsed_ms={int((time.perf_counter() - started) * 1000)} "
@@ -194,7 +299,7 @@ async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
             return ExpertChatResponse(
                 content=result["final_answer"],
                 provider_used=result.get("provider", provider),
-                model_used=result.get("model"),
+                model_used=result.get("model") or _model_label(chosen, req.model),
                 complexity_score=complexity,
                 thinking_mode_used="think",
                 steps=result.get("steps"),
@@ -202,43 +307,40 @@ async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
                 fallback_applied=bool(result.get("fallback_applied", False)),
                 notices=[*route_notices, *list(result.get("notices", []))],
                 latency_ms=int((time.perf_counter() - started) * 1000),
+                tool_trace=list(result.get("tool_trace", [])),
+                sources=list(result.get("sources", [])),
+                effort=effort.as_dict(),
             )
 
-        # ── fast pipeline (single call) ───────────────────────────────────────
-        messages = build_messages(
-            req.query,
-            history=[m.model_dump() for m in req.history],
-            system_prompt=req.system_prompt,
-        )
-        raw = await dispatch(
-            messages, provider,
-            model=req.model, temperature=temperature, max_tokens=max_tokens,
-        )
-        try:
-            content = raw["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError):
-            content = ""
-        meta = extract_dispatch_meta(raw)
-        notices = [*route_notices]
-        if isinstance(meta.get("notice"), str) and meta["notice"]:
-            notices.append(meta["notice"])
+        # ── one generation with the per-turn tool loop: Fast, and a trivial message in any mode ──
+        with compaction.using(note):
+            messages = build_messages(req.query, history=window, system_prompt=system_prompt)
+            result = await run_with_tools(
+                messages, provider, model=req.model, temperature=temperature, max_tokens=max_tokens,
+                call=dispatch, forced=forced, registry=registry, max_rounds=effort.tool_rounds,
+            )
+        content = result.get("content") or ""
+        notices = [*route_notices, *list(result.get("notices", []))]
 
         print(
-            f"[EXPERT CHAT {trace_id}] done mode=fast provider={raw.get('provider', provider)!r} "
-            f"model={raw.get('model')!r} elapsed_ms={int((time.perf_counter() - started) * 1000)} "
-            f"answer_len={len(content or '')} fallback={bool(meta.get('fallback_applied', False))}"
+            f"[EXPERT CHAT {trace_id}] done mode={mode} effort={effort.level} provider={provider!r} "
+            f"model={_model_label(chosen, req.model)!r} elapsed_ms={int((time.perf_counter() - started) * 1000)} "
+            f"answer_len={len(content or '')} tools={len(result.get('tool_trace', []))} "
+            f"fallback={bool(result.get('fallback_applied', False))}"
         )
         return ExpertChatResponse(
             content=content,
-            provider_used=raw.get("provider", provider),
-            model_used=raw.get("model"),
+            provider_used=(chosen.label if chosen is not None else provider),
+            model_used=_model_label(chosen, req.model),
             complexity_score=complexity,
-            thinking_mode_used="fast",
-            provider_raw=raw if include_raw else None,
+            thinking_mode_used=mode,
             strategy_used=strategy,
-            fallback_applied=bool(meta.get("fallback_applied", False)),
+            fallback_applied=bool(result.get("fallback_applied", False)),
             notices=notices,
             latency_ms=int((time.perf_counter() - started) * 1000),
+            tool_trace=list(result.get("tool_trace", [])),
+            sources=list(result.get("sources", [])),
+            effort=effort.as_dict(),
         )
 
     except Exception as exc:
@@ -267,8 +369,6 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
     complexity = _compute_request_complexity(req)
     chosen = target_mod.from_request(req.target)
     provider = _provider_for(req, chosen)
-    temperature = req.temperature if req.temperature is not None else EXPERT_TEMPERATURE
-    max_tokens = req.max_tokens if req.max_tokens is not None else EXPERT_MAX_TOKENS
 
     resolution = resolve_thinking_mode(req.thinking_mode, complexity)
     mode = resolution.mode_used
@@ -281,84 +381,148 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
         mode = "think"
         resolution = resolve_thinking_mode(mode, complexity)
 
+    # The request's tools, what runs first, and the effort this message earns (as in _expert_chat).
+    registry = _request_tools(req)
+    forced = _forced_tools(req, registry)
+    effort = effort_for(mode, complexity, trivial=is_trivial(req.query), forced_tools=bool(forced))
+    temperature = req.temperature if req.temperature is not None else effort.temperature
+    max_tokens = req.max_tokens if req.max_tokens is not None else effort.max_tokens
+    system_prompt = project_system_prompt(req.system_prompt, _project(req))
+    direct = effort.level == "direct"
+    strategy = "direct" if direct and mode != "fast" else resolution.strategy
+
+    # Compaction runs inside the stream (below): the reader sees "Compacting the conversation…"
+    # while the summary is written, and the summary is written by the chat's own model (the
+    # target context is set around the stream, not around this function).
+    history_dump = [m.model_dump() for m in req.history]
+    compacting_turns = compaction.needs_summary(history_dump, req.session_id)
+    run_target, escalated = (chosen, None) if direct else await _escalate_for_heavy(chosen, req, mode, provider)
+    if escalated:
+        stream_notices.append(_escalation_notice(escalated, chosen, req))
+    started = time.perf_counter()
+    project = _project(req)
+
+    def sse(name: str, payload: Dict[str, Any]) -> str:
+        return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def tok(text: str) -> str:
+        return f"data: {text.replace(chr(10), chr(92) + 'n')}\n\n"
+
     async def event_generator():
-        meta = json.dumps(
-            {
-                "provider": provider,
-                "complexity": complexity,
-                "thinking_mode": mode,
-                "strategy": resolution.strategy,
-                "notices": stream_notices,
-            }
+        summary: Dict[str, Any] = {"tool_trace": [], "sources": [], "verdict": None, "notices": list(stream_notices)}
+        final_answer = ""
+
+        def relay(event: Dict[str, Any]) -> str:
+            """A pipeline event → its SSE frame ('' for events the client has no use for)."""
+            kind = event["type"]
+            if kind == "step_start":
+                return sse("step", {
+                    "step": event["step"], "label": event.get("label", ""),
+                    "provider": event.get("provider", provider), "role": event.get("role", "work"),
+                })
+            if kind == "step_end":
+                return sse("step_end", {"step": event["step"]})
+            if kind == "token":
+                return tok(event["content"])
+            if kind in ("tool_start", "tool_end"):
+                payload = {k: v for k, v in event.items() if k != "type"}
+                payload["phase"] = "start" if kind == "tool_start" else "end"
+                if kind == "tool_end":
+                    summary["tool_trace"].append(
+                        {k: event.get(k) for k in ("id", "name", "label", "ok", "summary", "elapsed_ms", "step")}
+                    )
+                return sse("tool", payload)
+            if kind == "sources":
+                summary["sources"] = event["sources"]
+                return sse("sources", {"sources": event["sources"], "step": event.get("step")})
+            if kind == "reset":
+                return sse("reset", {"step": event.get("step")})
+            if kind == "wait":
+                return sse("wait", {k: v for k, v in event.items() if k != "type"})
+            if kind == "notice":
+                if event["text"] not in summary["notices"]:
+                    summary["notices"].append(event["text"])
+                return sse("notice", {"text": event["text"]})
+            if kind == "verdict":
+                summary["verdict"] = event["verdict"]
+                summary["verdict_detail"] = {"verdict": event["verdict"], "note": event.get("note", ""), **(event.get("detail") or {})}
+                return sse("verdict", {"verdict": event["verdict"], "note": event.get("note", ""), "detail": event.get("detail") or {}})
+            return ""
+
+        if compacting_turns:
+            yield sse("compacting", {
+                "turns": compacting_turns,
+                "text": f"Compacting the conversation: summarizing {compacting_turns} earlier "
+                        f"message{'' if compacting_turns == 1 else 's'}…",
+            })
+        window, note, compaction_notice = await compaction.prepare(
+            history_dump, session_id=req.session_id, provider=provider, model=req.model,
         )
-        yield f"event: meta\ndata: {meta}\n\n"
+        if compaction_notice:
+            stream_notices.append(compaction_notice)
+            summary["notices"].append(compaction_notice)
+        yield sse("meta", {
+            "provider": provider, "complexity": complexity, "thinking_mode": mode,
+            "strategy": strategy, "notices": list(stream_notices),
+            "model": _model_label(run_target, req.model), "escalated": escalated,
+            "compacted": bool(note), "effort": effort.as_dict(),
+            "project": {"id": project["id"], "name": project.get("name")} if project else None,
+        })
         try:
-            if mode == "heavy":
-                _synthesis_chunks: list = []
-                _active_step_h = ""
-                async for event in stream_heavy(
-                    req.query, provider,
-                    history=[m.model_dump() for m in req.history],
-                    model=req.model, temperature=temperature, max_tokens=max_tokens,
-                ):
-                    if event["type"] == "step_start":
-                        _active_step_h = event["step"]
-                        d = json.dumps({"step": event["step"], "label": event.get("label",""), "provider": event.get("provider", provider)})
-                        yield f"event: step\ndata: {d}\n\n"
-                    elif event["type"] == "token":
-                        if _active_step_h == "synthesis":
-                            _synthesis_chunks.append(event["content"])
-                        safe = event["content"].replace("\n", "\\n")
-                        yield f"data: {safe}\n\n"
-                    elif event["type"] == "step_end":
-                        yield f"event: step_end\ndata: {json.dumps({'step': event['step']})}\n\n"
-                # Emit final answer as plain tokens so turn.content gets populated
-                final_answer = "".join(_synthesis_chunks)
-                if final_answer:
-                    yield f"event: final_answer\ndata: start\n\n"
-                    for ch in final_answer:
-                        yield f"data: {ch.replace(chr(10), chr(92)+'n')}\n\n"
-            elif mode == "think":
-                _solve_chunks: list = []
-                _active_step_t = ""
-                async for event in stream_think(
-                    req.query, provider,
-                    history=[m.model_dump() for m in req.history],
-                    model=req.model, temperature=temperature, max_tokens=max_tokens,
-                    with_critique=req.with_critique,
-                ):
-                    if event["type"] == "step_start":
-                        _active_step_t = event["step"]
-                        d = json.dumps({"step": event["step"], "label": event.get("label","")})
-                        yield f"event: step\ndata: {d}\n\n"
-                    elif event["type"] == "token":
-                        if _active_step_t == "solve":
-                            _solve_chunks.append(event["content"])
-                        safe = event["content"].replace("\n", "\\n")
-                        yield f"data: {safe}\n\n"
-                    elif event["type"] == "step_end":
-                        yield f"event: step_end\ndata: {json.dumps({'step': event['step']})}\n\n"
-                # Emit final answer so turn.content gets populated
-                final_answer = "".join(_solve_chunks)
-                if final_answer:
-                    yield f"event: final_answer\ndata: start\n\n"
-                    for ch in final_answer:
-                        yield f"data: {ch.replace(chr(10), chr(92)+'n')}\n\n"
-            else:
-                messages = build_messages(
-                    req.query,
-                    history=[m.model_dump() for m in req.history],
-                    system_prompt=req.system_prompt,
-                )
-                async for chunk in dispatch_stream(
-                    messages, provider,
-                    model=req.model, temperature=temperature, max_tokens=max_tokens,
-                ):
-                    safe = chunk.replace("\n", "\\n")
-                    yield f"data: {safe}\n\n"
+            with compaction.using(note):
+                if mode == "heavy" and not direct:
+                    with target_mod.using(run_target):
+                        async for event in stream_heavy(
+                            req.query, provider, history=window, system_prompt=system_prompt,
+                            forced_tools=forced, research=effort.research, registry=registry,
+                            tool_rounds=effort.tool_rounds,
+                            model=req.model, temperature=temperature, max_tokens=max_tokens,
+                        ):
+                            if event["type"] == "final":
+                                final_answer = event.get("content") or ""
+                                continue
+                            frame = relay(event)
+                            if frame:
+                                yield frame
+                elif mode == "think" and not direct:
+                    async for event in stream_think(
+                        req.query, provider, history=window, system_prompt=system_prompt,
+                        forced_tools=forced, plan=effort.plan, analyze=effort.analyze, registry=registry, tool_rounds=effort.tool_rounds,
+                        model=req.model, temperature=temperature, max_tokens=max_tokens,
+                        with_critique=req.with_critique,
+                    ):
+                        if event["type"] == "final":
+                            final_answer = event.get("content") or ""
+                            continue
+                        frame = relay(event)
+                        if frame:
+                            yield frame
+                else:
+                    # One generation with the tool loop: Fast, and a trivial message in any mode.
+                    messages = build_messages(req.query, history=window, system_prompt=system_prompt)
+                    async for event in stream_with_tools(
+                        messages, provider, model=req.model, temperature=temperature, max_tokens=max_tokens,
+                        forced=forced, registry=registry, max_rounds=effort.tool_rounds,
+                    ):
+                        if event["type"] == "done":
+                            final_answer = event.get("content") or ""
+                            summary["tool_trace"] = list(event.get("tool_trace", []))
+                            summary["sources"] = list(event.get("sources", []))
+                            continue
+                        frame = relay(event)
+                        if frame:
+                            yield frame
+            if mode in ("heavy", "think") and not direct and final_answer:
+                # The reply, sent whole: the step tokens above were the work, not the answer.
+                yield "event: final_answer\ndata: start\n\n"
+                yield tok(final_answer)
+            yield sse("done", {
+                "content": final_answer, "thinking_mode": mode, "strategy": strategy, "effort": effort.as_dict(),
+                "latency_ms": int((time.perf_counter() - started) * 1000), **summary,
+            })
         except Exception as exc:
             logger.error("Expert stream error (mode=%s): %s", mode, exc, exc_info=True)
-            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+            yield sse("error", {"error": str(exc)})
         yield "data: [DONE]\n\n"
 
     async def with_target():
@@ -369,10 +533,167 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
                 yield item
 
     return StreamingResponse(
-        with_target(),
+        with_heartbeat(with_target()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+async def with_heartbeat(source: AsyncIterator[str], every: Optional[float] = None) -> AsyncIterator[str]:
+    """``source``'s frames, plus a ``: keep-alive`` comment whenever it is silent for ``every``
+    seconds (a long model call before the first token, a slow tool). Proxies and browsers
+    then never take a working stream for a dead one. The source runs as its own task, so a
+    timeout never cancels it mid-await; when the reader goes away, that task is cancelled
+    with the response, which closes the model request behind it."""
+    every = config_mod.EXPERT_SSE_HEARTBEAT_S if every is None else every
+    if not every or every <= 0:
+        async for item in source:
+            yield item
+        return
+    queue: "asyncio.Queue[Any]" = asyncio.Queue()
+    finished = object()
+
+    async def pump() -> None:
+        try:
+            async for item in source:
+                await queue.put(item)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - re-raised on the reader's side
+            await queue.put(exc)
+            return
+        await queue.put(finished)
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=every)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            if item is finished:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 - the pump's own cancellation
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Capabilities + Deep research
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
+
+
+@router.get("/usage", summary="Usage meter: each model endpoint's queue, pacing and learned rate limit")
+async def expert_usage() -> dict:
+    """Per OpenAI-compatible endpoint this process has called: requests in flight and in line,
+    the gap between starts and any cooldown, the learned cap (requests per window before the
+    provider rate-limits), and the rolling window's requests, successes and rate limits."""
+    from .providers import endpoint_usage
+    from .config import EXPERT_PROVIDER_MAX_INFLIGHT, EXPERT_PROVIDER_WAIT_S, EXPERT_PROVIDER_BACKGROUND_WAIT_S
+    return {
+        "endpoints": endpoint_usage(),
+        "policy": {
+            "max_in_flight": EXPERT_PROVIDER_MAX_INFLIGHT,
+            "interactive_wait_s": EXPERT_PROVIDER_WAIT_S,
+            "background_wait_s": EXPERT_PROVIDER_BACKGROUND_WAIT_S,
+        },
+    }
+
+
+@router.post("/capabilities", summary="What the connected models can carry (the Deep research gate)")
+async def expert_capabilities(req: CapabilitiesRequest) -> dict:
+    """The selected model's tier, the strongest model on the same connection, and whether
+    Deep research is offered (capability.py). POST, so a gateway key never rides in a URL."""
+    chosen = target_mod.from_request(req.target)
+    return await capability.assess(chosen, req.model, run_probe=req.probe)
+
+
+@router.post("/deep", summary="Start a Deep research run (background job)")
+async def deep_start(req: ExpertChatRequest) -> dict:
+    """Plan → sub-agents with tools → cited report, as a background job (deep.py). Refused
+    (403) when the connection has no high-end model, unless EXPERT_DEEP_RESEARCH=always."""
+    chosen = target_mod.from_request(req.target)
+    provider = _provider_for(req, chosen)
+    caps = await capability.assess(chosen, req.model)
+    gate = caps["deep_research"]
+    if not gate["enabled"]:
+        raise HTTPException(status_code=403, detail=gate["reason"])
+    notices: list = []
+    # The model chosen in the chat runs the research too (no silent swap to another model).
+    run_target, model = chosen, req.model
+    window, note, compaction_notice = await compaction.prepare(
+        [m.model_dump() for m in req.history], session_id=req.session_id, provider=provider, model=model,
+    )
+    if compaction_notice:
+        notices.append(compaction_notice)
+    registry = _request_tools(req)
+    job = deep.start(
+        req.query, provider=provider, model=_model_label(run_target, model), history=window, chosen=run_target,
+        timezone=req.client_timezone, context=req.context, note=note, notices=notices,
+        registry=registry, operator_prompt=project_system_prompt(req.system_prompt, _project(req)),
+        session_id=req.session_id,
+    )
+    return {"job_id": job.id, "status": job.status, "model": job.model, "notices": notices,
+            "time_budget_s": EXPERT_DEEP_TIME_BUDGET_S}
+
+
+@router.get("/deep/{job_id}", summary="Deep research job snapshot")
+async def deep_status(job_id: str) -> dict:
+    job = deep.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown Deep research job")
+    return job.snapshot()
+
+
+@router.get("/deep/{job_id}/events", summary="Deep research progress (SSE; replays from `after`, or from the start)")
+async def deep_events(job_id: str, request: Request, after: int = 0) -> StreamingResponse:
+    """Every frame carries ``id: <seq>``. A client that reconnects sends ``Last-Event-ID`` (or
+    ``?after=``) and gets only what it missed — no duplicate steps, no duplicate text."""
+    job = deep.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown Deep research job")
+    header = request.headers.get("last-event-id")
+    if header and header.isdigit():
+        after = max(after, int(header))
+
+    async def gen():
+        queue = job.subscribe(after=after)
+        try:
+            while True:
+                try:
+                    ev = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    if job.finished_state:
+                        break
+                    yield ": keep-alive\n\n"
+                    continue
+                yield f"id: {ev.get('seq', 0)}\nevent: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                if ev["type"] in ("done", "error", "cancelled"):
+                    break
+        finally:
+            job.unsubscribe(queue)
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+@router.delete("/deep/{job_id}", summary="Cancel a Deep research job")
+async def deep_cancel(job_id: str) -> dict:
+    job = deep.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown Deep research job")
+    job.cancel()
+    return {"job_id": job_id, "status": job.status}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -277,9 +277,41 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_user ON file_assets(user_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_user_kind ON file_assets(user_id, kind)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_project ON file_assets(project_id)")
+    ensure_file_assets_columns(con)
 
     con.commit()
     con.close()
+
+
+# Columns file_assets gained after its first shape (docs/design/MEDIA_STORAGE.md). Each is added
+# idempotently with a default that is true for every row written before it existed.
+_FILE_ASSET_COLUMNS = (
+    ("storage_backend", "TEXT NOT NULL DEFAULT 'local'"),   # which media backend holds the bytes (Phase 3a)
+    ("sha256", "TEXT NOT NULL DEFAULT ''"),                 # of the bytes as written; '' when unknown (Phase 3)
+    ("visibility", "TEXT NOT NULL DEFAULT 'private'"),      # 'private' | 'public' (Phase 4)
+    ("deleted_at", "TEXT"),                                 # soft deletion; bytes go when the trash is purged (Phase 4)
+)
+
+
+def ensure_file_assets_columns(con: sqlite3.Connection) -> list:
+    """Add whichever of the later file_assets columns this database lacks. Returns their names."""
+    cur = con.cursor()
+    present = {row[1] for row in cur.execute("PRAGMA table_info(file_assets)").fetchall()}
+    if not present:
+        return []
+    added = []
+    for name, spec in _FILE_ASSET_COLUMNS:
+        if name not in present:
+            cur.execute(f"ALTER TABLE file_assets ADD COLUMN {name} {spec}")
+            added.append(name)
+    if added:
+        con.commit()
+    return added
+
+
+def ensure_file_assets_backend_column(con: sqlite3.Connection) -> bool:
+    """Phase 3a's entry point, kept: True when storage_backend was just added."""
+    return "storage_backend" in ensure_file_assets_columns(con)
 
 
 def ensure_conversation_owner(conversation_id: str, user_id: str) -> None:

@@ -607,21 +607,23 @@ export default function SettingsPanel({
     } catch { /* ignore */ }
   }, [value.apiKey]);
 
-  async function fetchHealth() {
+  async function fetchHealth(opts: { refresh?: boolean } = {}) {
     setHealthErr(null);
     try {
+      // "Check again" probes afresh first (POST /v1/models/refresh), so the health read after it
+      // reflects Ollama now, not a cached "unreachable" from a moment ago.
+      // A failed resolution only clears the remedy; it never rejects unhandled.
+      const snapPromise = fetchModelResolution(resolveBackendUrl(value.backendUrl), {
+        configured: value.modelChat,
+        baseUrl: value.baseUrlChat || undefined,
+        refresh: opts.refresh,
+      }).catch(() => null);
+      if (opts.refresh) await snapPromise;
       const res = await fetch(`${resolveBackendUrl(value.backendUrl)}/health`);
       const data = await res.json();
       setHealth(data);
-      try {
-        const snap = await fetchModelResolution(resolveBackendUrl(value.backendUrl), {
-          configured: value.modelChat,
-          baseUrl: value.baseUrlChat || undefined,
-        });
-        setModelRemedy(snap?.chat?.remedy || null);
-      } catch {
-        setModelRemedy(null);
-      }
+      const snap = await snapPromise;
+      setModelRemedy(snap?.chat?.remedy || null);
     } catch (e: any) {
       setHealthErr(e?.message || String(e));
     }
@@ -1854,7 +1856,7 @@ export default function SettingsPanel({
               remedy={modelRemedy}
               vllmAvailable={!!health?.providers?.openai_compat?.ok}
               onDownloadModel={() => setActiveSection("models")}
-              onRetry={() => { void fetchHealth(); }}
+              onRetry={() => { void fetchHealth({ refresh: true }); }}
               onDismiss={() => setDismissOllamaBanner(true)}
               onSwitchToVllm={() => {
                 commit({

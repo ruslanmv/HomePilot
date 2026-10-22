@@ -126,6 +126,9 @@ from .multimodal import analyze_image, is_vision_intent, VISION_MODEL_PATTERNS
 # OpenAI-compatible endpoint (additive — exposes personas as /v1/chat/completions)
 from .openai_compat_endpoint import router as openai_compat_router
 
+# Where scripts/download.py is — the repo's, or the copy a packaged image ships.
+from .download_script import download_script
+
 # ── Access-log noise filter ──────────────────────────────────────────────────
 # The Interactive runtime polls GET /v1/interactive/play/sessions/{id}/pending
 # once per 1.5–5 s to pick up scene-render updates. Uvicorn logs every hit at
@@ -403,10 +406,18 @@ try:
         import sys as _expert_sys
         from pathlib import Path as _ExpertPath
 
-        _expert_pkg_dir = (
-            _ExpertPath(__file__).resolve().parents[2]
-            / "expert" / "backend" / "app" / "expert"
-        )
+        _expert_here = _ExpertPath(__file__).resolve()
+        _expert_candidates = [
+            _expert_here.parents[2] / "expert" / "backend" / "app" / "expert",   # the repo
+            # A packaged image has no repo around it: the Hugging Face Space ships the
+            # package next to this one (/app/expert). Without it the chat's default path,
+            # POST /v1/expert/chat, did not exist there and every chat came back HTTP 405.
+            _expert_here.parents[1] / "expert",
+        ]
+        if os.getenv("EXPERT_PACKAGE_DIR"):
+            _expert_candidates.insert(0, _ExpertPath(os.environ["EXPERT_PACKAGE_DIR"]))
+        _expert_pkg_dir = next((p for p in _expert_candidates if (p / "__init__.py").is_file()),
+                               _expert_candidates[0])
         _expert_init = _expert_pkg_dir / "__init__.py"
         if not _expert_init.is_file():
             raise FileNotFoundError(f"Expert package not found at {_expert_init}")
@@ -1074,9 +1085,10 @@ def _extract_photo_number(msg: str) -> int | None:
     if num_match:
         return int(num_match.group(1))
 
-    # Match patterns like "the second one", "second photo", "the 2nd"
+    # Match patterns like "the second one", "second photo", "the 2nd" — as whole words, so
+    # "firstly" or "a thirdparty tool" is not a photo number.
     for word, idx in _ORDINAL_MAP.items():
-        if word in m:
+        if _re.search(rf"\b{word}\b", m):
             return idx
 
     # Match patterns like "the 2nd", "the 3rd", "the 1st"
@@ -1107,6 +1119,12 @@ def _is_photo_intent(msg: str) -> bool:
     """
     m = (msg or "").lower().strip()
     if not m:
+        return False
+
+    # ---- PASS-THROUGH: anything longer than a command (a pasted document, a question with
+    # context) goes to the LLM — its words ("back", "first", "more") are not a request.
+    from .intent_guard import is_short_command
+    if not is_short_command(m):
         return False
 
     # ---- PASS-THROUGH: let the LLM handle questions and conversation ----
@@ -1269,6 +1287,19 @@ def _startup() -> None:
         startup_reconcile()
     except Exception as e:
         print(f"Warning: Asset registry reconcile failed: {e}")
+    # Media storage: say which backend holds the bytes; reach a remote one now, off the loop,
+    # so the first upload does not pay for loading its client (docs/design/MEDIA_STORAGE.md).
+    try:
+        from .media_storage import warm_up as _media_storage_warm_up
+        _media_storage_warm_up()
+    except Exception as e:
+        print(f"Warning: media storage warm-up failed: {e}")
+    # Deleted media waits in the trash for MEDIA_TRASH_RETENTION_DAYS; this thread purges it.
+    try:
+        from .media_ops import start_trash_gc as _start_trash_gc
+        _start_trash_gc()
+    except Exception as e:
+        print(f"Warning: media trash purge not started: {e}")
     # Files mount
     _ensure_static_mount()
 
@@ -2465,9 +2496,16 @@ async def list_models(
         remedy_extra: Dict[str, Any] = {}
         if provider == "ollama":
             from .model_resolver import active_runtime_url as _active_runtime_url
+            from .model_resolver import ollama_root as _ollama_root
             from .model_resolver import resolve as _resolve_model
-            if not base_url:
-                base_url = await _active_runtime_url()
+            # An explicit Base URL that is not an Ollama (OllaBridge's /v1, say) falls back to
+            # the Ollama that answers, and the response says where the models came from.
+            asked = base_url
+            base_url = await _active_runtime_url(base_url)
+            if asked and base_url not in (_ollama_root(asked), asked.rstrip("/")):
+                remedy_extra["note"] = (
+                    f"{asked} is not an Ollama runtime; listing the models of Ollama at {base_url}."
+                )
 
         # OpenAI-compatible endpoints (an OllaBridge gateway) also say *what* each model is —
         # a base model or an assistant built on one — which a picker needs to choose a
@@ -2864,17 +2902,9 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
         logger.addHandler(handler)
 
     try:
-        script_path = Path(__file__).parent.parent.parent / "scripts" / "download.py"
-
-        if not script_path.exists():
-            logger.error(f"Download script not found at {script_path}")
-            return JSONResponse(
-                status_code=500,
-                content=_safe_err(
-                    "Download script not found. Please ensure scripts/download.py exists.",
-                    code="script_not_found",
-                ),
-            )
+        # Only ComfyUI and Civitai installs run the script (checked below, once an Ollama pull
+        # has returned): requiring it up front failed every install on the Space, pulls included.
+        script_path = download_script()
 
         logger.info(f"Starting model installation: provider={req.provider}, model={req.model_id}")
 
@@ -2951,6 +2981,17 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             )
 
         # Run download script for comfyui and civitai
+        if not script_path.is_file():
+            logger.error(f"Download script not found at {script_path}")
+            return JSONResponse(
+                status_code=500,
+                content=_safe_err(
+                    f"Download script not found at {script_path}. Set HOMEPILOT_DOWNLOAD_SCRIPT "
+                    "to the repo's scripts/download.py.",
+                    code="script_not_found",
+                ),
+            )
+
         # Pass Civitai API key via environment variable (secure - not visible in process list)
         env = os.environ.copy()
         if req.civitai_api_key and req.provider == "civitai":
@@ -3545,17 +3586,12 @@ def _resolve_local_file_to_upload_root(url: str, upload_root: Path) -> Optional[
     if ".." in file_ref:
         return None
 
+    # The folder we were handed first (as before), then the same reference as a flat key or
+    # a file_assets id — on this disk, or fetched from the configured storage (files.py).
     local_path = upload_root / file_ref
     if not local_path.exists():
-        # Try resolving via file_assets table
-        try:
-            from .files import get_asset, _upload_root
-            asset = get_asset(file_ref)
-            if asset and asset.get("rel_path"):
-                local_path = _upload_root() / asset["rel_path"]
-        except Exception:
-            pass
-
+        from .files import resolve_local_file
+        local_path = resolve_local_file(file_ref) or local_path
     if not local_path.exists():
         return None
 
@@ -3638,12 +3674,20 @@ async def _download_comfy_image(url: str, upload_root: Path) -> str:
     ) as client:
         resp = await client.get(url)
         resp.raise_for_status()
-        dest.write_bytes(resp.content)
+    # The flat key `filename`, written atomically through the storage interface. Every
+    # caller passes UPLOAD_PATH, the media storage root; another folder (a test's temp dir)
+    # is written as a local store of its own.
+    from .media_storage import LocalStorage, get_storage, local_storage
+    storage = get_storage()
+    if Path(upload_root).resolve() != local_storage().root:
+        storage = LocalStorage(upload_root)
+    storage.put(filename, resp.content)
 
     # Register in asset registry for durability
     try:
         from .asset_registry import register_comfy_output
-        register_comfy_output(filename=filename, dest_path=str(dest))
+        register_comfy_output(filename=filename, dest_path=str(dest),
+                              storage_backend=storage.name, size_bytes=len(resp.content))
     except Exception as e:
         print(f"[ASSET_REGISTRY] Warning: failed to register {filename}: {e}")
 
@@ -4299,36 +4343,45 @@ async def upload_project_item(
         except Exception:
             pass  # Non-fatal: proceed with upload if dedup check fails
 
-        # Save to disk
+        # Save through media storage: in the user's project area when there is a user (the
+        # secure-asset layout), else the flat legacy key — one atomic write, not a flat write
+        # and a move.
+        import hashlib as _hashlib
         import mimetypes as _mt
+        from . import media_quota, media_validate
+        from .files import _user_key, insert_asset
+        from .media_storage import get_storage
+        # Before any byte is stored: what it claims to be, the owner's quota, the scanner if set.
+        media_validate.check_image_claim(data[:media_validate.HEAD_BYTES], content_type or "", filename)
+        if user_id:
+            media_quota.check(user_id, len(data))
+        media_validate.scan_bytes(data, filename)
         save_ext = f".{ext}" if ext else ".bin"
         save_name = f"{uuidlib.uuid4().hex}{save_ext}"
-        save_path = UPLOAD_PATH / save_name
-        save_path.write_bytes(data)
+        storage_key = (
+            f"{_user_key(user_id, 'project_asset', project_id=project_id)}/{save_name}" if user_id else save_name
+        )
+        storage = get_storage()
+        storage.put(storage_key, data)
+        save_path = storage.local_path(storage_key) or (UPLOAD_PATH / storage_key)
 
-        mime = content_type or _mt.guess_type(str(save_path))[0] or "application/octet-stream"
+        mime = content_type or _mt.guess_type(save_name)[0] or "application/octet-stream"
         base = _base_url_from_request(request)
 
         # Register as secure asset if user is authenticated
         asset_id = ""
-        file_url = f"{base}/files/{save_name}"
+        file_url = f"{base}/files/{storage_key}"
         if user_id:
             try:
-                from .files import _ensure_user_dir, _upload_root, insert_asset
-                folder = _ensure_user_dir(user_id, "project_asset", project_id=project_id)
-                import shutil
-                dest = folder / save_name
-                shutil.move(str(save_path), str(dest))
-                save_path = dest
-                rel_path = str(dest.relative_to(_upload_root()))
                 asset_id = insert_asset(
                     user_id=user_id,
                     kind="project_asset",
-                    rel_path=rel_path,
+                    rel_path=storage_key,
                     mime=mime,
                     size_bytes=len(data),
                     original_name=filename,
                     project_id=project_id,
+                    sha256=_hashlib.sha256(data).hexdigest(),
                 )
                 file_url = f"{base}/files/{asset_id}"
             except Exception as asset_err:
@@ -5584,65 +5637,71 @@ async def upload(request: Request, file: UploadFile = File(...), authorization: 
     except Exception:
         pass
 
+    from .media_storage import get_storage
+    name = f"{uuidlib.uuid4().hex}{ext}"
     if _uid:
-        # Secure path: store under per-user directory and register asset
-        from .files import _ensure_user_dir, _upload_root, insert_asset
-        import mimetypes as _mt
-        folder = _ensure_user_dir(_uid, "upload")
-        name = f"{uuidlib.uuid4().hex}{ext}"
-        path = folder / name
+        # Secure path: the user's area, registered as an asset below
+        from .files import _user_key
+        key = f"{_user_key(_uid, 'upload')}/{name}"
     else:
-        # Legacy path: flat UPLOAD_PATH
-        name = f"{uuidlib.uuid4().hex}{ext}"
-        path = UPLOAD_PATH / name
+        # Legacy path: the flat root
+        key = name
+    storage = get_storage()
 
     written = 0
     chunk_size = 1024 * 1024  # 1MB
+    from . import media_quota, media_validate
+    import hashlib as _hashlib
 
-    # Atomic write: write to .tmp first, then rename on success
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    # Read it whole (bounded by MAX_UPLOAD_MB) and check it before any byte is stored: what it
+    # claims to be, the owner's quota, the scanner if one is set. Then one atomic put.
+    chunks: list = []
+    digest = _hashlib.sha256()
     try:
-        with tmp_path.open("wb") as f:
-            while True:
-                chunk = await file.read(chunk_size)
-                if not chunk:
-                    break
-                written += len(chunk)
-                if written > max_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"File too large. Max {MAX_UPLOAD_MB}MB.",
-                    )
-                f.write(chunk)
-            f.flush()
-            os.fsync(f.fileno())
-        # Atomic rename
-        tmp_path.rename(path)
-    except OSError as e:
-        # Clean up partial file
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Upload storage error: {e}. Upload dir: {path.parent}",
-        )
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            if not chunks:
+                media_validate.check_image_claim(chunk[:media_validate.HEAD_BYTES], file.content_type or "", filename)
+            written += len(chunk)
+            if written > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Max {MAX_UPLOAD_MB}MB.",
+                )
+            digest.update(chunk)
+            chunks.append(chunk)
     finally:
         await file.close()
+    data = b"".join(chunks)
+    if _uid:
+        media_quota.check(_uid, written)
+    media_validate.scan_bytes(data, filename)
+    try:
+        storage.put(key, data)
+    except OSError as e:
+        local = storage.local_path(key)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload storage error: {e}. Upload dir: {local.parent if local else storage.name}",
+        )
 
     base = _base_url_from_request(request)
 
     if _uid:
         # Register as a secure asset
-        from .files import _upload_root, insert_asset
+        from .files import insert_asset
         import mimetypes as _mt
-        rel_path = str(path.relative_to(_upload_root()))
-        mime = _mt.guess_type(str(path))[0] or "application/octet-stream"
+        mime = _mt.guess_type(name)[0] or "application/octet-stream"
         asset_id = insert_asset(
             user_id=_uid,
             kind="upload",
-            rel_path=rel_path,
+            rel_path=key,
             mime=mime,
             size_bytes=written,
             original_name=filename,
+            sha256=digest.hexdigest(),
         )
         return JSONResponse(status_code=201, content={"url": f"{base}/files/{asset_id}"})
     else:

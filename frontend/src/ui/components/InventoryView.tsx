@@ -34,6 +34,7 @@ import {
   deleteInventoryItem,
 } from '../inventoryApi'
 import { PersonaDocumentsPanel } from './PersonaDocumentsPanel'
+import { fileAuthToken } from '../lib/fileUrl'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -311,7 +312,7 @@ export function InventoryView({ projectId, backendUrl, apiKey, onBack, onShowInC
   const resolveImageUrl = useCallback((item: InventoryItem): string | undefined => {
     const url = item.url
     if (!url) return undefined
-    const tok = (() => { try { return localStorage.getItem('homepilot_auth_token') || '' } catch { return '' } })()
+    const tok = fileAuthToken(backendUrl)
     let full = url.startsWith('http') ? url : `${backendUrl}${url}`
     if (tok && full.includes('/files/')) {
       const sep = full.includes('?') ? '&' : '?'

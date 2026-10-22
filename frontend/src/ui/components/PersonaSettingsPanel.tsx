@@ -49,6 +49,7 @@ import { OUTFIT_PRESETS, PERSONA_BLUEPRINTS } from '../personaTypes'
 import { generateOutfitImages, generatePersonaImages, commitGeneratedImages } from '../personaApi'
 import { commitPersonaAvatar } from '../personaPortability'
 import { useAvatarCapabilities } from '../useAvatarCapabilities'
+import { fileAuthToken } from '../lib/fileUrl'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -132,7 +133,7 @@ function readNsfwMode(): boolean {
 function fileUrl(backendUrl: string, rel?: string | null): string | null {
   if (!rel) return null
   const clean = rel.replace(/^\/+/, '')
-  const tok = localStorage.getItem('homepilot_auth_token') || ''
+  const tok = fileAuthToken(backendUrl)
   return `${backendUrl}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
 }
 
@@ -150,9 +151,9 @@ function resolveImgUrl(url: string, backendUrl: string): string {
     full = `${base}${path}`
   }
 
-  // Append auth token for /files/ paths so <img> tags can access them
+  // The token for /files/ paths — across origins only; same-origin has the cookie
   if (full.includes('/files/')) {
-    const tok = localStorage.getItem('homepilot_auth_token') || ''
+    const tok = fileAuthToken(backendUrl)
     if (tok) {
       const sep = full.includes('?') ? '&' : '?'
       return `${full}${sep}token=${encodeURIComponent(tok)}`
@@ -673,7 +674,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
       const committedProject = commitResult.project || {}
       const committedPap = committedProject.persona_appearance || {}
       const committedRel = committedPap.selected_thumb_filename || committedPap.selected_filename
-      const _tok = localStorage.getItem('homepilot_auth_token') || ''
+      const _tok = fileAuthToken(backendUrl)
       const displayUrl = committedRel
         ? `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}${_tok ? `&token=${encodeURIComponent(_tok)}` : ''}`
         : url

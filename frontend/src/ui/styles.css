@@ -845,6 +845,63 @@ select option:hover {
 /* Small avatars (chat header, beside replies): a gentle pulse until loaded. */
 .hp-avatar-loading { background-color: rgba(255, 255, 255, 0.07); animation: hp-avatar-pulse 1.4s ease-in-out infinite; }
 @keyframes hp-avatar-pulse { 50% { background-color: rgba(255, 255, 255, 0.15); } }
+
+/* Live work in the chat: the status title shimmers while a stage or a tool runs, and a soft
+   cursor marks the end of the text while tokens arrive. Both stop under reduced motion. */
+.hp-shimmer-text {
+  background: linear-gradient(90deg, #e9e9e5 0%, #e9e9e5 35%, #ffffff 50%, #e9e9e5 65%, #e9e9e5 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: hp-shimmer-text 1.8s ease-in-out infinite;
+}
+@keyframes hp-shimmer-text { from { background-position: 120% 0; } to { background-position: -20% 0; } }
+.hp-stream-cursor {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 0.2em;
+  border-radius: 9999px;
+  background: #ced7c1;
+  vertical-align: baseline;
+  animation: hp-stream-cursor 0.9s ease-in-out infinite;
+}
+@keyframes hp-stream-cursor { 0%, 100% { opacity: 0.25; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
+/* Compacting the conversation: three lines that condense toward the middle one and spread
+   again — a long history being folded into a summary. */
+.hp-compact-lines {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  width: 18px;
+  height: 18px;
+}
+.hp-compact-lines > span {
+  display: block;
+  height: 2px;
+  border-radius: 9999px;
+  background: rgb(var(--hp-accent-fg));
+  transform-origin: center;
+  animation: hp-compact-lines 1.6s ease-in-out infinite;
+}
+.hp-compact-lines > span:nth-child(1) { --hp-compact-shift: 5px; }
+.hp-compact-lines > span:nth-child(2) { animation-name: hp-compact-core; }
+.hp-compact-lines > span:nth-child(3) { --hp-compact-shift: -5px; }
+@keyframes hp-compact-lines {
+  0%, 100% { transform: translateY(0) scaleX(1); opacity: 0.9; }
+  50% { transform: translateY(var(--hp-compact-shift, 0)) scaleX(0.45); opacity: 0.35; }
+}
+@keyframes hp-compact-core {
+  0%, 100% { transform: scaleX(0.7); opacity: 0.7; }
+  50% { transform: scaleX(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hp-shimmer-text { animation: none; color: #e9e9e5; background: none; }
+  .hp-stream-cursor { animation: none; opacity: 0.6; }
+  .hp-compact-lines > span { animation: none; }
+}
 .hp-project-avatar--live .hp-project-avatar__img {
   box-shadow:
     0 0 0 2px rgba(var(--hp-accent), calc(0.5 + var(--hp-level) * 0.4)),

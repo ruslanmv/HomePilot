@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -100,3 +101,49 @@ def test_the_script_starts_without_tqdm():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert "Missing required" not in out.stdout + out.stderr
     assert "usage: download.py" in out.stdout
+
+
+# ── where the script is (app/download_script.py) ────────────────────────────
+
+
+def test_an_ollama_pull_never_needs_the_download_script(main_module, monkeypatch):
+    """The Hugging Face Space had no scripts/ folder, and every install there — Ollama pulls
+    included, which never run the script — failed with "Download script not found"."""
+    seen = {}
+
+    def fake_run(cmd, env=None, logger=None, on_line=None):
+        seen["cmd"] = cmd
+        return 0, ["success"]
+
+    monkeypatch.setattr(main_module, "download_script", lambda: Path("/nowhere/scripts/download.py"))
+    monkeypatch.setattr(main_module, "_run_streaming", fake_run)
+    req = main_module.ModelInstallRequest(provider="ollama", model_id="llama3.2:3b", model_type="chat")
+    res = asyncio.run(main_module.install_model(req))
+    assert res.status_code == 200
+    assert seen["cmd"] == ["ollama", "pull", "llama3.2:3b"]
+
+
+def test_a_comfyui_install_without_the_script_says_where_it_looked(main_module, monkeypatch):
+    monkeypatch.setattr(main_module, "download_script", lambda: Path("/nowhere/scripts/download.py"))
+    monkeypatch.setattr(main_module, "_run_streaming", lambda *a, **k: pytest.fail("must not run"))
+    req = main_module.ModelInstallRequest(provider="comfyui", model_id="sd15.safetensors", model_type="image")
+    res = asyncio.run(main_module.install_model(req))
+    assert res.status_code == 500
+    assert b"script_not_found" in res.body and b"/nowhere/scripts/download.py" in res.body
+    assert b"HOMEPILOT_DOWNLOAD_SCRIPT" in res.body
+
+
+def test_the_script_is_found_in_the_repo_and_in_a_packaged_image(tmp_path, monkeypatch):
+    from app.download_script import download_script
+
+    monkeypatch.delenv("HOMEPILOT_DOWNLOAD_SCRIPT", raising=False)
+    assert download_script().is_file()                                       # <repo>/scripts/download.py
+    # The Space image: backend/app at /app/app, the script copied to /app/scripts.
+    image = tmp_path / "app"
+    (image / "app").mkdir(parents=True)
+    (image / "scripts").mkdir()
+    (image / "scripts" / "download.py").write_text("")
+    assert download_script(image / "app") == image / "scripts" / "download.py"
+    # Named outright.
+    monkeypatch.setenv("HOMEPILOT_DOWNLOAD_SCRIPT", str(tmp_path / "elsewhere" / "download.py"))
+    assert download_script() == tmp_path / "elsewhere" / "download.py"

@@ -56,6 +56,15 @@ COPY backend/app ./app
 # Ensure __init__.py exists (created by deploy script)
 RUN touch ./app/__init__.py
 
+# The model installer (POST /models/install) runs this for ComfyUI and Civitai downloads;
+# the backend finds the copy next to its package (app/download_script.py).
+COPY scripts/download.py ./scripts/download.py
+
+# Expert — the chat's Fast / Expert / Heavy path (/v1/expert/*). The backend looks for it
+# next to its package when there is no repo around (app/main.py). Without it every chat
+# POST fell through to the frontend catch-all below and came back HTTP 405.
+COPY expert/backend/app/expert ./expert
+
 # Community persona samples
 COPY community/sample ./community/sample
 

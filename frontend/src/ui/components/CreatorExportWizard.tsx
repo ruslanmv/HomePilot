@@ -40,6 +40,7 @@ import {
   setSelectedVoiceId,
 } from '../tts/piperTts'
 import { DEFAULT_PIPER_VOICE_ID } from '../tts/piperVoices'
+import { fileAuthToken } from '../lib/fileUrl'
 
 export type ExportKind = 'mp4_plain' | 'mp4_youtube'
 
@@ -165,7 +166,7 @@ export default function CreatorExportWizard({
 
   const downloadUrl = useMemo(() => {
     if (!job || job.status !== 'done') return ''
-    const tok = localStorage.getItem('homepilot_auth_token') || ''
+    const tok = fileAuthToken(backendUrl)
     const qp = tok ? `?token=${encodeURIComponent(tok)}` : ''
     return `${trimBackend(backendUrl)}/studio/videos/${videoId}/export/jobs/${job.id}/download${qp}`
   }, [job, backendUrl, videoId])

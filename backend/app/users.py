@@ -1131,19 +1131,13 @@ async def upload_avatar(
     if len(contents) > 5 * 1024 * 1024:
         raise HTTPException(400, "Avatar image must be under 5MB")
 
-    # Determine upload directory (reuse existing upload path logic)
-    upload_dir = UPLOAD_DIR
-    if not os.path.isabs(upload_dir):
-        import pathlib
-        _backend_dir = pathlib.Path(__file__).resolve().parents[1]
-        upload_dir = str(_backend_dir / "data" / "uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-
-    # Save with unique name
-    filename = f"avatar_{user['id']}_{uuid.uuid4().hex[:8]}{ext}"
-    filepath = os.path.join(upload_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(contents)
+    # Save with a unique name. The flat key keeps today's /files/<name> URL — and its
+    # public-by-prefix serving (docs/design/MEDIA_STORAGE.md, audit).
+    from .media_storage import get_storage
+    storage = get_storage()
+    # A random name: the picture is public on the login screen, the account id is not its business.
+    filename = f"avatar_{uuid.uuid4().hex[:16]}{ext}"
+    storage.put(filename, contents)
 
     # Build URL (relative to /files/ static mount)
     avatar_url = f"/files/{filename}"
@@ -1151,10 +1145,8 @@ async def upload_avatar(
     # Delete old avatar file if it exists (cleanup)
     old_url = user.get("avatar_url", "")
     if old_url and old_url.startswith("/files/"):
-        old_path = os.path.join(upload_dir, old_url.replace("/files/", "", 1))
         try:
-            if os.path.exists(old_path):
-                os.remove(old_path)
+            storage.delete(old_url.replace("/files/", "", 1))
         except Exception:
             pass  # Non-fatal
 

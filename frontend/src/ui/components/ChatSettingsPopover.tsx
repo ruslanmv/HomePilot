@@ -23,6 +23,10 @@ export type ChatScopedSettings = {
   model?: ChatModelChoice | null
   /** Answer from current web results, with sources (standard chat only; off by default). */
   webSearch?: boolean
+  /** Expert and Heavy show each stage's reasoning as it is written (on by default, as in
+   *  ChatGPT or Claude; off, the work card names the stages and each stage's output sits
+   *  behind "Show output"). */
+  showReasoning?: boolean
 }
 
 export const DEFAULT_CHAT_SETTINGS: ChatScopedSettings = {
@@ -32,6 +36,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatScopedSettings = {
   incognito: false,
   model: null,
   webSearch: false,
+  showReasoning: true,
 }
 
 /** Asks the app to open Models, where the offered models are chosen. */
@@ -94,7 +99,7 @@ function ChatModelPicker({ value, onChange }: { value: ChatModelChoice | null; o
         <button
           type="button"
           onClick={() => window.dispatchEvent(new CustomEvent(OPEN_MODELS_EVENT))}
-          className="inline-flex items-center gap-1 text-[11px] text-white/50 hover:text-white"
+          className="inline-flex items-center gap-1 text-[11px] text-white/50 hover:text-violet-200"
         >
           <SlidersHorizontal size={11} aria-hidden /> Manage
         </button>
@@ -103,7 +108,7 @@ function ChatModelPicker({ value, onChange }: { value: ChatModelChoice | null; o
         id={id}
         value={current}
         onChange={(e) => pick(e.target.value)}
-        className="mt-2 h-9 w-full cursor-pointer rounded-xl border border-white/10 bg-white/5 px-2.5 text-xs text-white outline-none [color-scheme:dark] focus:border-white/25"
+        className="mt-2 h-9 w-full cursor-pointer rounded-xl border border-white/10 bg-white/5 px-2.5 text-xs text-white outline-none [color-scheme:dark] focus:border-violet-400/60"
       >
         <option value="">Default · {defaultModelLabel(shelf)}</option>
         {stale && value ? <option value={current}>{value.label} — no longer offered</option> : null}
@@ -180,15 +185,18 @@ function Toggle({
       aria-label={label}
       onClick={() => onChange(!value)}
       className={[
-        'w-10 h-6 rounded-full border transition-all relative',
-        value ? 'bg-white/20 border-white/25' : 'bg-white/5 border-white/10',
+        // The app's accent (violet-600, as Routines and Meetings use it) when on; shrink-0 so a
+        // long description beside it can never squeeze the track under the knob.
+        'w-10 h-6 shrink-0 rounded-full border transition-all relative',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-300',
+        value ? 'bg-violet-600 border-violet-500/70 shadow-[0_0_0_1px_rgba(124,58,237,0.25)]' : 'bg-white/10 border-white/10',
       ].join(' ')}
       aria-pressed={value}
     >
       <span
         className={[
           'absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full transition-all',
-          value ? 'left-[22px] bg-white/80' : 'left-[4px] bg-white/40',
+          value ? 'left-[22px] bg-white' : 'left-[4px] bg-white/55',
         ].join(' ')}
       />
     </button>
@@ -257,6 +265,19 @@ export function ChatSettingsPopover({
 
         <div className="flex items-center justify-between gap-3">
           <div>
+            <div className="text-sm text-white/90">Show reasoning</div>
+            <div className="text-[11px] text-white/45">
+              Expert and Heavy show each stage&rsquo;s reasoning as they work. Off, the stages are named and their output stays one click away.
+            </div>
+          </div>
+          <Toggle
+            value={settings.showReasoning !== false}
+            onChange={(v) => onChange({ ...settings, showReasoning: v })}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <div>
             <div className="text-sm text-white/90">Advanced help</div>
             <div className="text-[11px] text-white/45">
               Enables optional smart actions when available.
@@ -321,7 +342,7 @@ export function ChatSettingsPopover({
                   className={[
                     'px-3 py-2 rounded-xl text-xs font-semibold border transition-all',
                     active
-                      ? 'bg-white/15 border-white/25 text-white'
+                      ? 'bg-violet-600/85 border-violet-400/60 text-white shadow-[0_4px_14px_rgba(124,58,237,0.25)]'
                       : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10 hover:border-white/15',
                   ].join(' ')}
                 >
@@ -342,7 +363,7 @@ export function ChatSettingsPopover({
         <button
           type="button"
           onClick={onClose}
-          className="text-xs px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 hover:border-white/20 text-white/80 hover:text-white transition-all"
+          className="text-xs px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 border border-violet-500/60 text-white font-semibold shadow-[0_4px_14px_rgba(124,58,237,0.3)] transition-all"
         >
           Done
         </button>

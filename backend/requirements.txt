@@ -24,3 +24,6 @@ faster-whisper==1.2.1
 # PyAV 19 dropped an argument faster-whisper 1.2.1 passes; see requirements/speech-cpu.txt.
 av==18.1.0
 ctranslate2==4.8.2
+# Media in an S3-compatible object store (MEDIA_STORAGE_BACKEND=s3; docs/design/MEDIA_STORAGE.md).
+# Imported only when that backend is selected; CI and the packaged images install this file.
+boto3>=1.34

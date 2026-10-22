@@ -214,16 +214,23 @@ def _db_list_project_files(project_id: str, *, user_id: str = "") -> List[Dict[s
     if not conn:
         return []
     try:
+        # Files in the trash (deleted_at set) are not inventory; a database from before that
+        # column is read as it was.
+        try:
+            conn.execute("SELECT deleted_at FROM file_assets LIMIT 0")
+            trash = " AND deleted_at IS NULL"
+        except sqlite3.OperationalError:
+            trash = ""
         if user_id:
             cur = conn.execute(
                 "SELECT id, kind, rel_path, mime, size_bytes, original_name "
-                "FROM file_assets WHERE project_id = ? AND user_id = ?",
+                f"FROM file_assets WHERE project_id = ? AND user_id = ?{trash}",
                 (project_id, user_id),
             )
         else:
             cur = conn.execute(
                 "SELECT id, kind, rel_path, mime, size_bytes, original_name "
-                "FROM file_assets WHERE project_id = ?",
+                f"FROM file_assets WHERE project_id = ?{trash}",
                 (project_id,),
             )
         out: List[Dict[str, Any]] = []

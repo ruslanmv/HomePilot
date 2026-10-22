@@ -37,6 +37,7 @@ import dataclasses
 import logging
 import os
 import re
+import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -50,8 +51,14 @@ log = logging.getLogger("homepilot.models")
 Role = Literal["chat", "fast", "vision", "embed"]
 ROLES: Tuple[str, ...] = ("chat", "fast", "vision", "embed")
 
-PROBE_TIMEOUT_S = float(os.getenv("MODEL_DISCOVERY_TIMEOUT_S", "1.5"))
+# 3 s: Ollama answers /api/tags in tens of milliseconds, but not while it loads a model or the
+# machine is short of memory (ComfyUI loading a checkpoint) — 1.5 s reported it missing then.
+# The candidates are probed in parallel, so a down Ollama still costs one timeout, not several.
+PROBE_TIMEOUT_S = float(os.getenv("MODEL_DISCOVERY_TIMEOUT_S", "3"))
 CACHE_TTL_S = float(os.getenv("MODEL_DISCOVERY_TTL_S", "30"))
+# "Nothing answered" is remembered briefly, so a hiccup clears itself on the next look instead
+# of holding the "Ollama unavailable" banner for the full cache lifetime.
+NEGATIVE_TTL_S = float(os.getenv("MODEL_DISCOVERY_NEGATIVE_TTL_S", "5"))
 
 # ── Model classification (single source of truth; llm.py re-exports) ──────────
 VISION_ONLY_HINTS = (
@@ -224,6 +231,29 @@ def is_docker() -> bool:
     return os.path.exists("/.dockerenv") or "docker" in _read_text("/proc/1/cgroup")
 
 
+_WSL_MODE: Dict[str, str] = {}
+
+
+def wsl_networking_mode() -> str:
+    """``mirrored`` or ``nat`` (WSL 2), ``""`` outside WSL or when it cannot be told. In
+    mirrored mode WSL shares Windows' loopback, so Ollama on Windows' 127.0.0.1 is reachable as
+    127.0.0.1 here and the "enable mirrored networking" advice does not apply."""
+    if "mode" in _WSL_MODE:
+        return _WSL_MODE["mode"]
+    mode = ""
+    if is_wsl():
+        try:
+            out = subprocess.run(["wslinfo", "--networking-mode"], capture_output=True, text=True, timeout=2)
+            mode = (out.stdout or "").strip().lower()
+        except (OSError, subprocess.SubprocessError):
+            mode = ""
+        if mode not in ("mirrored", "nat"):
+            # Mirrored mode puts the host's loopback alias 10.255.255.254 on lo.
+            mode = "mirrored" if "10.255.255.254" in _read_text("/proc/net/fib_trie") else "nat"
+    _WSL_MODE["mode"] = mode
+    return mode
+
+
 def _default_gateway_from_proc() -> str:
     """Default route gateway from ``/proc/net/route`` (little-endian hex)."""
     text = _read_text("/proc/net/route")
@@ -279,7 +309,9 @@ def candidate_urls(explicit: Optional[str] = None) -> List[Tuple[str, str]]:
     add("configured", OLLAMA_BASE_URL)
     add("loopback", "http://127.0.0.1:11434")
     add("loopback", "http://localhost:11434")
-    if is_wsl():
+    if is_wsl() and wsl_networking_mode() != "mirrored":
+        # NAT mode only: with mirrored networking Windows' Ollama is 127.0.0.1 here, and the
+        # gateway / nameserver addresses are the LAN router, which never runs Ollama.
         for ip in wsl_host_ips():
             add("wsl-host", f"http://{ip}:11434")
     if is_docker():
@@ -379,14 +411,21 @@ def invalidate(reason: str = "") -> None:
         log.info("model discovery cache invalidated: %s", reason)
 
 
+def _fresh(ts: float, runtimes: List[Runtime], now: float) -> bool:
+    """A cached probe result still holds: ``CACHE_TTL_S`` when something answered,
+    ``NEGATIVE_TTL_S`` when nothing did (a hiccup must not stick)."""
+    ttl = CACHE_TTL_S if any(r.reachable for r in runtimes) else NEGATIVE_TTL_S
+    return now - ts < ttl
+
+
 async def discover(force: bool = False) -> List[Runtime]:
-    """All candidate runtimes with their probe results, cached ``CACHE_TTL_S``."""
+    """All candidate runtimes with their probe results, cached (see :func:`_fresh`)."""
     now = time.monotonic()
-    if not force and _cache["runtimes"] and now - _cache["ts"] < CACHE_TTL_S:
+    if not force and _cache["runtimes"] and _fresh(_cache["ts"], _cache["runtimes"], now):
         return list(_cache["runtimes"])
     async with _get_lock():
         now = time.monotonic()
-        if not force and _cache["runtimes"] and now - _cache["ts"] < CACHE_TTL_S:
+        if not force and _cache["runtimes"] and _fresh(_cache["ts"], _cache["runtimes"], now):
             return list(_cache["runtimes"])
         cands = candidate_urls()
         results = await asyncio.gather(*(probe(u, label) for label, u in cands))
@@ -407,7 +446,7 @@ async def discover_url(url: str, force: bool = False) -> Runtime:
     key = url.rstrip("/")
     now = time.monotonic()
     hit = _url_cache.get(key)
-    if hit and not force and now - hit[0] < CACHE_TTL_S:
+    if hit and not force and _fresh(hit[0], [hit[1]], now):
         return hit[1]
     rt = await probe(key, "explicit")
     _url_cache[key] = (time.monotonic(), rt)
@@ -429,10 +468,35 @@ def pick_runtime(runtimes: List[Runtime]) -> Optional[Runtime]:
     return reachable[0]
 
 
+def ollama_root(url: str) -> str:
+    """The Ollama root a URL points at: Ollama serves its own API (``/api/tags``) and the
+    OpenAI-compatible one (``/v1``) from the same root, so ``http://host:11434/v1`` — what an
+    OpenAI-style "Base URL" field holds — means ``http://host:11434``."""
+    u = (url or "").strip().rstrip("/")
+    for suffix in ("/v1", "/api"):
+        if u.lower().endswith(suffix):
+            u = u[: -len(suffix)]
+    return u
+
+
 async def active_runtime(base_url: Optional[str] = None, force: bool = False) -> Tuple[Optional[Runtime], List[Runtime]]:
+    """The Ollama to use. An explicit ``base_url`` wins when it is an Ollama (or answers like one,
+    a proxy that lists no tags). When it does not answer as Ollama at all — an OpenAI-compatible
+    gateway such as OllaBridge (404 on ``/api/tags``), or nothing — the usual places are searched
+    instead of reporting Ollama missing while it runs on its own port."""
     if base_url:
-        rt = await discover_url(base_url, force=force)
-        return (rt if rt.reachable else None), [rt]
+        root = ollama_root(base_url)
+        rt = await discover_url(root, force=force)
+        if rt.reachable:
+            return rt, [rt]
+        if os.getenv("OLLAMA_DISCOVERY", "auto").strip().lower() in ("explicit", "strict"):
+            return None, [rt]
+        runtimes = [r for r in await discover(force=force) if r.url != rt.url]
+        found = pick_runtime(runtimes)
+        if found is not None:
+            log.info("model discovery: %s is not an Ollama runtime (%s); using Ollama at %s",
+                     base_url, rt.error or "no /api/tags", found.url)
+        return found, [rt, *runtimes]
     runtimes = await discover(force=force)
     return pick_runtime(runtimes), runtimes
 
@@ -543,6 +607,21 @@ def build_remedy(role: str, runtime: Optional[Runtime], runtimes: List[Runtime],
         }
     probed = [r.url for r in runtimes]
     wsl_hosts = [r for r in runtimes if r.label == "wsl-host"]
+    if is_wsl() and wsl_networking_mode() == "mirrored":
+        # WSL shares Windows' loopback: a Windows Ollama would have answered on 127.0.0.1, so
+        # it is stopped, starting, or too busy to answer — not unreachable.
+        return {
+            "kind": "start",
+            "message": (
+                "Ollama did not answer. WSL uses mirrored networking, so an Ollama running on Windows "
+                "is reachable here: it is probably stopped, still starting, or busy loading a model. "
+                "Start the Ollama app on Windows (if `ollama serve` says the port is already in use, "
+                "it is running), wait a few seconds, then press Check again."
+            ),
+            "command": "ollama serve",
+            "probed": probed,
+            "suggested": suggested,
+        }
     if is_wsl() and wsl_hosts:
         return {
             "kind": "wsl_bridge",
@@ -596,6 +675,9 @@ async def resolve(role: str, configured: str = "", *, base_url: Optional[str] = 
         model, source = "", "none"
         urls = ", ".join(r.url for r in runtimes) or (base_url or OLLAMA_BASE_URL)
         reason = f"No Ollama runtime is reachable (tried {urls})."
+    elif base_url and runtime.url != ollama_root(base_url):
+        reason = (f"{base_url} is not an Ollama runtime (an OpenAI-compatible gateway such as "
+                  f"OllaBridge?); found Ollama at {runtime.url}. " + reason)
     res = Resolution(
         role=role,
         configured=cfg,
