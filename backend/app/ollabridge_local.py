@@ -47,6 +47,7 @@ def _cloud_url() -> str:
 def edition() -> Dict[str, Any]:
     """Which HomePilot edition is this — and can it act as a GPU provider?"""
     ed = _edition()
+    from .hf_inference import oauth_configured, on_huggingface
     return {
         "edition": ed,
         "is_web": ed == "web",
@@ -54,6 +55,10 @@ def edition() -> Dict[str, Any]:
         # Only a local install can expose its own GPU as a provider node.
         "can_provide_gpu": ed == "local",
         "cloud_url": _cloud_url(),
+        # A Space can offer Hugging Face account inference. Signed-out visitors
+        # stay on the local model already running in this session.
+        "on_huggingface": on_huggingface(),
+        "hf_oauth": oauth_configured(),
     }
 
 

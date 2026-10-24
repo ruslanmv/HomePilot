@@ -2249,6 +2249,9 @@ async def orchestrate(
     }
     if web_public:
         reply["web_search"] = web_public
+    notice = out.get("hf_notice") if isinstance(out, dict) else None
+    if isinstance(notice, str) and notice.strip():
+        reply["notice"] = notice
     return reply
 
 

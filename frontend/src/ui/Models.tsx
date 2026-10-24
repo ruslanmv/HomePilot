@@ -4,6 +4,7 @@ import { ProgressBar, Skeleton } from './motion'
 import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink,
   MessageSquare, ScanEye, Image as ImageIcon, Pencil, Video, Sparkles, Layers, Puzzle } from 'lucide-react'
 import OllaBridgeModels from './components/OllaBridgeModels'
+import HfAccountCard from './components/HfAccountCard'
 import OllaBridgeChatPanel from './components/ollabridge/OllaBridgeChatPanel'
 import { isOllaBridgeChatRoute } from './components/ollabridge/chatRoute'
 import { isAccountsUxEnabled } from './account/featureFlags'
@@ -124,6 +125,10 @@ export type ModelsParams = {
 
   // NSFW/Spice Mode - shows additional adult content models
   nsfwMode?: boolean
+
+  /** Choose a Hugging Face account model for this session's chat. */
+  onUseForChat?: (model: string) => void
+  modelChat?: string
 }
 
 // Avatar model types (from /v1/avatar-models endpoint)
@@ -1617,11 +1622,16 @@ export default function ModelsView(props: ModelsParams) {
               )}
             </select>
             {providersError ? <div className="mt-2 text-xs text-rose-400/80">{providersError}</div> : null}
+            {modelType === 'chat' && provider !== 'huggingface' && providers.some((p) => p.name === 'huggingface') ? (
+              <div className="mt-3">
+                <HfAccountCard backendUrl={backendUrl} variant="suggest" providerChat={provider} />
+              </div>
+            ) : null}
           </div>
 
           {/* OllaBridge on Chat has its own Gateway URL / Base URL fields in the
               Local and Cloud cards below; the override does not apply to it. */}
-          {!ollaBridgeChat && (
+          {!ollaBridgeChat && provider !== 'huggingface' && (
           <div className="min-w-0">
             <label htmlFor="hp-models-base-url" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Base URL Override</label>
             <input
@@ -1916,6 +1926,12 @@ export default function ModelsView(props: ModelsParams) {
             />
           ) : provider === 'ollabridge' && !isAccountsUxEnabled() ? (
             <OllaBridgeModels filterType={modelType} />
+          ) : provider === 'huggingface' ? (
+            <HfAccountCard
+              backendUrl={backendUrl}
+              activeModel={props.modelChat}
+              onUseForChat={props.onUseForChat}
+            />
           ) : (
           <>
           {/* FitLab suggestions — one line (the best fit for this computer) until expanded,

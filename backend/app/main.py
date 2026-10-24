@@ -332,6 +332,13 @@ try:
 except Exception as _obl_err:  # noqa: BLE001
     print(f"[ollabridge-local] DISABLED due to import error: {_obl_err}")
 
+try:
+    from .hf_routes import router as _hf_router
+    app.include_router(_hf_router)
+    print("[huggingface] account inference routes mounted")
+except Exception as _hf_err:  # noqa: BLE001
+    print(f"[huggingface] DISABLED due to import error: {_hf_err}")
+
 # --- Node Manifest (/v1/node/manifest) — Phase 1 of the OllaBridge Cloud ------
 # Mirror. ADDITIVE, localhost-only, feature-flagged
 # (OLLABRIDGE_NODE_MANIFEST_ENABLED, default off). The endpoint itself 404s
@@ -2425,6 +2432,7 @@ async def list_models(
     provider: str = Query("openai_compat", description="Provider to list models from"),
     base_url: Optional[str] = Query(None, description="Override base URL for the provider"),
     model_type: Optional[str] = Query(None, description="For ComfyUI: 'image', 'video', or 'edit'"),
+    hp_hf_session: Optional[str] = Cookie(default=None),
 ) -> JSONResponse:
     """
     List available models from a provider.
@@ -2473,6 +2481,21 @@ async def list_models(
                     "models": models,
                     "count": len(models),
                     "message": f"Scanned filesystem - found {len(models)} installed models",
+                },
+            )
+
+        if provider == "huggingface":
+            from .hf_inference import list_account_models
+            models, live = await list_account_models(hp_hf_session)
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": True,
+                    "provider": "huggingface",
+                    "models": models,
+                    "count": len(models),
+                    "live": live,
+                    "message": "Your Hugging Face account" if live else "Sign in to use your Hugging Face credits. These models are suggestions until then.",
                 },
             )
 
@@ -4941,7 +4964,7 @@ async def get_persona_memory_stats(
 # ----------------------------
 
 @app.post("/chat", dependencies=[Depends(require_api_key)])
-async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_session: Optional[str] = Cookie(default=None)) -> JSONResponse:
+async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_session: Optional[str] = Cookie(default=None), hp_hf_session: Optional[str] = Cookie(default=None)) -> JSONResponse:
     """
     Unified chat endpoint with mode-aware routing.
     Stable response schema:
@@ -4987,6 +5010,14 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
         _provider_key_ctx.set(_pk)
     except Exception:
         pass  # additive — never let credential plumbing break chat
+
+    # Hugging Face account inference. The cookie is a session id; the token
+    # never leaves this process. No session means the local model answers.
+    try:
+        from .hf_inference import bind_hf_session
+        bind_hf_session(hp_hf_session)
+    except Exception:
+        pass
 
     # Normalize chat model selection. Settings V2 sends the generic
     # provider_model for all providers; keep the legacy ollama_model /
@@ -5610,10 +5641,11 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     if media is not None and not isinstance(media, dict):
         media = None
 
-    return JSONResponse(
-        status_code=200,
-        content={"conversation_id": cid, "text": text, "media": media},
-    )
+    body: Dict[str, Any] = {"conversation_id": cid, "text": text, "media": media}
+    notice = out.get("notice") if isinstance(out, dict) else None
+    if isinstance(notice, str) and notice.strip():
+        body["notice"] = notice
+    return JSONResponse(status_code=200, content=body)
 
 
 @app.post("/upload", dependencies=[Depends(require_api_key)])

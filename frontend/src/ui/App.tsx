@@ -210,6 +210,8 @@ export type Msg = {
   animate?: boolean
   // when true, show recovery UI and allow retry
   error?: boolean
+  /** Quiet note, such as a reply that fell back to the local model. */
+  notice?: string
   // info needed for retry; kept minimal and non-destructive
   retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string; topology?: 'direct' | 'smart' | 'agent' | 'knowledge' } }
   media?: {
@@ -3057,6 +3059,10 @@ function ChatState({
                   </div>
                 ) : null}
 
+                {m.role === 'assistant' && m.notice && !m.pending ? (
+                  <p className="mt-2 text-xs leading-relaxed text-white/50">{m.notice}</p>
+                ) : null}
+
                 {/* Error card */}
                 {m.error && m.retry && !m.pending ? (
                   <div className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3">
@@ -5620,7 +5626,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
-        const expertPath = canUseExpertInContext(mode, reasoningMode, currentProject?.project_type) && !expertMissingRef.current
+        const expertPath = canUseExpertInContext(mode, reasoningMode, currentProject?.project_type)
+          && chatSelection.providerChat !== 'huggingface'
+          && !expertMissingRef.current
         // Expert turns are saved by the app under this conversation's id — a new chat gets one now.
         const convId = conversationId || uuid()
         if (expertPath && !conversationId) setConversationId(convId)
@@ -5812,6 +5820,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   pending: false,
                   animate: !data.error,
                   text: (data.text ?? data.content ?? '…'),
+                  notice: typeof data.notice === 'string' ? data.notice : undefined,
                   // The sources ride on the media, as they are stored, so a reloaded chat shows them too.
                   media: data.web_search ? { ...(data.media ?? {}), web: data.web_search } : (data.media ?? null),
                   compute: data.compute ?? null,
@@ -7253,6 +7262,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             civitaiApiKey={settingsDraft.civitaiApiKey}
             nsfwMode={settingsDraft.nsfwMode}
             currentModels={advisorCurrent}
+            modelChat={settingsDraft.modelChat}
+            onUseForChat={(model) => {
+              setSettingsDraft((prev) => ({
+                ...prev,
+                providerChat: 'huggingface',
+                modelChat: model,
+                baseUrlChat: '',
+              }))
+            }}
           />
         ) : mode === 'studio' ? (
           studioVariant === 'creator' ? (

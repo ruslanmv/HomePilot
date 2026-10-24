@@ -7,13 +7,18 @@ sdk: docker
 app_port: 7860
 pinned: false
 short_description: Private AI assistant with persistent personas
+hf_oauth: true
+hf_oauth_scopes:
+  - inference-api
 ---
 
 # HomePilot — Hugging Face Space
 
 Your private AI assistant with persistent personas, powered by Ollama.
 This Space runs HomePilot with a built-in LLM runtime — no external
-API keys required.
+API keys required. Anonymous chat uses the local model. Signing in with
+Hugging Face is optional and uses that account's Inference Providers
+credits (free monthly credits, or a Pro plan).
 
 ## Pre-installed Personas (Chata Edition)
 

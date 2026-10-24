@@ -758,6 +758,14 @@ async def chat(
         )
     if provider == "watsonx":
         return await chat_watsonx(messages)
+    if provider == "huggingface":
+        from .hf_inference import chat_huggingface
+        return await chat_huggingface(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=model,
+        )
 
     return await chat_openai_compat(
         messages,

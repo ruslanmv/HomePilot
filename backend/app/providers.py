@@ -310,7 +310,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
     Safe info for frontend settings UI (no secrets).
     Includes capabilities for each provider.
     """
-    return {
+    info = {
         "openai_compat": {
             "label": "OpenAI-compatible (vLLM)",
             "base_url": LLM_BASE_URL,
@@ -388,3 +388,24 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
             },
         },
     }
+    # Only a Hugging Face Space offers account inference. Local installs stay
+    # on the user's own providers. Chat only: this CPU Space has no GPU media.
+    try:
+        from .hf_inference import on_huggingface
+        if on_huggingface():
+            info["huggingface"] = {
+                "label": "Hugging Face (your account)",
+                "base_url": "https://router.huggingface.co/v1",
+                "default_model": "Qwen/Qwen2.5-7B-Instruct",
+                "account_login": True,
+                "capabilities": {
+                    "chat": True,
+                    "models_list": True,
+                    "images": False,
+                    "video": False,
+                    "multimodal": False,
+                },
+            }
+    except Exception:
+        pass
+    return info
