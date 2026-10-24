@@ -2217,6 +2217,10 @@ async def orchestrate(
     # The sources are kept with the reply, so they are still there when the chat is reopened.
     web_public = web_ctx.public() if web_ctx is not None else None
     stored_media = {**(text_media or {}), "web": web_public} if web_public else text_media
+    hf_note = str(out.get("hf_note") or "").strip() if isinstance(out, dict) else ""
+    if hf_note:
+        text_media = {**(text_media or {}), "inference_note": hf_note}
+        stored_media = {**(stored_media or {}), "inference_note": hf_note}
     add_message(cid, "assistant", text, media=stored_media)
 
     # Additive: Memory V2 ingestion after response (persona projects only)
@@ -2249,6 +2253,8 @@ async def orchestrate(
     }
     if web_public:
         reply["web_search"] = web_public
+    if hf_note:
+        reply["inference_note"] = hf_note
     return reply
 
 

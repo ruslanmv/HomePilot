@@ -61,6 +61,7 @@ import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl, saveBackendUrl } from './lib/backendUrl'
 import { isMissingRoute, shouldAnswerWithChat } from './lib/expertRoute'
 import { getEdition } from './lib/edition'
+import { HfOllamaSuggestion } from './components/HfAccountChat'
 import { fileAuthToken } from './lib/fileUrl'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
@@ -235,6 +236,8 @@ export type Msg = {
     fell_back: boolean
     reason?: string | null
   } | null
+  /** Short note when a Hugging Face account request fell back to the local model. */
+  inferenceNote?: string
   // Phase 4: "Ask before acting" confirmation payload
   confirm?: {
     intent: 'generate_images' | 'generate_videos'
@@ -276,6 +279,13 @@ function browserTimeZone(): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function inferenceNoteOf(m: { inferenceNote?: string; media?: { inference_note?: unknown } | null }): string {
+  const direct = m.inferenceNote?.trim()
+  if (direct) return direct
+  const fromMedia = m.media?.inference_note
+  return typeof fromMedia === 'string' ? fromMedia.trim() : ''
 }
 
 function hydratePersistedMessageMedia(raw: unknown): {
@@ -2583,6 +2593,8 @@ function EmptyState({
   onChatReasoningModeChange,
   showChatReasoningSelector,
   allowPersonaMode,
+  backendUrl,
+  providerChat,
 }: {
   mode: Mode
   input: string
@@ -2597,6 +2609,8 @@ function EmptyState({
   onChatReasoningModeChange: (mode: ChatReasoningMode) => void
   showChatReasoningSelector: boolean
   allowPersonaMode: boolean
+  backendUrl?: string
+  providerChat?: string
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-6">
@@ -2615,6 +2629,9 @@ function EmptyState({
       </div>
 
       <div className="w-full max-w-[46rem]">
+        {mode === 'chat' ? (
+          <HfOllamaSuggestion backendUrl={backendUrl} providerChat={providerChat} className="mb-3" />
+        ) : null}
         <QueryBar
           centered
           input={input}
@@ -2693,6 +2710,7 @@ function ChatState({
   allowPersonaMode,
   assistantAvatarUrls,
   assistantName = 'HomePilot',
+  providerChat,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -2722,6 +2740,7 @@ function ChatState({
   assistantAvatarUrls?: Array<string | null | undefined>
   /** Who answers — each reply's accessible name, so it is identifiable without the picture. */
   assistantName?: string
+  providerChat?: string
 }) {
   const { copied, copy } = useCopyMessage()
   // Settings → Chat → Appearance: the picture beside replies, and message spacing.
@@ -3030,6 +3049,9 @@ function ChatState({
                 {m.role === 'assistant' && !m.pending && parseWebSearch(m.media?.web) ? (
                   <WebSources web={parseWebSearch(m.media?.web)!} text={m.text} />
                 ) : null}
+                {m.role === 'assistant' && !m.pending && inferenceNoteOf(m) ? (
+                  <p className="mt-2 text-[12px] leading-relaxed text-white/45">{inferenceNoteOf(m)}</p>
+                ) : null}
 
                 {/* Grok-style icon action row */}
                 {!m.pending ? (
@@ -3155,6 +3177,9 @@ function ChatState({
 
       <div className="hp-composer-dock pb-4">
         <div className="px-4">
+          {mode === 'chat' ? (
+            <HfOllamaSuggestion backendUrl={backendUrl} providerChat={providerChat} className="mb-3" />
+          ) : null}
           <QueryBar
             centered={false}
             input={input}
@@ -3918,6 +3943,27 @@ export default function App() {
     }
     window.addEventListener('homepilot:use-gpu-node', onUseGpuNode)
     return () => window.removeEventListener('homepilot:use-gpu-node', onUseGpuNode)
+  }, [])
+
+  // Models → Chat → Hugging Face (your account). The token stays on the
+  // server; this only records which provider and model the next reply uses.
+  useEffect(() => {
+    function onUseHf(e: Event) {
+      const model = String((e as CustomEvent).detail?.model || '').trim()
+      setSettingsDraft((prev) => ({
+        ...prev,
+        providerChat: 'huggingface',
+        baseUrlChat: '',
+        modelChat: model || prev.modelChat,
+      }))
+      try {
+        localStorage.setItem('homepilot_provider_chat', 'huggingface')
+        localStorage.setItem('homepilot_base_url_chat', '')
+        if (model) localStorage.setItem('homepilot_model_chat', model)
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('homepilot:use-hf-chat', onUseHf)
+    return () => window.removeEventListener('homepilot:use-hf-chat', onUseHf)
   }, [])
 
   // Models → Multimodal → OllaBridge: a model that passed the vision check reads images from
@@ -5621,7 +5667,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
-        const expertPath = canUseExpertInContext(mode, reasoningMode, currentProject?.project_type) && !expertMissingRef.current
+        const expertPath = chatSelection.providerChat !== 'huggingface'
+          && canUseExpertInContext(mode, reasoningMode, currentProject?.project_type)
+          && !expertMissingRef.current
         // Expert turns are saved by the app under this conversation's id — a new chat gets one now.
         const convId = conversationId || uuid()
         if (expertPath && !conversationId) setConversationId(convId)
@@ -5825,6 +5873,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   text: (data.text ?? data.content ?? '…'),
                   // The sources ride on the media, as they are stored, so a reloaded chat shows them too.
                   media: data.web_search ? { ...(data.media ?? {}), web: data.web_search } : (data.media ?? null),
+                  inferenceNote: typeof data.inference_note === 'string' ? data.inference_note : undefined,
                   compute: data.compute ?? null,
                   // A structured error (e.g. no local model) renders as an error
                   // bubble with Retry, not as a normal-looking reply.
@@ -7255,6 +7304,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
             providerChat={settingsDraft.providerChat}
+            modelChat={settingsDraft.modelChat}
             providerImages={settingsDraft.providerImages}
             providerVideo={settingsDraft.providerVideo}
             baseUrlChat={settingsDraft.baseUrlChat}
@@ -7456,6 +7506,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               onChatReasoningModeChange={handleChatReasoningModeChange}
               showChatReasoningSelector={showChatReasoningSelector}
               allowPersonaMode={currentProject?.project_type === 'persona'}
+              backendUrl={settings.backendUrl}
+              providerChat={settingsDraft.providerChat}
             />
           ) : (
             <ChatState
@@ -7483,6 +7535,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               onChatReasoningModeChange={handleChatReasoningModeChange}
               showChatReasoningSelector={showChatReasoningSelector}
               allowPersonaMode={currentProject?.project_type === 'persona'}
+              providerChat={settingsDraft.providerChat}
             />
           )
         ) : messages.length === 0 && currentProject ? (
@@ -7549,6 +7602,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             onChatReasoningModeChange={handleChatReasoningModeChange}
             showChatReasoningSelector={showChatReasoningSelector}
             allowPersonaMode={currentProject?.project_type === 'persona'}
+            backendUrl={settings.backendUrl}
+            providerChat={settingsDraft.providerChat}
           />
         ) : (
           <ChatState
@@ -7576,6 +7631,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             onChatReasoningModeChange={handleChatReasoningModeChange}
             showChatReasoningSelector={showChatReasoningSelector}
             allowPersonaMode={currentProject?.project_type === 'persona'}
+            providerChat={settingsDraft.providerChat}
           />
         )}
       </main>

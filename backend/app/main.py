@@ -170,6 +170,12 @@ app.add_middleware(
 async def request_trace(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuidlib.uuid4())
     token = request_id_ctx.set(request_id)
+    hf_reset = None
+    try:
+        from .hf_account import bind_session_cookie
+        hf_reset = bind_session_cookie(request.cookies.get("hp_hf_sid"))
+    except Exception:
+        hf_reset = None
     started = time.perf_counter()
     log_event("http.request.start", method=request.method, path=request.url.path)
     try:
@@ -194,6 +200,13 @@ async def request_trace(request: Request, call_next):
         raise
     finally:
         request_id_ctx.reset(token)
+        if hf_reset is not None:
+            try:
+                from .hf_account import HF_SESSION_ID, HF_USER_TOKEN
+                HF_SESSION_ID.reset(hf_reset[0])
+                HF_USER_TOKEN.reset(hf_reset[1])
+            except Exception:
+                pass
 
 # Include Studio routes (/studio/*)
 app.include_router(studio_router)
@@ -331,6 +344,15 @@ try:
     print(f"[ollabridge-local] mounted — edition={_hp_edition}")
 except Exception as _obl_err:  # noqa: BLE001
     print(f"[ollabridge-local] DISABLED due to import error: {_obl_err}")
+
+# Hugging Face account chat (Space only). The routes answer on every install;
+# the provider is advertised only when SPACE_ID is set.
+try:
+    from .hf_account import router as _hf_account_router
+    app.include_router(_hf_account_router)
+    print("[hf-account] mounted /v1/hf")
+except Exception as _hf_acc_err:  # noqa: BLE001
+    print(f"[hf-account] disabled: {_hf_acc_err}")
 
 # --- Node Manifest (/v1/node/manifest) — Phase 1 of the OllaBridge Cloud ------
 # Mirror. ADDITIVE, localhost-only, feature-flagged
@@ -915,7 +937,7 @@ async def viewpack_save_to_outfit(request: Request) -> JSONResponse:
 # Models
 # ----------------------------
 
-ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx"]
+ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx", "huggingface"]
 
 
 class ChatIn(BaseModel):
@@ -2530,6 +2552,29 @@ async def list_models(
                     "models": models,
                     "count": len(models),
                     "message": f"Scanned filesystem - found {len(models)} installed models",
+                },
+            )
+
+        # Hugging Face account chat: a curated list, only on a Space. No token
+        # is read or returned here.
+        if provider == "huggingface":
+            from .hf_account import chat_model_ids, is_hf_space
+            if not is_hf_space():
+                return JSONResponse(
+                    status_code=400,
+                    content=_safe_err(
+                        "Hugging Face account chat is only available on the Space.",
+                        code="unsupported_provider",
+                    ),
+                )
+            models = chat_model_ids()
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": True,
+                    "provider": "huggingface",
+                    "models": models,
+                    "count": len(models),
                 },
             )
 
@@ -5667,9 +5712,14 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     if media is not None and not isinstance(media, dict):
         media = None
 
+    content: Dict[str, Any] = {"conversation_id": cid, "text": text, "media": media}
+    note = out.get("inference_note") if isinstance(out, dict) else None
+    if isinstance(note, str) and note.strip():
+        content["inference_note"] = note.strip()
+
     return JSONResponse(
         status_code=200,
-        content={"conversation_id": cid, "text": text, "media": media},
+        content=content,
     )
 
 

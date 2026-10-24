@@ -9,6 +9,7 @@ import { isOllaBridgeChatRoute } from './components/ollabridge/chatRoute'
 import { isAccountsUxEnabled } from './account/featureFlags'
 import { GENERATED_CATALOGS } from '../generated/modelCatalog'
 import { ModelAdvisorCard } from './components/ModelAdvisorCard'
+import { HfAccountSetup, HfOllamaSuggestion } from './components/HfAccountChat'
 import { setAdvisorEnabled, useAdvisorEnabled, type AdvisorKind, type CurrentModels } from './modelAdvisor'
 
 /** The Model Type choices, in order, with the icon and label shown for each. */
@@ -111,6 +112,7 @@ export type ModelsParams = {
 
   // Defaults from Enterprise Settings
   providerChat?: string
+  modelChat?: string
   providerImages?: string
   providerVideo?: string
 
@@ -543,7 +545,7 @@ export default function ModelsView(props: ModelsParams) {
     // Civitai: download-only provider, models get installed to ComfyUI after download
     // OllaBridge renders its own relay-synced list; the local backend has no
     // catalog for it, so skip the fetch (avoids a spurious error banner).
-    const skipProviders = ['openai', 'claude', 'watsonx', 'civitai', 'ollabridge']
+    const skipProviders = ['openai', 'claude', 'watsonx', 'civitai', 'ollabridge', 'huggingface']
 
     if (skipProviders.includes(provider)) {
       setInstalled([])
@@ -1621,7 +1623,7 @@ export default function ModelsView(props: ModelsParams) {
 
           {/* OllaBridge on Chat has its own Gateway URL / Base URL fields in the
               Local and Cloud cards below; the override does not apply to it. */}
-          {!ollaBridgeChat && (
+          {!ollaBridgeChat && provider !== 'huggingface' && (
           <div className="min-w-0">
             <label htmlFor="hp-models-base-url" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Base URL Override</label>
             <input
@@ -1916,8 +1918,17 @@ export default function ModelsView(props: ModelsParams) {
             />
           ) : provider === 'ollabridge' && !isAccountsUxEnabled() ? (
             <OllaBridgeModels filterType={modelType} />
+          ) : provider === 'huggingface' && modelType === 'chat' ? (
+            <HfAccountSetup
+              backendUrl={backendUrl}
+              active={props.providerChat === 'huggingface'}
+              activeModel={props.modelChat}
+            />
           ) : (
           <>
+          {modelType === 'chat' && provider === 'ollama' ? (
+            <HfOllamaSuggestion backendUrl={backendUrl} providerChat={props.providerChat || provider} />
+          ) : null}
           {/* FitLab suggestions — one line (the best fit for this computer) until expanded,
               so the recommendation stays in view and the model list starts right below. */}
           {advisorOn && ADVISOR_KIND_FOR[modelType] ? (

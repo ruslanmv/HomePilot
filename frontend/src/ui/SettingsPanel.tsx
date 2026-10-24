@@ -1,4 +1,5 @@
 import { useBackToClose } from "./lib/useBackToClose";
+import { HfAccountSetup, HfOllamaSuggestion } from "./components/HfAccountChat";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings as SettingsIcon,
@@ -940,7 +941,8 @@ export default function SettingsPanel({
   const showOllamaBanner = (!!ollamaDown || ollamaNeedsModel) && !dismissOllamaBanner;
 
   // ── Control builders (dark-themed, reused across sections) ─────────────
-  function providerSelectRow(label: string, description: string, provider: ProviderKey, setProvider: (k: ProviderKey) => void) {
+  function providerSelectRow(label: string, description: string, provider: ProviderKey, setProvider: (k: ProviderKey) => void, includeAccount = false) {
+    const options = includeAccount ? providerOptions : providerOptions.filter(([k]) => k !== "huggingface");
     return (
       <Row label={label} description={description}>
         <select
@@ -948,7 +950,7 @@ export default function SettingsPanel({
           value={provider}
           onChange={(e) => setProvider(e.target.value)}
         >
-          {providerOptions.map(([k, info]) => (
+          {options.map(([k, info]) => (
             <option key={k} value={k}>
               {info.label}
             </option>
@@ -1176,7 +1178,26 @@ export default function SettingsPanel({
         }
       >
         {providersErr && <div className="text-[11px] text-red-400">{providersErr}</div>}
-        {providerSelectRow("Chat Provider", "Used for text conversations and prompt refinement.", value.providerChat, (k) => commit({ ...value, providerChat: k }))}
+        {providerSelectRow("Chat Provider", "Used for text conversations and prompt refinement.", value.providerChat, (k) => {
+          if (k !== "huggingface") {
+            commit({ ...value, providerChat: k });
+            return;
+          }
+          const fallback = providers?.huggingface?.default_model || "";
+          const keep = (value.modelChat || "").includes("/");
+          commit({
+            ...value,
+            providerChat: "huggingface",
+            baseUrlChat: "",
+            modelChat: keep ? value.modelChat : fallback,
+          });
+        }, true)}
+        {value.providerChat === "huggingface" ? (
+          <HfAccountSetup backendUrl={value.backendUrl} activeModel={value.modelChat} />
+        ) : null}
+        {value.providerChat === "ollama" ? (
+          <HfOllamaSuggestion backendUrl={value.backendUrl} providerChat={value.providerChat} />
+        ) : null}
         {providerSelectRow("Image Provider", "Used for image generation.", value.providerImages, (k) => commit({ ...value, providerImages: k }))}
         {providerSelectRow("Video Provider", "Used for video generation.", value.providerVideo, (k) => commit({ ...value, providerVideo: k }))}
         {providerSelectRow("Multimodal Provider", "Used for image understanding (vision).", value.providerMultimodal || 'ollama', (k) => commit({ ...value, providerMultimodal: k }))}
@@ -1206,8 +1227,12 @@ export default function SettingsPanel({
         description="Optional base URLs and the specific model for each provider."
         icon={<Boxes size={16} />}
       >
-        {baseUrlRow("Chat Base URL", value.providerChat, value.baseUrlChat, (v) => commit({ ...value, baseUrlChat: v }))}
-        {modelSelectRow("Chat Model", value.providerChat, value.modelChat, (m) => commit({ ...value, modelChat: m }), value.baseUrlChat)}
+        {value.providerChat !== "huggingface" ? (
+          <>
+            {baseUrlRow("Chat Base URL", value.providerChat, value.baseUrlChat, (v) => commit({ ...value, baseUrlChat: v }))}
+            {modelSelectRow("Chat Model", value.providerChat, value.modelChat, (m) => commit({ ...value, modelChat: m }), value.baseUrlChat)}
+          </>
+        ) : null}
 
         {baseUrlRow("Image Base URL", value.providerImages, value.baseUrlImages, (v) => commit({ ...value, baseUrlImages: v }))}
         {modelSelectRow("Image Model (if supported)", value.providerImages, value.modelImages, (m) => commit({ ...value, modelImages: m }), value.baseUrlImages, value.providerImages === 'comfyui' ? 'image' : undefined)}

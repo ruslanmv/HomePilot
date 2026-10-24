@@ -310,7 +310,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
     Safe info for frontend settings UI (no secrets).
     Includes capabilities for each provider.
     """
-    return {
+    info = {
         "openai_compat": {
             "label": "OpenAI-compatible (vLLM)",
             "base_url": LLM_BASE_URL,
@@ -388,3 +388,23 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
             },
         },
     }
+    # Chat-only, and only on a Space. A desktop install (no SPACE_ID) keeps
+    # the provider list it had before, including local Ollama.
+    try:
+        from .hf_account import DEFAULT_MODEL, is_hf_space
+        if is_hf_space():
+            info["huggingface"] = {
+                "label": "Hugging Face (your account)",
+                "base_url": "https://router.huggingface.co/v1",
+                "default_model": DEFAULT_MODEL,
+                "capabilities": {
+                    "chat": True,
+                    "models_list": True,
+                    "images": False,
+                    "video": False,
+                    "multimodal": False,
+                },
+            }
+    except Exception:
+        pass
+    return info

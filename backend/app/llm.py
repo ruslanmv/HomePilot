@@ -271,7 +271,7 @@ from .config import (
     ANTHROPIC_MODEL,
 )
 
-ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx"]
+ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx", "huggingface"]
 
 
 # ── Ollama model classification & selection ─────────────────────────────────
@@ -732,6 +732,14 @@ async def chat(
     base_url: Optional[str] = None,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
+    if provider == "huggingface":
+        from .hf_account import chat_via_account
+        return await chat_via_account(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=model,
+        )
     if provider == "ollama":
         return await chat_ollama(
             messages,
