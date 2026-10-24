@@ -429,6 +429,22 @@ async def test_the_bucket_spreads_starts_at_the_learned_rate():
     assert all(b - a >= 0.17 for a, b in zip(stamps, stamps[1:]))
 
 
+def test_exit_status_4_with_tools_is_a_local_incompatibility_and_nothing_else():
+    """qwen2.5:0.5b on CPU Ollama dies with exit status 4 when the request includes tools.
+    That retries once without tools. A memory error, and the same crash with no tools sent,
+    stay real failures."""
+    crash = "llama runner process has terminated: exit status 4"
+    assert isinstance(_err(500, crash, tools=True), providers.ToolsUnsupported)
+    assert isinstance(_err(500, "4", tools=True), providers.ToolsUnsupported)
+    assert isinstance(_err(200, '{"error": "4"}', tools=True), providers.ToolsUnsupported)
+    bare = _err(500, crash, tools=False)
+    assert type(bare) is RuntimeError and not isinstance(bare, providers.ToolsUnsupported)
+    memory = _err(500, "model requires more system memory", tools=True)
+    assert type(memory) is RuntimeError and not isinstance(memory, providers.ToolsUnsupported)
+    assert providers.local_tool_crash_exception(RuntimeError("4"))
+    assert not providers.local_tool_crash_exception(RuntimeError("model requires more system memory"))
+
+
 def test_a_local_model_without_tools_behind_ollabridge_reads_as_no_tools():
     """llama3:8b through OllaBridge: Ollama answers 400 "does not support tools", an older
     OllaBridge wraps it in a 500. With tools, that is "no tools here" (retry without them);
@@ -446,3 +462,63 @@ def test_an_ollama_target_with_an_openai_base_url_is_openai_compatible():
     assert t.provider == "openai_compat" and t.base_url == "http://localhost:11435/v1" and not t.is_ollama
     local = target_mod.from_request({"provider": "ollama", "base_url": "http://localhost:11434", "model": "llama3:8b"})
     assert local.provider == "ollama" and local.is_ollama
+
+
+class _LocalResp:
+    def __init__(self, status, body):
+        self.status_code = status
+        self._body = body
+        self.text = json.dumps(body)
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def _local_client(resp):
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None):
+            return resp
+
+    return _Client
+
+
+@pytest.mark.asyncio
+async def test_chat_local_classifies_exit_status_4_only_when_tools_were_sent(monkeypatch):
+    async def resolve(name):
+        return name or "qwen2.5:0.5b"
+
+    monkeypatch.setattr(providers, "_resolve_local_model", resolve)
+    crash = {"error": "llama runner process has terminated: exit status 4"}
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _local_client(_LocalResp(500, crash)))
+    with pytest.raises(providers.ToolsUnsupported):
+        await providers.chat_local([{"role": "user", "content": "hello"}], model="qwen2.5:0.5b", tools=TOOLS)
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _local_client(_LocalResp(500, crash)))
+    with pytest.raises(RuntimeError, match="exit status 4") as bare:
+        await providers.chat_local([{"role": "user", "content": "hello"}], model="qwen2.5:0.5b")
+    assert not isinstance(bare.value, providers.ToolsUnsupported)
+
+    monkeypatch.setattr(
+        providers.httpx, "AsyncClient",
+        _local_client(_LocalResp(500, {"error": "model requires more system memory"})),
+    )
+    with pytest.raises(RuntimeError, match="system memory") as memory:
+        await providers.chat_local([{"role": "user", "content": "hello"}], model="qwen2.5:0.5b", tools=TOOLS)
+    assert not isinstance(memory.value, providers.ToolsUnsupported)
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _local_client(_LocalResp(200, {"error": "4"})))
+    with pytest.raises(providers.ToolsUnsupported):
+        await providers.chat_local([{"role": "user", "content": "hello"}], model="qwen2.5:0.5b", tools=TOOLS)

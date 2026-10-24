@@ -25,7 +25,7 @@ from .config import (
     EXPERT_LOCAL_MODEL, EXPERT_LOCAL_FAST_MODEL,
     GROQ_MODEL, GROK_MODEL, GEMINI_MODEL,
     EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE,
-    EXPERT_HEAVY_ESCALATE, EXPERT_DEEP_TIME_BUDGET_S,
+    EXPERT_HEAVY_ESCALATE, EXPERT_DEEP_TIME_BUDGET_S, EXPERT_TOOLS_ENABLED,
     available_expert_providers,
 )
 from .router import (
@@ -243,7 +243,7 @@ async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
         f"resolved_mode={mode!r} strategy={strategy!r} provider={provider!r} "
         f"model={req.model!r} target={chosen!r} complexity={complexity} history={len(req.history)} "
         f"history_chars={history_chars} query_chars={len(req.query or '')} "
-        f"max_tokens={max_tokens} temperature={temperature}"
+        f"max_tokens={max_tokens} temperature={temperature} tools={int(bool(EXPERT_TOOLS_ENABLED))}"
     )
 
     try:
@@ -344,7 +344,11 @@ async def _expert_chat(req: ExpertChatRequest, chosen) -> ExpertChatResponse:
         )
 
     except Exception as exc:
-        print(f"[EXPERT CHAT {trace_id}] error mode={mode!r} provider={provider!r} error={type(exc).__name__}: {exc}")
+        print(
+            f"[EXPERT CHAT {trace_id}] error mode={mode!r} provider={provider!r} "
+            f"model={req.model!r} tools={int(bool(EXPERT_TOOLS_ENABLED))} "
+            f"error={type(exc).__name__}: {exc}"
+        )
         logger.error("Expert chat failed (mode=%s): %s", mode, exc, exc_info=True)
         raise HTTPException(status_code=502, detail=f"Expert pipeline error: {exc}")
 
@@ -521,7 +525,11 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
                 "latency_ms": int((time.perf_counter() - started) * 1000), **summary,
             })
         except Exception as exc:
-            logger.error("Expert stream error (mode=%s): %s", mode, exc, exc_info=True)
+            logger.error(
+                "Expert stream error (mode=%s provider=%s model=%s tools=%s session=%s): %s",
+                mode, provider, req.model, int(bool(EXPERT_TOOLS_ENABLED)),
+                (req.session_id or "")[:8], exc, exc_info=True,
+            )
             yield sse("error", {"error": str(exc)})
         yield "data: [DONE]\n\n"
 

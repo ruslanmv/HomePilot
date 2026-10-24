@@ -25,13 +25,27 @@ from .config import (
     EXPERT_TOOL_RESULT_MAX_CHARS,
 )
 from .config import EXPERT_CAPABILITY_NEGATIVE_TTL_S, EXPERT_CAPABILITY_TTL_S
-from .providers import ToolsUnsupported
+from .providers import ToolsUnsupported, local_tool_crash_exception
 from .router import ProviderName, dispatch, extract_dispatch_meta, stream_provider_events
 from . import state_store
 from . import target as target_mod
 from . import tools as tools_mod
 
 logger = logging.getLogger("expert.tool_loop")
+
+
+def _refused_tools(exc: BaseException, *, offered: bool, provider: str, model: Optional[str]) -> bool:
+    """A tools-field refusal, or the local runner crash (exit status 4 / a bare ``"4"``) on a
+    request that offered tools. One retry without tools; any other error stays an error."""
+    if isinstance(exc, ToolsUnsupported):
+        return True
+    if offered and local_tool_crash_exception(exc):
+        logger.warning(
+            "local tool runner crash; one retry without tools provider=%s model=%s tools=1 error_type=%s error=%s",
+            provider, model, type(exc).__name__, exc,
+        )
+        return True
+    return False
 
 # What is known about a model's tool calling, by connection key (see capability_key): True when
 # a call came back, False when the tools field was rejected. Learned facts survive a restart in
@@ -392,7 +406,9 @@ async def stream_with_tools(
                     if ev["notice"] not in notices:
                         notices.append(ev["notice"])
                         yield {"type": "notice", "text": ev["notice"]}
-        except ToolsUnsupported:
+        except Exception as exc:
+            if not _refused_tools(exc, offered=offer, provider=provider, model=model):
+                raise
             # A capability fact, not news for the reader: logged and remembered, the answer
             # simply continues without tools (the UI stays clean; the trace is unchanged).
             remember_tools(key, False)
@@ -486,7 +502,9 @@ async def run_with_tools(
                 _round_messages(convo, offer=offer, book=book), provider,
                 model=model, temperature=temperature, max_tokens=max_tokens, tools=tools if offer else None,
             )
-        except ToolsUnsupported:
+        except Exception as exc:
+            if not _refused_tools(exc, offered=offer, provider=provider, model=model):
+                raise
             remember_tools(key, False)
             logger.info("tools: %s rejected the tools field; answering without tools from now on", key)
             if assist and not first and tools:

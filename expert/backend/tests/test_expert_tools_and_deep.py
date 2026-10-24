@@ -223,6 +223,66 @@ async def test_tool_loop_remembers_a_model_without_tool_support(fresh, monkeypat
     assert second.calls[0][1] is None
 
 
+@pytest.mark.asyncio
+async def test_a_bare_error_4_retries_once_without_tools(fresh):
+    """The Space answered Fast hello with ``{"error": "4"}`` in about 40 ms. One retry
+    without tools returns the answer; the reader is not told tools were dropped."""
+    seen = []
+
+    async def call(messages, provider, *, tools=None, **kw):
+        seen.append(tools)
+        if tools:
+            raise RuntimeError("4")
+        return {"choices": [{"message": {"role": "assistant", "content": "Hello!"}}]}
+
+    reg = tools_mod.ToolRegistry(servers=["http://fake/rpc"], allow="hp.web.search")
+    out = await tool_loop.run_with_tools(
+        [{"role": "user", "content": "hello"}], "local", registry=reg, call=call, model="qwen2.5:0.5b",
+    )
+    assert out["content"] == "Hello!"
+    assert seen[0] and seen[1] is None
+
+
+@pytest.mark.asyncio
+async def test_a_memory_error_is_not_retried_without_tools(fresh):
+    seen = []
+
+    async def call(messages, provider, *, tools=None, **kw):
+        seen.append(tools)
+        raise RuntimeError("Ollama could not run 'qwen2.5:0.5b' (HTTP 500): model requires more system memory")
+
+    reg = tools_mod.ToolRegistry(servers=["http://fake/rpc"], allow="hp.web.search")
+    with pytest.raises(RuntimeError, match="system memory"):
+        await tool_loop.run_with_tools(
+            [{"role": "user", "content": "hello"}], "local", registry=reg, call=call, model="qwen2.5:0.5b",
+        )
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_tokens_then_error_4_retries_inside_the_same_stream(fresh, monkeypatch):
+    """A crash after tokens resets that preamble and answers once without tools.
+    It does not start a second turn."""
+    calls = []
+
+    class _CrashThenAnswer:
+        async def __call__(self, messages, provider, *, tools=None, model=None, temperature=0.7, max_tokens=2048):
+            calls.append(tools)
+            if tools:
+                yield {"delta": "Hi"}
+                raise RuntimeError("exit status 4")
+            yield {"delta": "Hello!"}
+
+    monkeypatch.setattr(tool_loop, "stream_provider_events", _CrashThenAnswer())
+    reg = tools_mod.ToolRegistry(servers=["http://fake/rpc"], allow="hp.web.search")
+    events = await _collect(tool_loop.stream_with_tools(
+        [{"role": "user", "content": "hello"}], "local", registry=reg, model="qwen2.5:0.5b",
+    ))
+    assert [e["type"] for e in events if e["type"] in ("token", "reset", "done")][:3] == ["token", "reset", "token"]
+    assert events[-1]["type"] == "done" and events[-1]["content"] == "Hello!"
+    assert calls[0] and calls[1] is None and len(calls) == 2
+
+
 # ── compaction.py ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

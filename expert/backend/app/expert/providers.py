@@ -561,6 +561,35 @@ def _wrapped_local_refusal(status: int, body: str) -> bool:
     return status >= 500 and "/api/chat" in text and "400" in text
 
 
+def _local_runner_tool_crash(status: int, body: str) -> bool:
+    """CPU Ollama kills a small model that was handed ``tools`` with exit status 4, and the
+    Space has reported that failure as a bare ``"4"``. That is this model's tool incompatibility,
+    not an outage: a 500 about memory, a missing model, or any other runner exit stays a real error.
+    """
+    if _rate_limited(status, body or ""):
+        return False
+    text = _detail_text(body or "").strip()
+    if text in {"4", "exit status 4"}:
+        return True
+    return "exit status 4" in text.lower()
+
+
+def local_tool_crash_exception(exc: BaseException) -> bool:
+    """True when an exception is the local runner crash above, including one that escaped
+    classification and arrived as ``RuntimeError("4")``."""
+    text = str(exc).strip()
+    if text in {"4", "exit status 4"}:
+        return True
+    return "exit status 4" in text.lower()
+
+
+def _log_local_tool_crash(model: str, status: int, body: str) -> None:
+    logger.warning(
+        "local tool incompatibility provider=local model=%s status=%s tools=1 body=%s",
+        model, status, (body or "")[:500],
+    )
+
+
 def _message_in(data: Any) -> str:
     """The human message in an error body, however it is nested: OpenAI's ``error.message``,
     FastAPI's ``detail`` (a string, or OllaBridge's ``detail.error.message``), or ``message``."""
@@ -596,7 +625,7 @@ def _openai_compat_error(status: int, detail: str, headers: Any, *, base_url: st
             retry_after=_retry_after(headers),
         )
     if tools and (_tools_rejected(status, text) or _legacy_tools_failure(status, text)
-                  or _wrapped_local_refusal(status, text)):
+                  or _wrapped_local_refusal(status, text) or _local_runner_tool_crash(status, text)):
         return ToolsUnsupported(
             f"{who} rejected the tools field (HTTP {status}" + (f": {text[:160]}" if text else "") + ")"
         )
@@ -1199,12 +1228,23 @@ async def chat_local(
                 f"Ollama rejected model '{mdl}' with 404. Run "
                 f"`ollama pull {mdl}` and retry (or set EXPERT_LOCAL_MODEL)."
             )
+        if r.status_code >= 400 and tools and (
+            _tools_rejected(r.status_code, r.text) or _local_runner_tool_crash(r.status_code, r.text)
+        ):
+            _log_local_tool_crash(mdl, r.status_code, r.text)
+            raise ToolsUnsupported(f"{mdl} cannot run with tools (HTTP {r.status_code}).")
         if r.status_code >= 500:
             raise _ollama_failure(r, mdl)
-        if tools and _tools_rejected(r.status_code, r.text):
-            raise ToolsUnsupported(f"{mdl} does not support tool calling.")
         r.raise_for_status()
         data = r.json()
+
+    if isinstance(data, dict) and data.get("error") and not (data.get("message") or {}).get("content"):
+        blob = json.dumps(data)
+        if tools and _local_runner_tool_crash(r.status_code, blob):
+            _log_local_tool_crash(mdl, r.status_code, blob)
+            raise ToolsUnsupported(f"{mdl} cannot run with tools (HTTP {r.status_code}).")
+        reason = _detail_text(blob)[:240] or "server error"
+        raise RuntimeError(f"Ollama could not run '{mdl}' (HTTP {r.status_code}): {reason}")
 
     message = data.get("message", {}) or {}
     return _openai_wrap(message.get("content", ""), mdl, "local", tool_calls=_normalize_tool_calls(message.get("tool_calls")))
@@ -1234,6 +1274,7 @@ async def stream_local_events(
     if tools:
         payload["tools"] = tools
     calls: List[Dict[str, Any]] = []
+    emitted = False
     async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
         async with client.stream("POST", url, json=payload) as resp:
             if resp.status_code == 404:
@@ -1241,10 +1282,16 @@ async def stream_local_events(
                     f"Ollama rejected model '{mdl}' with 404. Run "
                     f"`ollama pull {mdl}` and retry (or set EXPERT_LOCAL_MODEL)."
                 )
-            if resp.status_code == 400 and tools:
+            if resp.status_code >= 400:
                 body = (await resp.aread()).decode("utf-8", "replace")
-                if _tools_rejected(400, body):
-                    raise ToolsUnsupported(f"{mdl} does not support tool calling.")
+                if tools and (
+                    _tools_rejected(resp.status_code, body) or _local_runner_tool_crash(resp.status_code, body)
+                ):
+                    _log_local_tool_crash(mdl, resp.status_code, body)
+                    raise ToolsUnsupported(f"{mdl} cannot run with tools (HTTP {resp.status_code}).")
+                if resp.status_code >= 500:
+                    reason = _detail_text(body)[:240] or "server error"
+                    raise RuntimeError(f"Ollama could not run '{mdl}' (HTTP {resp.status_code}): {reason}")
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.strip():
@@ -1253,9 +1300,17 @@ async def stream_local_events(
                     chunk = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if chunk.get("error") and not (chunk.get("message") or {}).get("content"):
+                    blob = json.dumps(chunk)
+                    err_text = str(chunk.get("error"))[:240]
+                    if tools and not emitted and _local_runner_tool_crash(resp.status_code, blob):
+                        _log_local_tool_crash(mdl, resp.status_code, blob)
+                        raise ToolsUnsupported(f"{mdl} cannot run with tools (HTTP {resp.status_code}).")
+                    raise RuntimeError(f"Ollama could not run '{mdl}': {err_text}")
                 message = chunk.get("message", {}) or {}
                 delta = message.get("content", "")
                 if delta:
+                    emitted = True
                     yield {"delta": delta}
                 if message.get("tool_calls"):
                     calls.extend(_normalize_tool_calls(message["tool_calls"]))

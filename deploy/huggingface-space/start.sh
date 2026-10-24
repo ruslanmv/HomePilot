@@ -223,4 +223,12 @@ fi
 # INTERACTIVE_LLM_MODEL always wins.
 export INTERACTIVE_LLM_MODEL=${INTERACTIVE_LLM_MODEL:-$OLLAMA_MODEL}
 
+# Expert Fast must call the model this Space actually loaded. Auto-fallback stays
+# a safety net. The CPU web edition does not start the tool servers on 9101/9102/9105,
+# and qwen2.5:0.5b crashes (exit status 4) when a request includes tools.
+export EXPERT_LOCAL_MODEL="${OLLAMA_MODEL}"
+export EXPERT_LOCAL_FAST_MODEL="${OLLAMA_MODEL}"
+export EXPERT_OLLAMA_URL="${OLLAMA_BASE_URL}"
+export EXPERT_TOOLS_ENABLED="${EXPERT_TOOLS_ENABLED:-0}"
+
 exec python3 /app/hf_wrapper.py

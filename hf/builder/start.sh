@@ -127,4 +127,11 @@ if [ "${ENABLE_PROJECT_BOOTSTRAP:-true}" = "true" ] \
     ) 2>&1 | tee -a /tmp/homepilot/data/bootstrap.log &
 fi
 
+# Expert Fast must call the model this Space actually loaded. The CPU web edition
+# does not start tool servers, and the bundled small model crashes when tools are sent.
+export EXPERT_LOCAL_MODEL="${OLLAMA_MODEL}"
+export EXPERT_LOCAL_FAST_MODEL="${OLLAMA_MODEL}"
+export EXPERT_OLLAMA_URL="${OLLAMA_BASE_URL}"
+export EXPERT_TOOLS_ENABLED="${EXPERT_TOOLS_ENABLED:-0}"
+
 exec python3 /app/hf_wrapper.py

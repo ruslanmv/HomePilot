@@ -59,7 +59,8 @@ import {
 import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl, saveBackendUrl } from './lib/backendUrl'
-import { isMissingRoute } from './lib/expertRoute'
+import { getEdition } from './lib/edition'
+import { isMissingRoute, shouldFallbackToLegacyChat } from './lib/expertRoute'
 import { fileAuthToken } from './lib/fileUrl'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
@@ -5719,6 +5720,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           },
         })
         const runExpert = async (): Promise<any> => {
+          const webEdition = (await getEdition()).is_web
           const wantDeep = reasoningMode === 'deep'
           let state: ExpertStreamState = initialExpertState(wantDeep ? 'deep' : toThinkingMode(reasoningMode))
           let lastPaint = 0
@@ -5783,15 +5785,26 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             } else {
               // No Expert on this HomePilot (a packaged image that did not ship it): the
               // standard chat answers this turn and every later one — not an "HTTP 405" bubble.
-              if (!isMissingRoute(err) || state.text) throw err
-              expertMissingRef.current = true
+              // On the web edition, Fast also falls back when Expert dies before any token
+              // (the bundled CPU model rejecting tools). A partial answer is not replaced.
+              const fallback = shouldFallbackToLegacyChat({
+                webEdition, reasoningMode, error: err, assistantText: state.text,
+              })
+              if (!fallback) throw err
+              if (isMissingRoute(err)) expertMissingRef.current = true
               return legacyChat()
             }
           } finally {
             if (streamAbortRef.current === controller) streamAbortRef.current = null
             setStreaming(false)
           }
-          if (state.error) throw new Error(state.error)
+          if (state.error) {
+            const fallback = shouldFallbackToLegacyChat({
+              webEdition, reasoningMode, error: new Error(state.error), assistantText: state.text,
+            })
+            if (fallback) return legacyChat()
+            throw new Error(state.error)
+          }
           paint(true)
           expertAnswered = true
           const web = sourcesAsWeb(state.trace)
@@ -5849,6 +5862,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           typeof err?.message === 'string' ? err.message : 'backend unreachable.'
         }`
 
+        // The user bubble already holds the typed text. Only this assistant placeholder
+        // becomes the error, so a failed hello never wipes what the visitor wrote.
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
