@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { isMissingRoute } from '../ui/lib/expertRoute'
+import { isMissingRoute, shouldAnswerWithChat, type ExpertFailure } from '../ui/lib/expertRoute'
 
 describe('a missing Expert route', () => {
   it('is a 404, or the 405 a GET-only catch-all gives a POST', () => {
@@ -18,5 +18,36 @@ describe('a missing Expert route', () => {
     expect(isMissingRoute(new TypeError('Failed to fetch'))).toBe(false)
     expect(isMissingRoute('HTTP 4040')).toBe(false)
     expect(isMissingRoute(null)).toBe(false)
+  })
+})
+
+describe('answering a failed Expert turn with the standard chat', () => {
+  const base: ExpertFailure = {
+    err: new Error('4'), shownText: '', aborted: false, isWeb: true, reasoningMode: 'fast',
+  }
+
+  it('answers a web-edition Fast turn that failed before any text (the Space\'s "error 4")', () => {
+    expect(shouldAnswerWithChat(base)).toBe(true)
+    expect(shouldAnswerWithChat({ ...base, err: new Error('HTTP 500 Internal Server Error') })).toBe(true)
+    expect(shouldAnswerWithChat({ ...base, err: new TypeError('Failed to fetch') })).toBe(true)
+  })
+
+  it('answers a missing Expert route in any edition and mode', () => {
+    const missing = new Error('HTTP 404 Not Found')
+    expect(shouldAnswerWithChat({ ...base, err: missing, isWeb: false, reasoningMode: 'heavy' })).toBe(true)
+    expect(shouldAnswerWithChat({ ...base, err: new Error('HTTP 405 Method Not Allowed'), isWeb: false })).toBe(true)
+  })
+
+  it('never answers twice, after a Stop, or in place of Expert / Heavy / Deep', () => {
+    expect(shouldAnswerWithChat({ ...base, shownText: 'Hel' })).toBe(false)
+    expect(shouldAnswerWithChat({ ...base, err: new Error('HTTP 404 Not Found'), shownText: 'Hel' })).toBe(false)
+    expect(shouldAnswerWithChat({ ...base, aborted: true })).toBe(false)
+    for (const reasoningMode of ['expert', 'heavy', 'deep']) {
+      expect(shouldAnswerWithChat({ ...base, reasoningMode })).toBe(false)
+    }
+  })
+
+  it('leaves Expert errors to show on a local install', () => {
+    expect(shouldAnswerWithChat({ ...base, isWeb: false })).toBe(false)
   })
 })

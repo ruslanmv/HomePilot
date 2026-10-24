@@ -69,6 +69,16 @@ logger = logging.getLogger("expert.routes")
 router = APIRouter(prefix="/v1/expert", tags=["expert"])
 
 
+def _stream_error_text(exc: BaseException) -> str:
+    """The message a stream's ``error`` event carries. Provider failures are RuntimeErrors
+    written for the user ("Could not reach …"); anything else is a bug, and its bare text says
+    nothing (``str(KeyError(4))`` is "4", which the Space showed as "error 4"), so it is named."""
+    text = str(exc).strip()
+    if isinstance(exc, RuntimeError) and not isinstance(exc, (NotImplementedError, RecursionError)) and text:
+        return text
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
 def _compute_request_complexity(req: ExpertChatRequest) -> int:
     score = score_complexity(req.query)
     if req.has_attachments:
@@ -522,7 +532,7 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
             })
         except Exception as exc:
             logger.error("Expert stream error (mode=%s): %s", mode, exc, exc_info=True)
-            yield sse("error", {"error": str(exc)})
+            yield sse("error", {"error": _stream_error_text(exc)})
         yield "data: [DONE]\n\n"
 
     async def with_target():

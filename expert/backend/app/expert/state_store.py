@@ -6,7 +6,8 @@ not lost and a client can reconnect. Opened per call with a process lock; a hand
 per day, so there is nothing to tune.
 
 Location: ``EXPERT_STATE_DB``, else ``<DATA_DIR>/expert_state.sqlite`` (HomePilot's data
-directory), else ``backend/data/expert_state.sqlite`` next to the main database.
+directory), else ``backend/data/expert_state.sqlite`` next to the main database (outside the
+repo: the directory of ``SQLITE_PATH``, else the temp directory).
 """
 from __future__ import annotations
 
@@ -35,8 +36,17 @@ def _default_path() -> Path:
     data_dir = (os.getenv("DATA_DIR") or "").strip()
     if data_dir:
         return Path(data_dir) / "expert_state.sqlite"
-    repo = Path(__file__).resolve().parents[4]
-    return repo / "backend" / "data" / "expert_state.sqlite"
+    # In the repo this file is expert/backend/app/expert/state_store.py: four levels up is the
+    # repo root. An image that ships the package on its own (the Hugging Face Space's
+    # /app/expert) has no such parents — parents[4] raised IndexError(4), and every Fast chat
+    # there answered "error 4". There the store sits next to HomePilot's main database.
+    here = Path(__file__).resolve()
+    if len(here.parents) > 4 and here.parents[2].name == "backend":
+        return here.parents[4] / "backend" / "data" / "expert_state.sqlite"
+    sqlite_path = (os.getenv("SQLITE_PATH") or "").strip()
+    if sqlite_path:
+        return Path(sqlite_path).parent / "expert_state.sqlite"
+    return Path(tempfile.gettempdir()) / "homepilot-expert-state.sqlite"
 
 
 def configure(path: Optional[os.PathLike] = None) -> Path:

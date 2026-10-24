@@ -59,7 +59,8 @@ import {
 import { abortWebSpeech, startWebSpeech, stopWebSpeech } from './media/webSpeechSession'
 import { isDeafTurn, planSttRecovery } from './media/sttTurnHealth'
 import { getDefaultBackendUrl, resolveBackendUrl, saveBackendUrl } from './lib/backendUrl'
-import { isMissingRoute } from './lib/expertRoute'
+import { isMissingRoute, shouldAnswerWithChat } from './lib/expertRoute'
+import { getEdition } from './lib/edition'
 import { fileAuthToken } from './lib/fileUrl'
 import { visionErrorMessage } from './lib/visionError'
 import { modeGroup, resetsConversation } from './lib/modeGroups'
@@ -5781,17 +5782,27 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 trace: { ...state.trace, notices: [...state.trace.notices, 'Stopped before the answer was complete.'] },
               }
             } else {
-              // No Expert on this HomePilot (a packaged image that did not ship it): the
-              // standard chat answers this turn and every later one — not an "HTTP 405" bubble.
-              if (!isMissingRoute(err) || state.text) throw err
-              expertMissingRef.current = true
+              // No Expert on this HomePilot (a packaged image that did not ship it), or a web
+              // Fast turn that failed before any text: the standard chat answers instead of an
+              // error bubble (lib/expertRoute.ts). A missing Expert stays missing for later turns.
+              const isWeb = (await getEdition()).is_web
+              if (!shouldAnswerWithChat({ err, shownText: state.text, aborted: false, isWeb, reasoningMode })) throw err
+              console.warn('[expert] answering with the standard chat:', err)
+              if (isMissingRoute(err)) expertMissingRef.current = true
               return legacyChat()
             }
           } finally {
             if (streamAbortRef.current === controller) streamAbortRef.current = null
             setStreaming(false)
           }
-          if (state.error) throw new Error(state.error)
+          if (state.error) {
+            // The stream itself reported the failure (an `error` event): same rule as above.
+            const isWeb = (await getEdition()).is_web
+            const failure = { err: new Error(state.error), shownText: state.text, aborted: controller.signal.aborted, isWeb, reasoningMode }
+            if (!shouldAnswerWithChat(failure)) throw failure.err
+            console.warn('[expert] answering with the standard chat:', state.error)
+            return legacyChat()
+          }
           paint(true)
           expertAnswered = true
           const web = sourcesAsWeb(state.trace)

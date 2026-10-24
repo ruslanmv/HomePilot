@@ -1526,6 +1526,63 @@ async def health() -> JSONResponse:
     return JSONResponse(status_code=200, content=status)
 
 
+# /health answers 200 whatever the providers say (its body reports them). These two say what a
+# deploy and a health check need: is the process up, and can a visitor get an answer.
+
+@app.get("/health/live")
+async def health_live() -> Dict[str, Any]:
+    """The process is up and serving. Depends on nothing else."""
+    return {"live": True}
+
+
+@app.get("/health/ready")
+async def health_ready() -> JSONResponse:
+    """Whether the standard chat can answer now: a local runtime with a chat model the same
+    resolution /chat uses picks. 503 until then (the model is still pulling or loading)."""
+    from .config import HOMEPILOT_EDITION
+    from .model_resolver import resolve as _resolve
+
+    chat: Dict[str, Any] = {"model": "", "runtime_url": "", "reason": ""}
+    try:
+        res = await _resolve("chat")
+        ready = res.source != "none" and bool(res.model)
+        chat = {"model": res.model, "runtime_url": res.runtime_url, "reason": res.reason,
+                "configured_installed": res.configured_installed}
+    except Exception as exc:  # noqa: BLE001 — readiness never raises
+        ready = False
+        chat["reason"] = f"{type(exc).__name__}: {exc}"
+    body = {
+        "ready": ready,
+        "edition": HOMEPILOT_EDITION,
+        "chat": chat,
+        "expert": {"tools": os.getenv("EXPERT_TOOLS_ENABLED", "1").lower() in ("1", "true", "yes")},
+        "build": build_info(),
+    }
+    return JSONResponse(status_code=200 if ready else 503, content=body)
+
+
+def build_info() -> Dict[str, str]:
+    """The commit this instance was built from: build-info.json next to the package (written by
+    the deploy, deploy/huggingface-space/scripts/deploy-hf.sh), else HOMEPILOT_BUILD_SHA."""
+    info: Dict[str, str] = {}
+    path = Path(os.getenv("HOMEPILOT_BUILD_INFO") or Path(__file__).resolve().parents[1] / "build-info.json")
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            info = {k: str(v) for k, v in data.items()}
+    except (OSError, ValueError):
+        pass
+    info.setdefault("sha", os.getenv("HOMEPILOT_BUILD_SHA", "").strip() or "unknown")
+    return info
+
+
+@app.get("/version")
+async def version() -> Dict[str, Any]:
+    """Which build is serving: tells a deploy whether the Space runs the commit just pushed."""
+    from .config import HOMEPILOT_EDITION
+    return {"version": app.version, "edition": HOMEPILOT_EDITION, **build_info()}
+
+
 @app.get("/health/detailed")
 async def health_detailed() -> JSONResponse:
     """

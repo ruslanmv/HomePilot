@@ -9,6 +9,13 @@ on:
       - 'community/**'
       - 'hf/**'
       - 'deploy/huggingface-space/**'
+      # Also in the Space bundle (deploy-hf.sh copies them): a change only here used to
+      # leave the Space on an older build.
+      - 'expert/**'
+      - 'packages/**'
+      - 'scripts/download.py'
+      - 'tsconfig.base.json'
+      - '.github/workflows/sync-hf-spaces.yml'
   workflow_dispatch: {}
 
 jobs:
@@ -35,3 +42,14 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           bash deploy/huggingface-space/scripts/deploy-hf.sh
+
+      # The push above only hands the bundle to Hugging Face, which then builds it. A failed
+      # build keeps the previous image serving, so wait for this commit to be the one running
+      # and for a "hello" to be answered — by /chat and by the chat's default Fast path.
+      - name: Verify the Space serves this commit and answers
+        timeout-minutes: 45
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          python3 deploy/huggingface-space/scripts/verify_space.py
