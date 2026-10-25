@@ -75,10 +75,15 @@ def test_models_per_type_in_models(client, monkeypatch):
     hf = _hf()
     seen = []
 
+    provider_task = {"chat": "conversational", "multimodal": "conversational",
+                     "image": "text-to-image", "video": "text-to-video"}
+
     def fake_list(task, secret):
+        # Raw Hub rows, as the API returns them; the connector ranks them.
         seen.append(task)
-        return [{"id": f"hf:org/{task}-model" if task in ("image", "video") else f"org/{task}-model",
-                 "name": f"org/{task}-model", "likes": 1, "downloads": 2}]
+        return [{"id": f"org/{task}-model", "likes": 1, "downloads": 2, "tags": [],
+                 "inferenceProviderMapping": [{"provider": "fal-ai", "status": "live",
+                                               "task": provider_task[task]}]}]
     monkeypatch.setattr(hf, "_list", fake_list)
     monkeypatch.setattr(hf, "_cache", {})
     h = _user(client)

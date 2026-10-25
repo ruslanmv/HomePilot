@@ -9,6 +9,7 @@ whenever FitLab cannot be reached.
 | `fitlab_registry.snapshot.json` | `data/registry.json` (`registry-latest`) | Chat and vision models with an Ollama tag: sizing fields, 30-day downloads, measured benchmarks, calibration |
 | `fitlab_media.snapshot.json` | `data/media_registry.json` | The media lane as published (image + video, scoring weights and components) |
 | `fitlab_gpus.json` | `data/gpu_catalog.json` (`master`) | Name, aliases, VRAM and memory bandwidth per GPU profile |
+| `fitlab_inference.snapshot.json` | `data/inference_registry.json` | The inference lane as published: hosted models HomePilot can run (chat, vision, image, video), ranked in five orders. Models → Hugging Face ranks the live Hub with the same rules (`../inference.py`) and uses this only when the Hub cannot be reached |
 
 Do not edit by hand. Refresh with:
 

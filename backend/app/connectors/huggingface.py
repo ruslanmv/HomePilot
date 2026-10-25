@@ -37,7 +37,7 @@ import io
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import store
 from .context import current_user_id
@@ -112,7 +112,7 @@ def account_problem(exc: BaseException) -> bool:
     return any(code in text for code in ("401", "402", "403", "429")) or isinstance(exc, NotLinked)
 
 _cache: Dict[str, Any] = {}
-_CACHE_S = 600
+_CACHE_S = 1800
 
 
 class NotLinked(RuntimeError):
@@ -153,37 +153,92 @@ async def whoami(secret: str) -> Dict[str, Any]:
 
 # ── models ───────────────────────────────────────────────────────────────────
 
+# Hub queries that make up the candidate pool, the same three FitLab's inference lane uses: most
+# liked, trending, newest — so a new model with few likes is still a candidate.
+HUB_MODELS = "https://huggingface.co/api/models"
+_EXPAND = ("likes", "downloads", "trendingScore", "lastModified", "createdAt", "tags",
+           "library_name", "pipeline_tag", "inferenceProviderMapping")
+_QUERIES = (("likes", 100), ("trendingScore", 100), ("createdAt", 60))
+#: HomePilot's model types → FitLab inference-lane kinds.
+_LANE_KIND = {"chat": "chat", "multimodal": "vision", "image": "image", "video": "video"}
+ORDERS = ("popular", "likes", "trending", "newest", "rising")
+
+
 def _list(task: str, secret: str) -> List[Dict[str, Any]]:
-    from huggingface_hub import HfApi
+    """The raw candidate pool for ``task`` from the Hub (one row per repo), as the Hub returns it."""
+    import httpx
 
-    models = HfApi().list_models(
-        pipeline_tag=TASKS[task], inference_provider="all", sort="trending_score", limit=30,
-        token=secret or None,
-    )
-    out = []
-    for m in models:
-        repo = getattr(m, "id", "") or getattr(m, "modelId", "")
-        if not repo:
-            continue
-        out.append({
-            "id": f"{PREFIX}{repo}" if task in ("image", "video") else repo,
-            "name": repo,
-            "likes": getattr(m, "likes", 0) or 0,
-            "downloads": getattr(m, "downloads", 0) or 0,
-        })
-    return out
+    headers = {"User-Agent": "homepilot-model-ranking"}
+    if secret:
+        headers["Authorization"] = f"Bearer {secret}"
+    pool: Dict[str, Dict[str, Any]] = {}
+    errors = 0
+    with httpx.Client(timeout=15.0, headers=headers) as client:
+        for sort, limit in _QUERIES:
+            params = [("pipeline_tag", TASKS[task]), ("inference_provider", "all"), ("sort", sort),
+                      ("limit", str(limit))] + [("expand[]", e) for e in _EXPAND]
+            try:
+                r = client.get(HUB_MODELS, params=params)
+                r.raise_for_status()
+                for m in r.json():
+                    pool.setdefault(m.get("id") or m.get("modelId") or "", m)
+            except Exception as exc:  # noqa: BLE001 — one query down is not the whole list
+                errors += 1
+                logger.warning("Hugging Face model list (%s, %s) failed: %s", task, sort, str(exc)[:160])
+    if errors == len(_QUERIES):
+        raise RuntimeError("the Hugging Face Hub could not be reached")
+    return [m for k, m in pool.items() if k]
 
 
-async def models(task: str) -> List[Dict[str, Any]]:
-    """Models Inference Providers serve for ``task`` right now, trending first (cached 10 min)."""
+def _row(task: str, ranked: Dict[str, Any]) -> Dict[str, Any]:
+    """A ranked row as Models shows it: image/video ids carry ``hf:``; raw counts kept."""
+    repo = ranked["id"]
+    return {**ranked, "id": f"{PREFIX}{repo}" if task in ("image", "video") else repo, "name": repo}
+
+
+def _from_fitlab(task: str, order: str) -> Tuple[List[Dict[str, Any]], str]:
+    """FitLab's published ranking: the last copy fetched, else the one shipped with HomePilot."""
+    from ..model_advisor import feed
+
+    lane = feed.load("inference")
+    k = ((lane.doc or {}).get("kinds") or {}).get(_LANE_KIND[task]) or {}
+    rows = (k.get("lists") or {}).get(order) or (k.get("lists") or {}).get("popular") or []
+    return [_row(task, r) for r in rows if isinstance(r, dict) and r.get("id")], f"fitlab-{lane.source}"
+
+
+async def ranked(task: str, order: str = "popular") -> Tuple[List[Dict[str, Any]], str]:
+    """Models Inference Providers serve live for ``task``, in ``order``, and where they came from.
+
+    Live from the Hub, ranked with FitLab's inference-lane rules (model_advisor/inference.py):
+    only models a provider serves live for the task HomePilot calls, adapters excluded; orders
+    popular (likes, downloads, trend, freshness), likes, trending, newest, rising. The pool is
+    cached for half an hour. When the Hub cannot be reached, FitLab's published ranking stands in.
+    """
+    from ..model_advisor import inference as lane
+
     if task not in TASKS:
         raise ValueError(f"Unknown model type '{task}'. Use one of: {', '.join(TASKS)}.")
+    if order not in ORDERS:
+        raise ValueError(f"Unknown order '{order}'. Use one of: {', '.join(ORDERS)}.")
     hit = _cache.get(task)
-    if hit and time.time() - hit[0] < _CACHE_S:
-        return hit[1]
-    listed = await asyncio.to_thread(_list, task, token())
-    _cache[task] = (time.time(), listed)
-    return listed
+    pool = hit[1] if hit and time.time() - hit[0] < _CACHE_S else None
+    if pool is None:
+        try:
+            pool = await asyncio.to_thread(_list, task, token())
+            _cache[task] = (time.time(), pool)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ranking %s from FitLab's feed: %s", task, str(exc)[:160])
+            return _from_fitlab(task, order)
+    rows = lane.rank(pool, _LANE_KIND[task], order, limit=40)
+    if not rows:
+        return _from_fitlab(task, order)
+    return [_row(task, r) for r in rows], "live"
+
+
+async def models(task: str, order: str = "popular") -> List[Dict[str, Any]]:
+    """Ranked models for ``task`` (see :func:`ranked`), without the source."""
+    rows, _source = await ranked(task, order)
+    return rows
 
 
 # ── chat and vision ──────────────────────────────────────────────────────────

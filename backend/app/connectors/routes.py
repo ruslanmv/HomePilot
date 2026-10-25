@@ -59,12 +59,17 @@ def unlink(connector_id: str, user_id: str = Depends(_user)) -> Dict[str, Any]:
 @router.get("/huggingface/models")
 async def hf_models(
     model_type: str = Query("chat", alias="type", description="chat | multimodal | image | video"),
+    sort: str = Query("popular", description="popular | likes | trending | newest | rising"),
     user_id: Optional[str] = Depends(_user),
 ) -> Dict[str, Any]:
+    """Models Inference Providers serve live for a type, ranked (FitLab's inference lane):
+    ``popular`` weighs likes, downloads, trend and freshness; ``likes`` is ranked by the people."""
     try:
-        listed = await huggingface.models(model_type)
+        listed, source = await huggingface.ranked(model_type, sort)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 — the Hub unreachable
         raise HTTPException(status_code=502, detail=f"Could not list Hugging Face models ({type(exc).__name__}).") from exc
-    return {"ok": True, "type": model_type, "connected": bool(huggingface.token(user_id)), "models": listed}
+    return {"ok": True, "type": model_type, "sort": sort, "orders": list(huggingface.ORDERS),
+            "source": source, "connected": bool(huggingface.token(user_id)), "models": listed,
+            "note": "Ranked by popularity on Hugging Face. Popular is not always best for your task."}
