@@ -129,8 +129,11 @@ import { ComposerAssistContext, type DeepHint } from './lib/composerAssist'
 import { isTrivialPrompt } from './lib/promptHeuristics'
 import RouteBadge from './components/compute/RouteBadge'
 import ModelBadge, { type AnsweredBy } from './components/compute/ModelBadge'
-import { ChatEmptyState } from './components/ChatEmptyState'
-import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
+import {
+  OPEN_PROJECT_TOOL_EVENT, ProjectLanding, ProjectPanel, ProjectSwitcher,
+  type ProjectTask, type ProjectTool,
+} from './components/project/ProjectWorkspace'
+import { AgentIntent, AgentIntentTiles, INTENT_COPY } from './components/AgentIntentTiles'
 import { AgentSettingsPanel, type AgentProjectData } from './components/AgentSettingsPanel'
 import { PersonaSettingsPanel } from './components/PersonaSettingsPanel'
 import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
@@ -3676,6 +3679,10 @@ export default function App() {
     }
     persona_agent?: Record<string, any>
     persona_appearance?: Record<string, any>
+    /** The account's own assistant (backend/app/onboarding.py). */
+    is_default_assistant?: boolean
+    /** The project's checklist (Project → Tasks). */
+    tasks?: ProjectTask[]
     /** epoch seconds — the hub shows how long the relationship has lasted */
     created_at?: number
     /** epoch seconds — cache-buster for the saved picture */
@@ -3704,6 +3711,16 @@ export default function App() {
 
   // Agent settings panel toggle
   const [showAgentSettings, setShowAgentSettings] = useState(false)
+  // Project Chat → Files / Tasks / Instructions (components/project/ProjectWorkspace.tsx).
+  const [projectTool, setProjectTool] = useState<ProjectTool | null>(null)
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const tool = (e as CustomEvent<{ tool?: ProjectTool }>).detail?.tool
+      if (tool) setProjectTool(tool)
+    }
+    window.addEventListener(OPEN_PROJECT_TOOL_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_PROJECT_TOOL_EVENT, onOpen)
+  }, [])
 
   // Companion-grade: show session hub when opening a persona project
   const [showSessionPanel, setShowSessionPanel] = useState(false)
@@ -6658,7 +6675,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         localStorage.setItem('homepilot_current_project', a.id)
         setCurrentProject({
           id: a.id, name: a.name, document_count: 0, project_type: a.project_type,
-          description: a.description, instructions: a.instructions,
+          description: a.description, instructions: a.instructions, is_default_assistant: true,
         })
         if (handoff?.mode) {
           setMode(handoff.mode as Mode)
@@ -6792,6 +6809,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           agentic: project.agentic,
           persona_agent: project.persona_agent,
           persona_appearance: project.persona_appearance,
+          is_default_assistant: !!project.is_default_assistant,
+          tasks: Array.isArray(project.tasks) ? project.tasks : [],
           created_at: project.created_at,
           updated_at: project.updated_at,
         })
@@ -7016,90 +7035,58 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
         {mode === 'chat' && (
-        <header className="absolute top-0 left-0 right-0 pl-5 pr-[9rem] py-3 z-20 flex items-center justify-start gap-3 pointer-events-none">
+        <header className="absolute top-0 left-0 right-0 pl-5 pr-[9rem] py-3 z-40 flex items-center justify-start gap-3 pointer-events-none">
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
             if (currentProjectId) {
               const projectName = currentProject?.name || 'Project'
-              const docCount = currentProject?.document_count || 0
 
               return (
-                <div className={`pointer-events-auto inline-flex items-center gap-2 ${
-                  currentProject?.project_type === 'agent'
-                    ? 'bg-amber-600/20 text-amber-400 border-amber-600/30'
-                    : 'bg-blue-600/20 text-blue-400 border-blue-600/30'
-                } text-xs font-semibold px-4 py-2 rounded-full border`}>
-                  {projectThumbUrl ? (
+                <ProjectSwitcher
+                  project={currentProject || { id: currentProjectId, name: projectName }}
+                  avatar={projectThumbUrl ? (
                     // The project's own picture is its identity in the header too.
-                    <AvatarImage
-                      urls={[projectFaceUrl, projectThumbUrl]}
-                      className="-ml-2 h-6 w-6 rounded-full object-cover ring-1 ring-white/25"
-                    />
-                  ) : (
-                    <Folder size={12} />
-                  )}
-                  <span className="max-w-[120px] truncate">{projectName}</span>
-                  {currentProject?.project_type === 'agent' && (
-                    <span className="px-1.5 py-0.5 bg-amber-600/30 rounded text-[10px]">Agent</span>
-                  )}
-                  {docCount > 0 && (
-                    <span className={`px-1.5 py-0.5 ${
-                      currentProject?.project_type === 'agent' ? 'bg-amber-600/30' : 'bg-blue-600/30'
-                    } rounded text-[10px]`} title={`${docCount} document chunks`}>
-                      {docCount} docs
-                    </span>
-                  )}
-                  {/* Persona projects: Session Hub + Resume Voice buttons */}
-                  {currentProject?.project_type === 'persona' && (
-                    <>
-                      <button
-                        onClick={() => setMode('voice')}
-                        className="ml-0.5 p-0.5 rounded-full transition-colors hover:bg-purple-600/30 text-purple-400"
-                        title="Continue in Voice"
-                      >
-                        <Mic size={12} />
-                      </button>
-                      <button
-                        onClick={() => setShowSessionPanel(true)}
-                        className="p-0.5 hover:bg-purple-600/30 rounded-full transition-colors text-purple-400"
-                        title="Session Hub"
-                      >
-                        <Clock size={12} />
-                      </button>
-                    </>
-                  )}
-                  <button
-                    onClick={() => setShowAgentSettings(true)}
-                    className={`ml-0.5 p-0.5 ${
-                      currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
-                    } rounded-full transition-colors`}
-                    title="Project settings"
-                  >
-                    <Settings size={12} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      localStorage.removeItem('homepilot_current_project')
-                      setCurrentProject(null)
-                      setShowAgentSettings(false)
-                      setShowSessionPanel(false)
-                      setInput('')
-                      onNewConversation()
-                    }}
-                    className={`p-0.5 ${
-                      currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
-                    } rounded-full transition-colors`}
-                    title="Exit project mode"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
+                    <AvatarImage urls={[projectFaceUrl, projectThumbUrl]} className="-ml-1 h-6 w-6 rounded-full object-cover ring-1 ring-white/20" />
+                  ) : undefined}
+                  backendUrl={settingsDraft.backendUrl}
+                  headers={authHeaders}
+                  onSwitch={(id) => { void handleProjectSelect(id) }}
+                  onAllProjects={() => setMode('project')}
+                  onSettings={() => setShowAgentSettings(true)}
+                  onVoice={currentProject?.project_type === 'persona' ? () => setMode('voice') : undefined}
+                  onSessions={currentProject?.project_type === 'persona' ? () => setShowSessionPanel(true) : undefined}
+                  onLeave={() => {
+                    localStorage.removeItem('homepilot_current_project')
+                    setCurrentProject(null)
+                    setShowAgentSettings(false)
+                    setShowSessionPanel(false)
+                    setProjectTool(null)
+                    setInput('')
+                    onNewConversation()
+                  }}
+                />
               )
             }
             return null
           })()}
         </header>
+        )}
+
+        {/* Project → Files / Tasks / Instructions: one focused sheet, opened on request. */}
+        {projectTool && currentProject && (
+          <ProjectPanel
+            project={currentProject}
+            tool={projectTool}
+            backendUrl={settingsDraft.backendUrl}
+            headers={authHeaders}
+            onToolChange={setProjectTool}
+            onClose={() => setProjectTool(null)}
+            onProjectChange={(patch) => setCurrentProject((p) => (p ? {
+              ...p, ...patch,
+              ...(patch.files ? { document_count: patch.files.reduce((n, f) => n + (f.chunks || 0), 0) } : {}),
+            } : p))}
+          />
         )}
 
         {/* Project Settings Panel — accessible from gear icon in project header */}
@@ -7596,53 +7583,55 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             />
           )
         ) : messages.length === 0 && currentProject ? (
-          <div className="flex-1 flex flex-col items-center justify-center px-6">
-            <ChatEmptyState
-              title={currentProject.name}
-              description={currentProject.description}
-              isAgent={currentProject.project_type === 'agent'}
-              isPersona={currentProject.project_type === 'persona'}
-              agentIntent={currentProject.project_type === 'agent' ? agentStartIntent : null}
-              onAgentIntentChange={(intent) => {
-                if (currentProject.project_type !== 'agent') return
-                setAgentStartIntent(intent)
-              }}
-              capabilityLabels={(currentProject.agentic?.capabilities || []).map((id: string) => {
-                if (id === 'generate_images') return 'Generate images'
-                if (id === 'generate_videos') return 'Generate short videos'
-                if (id === 'analyze_documents') return 'Analyze documents'
-                if (id === 'automate_external') return 'Automate external services'
-                return id
-              })}
-              onPickPrompt={(t) => sendTextOrIntent(t)}
-              onResumeVoice={
-                currentProject.project_type === 'persona'
-                  ? () => setMode('voice')
-                  : undefined
+          // Project Chat, empty conversation: the Home landing with the project's name, the
+          // composer centred under it, and Files / Tasks / Instructions. The first message
+          // turns it into the normal chat, composer at the bottom.
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <ProjectLanding
+              project={currentProject}
+              avatar={projectThumbUrl ? (
+                <AvatarImage urls={[projectFaceUrl, projectThumbUrl]} className="h-full w-full rounded-2xl object-cover" />
+              ) : undefined}
+              composer={
+                <QueryBar
+                  centered={false}
+                  mode={mode}
+                  input={input}
+                  setInput={setInput}
+                  fileInputRef={fileInputRef}
+                  canSend={canSend}
+                  onSend={onSend}
+                  onUpload={handleAttachFile}
+                  pendingPreviewUrl={pendingPreviewUrl}
+                  onRemoveAttachment={clearPendingFile}
+                  placeholderOverride={
+                    currentProject.project_type === 'agent' && agentStartIntent
+                      ? INTENT_COPY[agentStartIntent].placeholder
+                      : currentProject.is_default_assistant || currentProject.project_type === 'persona'
+                        ? undefined
+                        : 'Ask about this project…'
+                  }
+                  chatReasoningMode={chatReasoningMode}
+                  onChatReasoningModeChange={handleChatReasoningModeChange}
+                  showChatReasoningSelector={showChatReasoningSelector}
+                />
+              }
+              extra={
+                currentProject.project_type === 'persona' ? (
+                  <div className="flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setMode('voice')}
+                      className="inline-flex min-h-[40px] items-center gap-2 rounded-full border border-white/10 px-4 text-[14px] text-white/75 hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
+                    >
+                      <Mic size={15} aria-hidden /> Continue in Voice
+                    </button>
+                  </div>
+                ) : currentProject.project_type === 'agent' ? (
+                  <AgentIntentTiles value={agentStartIntent} onChange={(i) => setAgentStartIntent(i)} />
+                ) : null
               }
             />
-            <div className="shrink-0 w-full max-w-3xl pb-6 pt-4">
-              <QueryBar
-                centered={false}
-                mode={mode}
-                input={input}
-                setInput={setInput}
-                fileInputRef={fileInputRef}
-                canSend={canSend}
-                onSend={onSend}
-                onUpload={handleAttachFile}
-                pendingPreviewUrl={pendingPreviewUrl}
-                onRemoveAttachment={clearPendingFile}
-                placeholderOverride={
-                  currentProject.project_type === 'agent' && agentStartIntent
-                    ? INTENT_COPY[agentStartIntent].placeholder
-                    : undefined
-                }
-                chatReasoningMode={chatReasoningMode}
-                onChatReasoningModeChange={handleChatReasoningModeChange}
-                showChatReasoningSelector={showChatReasoningSelector}
-              />
-            </div>
           </div>
         ) : messages.length === 0 ? (
           <EmptyState
