@@ -185,7 +185,8 @@ echo "  ┌───────────────────────
 echo "  │  Ready!                               │"
 echo "  │                                       │"
 echo "  │  App:      /                          │"
-echo "  │  Health:   /health                    │"
+echo "  │  Health:   /health/ready              │"
+echo "  │  Build:    /version                   │"
 echo "  │  API:      /docs                      │"
 echo "  │  Gallery:  /community/registry        │"
 echo "  │  Chat:     /v1/chat/completions       │"
@@ -222,5 +223,15 @@ fi
 # (the built-in default, llama3:8b, is never pulled on the Space). An explicit
 # INTERACTIVE_LLM_MODEL always wins.
 export INTERACTIVE_LLM_MODEL=${INTERACTIVE_LLM_MODEL:-$OLLAMA_MODEL}
+
+# Expert (the chat's default Fast path) on the same model and runtime. Its own defaults
+# (llama3.2:3b for Fast, deepseek-r1 otherwise) are never pulled on the Space; the installed-
+# model fallback would find qwen, but the visitor's first "hello" should not depend on it.
+export EXPERT_OLLAMA_URL=${EXPERT_OLLAMA_URL:-$OLLAMA_BASE_URL}
+export EXPERT_LOCAL_MODEL=${EXPERT_LOCAL_MODEL:-$OLLAMA_MODEL}
+export EXPERT_LOCAL_FAST_MODEL=${EXPERT_LOCAL_FAST_MODEL:-$OLLAMA_MODEL}
+# Expert's tools are MCP servers (:9101-9105) the backend starts from the repo's agentic/
+# package, which this image does not ship — so there are none to offer. Off unless overridden.
+export EXPERT_TOOLS_ENABLED=${EXPERT_TOOLS_ENABLED:-0}
 
 exec python3 /app/hf_wrapper.py

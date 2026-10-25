@@ -9,6 +9,7 @@ import { isOllaBridgeChatRoute } from './components/ollabridge/chatRoute'
 import { isAccountsUxEnabled } from './account/featureFlags'
 import { GENERATED_CATALOGS } from '../generated/modelCatalog'
 import { ModelAdvisorCard } from './components/ModelAdvisorCard'
+import HfModelPicker, { HF_TYPES, type HfModelType } from './connectors/HfModelPicker'
 import { setAdvisorEnabled, useAdvisorEnabled, type AdvisorKind, type CurrentModels } from './modelAdvisor'
 
 /** The Model Type choices, in order, with the icon and label shown for each. */
@@ -441,10 +442,13 @@ export default function ModelsView(props: ModelsParams) {
       return [ollabridge, ...providers.filter(p => p.name !== 'comfyui' && p.name !== 'civitai')]
     } else if (modelType === 'multimodal') {
       // Multimodal: Ollama (vision models run locally) + OllaBridge nodes
-      return [ollabridge, ...providers.filter(p => p.name === 'ollama')]
+      // + Hugging Face vision models on the account linked in Settings → Connectors
+      return [ollabridge, ...providers.filter(p => p.name === 'ollama' || p.name === 'huggingface')]
     } else {
       // For image/video/edit/enhance/lora/addons: comfyui + civitai (if experimental) + OllaBridge
-      const filtered = providers.filter(p => p.name === 'comfyui')
+      const filtered = providers.filter(p => p.name === 'comfyui'
+        // Hugging Face makes images and video on the linked account (Settings → Connectors)
+        || (p.name === 'huggingface' && (modelType === 'image' || modelType === 'video')))
 
       // Add Civitai only for image/video (Civitai API only supports these types)
       if (props.experimentalCivitai && (modelType === 'image' || modelType === 'video')) {
@@ -543,7 +547,7 @@ export default function ModelsView(props: ModelsParams) {
     // Civitai: download-only provider, models get installed to ComfyUI after download
     // OllaBridge renders its own relay-synced list; the local backend has no
     // catalog for it, so skip the fetch (avoids a spurious error banner).
-    const skipProviders = ['openai', 'claude', 'watsonx', 'civitai', 'ollabridge']
+    const skipProviders = ['openai', 'claude', 'watsonx', 'civitai', 'ollabridge', 'huggingface']
 
     if (skipProviders.includes(provider)) {
       setInstalled([])
@@ -1621,7 +1625,7 @@ export default function ModelsView(props: ModelsParams) {
 
           {/* OllaBridge on Chat has its own Gateway URL / Base URL fields in the
               Local and Cloud cards below; the override does not apply to it. */}
-          {!ollaBridgeChat && (
+          {!ollaBridgeChat && provider !== 'huggingface' && (
           <div className="min-w-0">
             <label htmlFor="hp-models-base-url" className="text-[11px] text-white/55 font-bold uppercase tracking-wider block mb-2.5">Base URL Override</label>
             <input
@@ -1914,6 +1918,8 @@ export default function ModelsView(props: ModelsParams) {
               backendApiKey={authKey}
               role={modelType === 'multimodal' ? 'vision' : 'chat'}
             />
+          ) : provider === 'huggingface' && (HF_TYPES as string[]).includes(modelType) ? (
+            <HfModelPicker backendUrl={backendUrl} type={modelType as HfModelType} />
           ) : provider === 'ollabridge' && !isAccountsUxEnabled() ? (
             <OllaBridgeModels filterType={modelType} />
           ) : (

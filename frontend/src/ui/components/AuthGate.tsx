@@ -5,7 +5,9 @@
  * 1. On mount, call GET /v1/auth/me to check auth status
  * 2. If needs_setup (no users) → show AuthScreen in register mode
  * 3. If needs_login (multi-user, no token) → show AuthScreen
- * 4. If authenticated but !onboarding_complete → show OnboardingWizard
+ * 4. If authenticated but !onboarding_complete → the first conversation with the account's
+ *    own assistant (AssistantOnboarding); the app then opens that chat
+ * On the hosted web edition, /me answers needs_guest: each visitor gets a guest account.
  * 5. If authenticated and onboarded → render children (the main App)
  *
  * Single-user with no password: auto-login, no friction.
@@ -16,7 +18,7 @@
  */
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import AuthScreen from './AuthScreen'
-import OnboardingWizard from './OnboardingWizard'
+import AssistantOnboarding, { type AssistantHandoff } from './AssistantOnboarding'
 import { resolveBackendUrl } from '../lib/backendUrl'
 
 export interface AuthUser {
@@ -39,6 +41,8 @@ export interface RecentUser {
 const LS_TOKEN_KEY = 'homepilot_auth_token'
 const LS_USER_KEY = 'homepilot_auth_user'
 const LS_RECENT_USERS_KEY = 'homepilot_recent_users'
+/** What the first conversation hands the app: which chat to open, and what to send first. */
+export const ASSISTANT_HANDOFF_KEY = 'homepilot_assistant_handoff'
 
 function getBackendUrl(): string {
   return resolveBackendUrl()
@@ -137,6 +141,18 @@ export default function AuthGate({ children }: AuthGateProps) {
       }
 
       const data = await res.json()
+
+      if (data.needs_guest) {
+        // Web edition: this visitor gets their own guest account (and, next, their own
+        // assistant) instead of the shared admin.
+        const g = await fetch(`${backendUrl}/v1/auth/guest`, { method: 'POST', credentials: 'include', signal: controller.signal })
+        if (g.ok) {
+          const gd = await g.json()
+          handleAuthenticated(gd.user as AuthUser, gd.token)
+          return
+        }
+        throw new Error(`guest session HTTP ${g.status}`)
+      }
 
       if (data.needs_setup) {
         // First boot — no users exist
@@ -300,14 +316,17 @@ export default function AuthGate({ children }: AuthGateProps) {
     )
   }
 
-  // Onboarding wizard
+  // The first conversation with the account's own assistant
   if (state === 'onboarding' && user) {
     return (
-      <OnboardingWizard
+      <AssistantOnboarding
         backendUrl={backendUrl}
         token={token}
-        username={user.username}
-        onComplete={handleOnboardingComplete}
+        onDone={(handoff: AssistantHandoff) => {
+          // App opens this assistant's chat (and sends the first message, if one was typed).
+          try { sessionStorage.setItem(ASSISTANT_HANDOFF_KEY, JSON.stringify(handoff)) } catch { /* ignore */ }
+          handleOnboardingComplete(user.display_name)
+        }}
       />
     )
   }

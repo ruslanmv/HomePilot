@@ -130,3 +130,30 @@ def test_the_stream_shows_compaction_first_and_summarizes_with_the_chat_model(mo
     assert names[:2] == ["compacting", "meta"]
     assert "summarizing 8 earlier messages" in text and '"compacted": true' in text
     assert seen["target"] is not None and seen["target"].model == "m"           # the chat's own model
+
+
+def test_a_stream_error_names_a_bug_but_keeps_a_provider_message():
+    # The Space's Fast "hello" came back as "error 4": a bare str(KeyError(4)).
+    assert routes._stream_error_text(KeyError(4)) == "KeyError: 4"
+    assert routes._stream_error_text(IndexError()) == "IndexError"
+    assert routes._stream_error_text(NotImplementedError("x")) == "NotImplementedError: x"
+    msg = "Could not reach http://localhost:8001/v1 for the selected model (ConnectError). Is it running?"
+    assert routes._stream_error_text(RuntimeError(msg)) == msg
+    providers = importlib.import_module("app.expert.providers")
+    assert routes._stream_error_text(providers.ToolsUnsupported("no tools")) == "no tools"
+
+
+def test_the_state_store_finds_a_home_outside_the_repo(monkeypatch, tmp_path):
+    # The Space ships Expert as /app/expert: Path(__file__).parents[4] raised IndexError(4),
+    # and every Fast chat there answered "error 4".
+    state_store = importlib.import_module("app.expert.state_store")
+    monkeypatch.setattr(state_store, "EXPERT_STATE_DB", "")
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setattr(state_store, "__file__", "/app/expert/state_store.py")
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "data" / "homepilot.db"))
+    assert state_store._default_path() == tmp_path / "data" / "expert_state.sqlite"
+    monkeypatch.delenv("SQLITE_PATH")
+    assert state_store._default_path().name == "homepilot-expert-state.sqlite"
+    # In the repo it stays where it was: backend/data next to the main database.
+    monkeypatch.setattr(state_store, "__file__", "/repo/expert/backend/app/expert/state_store.py")
+    assert str(state_store._default_path()) == "/repo/backend/data/expert_state.sqlite"

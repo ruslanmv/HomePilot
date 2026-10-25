@@ -95,6 +95,9 @@ def ensure_users_tables() -> None:
         cur.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT 'local'")
     if "cloud_user_id" not in existing_cols:
         cur.execute("ALTER TABLE users ADD COLUMN cloud_user_id TEXT")
+    # The project id of the account's own assistant, created once at onboarding (onboarding.py).
+    if "default_assistant_id" not in existing_cols:
+        cur.execute("ALTER TABLE users ADD COLUMN default_assistant_id TEXT")
     # Unique index on cloud_user_id (partial: NULLs are excluded so unlinked
     # local rows don't collide). SQLite honours the WHERE clause on indexes.
     cur.execute(
@@ -417,7 +420,8 @@ def get_or_create_default_user() -> Dict[str, Any]:
     Returns the default user. This preserves backward compatibility:
     single-user setups work exactly as before.
     """
-    users = list_users()
+    # A web-edition guest (see create_guest) is one visitor, never the install's default user.
+    users = [u for u in list_users() if (u.get("auth_provider") or "local") != "guest"]
     if users:
         return users[0]
 
@@ -954,6 +958,11 @@ def get_me(
         token = homepilot_session.strip()
     user = _validate_token(token) if token else None
 
+    if not user and guest_accounts_enabled():
+        # The hosted web edition: each visitor is their own guest account (POST /guest), so
+        # one visitor never lands in another's assistant and chats — not the shared admin.
+        return {"ok": True, "user": None, "needs_guest": True}
+
     if not user:
         # Auto-login for single-user / no-password setups
         users = list_users()
@@ -1012,6 +1021,54 @@ def get_me(
             "has_password": bool(user.get("password_hash")),
         },
     }
+
+
+def guest_accounts_enabled() -> bool:
+    """Guests are for the hosted web edition (a Hugging Face Space), where every visitor
+    shares one server. A local install keeps its single auto-login user.
+    HOMEPILOT_GUEST_ACCOUNTS=0 turns them off."""
+    if os.getenv("HOMEPILOT_GUEST_ACCOUNTS", "1").strip().lower() in ("0", "false", "no"):
+        return False
+    from .config import HOMEPILOT_EDITION
+    return HOMEPILOT_EDITION == "web"
+
+
+def create_guest() -> Dict[str, Any]:
+    """A passwordless account for one visitor, with no name until they give one."""
+    user = create_user(username=_unique_username(f"guest-{secrets.token_hex(4)}"))
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    con.execute("UPDATE users SET auth_provider = 'guest' WHERE id = ?", (user["id"],))
+    con.commit()
+    con.close()
+    user["auth_provider"] = "guest"
+    return user
+
+
+@router.post("/guest")
+def guest(request: Request):
+    """Start a guest session on the web edition (GET /me answered ``needs_guest``)."""
+    ensure_users_tables()
+    if not guest_accounts_enabled():
+        raise HTTPException(status_code=404, detail="Guest accounts are not enabled")
+    if not _rate_allowed(f"guest:{_client_ip(request)}", limit=30, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many new sessions. Try again later.")
+    user = create_guest()
+    token = _create_token(user["id"])
+    resp = JSONResponse({
+        "ok": True,
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "display_name": "",
+            "email": "",
+            "avatar_url": "",
+            "onboarding_complete": False,
+            "has_password": False,
+        },
+    })
+    return _set_session_cookie(resp, token)
 
 
 @router.put("/onboarding")

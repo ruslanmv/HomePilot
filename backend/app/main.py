@@ -103,7 +103,7 @@ from .profile import router as profile_router
 from .user_memory import router as memory_router
 
 # Multi-User Accounts & Onboarding (additive)
-from .users import router as users_router
+from .users import router as users_router, get_current_user
 
 # Per-User Profile, Secrets & Memory (additive — multi-user aware)
 from .user_profile_store import router as user_profile_store_router
@@ -471,6 +471,16 @@ app.include_router(hybrid_avatar_router)
 
 # Include User Auth & Onboarding routes (/v1/auth/*)
 app.include_router(users_router)
+
+# Connectors: accounts on other services, linked in Settings → Connectors (/v1/connectors/*).
+from .connectors.routes import router as connectors_router  # noqa: E402
+from .connectors.context import bind_request as _bind_connector_request  # noqa: E402
+app.include_router(connectors_router)
+app.middleware("http")(_bind_connector_request)
+
+# The first conversation: each account's own assistant (/v1/onboarding/*).
+from .onboarding import router as onboarding_router  # noqa: E402
+app.include_router(onboarding_router)
 
 # Include Per-User Profile Store routes (/v1/user-profile/*, /v1/user-memory/*)
 app.include_router(user_profile_store_router)
@@ -915,7 +925,7 @@ async def viewpack_save_to_outfit(request: Request) -> JSONResponse:
 # Models
 # ----------------------------
 
-ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx"]
+ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx", "huggingface"]
 
 
 class ChatIn(BaseModel):
@@ -1524,6 +1534,63 @@ async def health() -> JSONResponse:
     }
 
     return JSONResponse(status_code=200, content=status)
+
+
+# /health answers 200 whatever the providers say (its body reports them). These two say what a
+# deploy and a health check need: is the process up, and can a visitor get an answer.
+
+@app.get("/health/live")
+async def health_live() -> Dict[str, Any]:
+    """The process is up and serving. Depends on nothing else."""
+    return {"live": True}
+
+
+@app.get("/health/ready")
+async def health_ready() -> JSONResponse:
+    """Whether the standard chat can answer now: a local runtime with a chat model the same
+    resolution /chat uses picks. 503 until then (the model is still pulling or loading)."""
+    from .config import HOMEPILOT_EDITION
+    from .model_resolver import resolve as _resolve
+
+    chat: Dict[str, Any] = {"model": "", "runtime_url": "", "reason": ""}
+    try:
+        res = await _resolve("chat")
+        ready = res.source != "none" and bool(res.model)
+        chat = {"model": res.model, "runtime_url": res.runtime_url, "reason": res.reason,
+                "configured_installed": res.configured_installed}
+    except Exception as exc:  # noqa: BLE001 — readiness never raises
+        ready = False
+        chat["reason"] = f"{type(exc).__name__}: {exc}"
+    body = {
+        "ready": ready,
+        "edition": HOMEPILOT_EDITION,
+        "chat": chat,
+        "expert": {"tools": os.getenv("EXPERT_TOOLS_ENABLED", "1").lower() in ("1", "true", "yes")},
+        "build": build_info(),
+    }
+    return JSONResponse(status_code=200 if ready else 503, content=body)
+
+
+def build_info() -> Dict[str, str]:
+    """The commit this instance was built from: build-info.json next to the package (written by
+    the deploy, deploy/huggingface-space/scripts/deploy-hf.sh), else HOMEPILOT_BUILD_SHA."""
+    info: Dict[str, str] = {}
+    path = Path(os.getenv("HOMEPILOT_BUILD_INFO") or Path(__file__).resolve().parents[1] / "build-info.json")
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            info = {k: str(v) for k, v in data.items()}
+    except (OSError, ValueError):
+        pass
+    info.setdefault("sha", os.getenv("HOMEPILOT_BUILD_SHA", "").strip() or "unknown")
+    return info
+
+
+@app.get("/version")
+async def version() -> Dict[str, Any]:
+    """Which build is serving: tells a deploy whether the Space runs the commit just pushed."""
+    from .config import HOMEPILOT_EDITION
+    return {"version": app.version, "edition": HOMEPILOT_EDITION, **build_info()}
 
 
 @app.get("/health/detailed")
@@ -2440,6 +2507,24 @@ async def list_models(
     Example: GET /models?provider=comfyui&model_type=image
     """
     try:
+        # Hugging Face (Settings → Connectors): the models Inference Providers serve for the
+        # type asked — chat, multimodal, image or video. Image/video ids carry "hf:".
+        if provider == "huggingface":
+            from .connectors import huggingface as _hf
+            kind = {"vision": "multimodal", "images": "image", "edit": "image"}.get(model_type or "", model_type or "chat")
+            if kind not in _hf.TASKS:
+                kind = "chat"
+            try:
+                listed = await _hf.models(kind)
+            except Exception as exc:  # noqa: BLE001 — the Hub unreachable
+                return JSONResponse(status_code=502, content=_safe_err(
+                    f"Could not list Hugging Face models ({type(exc).__name__}).", code="upstream_error"))
+            return JSONResponse(status_code=200, content={
+                "ok": True, "provider": "huggingface", "model_type": kind,
+                "connected": bool(_hf.token()), "models": [m["id"] for m in listed],
+                "details": listed, "count": len(listed),
+            })
+
         # ComfyUI model listing - scan filesystem for installed models
         if provider == "comfyui":
             from .providers import scan_installed_models
@@ -3838,10 +3923,18 @@ async def create_project(data: ProjectCreateIn) -> JSONResponse:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to create project: {e}"))
 
 @app.get("/projects", dependencies=[Depends(require_api_key)])
-async def list_projects() -> JSONResponse:
+async def list_projects(user: Optional[Dict[str, Any]] = Depends(get_current_user)) -> JSONResponse:
     """List all available projects."""
     try:
-        result = projects.list_all_projects()
+        # Every account gets its own default assistant (onboarding.py); the store is shared,
+        # so each one is listed only to the account that owns it.
+        if user is None:
+            from .users import count_users, get_or_create_default_user
+            if count_users() == 1:
+                user = get_or_create_default_user()  # single-user install, same as conversations
+        uid = (user or {}).get("id") or ""
+        result = [p for p in projects.list_all_projects()
+                  if not p.get("is_default_assistant") or p.get("owner_user_id") == uid]
         return JSONResponse(status_code=200, content={"ok": True, "projects": result})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list projects: {e}"))

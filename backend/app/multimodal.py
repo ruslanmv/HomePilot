@@ -860,6 +860,14 @@ async def analyze_image(
             purpose=purpose,
         )
 
+    if provider == "huggingface":
+        # A vision model on the user's Hugging Face account (Settings → Connectors).
+        from .connectors import huggingface as _hf
+        return await _hf.analyze_image(
+            image_url, upload_path, model=model, user_prompt=user_prompt, nsfw_mode=nsfw_mode,
+            mode=mode, image_b64=image_b64, purpose=purpose,
+        )
+
     if provider in ("openai_compat", "ollabridge"):
         # An OllaBridge gateway (`<gateway>/v1`), the OllaBridge Cloud relay, vLLM, LM Studio…
         return await analyze_image_openai_compat(

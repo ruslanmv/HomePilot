@@ -136,6 +136,15 @@ find "$STAGE_DIR" -name '.DS_Store' -delete 2>/dev/null || true
 # Cache-bust
 echo "$(date -u +%s)" > "$STAGE_DIR/frontend/.cache-bust"
 
+# The commit this bundle is built from. The image serves it at GET /version, so a deploy (and
+# anyone debugging production) can tell whether the Space runs this commit or an older image
+# left over from a failed build (scripts/verify_space.py).
+BUILD_SHA="${GITHUB_SHA:-$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
+cat > "$STAGE_DIR/build-info.json" <<EOF
+{"sha": "${BUILD_SHA}", "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "ref": "${GITHUB_REF_NAME:-$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}"}
+EOF
+echo ">> build: ${BUILD_SHA}"
+
 echo ">> commit + push"
 cd "$STAGE_DIR"
 
