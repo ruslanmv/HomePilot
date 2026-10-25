@@ -877,6 +877,9 @@ async def orchestrate(
     # would leave the next one to be added silently broken again.
     if user_id:
         ensure_conversation_owner(cid, user_id)
+        # Connectors (Hugging Face…) used further down act for this user.
+        from .connectors.context import bind_user as _bind_connector_user
+        _bind_connector_user(user_id)
 
     # Periodic GC: evict stale conversation memories (throttled to once/minute)
     _gc_stale_memories()
@@ -904,6 +907,18 @@ async def orchestrate(
 
     # --- Animate ---
     if (m == "animate") or (image_url and ANIM_RE.search(text_in)):
+        # A video model picked from Hugging Face in Models (``hf:<repo>``): the user's
+        # account makes the video — from the image when there is one, else from the text.
+        if (vid_model or "").startswith("hf:"):
+            from .connectors import huggingface as _hf
+            from .config import UPLOAD_DIR as _upload_dir
+            from pathlib import Path
+            return await _hf.generate_video_turn(
+                cid=cid, user_id=user_id, model=vid_model,
+                prompt=_clean_for_imagine(text_in) if not image_url else URL_RE.sub("", text_in).strip(),
+                image_url=image_url, upload_path=Path(_upload_dir),
+            )
+
         # Normalise frontend shorthand: "med" → "medium"
         _PRESET_ALIASES = {"med": "medium"}
         vid_preset = _PRESET_ALIASES.get(vid_preset or "", vid_preset)
@@ -1548,6 +1563,17 @@ async def orchestrate(
             # The root cause of duplicate subjects is SD1.5 models generating
             # at SDXL resolutions (1024x1024). We use get_model_settings() to
             # automatically select the correct dimensions based on model architecture.
+
+            # An image model picked from Hugging Face in Models (``hf:<repo>``): the user's
+            # account makes the image, with the same refined prompt, instead of ComfyUI.
+            if (img_model or "").startswith("hf:"):
+                from .connectors import huggingface as _hf
+                return await _hf.generate_image_turn(
+                    cid=cid, user_id=user_id, model=img_model,
+                    prompt=refined.get("prompt") or text_in,
+                    negative=refined.get("negative_prompt"),
+                    aspect_ratio=img_aspect_ratio or refined.get("aspect_ratio", "1:1"),
+                )
 
             # Determine model to use (default to dreamshaper for SD1.5)
             model_filename = img_model or "dreamshaper_8.safetensors"

@@ -30,7 +30,7 @@ _IS_DOCKER = pathlib.Path("/.dockerenv").exists() or os.getenv("DOCKER_CONTAINER
 # - openai: OpenAI API
 # - claude: Anthropic API
 # - watsonx: IBM watsonx.ai (model listing supported; chat optional)
-ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx"]
+ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx", "huggingface"]
 
 # If running locally, default to Ollama (most users installing this repo have it).
 # In Docker/prod, default to openai_compat (vLLM container).

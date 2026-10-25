@@ -79,8 +79,10 @@ COPY deploy/huggingface-space/hf_wrapper.py ./hf_wrapper.py
 COPY deploy/huggingface-space/auto_import_personas.py ./auto_import_personas.py
 COPY deploy/huggingface-space/chata_project_bootstrap.py ./chata_project_bootstrap.py
 
-# Startup script (copied to root by deploy script)
-COPY start.sh ./start.sh
+# Startup script (copied to root by deploy script), and the commit this image is built from
+# (build-info.json, written by the deploy script; GET /version serves it). The glob lets a
+# local build without it go through: COPY needs only one of its sources to exist.
+COPY start.sh build-info.json* ./
 RUN chmod +x start.sh
 
 USER hpuser

@@ -1,8 +1,10 @@
 import { useBackToClose } from "./lib/useBackToClose";
+import ConnectorsPanel from "./connectors/ConnectorsPanel";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings as SettingsIcon,
   Link2,
+  Plug,
   Server,
   Boxes,
   SlidersHorizontal,
@@ -392,6 +394,8 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 const SECTIONS = [
   { id: "general", label: "General", Icon: SettingsIcon },
   { id: "connection", label: "Connection", Icon: Link2 },
+  // Accounts on other services (Hugging Face…): connectors/ConnectorsPanel.tsx.
+  { id: "connectors", label: "Connectors", Icon: Plug },
   // Account & Computers (Batch 3). Shown in place of "OllaBridge Link" only when
   // the feature flag is on; otherwise it is filtered out and behavior is
   // unchanged. See `visibleSections` below.
@@ -1210,10 +1214,10 @@ export default function SettingsPanel({
         {modelSelectRow("Chat Model", value.providerChat, value.modelChat, (m) => commit({ ...value, modelChat: m }), value.baseUrlChat)}
 
         {baseUrlRow("Image Base URL", value.providerImages, value.baseUrlImages, (v) => commit({ ...value, baseUrlImages: v }))}
-        {modelSelectRow("Image Model (if supported)", value.providerImages, value.modelImages, (m) => commit({ ...value, modelImages: m }), value.baseUrlImages, value.providerImages === 'comfyui' ? 'image' : undefined)}
+        {modelSelectRow("Image Model (if supported)", value.providerImages, value.modelImages, (m) => commit({ ...value, modelImages: m }), value.baseUrlImages, (value.providerImages === 'comfyui' || value.providerImages === 'huggingface') ? 'image' : undefined)}
 
         {baseUrlRow("Video Base URL", value.providerVideo, value.baseUrlVideo, (v) => commit({ ...value, baseUrlVideo: v }))}
-        {modelSelectRow("Video Model (if supported)", value.providerVideo, value.modelVideo, (m) => commit({ ...value, modelVideo: m }), value.baseUrlVideo, value.providerVideo === 'comfyui' ? 'video' : undefined)}
+        {modelSelectRow("Video Model (if supported)", value.providerVideo, value.modelVideo, (m) => commit({ ...value, modelVideo: m }), value.baseUrlVideo, (value.providerVideo === 'comfyui' || value.providerVideo === 'huggingface') ? 'video' : undefined)}
 
         {baseUrlRow("Multimodal Base URL", value.providerMultimodal || 'ollama', value.baseUrlMultimodal, (v) => commit({ ...value, baseUrlMultimodal: v }))}
         {modelSelectRow("Multimodal Model", value.providerMultimodal || 'ollama', value.modelMultimodal || '', (m) => commit({ ...value, modelMultimodal: m }), value.baseUrlMultimodal, 'multimodal')}
@@ -1705,6 +1709,7 @@ export default function SettingsPanel({
     switch (activeSection) {
       case "general": return renderGeneral();
       case "connection": return renderConnection();
+      case "connectors": return <ConnectorsPanel backendUrl={value.backendUrl} />;
       case "account": return <AccountComputers />;
       case "linking": return <OllaBridgeLink />;
       case "providers": return renderProviders();
