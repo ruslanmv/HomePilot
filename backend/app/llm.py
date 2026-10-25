@@ -733,9 +733,15 @@ async def chat(
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
     if provider == "huggingface":
-        # The user's Hugging Face account (Settings → Connectors), through Inference Providers.
+        # Hugging Face (the user's linked account, or the Space's own token), through Inference
+        # Providers. When it cannot answer at all — no token, out of credits, rate limited,
+        # unreachable — the local Ollama model answers instead, so chat never goes dark.
         from .connectors import huggingface as _hf
-        return await _hf.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return await _hf.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+        except Exception as _hf_exc:  # noqa: BLE001
+            print(f"[huggingface] chat unavailable ({type(_hf_exc).__name__}: {str(_hf_exc)[:160]}); answering with Ollama")
+            return await chat_ollama(messages, temperature=temperature, max_tokens=max_tokens)
     if provider == "ollama":
         return await chat_ollama(
             messages,
