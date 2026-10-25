@@ -310,7 +310,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
     Safe info for frontend settings UI (no secrets).
     Includes capabilities for each provider.
     """
-    return {
+    info = {
         "openai_compat": {
             "label": "OpenAI-compatible (vLLM)",
             "base_url": LLM_BASE_URL,
@@ -388,3 +388,18 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
             },
         },
     }
+    # The user's Hugging Face account (Settings → Connectors): its models are listed per type
+    # once it is linked (GET /v1/connectors/huggingface/models).
+    info["huggingface"] = {
+        "label": "Hugging Face",
+        "base_url": "https://router.huggingface.co/v1",
+        "connector": "huggingface",
+        "capabilities": {
+            "chat": True,
+            "models_list": True,
+            "images": True,
+            "video": True,
+            "multimodal": True,
+        },
+    }
+    return info

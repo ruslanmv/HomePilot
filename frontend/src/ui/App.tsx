@@ -89,7 +89,7 @@ import { localGatewayApiKeyFor } from './components/ollabridge/ollabridgeLocal'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
-import { useAuth } from './components/AuthGate'
+import { useAuth, ASSISTANT_HANDOFF_KEY } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 import CallOverlay from './CallOverlay'
 import { clog, speakOwned, isCallFullDuplexEnabled } from './call/log'
@@ -3920,6 +3920,38 @@ export default function App() {
     return () => window.removeEventListener('homepilot:use-gpu-node', onUseGpuNode)
   }, [])
 
+  // Models → a connector's provider (Hugging Face…) → "Use": that model becomes the one for
+  // its type — chat, multimodal, images or video — and stays chosen across reloads.
+  useEffect(() => {
+    function onUseModel(e: Event) {
+      const d = (e as CustomEvent).detail || {}
+      const provider = String(d.provider || '')
+      const model = String(d.model || '')
+      if (!provider || !model) return
+      const keys = ({
+        chat: ['providerChat', 'modelChat', 'chat'],
+        multimodal: ['providerMultimodal', 'modelMultimodal', 'multimodal'],
+        image: ['providerImages', 'modelImages', 'images'],
+        video: ['providerVideo', 'modelVideo', 'video'],
+      } as Record<string, [string, string, string]>)[String(d.type)]
+      if (!keys) return
+      const [providerKey, modelKey, storageKey] = keys
+      setSettingsDraft((prev) => ({
+        ...prev,
+        [providerKey]: provider,
+        [modelKey]: model,
+        ...(d.type === 'chat' ? { baseUrlChat: '' } : {}),
+      }))
+      try {
+        localStorage.setItem(`homepilot_provider_${storageKey}`, provider)
+        localStorage.setItem(`homepilot_model_${storageKey}`, model)
+        if (d.type === 'chat') localStorage.setItem('homepilot_base_url_chat', '')
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('homepilot:use-model', onUseModel)
+    return () => window.removeEventListener('homepilot:use-model', onUseModel)
+  }, [])
+
   // Models → Multimodal → OllaBridge: a model that passed the vision check reads images from
   // now on. The multimodal settings only — chat keeps its own model.
   useEffect(() => {
@@ -5621,7 +5653,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
-        const expertPath = canUseExpertInContext(mode, reasoningMode, currentProject?.project_type) && !expertMissingRef.current
+        // Hugging Face chat runs on the server with the user's linked token (Settings →
+        // Connectors), which Expert does not have: it answers through the standard chat.
+        const expertPath = chatSelection.providerChat !== 'huggingface'
+          && canUseExpertInContext(mode, reasoningMode, currentProject?.project_type)
+          && !expertMissingRef.current
         // Expert turns are saved by the app under this conversation's id — a new chat gets one now.
         const convId = conversationId || uuid()
         if (expertPath && !conversationId) setConversationId(convId)
@@ -6571,6 +6607,58 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     setPendingFile(null)
     setPendingPreviewUrl(null)
   }, [pendingPreviewUrl])
+
+  // ── The account's own assistant (backend/app/onboarding.py) ─────────────────
+  // On start, with nothing else open, the chat is that assistant's — the same thread the
+  // first conversation wrote. Right after onboarding, the handoff also says what to do next:
+  // send the message typed there, or open the part of the app a starter picked.
+  const assistantOpenedRef = useRef(false)
+  const pendingFirstMessageRef = useRef<{ text: string; conversationId: string } | null>(null)
+  useEffect(() => {
+    if (assistantOpenedRef.current) return
+    assistantOpenedRef.current = true
+    let handoff: { projectId?: string; firstMessage?: string; mode?: string } | null = null
+    try {
+      handoff = JSON.parse(sessionStorage.getItem(ASSISTANT_HANDOFF_KEY) || 'null')
+      sessionStorage.removeItem(ASSISTANT_HANDOFF_KEY)
+    } catch { /* ignore */ }
+    if (currentProject || (mode !== 'chat' && !handoff)) return
+    const stored = localStorage.getItem('homepilot_current_project')
+    void (async () => {
+      try {
+        const res = await fetch(`${settings.backendUrl.replace(/\/+$/, '')}/v1/onboarding/assistant`, {
+          headers: authHeaders, credentials: 'include',
+        })
+        if (!res.ok) return
+        const data = await res.json()
+        const a = data?.assistant
+        if (!a) return
+        // Another project was the last one open: leave the start as it was.
+        if (!handoff && stored && stored !== a.id) return
+        localStorage.setItem('homepilot_current_project', a.id)
+        setCurrentProject({
+          id: a.id, name: a.name, document_count: 0, project_type: a.project_type,
+          description: a.description, instructions: a.instructions,
+        })
+        if (handoff?.mode) {
+          setMode(handoff.mode as Mode)
+        } else {
+          setMode('chat')
+          if (handoff?.firstMessage && data.conversation_id) {
+            pendingFirstMessageRef.current = { text: handoff.firstMessage, conversationId: data.conversation_id }
+          }
+        }
+      } catch { /* no onboarding on this backend: start as before */ }
+    })()
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The first message waits for the assistant's thread to be loaded, then goes out as usual.
+  useEffect(() => {
+    const pending = pendingFirstMessageRef.current
+    if (!pending || mode !== 'chat' || chatConversationId !== pending.conversationId || !chatMessages.length) return
+    pendingFirstMessageRef.current = null
+    void sendTextOrIntent(pending.text)
+  }, [mode, chatConversationId, chatMessages.length, sendTextOrIntent])
 
   const onSend = useCallback((override?: string) => {
     if (pendingFile) {

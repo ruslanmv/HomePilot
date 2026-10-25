@@ -275,6 +275,11 @@ def create_new_project(data: Dict[str, Any]) -> Dict[str, Any]:
     if shared_api and isinstance(shared_api, dict):
         new_project["shared_api"] = shared_api
 
+    # A user's default assistant (onboarding.py): one per account, listed only to its owner.
+    if data.get("is_default_assistant"):
+        new_project["is_default_assistant"] = True
+        new_project["owner_user_id"] = str(data.get("owner_user_id") or "")
+
     db[project_id] = new_project
     _save_projects_db(db)
     return new_project
