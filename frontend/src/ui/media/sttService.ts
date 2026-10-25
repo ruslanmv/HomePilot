@@ -28,6 +28,7 @@
  * `engine: 'web-speech'` rather than left to assume.
  */
 
+import { setRecommendedSttDefault } from './sttPreferences';
 import { resolveBackendUrl } from '../lib/backendUrl';
 import {
   buildAudioConstraints,
@@ -44,6 +45,8 @@ export interface SttCapability {
   /** True when the recording leaves this machine for a remote endpoint. */
   remote: boolean;
   hint: string | null;
+  /** The server's suggestion for someone who has not chosen ("homepilot" on the web edition). */
+  recommended?: 'homepilot' | null;
 }
 
 export interface SttRecordingResult {
@@ -105,7 +108,10 @@ export async function getSttCapability(options: { force?: boolean } = {}): Promi
       provider: typeof body?.provider === 'string' ? body.provider : null,
       remote: Boolean(body?.remote),
       hint: typeof body?.hint === 'string' ? body.hint : null,
+      recommended: body?.recommended_engine === 'homepilot' ? 'homepilot' : null,
     };
+    // The hosted web edition recommends its own model to anyone who has not chosen.
+    setRecommendedSttDefault(body?.recommended_engine === 'homepilot' && value.available ? 'homepilot' : null);
     microphoneDebug('settings', 'stt_capability', value as unknown as Record<string, unknown>);
     cachedCapability = { at: Date.now(), value };
     return value;
@@ -231,6 +237,43 @@ export interface RecordAndTranscribeOptions {
   onRecording?: (info: { deviceLabel: string; stop: () => void }) => void;
   /** Called with the smoothed 0..1 input level while recording. */
   onLevel?: (level: number) => void;
+  /**
+   * End the turn by itself: after speech, once the input has been quiet for ``silenceMs``;
+   * with no speech at all, after ``noSpeechMs``. The threshold adapts to the room — it is
+   * set from the noise heard in the first half second — so a fan does not count as speech.
+   * Without it the recording runs until stopped or ``maxMs``, which is what the browser
+   * recognizer's own end-of-speech used to spare people.
+   */
+  endOnSilence?: { silenceMs?: number; noSpeechMs?: number };
+}
+
+export type EndOfTurn = 'silence-after-speech' | 'no-speech';
+
+/**
+ * End-of-speech from a stream of 0..1 input levels (see ``endOnSilence``). The first half
+ * second sets the room's noise floor; speech is anything clearly above it. Calls ``onEnd``
+ * once: after speech followed by ``silenceMs`` of quiet, or after ``noSpeechMs`` of nothing.
+ */
+export function silenceWatcher(
+  options: { silenceMs?: number; noSpeechMs?: number },
+  onEnd: (why: EndOfTurn) => void,
+  now: () => number = () => performance.now(),
+): (level: number) => void {
+  const silenceMs = options.silenceMs ?? 1200;
+  const noSpeechMs = options.noSpeechMs ?? 8000;
+  const startedAt = now();
+  let noiseFloor = 1, heardSpeech = false, quietSince = 0, ended = false;
+  return (level: number) => {
+    if (ended) return;
+    const t = now();
+    const elapsed = t - startedAt;
+    if (elapsed < 500) { noiseFloor = Math.min(noiseFloor, level); return; }
+    const threshold = Math.max(0.05, Math.min(0.3, noiseFloor * 2.5));
+    if (level > threshold) { heardSpeech = true; quietSince = 0; return; }
+    if (!quietSince) quietSince = t;
+    if (heardSpeech && t - quietSince >= silenceMs) { ended = true; onEnd('silence-after-speech'); }
+    else if (!heardSpeech && elapsed >= noSpeechMs) { ended = true; onEnd('no-speech'); }
+  };
 }
 
 /**
@@ -262,7 +305,13 @@ export async function recordAndTranscribe(
     audioContext = null;
   };
 
-  if (options.onLevel) {
+  // Where the turn ends by itself (endOnSilence): fed by the same level meter.
+  let onTurnEnd: ((why: EndOfTurn) => void) | null = null;
+  const watchSilence = options.endOnSilence
+    ? silenceWatcher(options.endOnSilence, (why) => onTurnEnd?.(why))
+    : () => {};
+
+  if (options.onLevel || options.endOnSilence) {
     try {
       const Ctor =
         window.AudioContext ||
@@ -281,7 +330,9 @@ export async function recordAndTranscribe(
             const sample = (data[i] - 128) / 128;
             sum += sample * sample;
           }
-          options.onLevel?.(Math.min(1, Math.sqrt(sum / data.length) * 4.5));
+          const level = Math.min(1, Math.sqrt(sum / data.length) * 4.5);
+          options.onLevel?.(level);
+          watchSilence(level);
           levelFrame = requestAnimationFrame(read);
         };
         read();
@@ -334,6 +385,11 @@ export async function recordAndTranscribe(
       microphoneDebug(scope, 'stt_recorder_auto_stop', { maxMs });
       stop();
     }, maxMs);
+    onTurnEnd = (why) => {
+      onTurnEnd = null;
+      microphoneDebug(scope, 'stt_recorder_end_of_speech', { why, elapsedMs: Math.round(performance.now() - startedAt) });
+      stop();
+    };
 
     options.onRecording?.({ deviceLabel, stop });
   });

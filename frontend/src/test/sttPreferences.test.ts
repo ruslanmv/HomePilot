@@ -19,6 +19,7 @@ import {
   describeSttResolution,
   getSttPreferences,
   resolveSttEngine,
+  setRecommendedSttDefault,
   setSttPreferences,
   subscribeSttPreferences,
   type SttEngineSupport,
@@ -202,5 +203,34 @@ describe('describeSttResolution', () => {
       null,
     );
     expect(text).toContain('No speech-to-text is available');
+  });
+});
+
+describe('the server\'s recommended default (hosted web edition)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setRecommendedSttDefault(null);
+  });
+
+  it('becomes the default for someone who has not chosen, and every surface is told', () => {
+    const heard: string[] = [];
+    const stop = subscribeSttPreferences((p) => heard.push(p.chat));
+    expect(getSttPreferences().chat).toBe('web-speech');
+    setRecommendedSttDefault('homepilot');
+    expect(getSttPreferences().chat).toBe('homepilot');
+    expect(heard).toEqual(['homepilot']);
+    expect(localStorage.getItem(STT_PREFERENCES_STORAGE_KEY)).toBeNull(); // still not a choice
+    stop();
+  });
+
+  it('never overrides a saved choice', () => {
+    setSttPreferences({ chat: 'web-speech' });
+    setRecommendedSttDefault('homepilot');
+    expect(getSttPreferences().chat).toBe('web-speech');
+  });
+
+  it('without a recommendation (a local install) the browser default stands', () => {
+    setRecommendedSttDefault(null);
+    expect(getSttPreferences()).toEqual(DEFAULT_STT_PREFERENCES);
   });
 });

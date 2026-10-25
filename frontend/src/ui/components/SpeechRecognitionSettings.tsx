@@ -102,6 +102,8 @@ export default function SpeechRecognitionSettings(): JSX.Element {
     () => getSttPreferences().chat,
   );
   const [capability, setCapability] = useState<SttCapability | null>(null);
+  // The hosted web edition: "this computer" is the HomePilot server, not the visitor's.
+  const onServer = capability?.recommended === 'homepilot';
   const [meeting, setMeeting] = useState<{ provider: string | null; available: boolean } | null>(
     null,
   );
@@ -203,11 +205,15 @@ export default function SpeechRecognitionSettings(): JSX.Element {
               <div className="flex items-center gap-2">
                 <Icon size={14} className={selected ? 'text-[#c8a7ff]' : 'text-white/45'} />
                 <span className={selected ? 'text-xs font-semibold text-white' : 'text-xs font-medium text-white/70'}>
-                  {option.label}
+                  {onServer && option.id === 'homepilot' ? 'On the HomePilot server' : option.label}
                 </span>
                 {selected ? <Check size={13} className="ml-auto text-[#c8a7ff]" /> : null}
               </div>
-              <p className="mt-1.5 text-[10px] leading-relaxed text-white/45">{option.summary}</p>
+              <p className="mt-1.5 text-[10px] leading-relaxed text-white/45">
+                {onServer && option.id === 'homepilot'
+                  ? 'This HomePilot transcribes with its own speech model. Works in every browser.'
+                  : option.summary}
+              </p>
             </button>
           );
         })}
