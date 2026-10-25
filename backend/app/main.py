@@ -1934,6 +1934,26 @@ async def auto_detect() -> JSONResponse:
         except Exception:
             pass
 
+    # ── 8. The hosted web edition: Hugging Face is the default engine ───
+    # A Space has no GPU and no ComfyUI, so images, video and vision come from Hugging Face,
+    # and chat goes there first with the local Ollama model as its fallback (llm.chat). A local
+    # install keeps everything above unchanged.
+    try:
+        from .connectors import huggingface as _hf
+        if _hf.is_web():
+            result["providerChat"] = "huggingface"
+            result["modelChat"] = _hf.defaults("chat")[0]
+            result["providerMultimodal"] = "huggingface"
+            result["modelMultimodal"] = _hf.defaults("multimodal")[0]
+            if not _hf.comfy_configured():
+                result["providerImages"] = "huggingface"
+                result["modelImages"] = _hf.PREFIX + _hf.defaults("image")[0]
+                result["providerVideo"] = "huggingface"
+                result["modelVideo"] = _hf.PREFIX + _hf.defaults("video")[0]
+            result["detected"]["huggingface"] = {"ok": True, "has_token": bool(_hf.token()), "chat_fallback": "ollama"}
+    except Exception as exc:  # noqa: BLE001 — defaults stay as detected above
+        print(f"[auto-detect] Hugging Face defaults skipped: {exc}")
+
     return JSONResponse(status_code=200, content=result)
 
 

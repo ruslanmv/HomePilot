@@ -9,6 +9,8 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, Check } from 'lucide-react'
+import { assistantAnimates, useAssistantAnimates } from '../chatAppearance'
+import AssistantFace, { type FaceState } from './AssistantFace'
 
 export type AssistantHandoff = {
   projectId?: string
@@ -33,22 +35,10 @@ type State = {
 
 const REVEAL_MS = 650
 
-function reducedMotion(): boolean {
-  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches } catch { return false }
-}
-
-/** The assistant's face: a soft gradient orb with two eyes. */
-function Orb({ size = 64 }: { size?: number }) {
-  return (
-    <div
-      aria-hidden
-      className="relative rounded-full bg-gradient-to-br from-violet-400 via-indigo-500 to-sky-400 shadow-[0_0_40px_rgba(129,140,248,0.45)]"
-      style={{ width: size, height: size }}
-    >
-      <span className="absolute rounded-full bg-white" style={{ width: size * 0.09, height: size * 0.22, left: size * 0.34, top: size * 0.36, transform: 'rotate(8deg)' }} />
-      <span className="absolute rounded-full bg-white" style={{ width: size * 0.09, height: size * 0.22, left: size * 0.56, top: size * 0.36, transform: 'rotate(8deg)' }} />
-    </div>
-  )
+/** Settings → Chat → "Animate HomePilot" off (or Motion off, or the OS reduce-motion
+ *  setting): every line appears at once and nothing moves. */
+function still(): boolean {
+  return !assistantAnimates()
 }
 
 /** Plain text with "- " lines as a list — enough for the introduction. */
@@ -73,12 +63,12 @@ function Text({ value }: { value: string }) {
   )
 }
 
-function Typing() {
+function Typing({ animated }: { animated: boolean }) {
   return (
     <div className="flex" role="status" aria-label="HomePilot is typing">
       <div className="flex items-center gap-1.5 rounded-[22px] bg-white/[0.07] px-5 py-4">
         {[0, 1, 2].map((i) => (
-          <span key={i} className="h-2 w-2 animate-bounce rounded-full bg-white/50" style={{ animationDelay: `${i * 140}ms` }} />
+          <span key={i} className={`h-2 w-2 rounded-full bg-white/50 ${animated ? 'animate-bounce' : ''}`} style={{ animationDelay: `${i * 140}ms` }} />
         ))}
       </div>
     </div>
@@ -99,6 +89,8 @@ export default function AssistantOnboarding({
   const [shown, setShown] = useState(0)        // messages revealed so far
   const [busy, setBusy] = useState(false)
   const [input, setInput] = useState('')
+  const animated = useAssistantAnimates()
+  const [cheer, setCheer] = useState(false)   // a short smile once the name is settled
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -121,7 +113,7 @@ export default function AssistantOnboarding({
       if (s.step === 'done') { onDone({ projectId: s.assistant.id, conversationId: s.conversation_id }); return }
       setState(s)
       // A new thread plays in; a reloaded one is simply there.
-      setShown(s.created && !reducedMotion() ? 0 : (s.messages?.length ?? 0))
+      setShown(s.created && !still() ? 0 : (s.messages?.length ?? 0))
     } catch {
       setFailed(true)
     }
@@ -138,15 +130,17 @@ export default function AssistantOnboarding({
   const messages = state?.messages ?? []
   const revealing = shown < messages.length
 
-  // Reveal one line at a time, with the typing dots in between.
+  // Reveal one line at a time, with the typing dots in between — or all at once when
+  // HomePilot's animations are off (switched off here while lines were still playing in).
   useEffect(() => {
     if (!revealing) return
+    if (!animated) { setShown(messages.length); return }
     const t = setTimeout(() => setShown((n) => n + 1), shown === 0 ? 350 : REVEAL_MS)
     return () => clearTimeout(t)
-  }, [revealing, shown])
+  }, [revealing, shown, animated, messages.length])
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'end' })
+    endRef.current?.scrollIntoView({ behavior: still() ? 'auto' : 'smooth', block: 'end' })
   }, [shown, busy])
 
   const finish = useCallback(async (extra: AssistantHandoff = {}) => {
@@ -157,7 +151,8 @@ export default function AssistantOnboarding({
   }, [call, onDone, state])
 
   const apply = useCallback((next: State) => {
-    setShown(reducedMotion() ? (next.messages?.length ?? 0) : messages.length)
+    if (next.step === 'introduced') { setCheer(true); setTimeout(() => setCheer(false), 1500) }
+    setShown(still() ? (next.messages?.length ?? 0) : messages.length)
     setState(next)
   }, [messages.length])
 
@@ -188,6 +183,13 @@ export default function AssistantOnboarding({
   }, [call, finish, state?.step])
 
   const name = state?.assistant?.name || 'HomePilot'
+  // The face follows the conversation: reading while you type, thinking while it waits,
+  // talking while lines play in, a smile right after you name it.
+  const face: FaceState = busy ? 'thinking'
+    : cheer ? 'happy'
+    : revealing ? 'speaking'
+    : input.trim() ? 'attentive'
+    : 'idle'
   const step = state?.step
   const ready = !!state && !revealing && !busy
 
@@ -205,7 +207,7 @@ export default function AssistantOnboarding({
         >
           Skip
         </button>
-        <Orb />
+        <AssistantFace size={64} state={face} animated={animated} />
         <div className="rounded-full border border-white/10 bg-white/[0.06] px-5 py-1.5 text-[17px] font-semibold tracking-tight">{name}</div>
       </header>
 
@@ -223,11 +225,11 @@ export default function AssistantOnboarding({
 
           {messages.slice(0, shown).map((m, i) => (
             m.role === 'user' ? (
-              <div key={i} className="flex justify-end animate-[hpFadeUp_.28s_ease-out]">
+              <div key={i} className={`flex justify-end ${animated ? 'animate-[hpFadeUp_.28s_ease-out]' : ''}`}>
                 <div className="max-w-[80%] rounded-[22px] bg-white px-5 py-3 text-[17px] leading-relaxed text-black">{m.content}</div>
               </div>
             ) : (
-              <div key={i} className="flex animate-[hpFadeUp_.28s_ease-out]">
+              <div key={i} className={`flex ${animated ? 'animate-[hpFadeUp_.28s_ease-out]' : ''}`}>
                 <div className="max-w-[88%] rounded-[22px] bg-white/[0.07] px-5 py-3.5 text-[17px] leading-relaxed text-white/95">
                   <Text value={m.content} />
                 </div>
@@ -235,11 +237,11 @@ export default function AssistantOnboarding({
             )
           ))}
 
-          {(revealing && shown > 0) || busy ? <Typing /> : null}
+          {(revealing && shown > 0) || busy ? <Typing animated={animated} /> : null}
 
           {/* Step 1: the name, already answered */}
           {ready && step === 'created' && (
-            <div className="max-w-[88%] rounded-[26px] border border-white/10 bg-white/[0.03] p-2 animate-[hpFadeUp_.28s_ease-out]">
+            <div className={`max-w-[88%] rounded-[26px] border border-white/10 bg-white/[0.03] p-2 ${animated ? 'animate-[hpFadeUp_.28s_ease-out]' : ''}`}>
               <button
                 type="button"
                 onClick={() => { void keepName() }}
@@ -253,7 +255,7 @@ export default function AssistantOnboarding({
 
           {/* Step 2: something to try, one tap */}
           {ready && step === 'introduced' && (state?.starters?.length ?? 0) > 0 && (
-            <div className="grid grid-cols-2 gap-2.5 pt-1 animate-[hpFadeUp_.32s_ease-out]">
+            <div className={`grid grid-cols-2 gap-2.5 pt-1 ${animated ? 'animate-[hpFadeUp_.32s_ease-out]' : ''}`}>
               {state!.starters!.map((s) => (
                 <button
                   key={s.id}

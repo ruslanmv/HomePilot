@@ -123,7 +123,7 @@ export function ChatAppearanceSettings({
   previewName?: string
   previewAvatarUrls?: Array<string | null | undefined>
 }) {
-  const { thumbnails, compact, faceZoom } = useChatAppearance()
+  const { thumbnails, compact, faceZoom, assistantAnimation } = useChatAppearance()
   return (
     <div className="space-y-6">
       <section aria-labelledby="hp-ca-thumbs" className="space-y-3">
@@ -187,6 +187,17 @@ export function ChatAppearanceSettings({
           </p>
         </div>
         <Switch checked={faceZoom} onChange={(v) => writeChatAppearance({ faceZoom: v })} labelledBy="hp-ca-face" describedBy="hp-ca-face-desc" />
+      </section>
+
+      <section className="flex items-start justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-3">
+        <div className="min-w-0">
+          <h3 id="hp-ca-anim" className="text-sm font-semibold text-white">Animate HomePilot</h3>
+          <p id="hp-ca-anim-desc" className="mt-0.5 text-xs text-white/55">
+            HomePilot&apos;s face, its typing dots and messages playing in. Off: everything appears at once
+            and stays still. Motion set to Off, or your device&apos;s reduce-motion setting, also stops them.
+          </p>
+        </div>
+        <Switch checked={assistantAnimation} onChange={(v) => writeChatAppearance({ assistantAnimation: v })} labelledBy="hp-ca-anim" describedBy="hp-ca-anim-desc" />
       </section>
 
       <ChatAppearancePreview name={previewName} avatarUrls={previewAvatarUrls} />

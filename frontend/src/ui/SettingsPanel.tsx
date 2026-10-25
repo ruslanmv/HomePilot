@@ -1181,6 +1181,12 @@ export default function SettingsPanel({
       >
         {providersErr && <div className="text-[11px] text-red-400">{providersErr}</div>}
         {providerSelectRow("Chat Provider", "Used for text conversations and prompt refinement.", value.providerChat, (k) => commit({ ...value, providerChat: k }))}
+        {value.providerChat === "huggingface" ? (
+          <p className="-mt-1 px-1 text-[11px] leading-snug text-white/50">
+            Hugging Face, with Ollama as backup: if Hugging Face can&apos;t answer (out of credits, busy or not
+            connected), the chat switches to the local Ollama model on its own.
+          </p>
+        ) : null}
         {providerSelectRow("Image Provider", "Used for image generation.", value.providerImages, (k) => commit({ ...value, providerImages: k }))}
         {providerSelectRow("Video Provider", "Used for video generation.", value.providerVideo, (k) => commit({ ...value, providerVideo: k }))}
         {providerSelectRow("Multimodal Provider", "Used for image understanding (vision).", value.providerMultimodal || 'ollama', (k) => commit({ ...value, providerMultimodal: k }))}

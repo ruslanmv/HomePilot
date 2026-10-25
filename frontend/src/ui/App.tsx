@@ -2042,6 +2042,8 @@ function QueryBar({
       const result = await recordAndTranscribe({
         scope: 'chat',
         maxMs: 20_000,
+        // The turn ends when you stop talking, as it did with the browser recognizer.
+        endOnSilence: {},
         onRecording: ({ stop }) => { micStopRecordingRef.current = stop },
       })
       micStopRecordingRef.current = null

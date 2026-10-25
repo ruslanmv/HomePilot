@@ -13,6 +13,7 @@ import {
   SttUnavailableError,
   getSttCapability,
   resetSttCapabilityCache,
+  silenceWatcher,
   transcribeBlob,
 } from '../ui/media/sttService';
 
@@ -47,7 +48,19 @@ describe('getSttCapability', () => {
       provider: 'whisper-local',
       remote: false,
       hint: null,
+      recommended: null,
     });
+  });
+
+  it('adopts the web edition\'s recommendation as the default for an undecided person', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okJson({
+      available: true, provider: 'whisper-local', remote: false, hint: null, recommended_engine: 'homepilot',
+    })));
+    const capability = await getSttCapability({ force: true });
+    expect(capability.recommended).toBe('homepilot');
+    const { getSttPreferences, setRecommendedSttDefault } = await import('../ui/media/sttPreferences');
+    expect(getSttPreferences().chat).toBe('homepilot');
+    setRecommendedSttDefault(null);
   });
 
   it('caches so a voice turn does not pay a round trip each time', async () => {
@@ -191,3 +204,41 @@ describe('transcribeBlob', () => {
     await expect(transcribeBlob(new Blob(['a']))).rejects.toThrow(/404/);
   });
 });
+
+describe('silenceWatcher — the composer turn ends when you stop talking', () => {
+  // A clock driven by the test; levels arrive every 50 ms like animation frames would.
+  function run(levels: Array<[number, number]>, options = {}) {
+    let t = 0
+    const ended: string[] = []
+    const feed = silenceWatcher(options, (why) => ended.push(why), () => t)
+    for (const [ms, level] of levels) {
+      for (let i = 0; i < ms; i += 50) { t += 50; feed(level) }
+    }
+    return { ended, t }
+  }
+
+  it('ends ~1.2 s after speech goes quiet', () => {
+    const { ended } = run([[600, 0.01], [2000, 0.4], [1300, 0.01]])
+    expect(ended).toEqual(['silence-after-speech'])
+  })
+
+  it('a short pause mid-sentence does not end the turn', () => {
+    const { ended } = run([[600, 0.01], [1000, 0.4], [700, 0.01], [1000, 0.4]])
+    expect(ended).toEqual([])
+  })
+
+  it('nobody speaking ends it after the no-speech limit', () => {
+    const { ended } = run([[9000, 0.01]], { noSpeechMs: 8000 })
+    expect(ended).toEqual(['no-speech'])
+  })
+
+  it('a noisy room raises the bar: steady fan noise is not speech', () => {
+    const { ended } = run([[600, 0.08], [9000, 0.09]], { noSpeechMs: 8000 })
+    expect(ended).toEqual(['no-speech'])
+  })
+
+  it('ends only once', () => {
+    const { ended } = run([[600, 0.01], [800, 0.5], [5000, 0.01]])
+    expect(ended).toHaveLength(1)
+  })
+})
