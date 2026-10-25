@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from . import CATALOG, catalog_entry, huggingface, store
+from . import CATALOG, catalog_entry, huggingface, oauth, store
 from .context import current_user_id
 
 router = APIRouter(prefix="/v1/connectors", tags=["connectors"])
@@ -27,13 +28,25 @@ class LinkIn(BaseModel):
 def list_connectors(user_id: str = Depends(_user)) -> Dict[str, Any]:
     """Every available connector, with this user's linked account if any (never its secret)."""
     linked = {c["id"]: c for c in store.linked(user_id)}
-    return {
-        "ok": True,
-        "connectors": [
-            {**c, "connected": c["id"] in linked, "account": (linked.get(c["id"]) or {}).get("account", "")}
-            for c in CATALOG
-        ],
+    return {"ok": True, "connectors": [_public(c, linked.get(c["id"])) for c in CATALOG]}
+
+
+def _public(entry: Dict[str, Any], row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """A catalog entry plus what this user may see of their link: account, avatar, how it was
+    linked, whether it expired. Never the secret."""
+    meta = (row or {}).get("meta") or {}
+    out = {
+        **entry,
+        "oauth": entry["id"] == huggingface.ID and oauth.enabled(),
+        "manage_url": oauth.MANAGE_URL if entry["id"] == huggingface.ID else "",
+        "connected": bool(row) and not row.get("expired"),
+        "expired": bool(row and row.get("expired")),
+        "account": (row or {}).get("account", ""),
+        "avatar": meta.get("avatar", ""),
+        "via": meta.get("via", "token") if row else "",
+        "connected_at": (row or {}).get("connected_at"),
     }
+    return out
 
 
 @router.post("/{connector_id}")
@@ -48,6 +61,37 @@ async def link(connector_id: str, body: LinkIn, user_id: str = Depends(_user)) -
     account = str(info.get("name") or info.get("fullname") or "")
     store.save(user_id, connector_id, secret, account=account, meta={"type": info.get("type") or "user"})
     return {"ok": True, "id": connector_id, "connected": True, "account": account}
+
+
+@router.post("/huggingface/oauth/start")
+def hf_oauth_start(request: Request, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    """A one-use "Sign in with Hugging Face" URL for this user, to open in a new window."""
+    if not oauth.enabled():
+        raise HTTPException(status_code=404, detail="Sign in with Hugging Face is not set up on this server.")
+    origin = (request.headers.get("origin") or "").strip()
+    return {"ok": True, "url": oauth.start(user_id, str(request.base_url), origin=origin)}
+
+
+@router.get("/huggingface/oauth/callback", response_class=HTMLResponse)
+async def hf_oauth_callback(code: str = "", state: str = "", error: str = "",
+                            error_description: str = "") -> HTMLResponse:
+    """Where Hugging Face sends the sign-in window back. Links the account, then closes."""
+    pending = oauth.take(state)
+    origin = (pending or {}).get("origin", "")
+    if error:
+        reason = "You cancelled the sign-in." if error == "access_denied" else (error_description or error)
+        return HTMLResponse(oauth.finish_page(False, error=reason, origin=origin))
+    if not pending:
+        return HTMLResponse(oauth.finish_page(False, error="This sign-in link expired. Please try again."), status_code=400)
+    try:
+        got = await oauth.exchange(code, pending)
+    except ValueError as exc:
+        return HTMLResponse(oauth.finish_page(False, error=str(exc), origin=origin), status_code=400)
+    except Exception as exc:  # noqa: BLE001 — Hugging Face unreachable
+        return HTMLResponse(oauth.finish_page(False, error=f"Could not reach Hugging Face ({type(exc).__name__}).",
+                                              origin=origin), status_code=502)
+    store.save(pending["user_id"], huggingface.ID, got["token"], account=got["account"], meta=got["meta"])
+    return HTMLResponse(oauth.finish_page(True, account=got["account"], origin=origin))
 
 
 @router.delete("/{connector_id}")

@@ -723,6 +723,34 @@ async def chat_ollama(
     }
 
 
+def _answered_by(out: Any, provider: str, model: Optional[str], *, fell_back: bool = False,
+                 reason: Optional[str] = None) -> Any:
+    """Note on a reply which provider and model actually wrote it (``answered_by``), so chat can
+    show it under the message — including when another provider stood in, and why."""
+    if isinstance(out, dict) and "answered_by" not in out:
+        raw = out.get("provider_raw") if isinstance(out.get("provider_raw"), dict) else {}
+        actual = str(out.get("model") or raw.get("model") or model or "")
+        out["answered_by"] = {"provider": provider, "model": actual, "fell_back": fell_back, "reason": reason}
+    return out
+
+
+def _hf_unavailable_reason(exc: BaseException) -> str:
+    """Why Hugging Face could not answer, in words for the person reading the chat."""
+    from .connectors import huggingface as _hf
+
+    if isinstance(exc, _hf.NotLinked):
+        return "Hugging Face is not connected"
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    text = str(exc)
+    if status == 402 or "402" in text:
+        return "Hugging Face credits ran out"
+    if status == 429 or "429" in text:
+        return "Hugging Face is rate limiting this account"
+    if status in (401, 403) or "401" in text or "403" in text:
+        return "Hugging Face did not accept the token"
+    return "Hugging Face did not answer"
+
+
 async def chat(
     messages: List[Dict[str, Any]],
     *,
@@ -735,13 +763,33 @@ async def chat(
     if provider == "huggingface":
         # Hugging Face (the user's linked account, or the Space's own token), through Inference
         # Providers. When it cannot answer at all — no token, out of credits, rate limited,
-        # unreachable — the local Ollama model answers instead, so chat never goes dark.
+        # unreachable — the local Ollama model answers instead, so chat never goes dark; the
+        # reply says so (``answered_by``) rather than passing the local model off as Hugging Face.
         from .connectors import huggingface as _hf
         try:
-            return await _hf.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+            out = await _hf.chat(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+            return _answered_by(out, "huggingface", model)
         except Exception as _hf_exc:  # noqa: BLE001
             print(f"[huggingface] chat unavailable ({type(_hf_exc).__name__}: {str(_hf_exc)[:160]}); answering with Ollama")
-            return await chat_ollama(messages, temperature=temperature, max_tokens=max_tokens)
+            # The model asked for is a Hub repo; Ollama answers with its own default.
+            out = await chat_ollama(messages, temperature=temperature, max_tokens=max_tokens)
+            return _answered_by(out, "ollama", None, fell_back=True, reason=_hf_unavailable_reason(_hf_exc))
+    return _answered_by(
+        await _chat_with(messages, provider=provider, temperature=temperature, max_tokens=max_tokens,
+                         base_url=base_url, model=model),
+        provider, model,
+    )
+
+
+async def _chat_with(
+    messages: List[Dict[str, Any]],
+    *,
+    provider: ProviderName,
+    temperature: float,
+    max_tokens: int,
+    base_url: Optional[str],
+    model: Optional[str],
+) -> Dict[str, Any]:
     if provider == "ollama":
         return await chat_ollama(
             messages,

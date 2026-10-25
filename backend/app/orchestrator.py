@@ -2277,6 +2277,9 @@ async def orchestrate(
         "media": text_media,
         "compute": _compute_diag(_route_report),
     }
+    # Which provider and model wrote this reply (llm.chat), shown under it in chat.
+    if isinstance(out, dict) and isinstance(out.get("answered_by"), dict):
+        reply["answered_by"] = out["answered_by"]
     if web_public:
         reply["web_search"] = web_public
     return reply

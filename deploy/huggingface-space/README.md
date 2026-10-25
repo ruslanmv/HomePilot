@@ -7,6 +7,12 @@ sdk: docker
 app_port: 7860
 pinned: false
 short_description: Private AI assistant with persistent personas
+# "Continue with Hugging Face" in Settings → Connectors (backend/app/connectors/oauth.py):
+# visitors sign in and accept; their own account then runs chat, images and video.
+hf_oauth: true
+hf_oauth_expiration_minutes: 43200
+hf_oauth_scopes:
+  - inference-api
 ---
 
 # HomePilot — Hugging Face Space

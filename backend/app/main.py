@@ -5723,10 +5723,11 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     if media is not None and not isinstance(media, dict):
         media = None
 
-    return JSONResponse(
-        status_code=200,
-        content={"conversation_id": cid, "text": text, "media": media},
-    )
+    content = {"conversation_id": cid, "text": text, "media": media}
+    # Which provider and model wrote the reply (llm.chat), for the badge under it.
+    if isinstance(out.get("answered_by"), dict):
+        content["answered_by"] = out["answered_by"]
+    return JSONResponse(status_code=200, content=content)
 
 
 @app.post("/upload", dependencies=[Depends(require_api_key)])

@@ -252,10 +252,13 @@ async def chat(messages: List[Dict[str, Any]], *, model: Optional[str], temperat
     last: Optional[BaseException] = None
     for repo in chain("chat", model or ""):
         try:
-            return await chat_openai_compat(
+            out = await chat_openai_compat(
                 messages, temperature=temperature, max_tokens=max_tokens,
                 base_url=ROUTER, model=repo, api_key=secret,
             )
+            if isinstance(out, dict):
+                out.setdefault("model", repo)   # which model of the chain answered
+            return out
         except Exception as exc:  # noqa: BLE001
             last = exc
             logger.warning("Hugging Face chat with %s failed: %s", repo, str(exc)[:200])

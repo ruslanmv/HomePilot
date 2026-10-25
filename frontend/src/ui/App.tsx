@@ -128,6 +128,7 @@ import {
 import { ComposerAssistContext, type DeepHint } from './lib/composerAssist'
 import { isTrivialPrompt } from './lib/promptHeuristics'
 import RouteBadge from './components/compute/RouteBadge'
+import ModelBadge, { type AnsweredBy } from './components/compute/ModelBadge'
 import { ChatEmptyState } from './components/ChatEmptyState'
 import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
 import { AgentSettingsPanel, type AgentProjectData } from './components/AgentSettingsPanel'
@@ -228,6 +229,8 @@ export type Msg = {
   } | null
   // Compute routing diagnostics (P0-2): which device served this reply, and
   // whether it fell back. Raw shape from /chat (snake_case, not camelized).
+  /** Which provider and model wrote this reply, and whether another stood in (/chat answered_by). */
+  answeredBy?: AnsweredBy | null
   compute?: {
     target: string
     device_id?: string | null
@@ -1297,6 +1300,8 @@ function Sidebar({
   onToggleCollapse,
   chatReasoningMode,
   chatPreview,
+  settingsSection,
+  setSettingsSection,
   advisorBadge = false,
   showMeetingsNav = false,
   drawer = false,
@@ -1314,6 +1319,8 @@ function Sidebar({
   settingsDraft: SettingsModelV2
   /** The open persona's name and picture, for Settings → Chat's preview. */
   chatPreview?: { name: string; avatarUrls: Array<string | null | undefined> } | null
+  settingsSection?: string
+  setSettingsSection: (tab: string | undefined) => void
   /** "New" on Models: suggestions changed or a better model fits (Model Advisor). */
   advisorBadge?: boolean
   setSettingsDraft: React.Dispatch<React.SetStateAction<SettingsModelV2>>
@@ -1651,8 +1658,9 @@ function Sidebar({
               value={settingsDraft}
               onChangeDraft={(next) => setSettingsDraft(next)}
               onSave={onSaveSettings}
-              onClose={() => setShowSettings(false)}
+              onClose={() => { setShowSettings(false); setSettingsSection(undefined) }}
               chatPreview={chatPreview}
+              initialSection={settingsSection}
             />
           ) : null}
 
@@ -3143,8 +3151,11 @@ function ChatState({
                     className="w-full rounded-xl border border-white/10 mt-2"
                   />
                 ) : null}
-                {m.role === 'assistant' && m.compute ? (
-                  <div className="mt-2"><RouteBadge compute={m.compute} /></div>
+                {m.role === 'assistant' && (m.compute || m.answeredBy) ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <ModelBadge answeredBy={m.answeredBy} />
+                    <RouteBadge compute={m.compute} />
+                  </div>
                 ) : null}
               </div>
             )}
@@ -3502,6 +3513,8 @@ export default function App() {
   })
 
   const [showSettings, setShowSettings] = useState(false)
+  // The Settings tab to open on (e.g. "connectors" from a reply's "Connect"); unset → default.
+  const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined)
   const [showHistory, setShowHistory] = useState(false)
   // MS28. Loaded only while the panel is open, and silent when MeetingSense is off — an
   // install without it gets the History it has always had, with no chip and no error.
@@ -3988,17 +4001,21 @@ export default function App() {
 
   // Troubleshoot in the offline banner asks to open settings.
   useEffect(() => {
-    const onOpen = () => setShowSettings(true)
+    const onOpen = (e: Event) => {
+      const tab = (e as CustomEvent<{ tab?: string } | undefined>).detail?.tab
+      setSettingsSection(typeof tab === 'string' ? tab : undefined)
+      setShowSettings(true)
+    }
     window.addEventListener('homepilot:open-settings', onOpen)
     return () => window.removeEventListener('homepilot:open-settings', onOpen)
   }, [setShowSettings])
 
   // Chat settings → "Manage models" opens Models, where the offered models are chosen.
   useEffect(() => {
-    const onOpen = () => setMode('models')
+    const onOpen = () => { setShowSettings(false); setMode('models') }
     window.addEventListener(OPEN_MODELS_EVENT, onOpen)
     return () => window.removeEventListener(OPEN_MODELS_EVENT, onOpen)
-  }, [])
+  }, [setShowSettings])
 
   // The meeting recap's "Meetings" breadcrumb opens the Meetings library.
   useEffect(() => {
@@ -5864,6 +5881,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   // The sources ride on the media, as they are stored, so a reloaded chat shows them too.
                   media: data.web_search ? { ...(data.media ?? {}), web: data.web_search } : (data.media ?? null),
                   compute: data.compute ?? null,
+                  answeredBy: data.answered_by ?? null,
                   // A structured error (e.g. no local model) renders as an error
                   // bubble with Retry, not as a normal-looking reply.
                   ...(data.error
@@ -6549,7 +6567,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
-              ? { ...m, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null, compute: data.compute ?? null }
+              ? { ...m, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null, compute: data.compute ?? null, answeredBy: data.answered_by ?? null }
               : m
           )
         )
@@ -6951,6 +6969,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           onToggleCollapse={toggleSidebar}
           chatReasoningMode={chatReasoningMode}
           chatPreview={currentProject ? { name: currentProject.name, avatarUrls: [projectFaceUrl, projectThumbUrl] } : null}
+          settingsSection={settingsSection}
+          setSettingsSection={setSettingsSection}
           advisorBadge={advisor.badge}
           showMeetingsNav={meetingsNavEnabled}
           drawer={isMobile}

@@ -56,10 +56,26 @@ def secret(user_id: str, connector_id: str) -> str:
         return ""
     con = _db()
     row = con.execute(
-        "SELECT secret FROM user_connectors WHERE user_id = ? AND connector_id = ?", (user_id, connector_id)
+        "SELECT secret, meta FROM user_connectors WHERE user_id = ? AND connector_id = ?", (user_id, connector_id)
     ).fetchone()
     con.close()
-    return row["secret"] if row else ""
+    if not row or _expired(_meta(row["meta"])):
+        return ""
+    return row["secret"]
+
+
+def _meta(raw: Optional[str]) -> Dict[str, Any]:
+    try:
+        meta = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _expired(meta: Dict[str, Any]) -> bool:
+    """A token from "Sign in with …" carries its expiry; a pasted token has none."""
+    exp = meta.get("expires_at")
+    return bool(exp) and float(exp) <= time.time()
 
 
 def linked(user_id: str) -> List[Dict[str, Any]]:
@@ -71,9 +87,7 @@ def linked(user_id: str) -> List[Dict[str, Any]]:
     con.close()
     out = []
     for r in rows:
-        try:
-            meta = json.loads(r["meta"] or "{}")
-        except ValueError:
-            meta = {}
-        out.append({"id": r["connector_id"], "account": r["account"], "meta": meta, "connected_at": r["connected_at"]})
+        meta = _meta(r["meta"])
+        out.append({"id": r["connector_id"], "account": r["account"], "meta": meta,
+                    "connected_at": r["connected_at"], "expired": _expired(meta)})
     return out
