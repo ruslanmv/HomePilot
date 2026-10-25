@@ -203,6 +203,15 @@ COPY --from=comfy-builder --chown=user:user /opt/ComfyUI   /opt/ComfyUI
 # Copy backend source
 COPY backend/app ./app
 
+# The Hugging Face Space bundles these next to the package. Without them the
+# hosted image has no Expert chat (/v1/expert/*), no bundled persona samples,
+# and no model installer script. Paths match what app/main.py, community.py,
+# and download_script.py probe inside a packaged image.
+COPY expert/backend/app/expert ./expert
+COPY community/sample ./community/sample
+COPY scripts/download.py ./scripts/download.py
+RUN chown -R user:user ./expert ./community ./scripts
+
 # Copy built frontend
 COPY --from=frontend-builder /build/dist ./static
 

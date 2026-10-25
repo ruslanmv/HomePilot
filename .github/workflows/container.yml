@@ -17,6 +17,14 @@ on:
       - "tsconfig.base.json"
       - ".dockerignore"
       - ".github/workflows/container.yml"
+      # The Space ships these and the Oracle deploy follows this image.
+      # Leaving them out published a new Space while GHCR (and therefore
+      # homepilot.ruslanmv.com) stayed on the previous commit.
+      # Keep this list in sync with APP_IMAGE_PREFIXES / APP_IMAGE_FILES
+      # in oracle/resolve_deploy.py.
+      - "expert/**"
+      - "community/**"
+      - "scripts/download.py"
   release:
     types: [published]
   workflow_dispatch:
