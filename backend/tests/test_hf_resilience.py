@@ -75,6 +75,27 @@ def test_local_defaults_are_unchanged(client, local):
     assert d["providerVideo"] == "comfyui" and d["providerMultimodal"] == "ollama"
 
 
+def test_web_tabs_name_what_a_linked_account_unlocks(client, web):
+    tabs = {row["id"]: row for row in client.get("/v1/edition").json()["tabs"]}
+    for tab in ("chat", "imagine", "animate", "models", "edit", "studio", "avatar", "interactive"):
+        assert tabs[tab]["needs_hugging_face"] is True
+        assert tabs[tab]["available"] is True
+        assert tabs[tab]["unlocked_by"] == "huggingface"
+    assert tabs["teams"]["available"] is False
+    assert tabs["teams"]["unlocked_by"] == "local-gpu"
+    assert "instruction" in tabs["edit"]["works"]
+    caps = client.get("/v1/capabilities").json()["capabilities"]
+    assert caps["inpaint"]["available"] is False
+    assert "ComfyUI" in caps["inpaint"]["reason"]
+    assert caps["outpaint"]["available"] is False
+
+
+def test_a_local_install_keeps_the_gpu_tabs(client, local):
+    tabs = {row["id"]: row for row in client.get("/v1/edition").json()["tabs"]}
+    assert tabs["edit"]["available"] is True
+    assert tabs["imagine"]["needs_hugging_face"] is False
+
+
 def test_the_space_token_is_never_used_on_a_local_install(local):
     assert _hf().shared_token() == ""
 
@@ -142,6 +163,13 @@ class _FakeClient:
         from PIL import Image
         return Image.new("RGB", (32, 32), "teal")
 
+    def image_to_image(self, image, prompt, *, model=None, **kw):
+        _FakeClient.calls.append(("edit", model))
+        if model in _FakeClient.down:
+            raise _status_error(_FakeClient.down[model])
+        from PIL import Image
+        return Image.new("RGB", (32, 32), "navy")
+
 
 @pytest.fixture
 def fake_hub(monkeypatch):
@@ -192,3 +220,62 @@ def test_local_images_stay_on_comfyui(local, monkeypatch):
     assert _hf().route_image("dreamshaper_8.safetensors") is None
     assert _hf().route_image(None) is None
     assert _hf().route_image("hf:org/model") == "hf:org/model"   # an explicit Hugging Face pick still works
+
+
+def test_an_edit_instruction_drops_comfy_flags(web):
+    text, masked = _hf().clean_edit_instruction(
+        "sunset over the lake --mask /m.png --mode inpaint --steps 30")
+    assert masked is True
+    assert text == "sunset over the lake"
+
+
+def test_web_edit_session_redraws_without_the_sidecar(client, web, fake_hub):
+    import io
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(buf, format="PNG")
+    cid = f"edit-{uuid.uuid4().hex[:8]}"
+    up = client.post(
+        f"/v1/edit-sessions/{cid}/image",
+        headers=_user(client),
+        files={"file": ("face.png", buf.getvalue(), "image/png")},
+    )
+    assert up.status_code == 200, up.text
+    assert up.json()["active_image_url"].startswith("/files/")
+    msg = client.post(
+        f"/v1/edit-sessions/{cid}/message",
+        headers=_user(client),
+        json={"message": "make the sky violet --mask /files/nope --mode inpaint"},
+    )
+    assert msg.status_code == 200, msg.text
+    raw = msg.json()["raw"]
+    assert raw["media"]["images"][0].startswith("/files/")
+    assert "GPU" in raw["text"]
+    assert any(kind == "edit" for kind, _model in fake_hub.calls)
+
+
+def test_edit_does_not_redraw_when_the_account_is_out_of_credits(client, web, fake_hub):
+    import io
+    from PIL import Image
+
+    for repo in _hf().defaults("edit"):
+        fake_hub.down[repo] = 402
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(buf, format="PNG")
+    cid = f"edit-{uuid.uuid4().hex[:8]}"
+    headers = _user(client)
+    up = client.post(
+        f"/v1/edit-sessions/{cid}/image",
+        headers=headers,
+        files={"file": ("face.png", buf.getvalue(), "image/png")},
+    )
+    assert up.status_code == 200, up.text
+    msg = client.post(
+        f"/v1/edit-sessions/{cid}/message",
+        headers=headers,
+        json={"message": "brighter"},
+    )
+    assert msg.status_code == 502, msg.text
+    assert "credits" in msg.text
+    assert not any(kind == "model" for kind, _model in fake_hub.calls)

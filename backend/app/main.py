@@ -6195,6 +6195,12 @@ async def _proxy_to_edit_session(
     Proxy a request to the edit-session sidecar service.
     Forwards headers, query params, and body to the sidecar.
     """
+    # The Space has no edit-session sidecar. A linked Hugging Face account redraws
+    # the picture here, instead of waiting on a connection that never opens.
+    from . import hosted_edit
+    if hosted_edit.active():
+        return await hosted_edit.dispatch(request, path, method)
+
     client = get_edit_session_client()
 
     # Build URL with query params
@@ -6282,6 +6288,10 @@ async def upload_edit_image(request: Request, conversation_id: str) -> JSONRespo
       - Multipart form with 'file' field (standard upload)
       - JSON body with 'image_url' field (server-side import from /files/ or /comfy/view/)
     """
+    from . import hosted_edit
+    if hosted_edit.active():
+        return await hosted_edit.upload(request, conversation_id)
+
     content_type = request.headers.get("content-type", "")
 
     # --- JSON body with image_url: server-side load + forward to sidecar ---

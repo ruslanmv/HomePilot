@@ -62,6 +62,7 @@ import {
 } from './editApi'
 import type { EditTabProps, VersionEntry } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
+import { HostedTabNote } from '../lib/HostedTabNote'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -1081,6 +1082,7 @@ export function EditTab({
             <div>
               <div className="text-sm font-semibold text-white leading-tight">HomePilot</div>
               <div className="text-xs text-white/50 leading-tight">Edit Studio</div>
+              <HostedTabNote tabId="edit" />
             </div>
           </div>
 

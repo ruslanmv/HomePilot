@@ -9,8 +9,11 @@ provider "Hugging Face" lists the models Inference Providers actually serve, per
   chat     text-generation     ``llm.chat(provider="huggingface")`` — the router's
                                OpenAI-compatible endpoint
   vision   image-text-to-text  ``multimodal.analyze_image(provider="huggingface")``
-  image    text-to-image       Imagine, when the image model is ``hf:<repo>``
-  video    text-to-video       Animate, when the video model is ``hf:<repo>``
+  image    text-to-image       Imagine, Studio storyboards, Avatar faces, Interactive
+                               scenes — whenever ComfyUI is not configured
+  video    text-to-video       Animate, when the video model is ``hf:<repo>`` (or any
+                               video on the web edition without ComfyUI)
+  edit     image-to-image      Edit, when the edit-session sidecar and ComfyUI are absent
   ======== =================== ======================================================
 
 Image and video models carry the ``hf:`` prefix because those paths pick their engine from
@@ -64,6 +67,8 @@ _DEFAULTS = {
     "multimodal": ("HF_DEFAULT_VISION_MODELS", "google/gemma-4-31B-it,Qwen/Qwen3.6-35B-A3B"),
     "image": ("HF_DEFAULT_IMAGE_MODELS", "black-forest-labs/FLUX.1-schnell,stabilityai/stable-diffusion-xl-base-1.0"),
     "video": ("HF_DEFAULT_VIDEO_MODELS", "Wan-AI/Wan2.2-TI2V-5B,Wan-AI/Wan2.1-T2V-1.3B"),
+    # Instruction edits. Tried before a plain redraw. Overridable without a code change.
+    "edit": ("HF_DEFAULT_EDIT_MODELS", "black-forest-labs/FLUX.1-Kontext-dev,Qwen/Qwen-Image-Edit"),
 }
 # How many models one request may try before giving up (keeps a failing turn short).
 MAX_MODELS_PER_REQUEST = 2
@@ -89,6 +94,19 @@ def shared_token() -> str:
 def comfy_configured() -> bool:
     from ..config import COMFY_BASE_URL
     return bool((COMFY_BASE_URL or "").strip())
+
+
+def hosted_media() -> bool:
+    """This machine has no ComfyUI, so pictures are drawn on Hugging Face.
+
+    True on the web edition, and on a local install that has no ComfyUI but does
+    have a linked account. A computer with ComfyUI keeps its own workflows.
+    """
+    if comfy_configured():
+        return False
+    if is_web():
+        return True
+    return bool(token())
 
 
 def chain(task: str, chosen: str = "") -> List[str]:
@@ -306,6 +324,144 @@ def route_video(vid_model: Optional[str]) -> Optional[str]:
     return None
 
 
+_EDIT_FLAGS = {"--mask", "--lora", "--mode", "--steps", "--cfg", "--denoise", "--seed", "--cn", "--cn-strength"}
+
+
+def clean_edit_instruction(text: str) -> Tuple[str, bool]:
+    """The words of an edit, without ComfyUI flags. The second value is true when a brush mask was sent."""
+    raw = text or ""
+    had_mask = "--mask" in raw or "--mode inpaint" in raw
+    words: List[str] = []
+    skip = False
+    for tok in raw.split():
+        if skip:
+            skip = False
+            continue
+        if tok in _EDIT_FLAGS:
+            skip = True
+            continue
+        if tok.startswith("--"):
+            continue
+        words.append(tok)
+    instruction = " ".join(words).strip()
+    return instruction or "Keep the same subject and apply the requested change", had_mask
+
+
+async def _draw_pil(*, secret: str, model: str, prompt: str,
+                    negative: Optional[str], aspect_ratio: str):
+    """A PIL image from text, or (None, last_repo, last_error)."""
+    from huggingface_hub import InferenceClient
+
+    width, height = _SIZES.get(aspect_ratio or "1:1", _SIZES["1:1"])
+    client = InferenceClient(provider="auto", token=secret, timeout=240)
+    image, repo, last = None, strip_prefix(model), None
+    for repo in chain("image", model):
+        try:
+            try:
+                image = await asyncio.to_thread(
+                    client.text_to_image, prompt, model=repo,
+                    negative_prompt=negative or None, width=width, height=height,
+                )
+            except Exception as exc:  # noqa: BLE001 — some providers refuse explicit sizes
+                if account_problem(exc):
+                    raise
+                image = await asyncio.to_thread(client.text_to_image, prompt, model=repo)
+            break
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            logger.warning("Hugging Face image with %s failed: %s", repo, str(exc)[:200])
+            if account_problem(exc):
+                break
+    return image, repo, last
+
+
+async def _edit_pil(*, secret: str, model: str, prompt: str, image_bytes: bytes):
+    """A PIL image edited from ``image_bytes``, or (None, last_repo, last_error)."""
+    from PIL import Image
+    from huggingface_hub import InferenceClient
+
+    source = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    client = InferenceClient(provider="auto", token=secret, timeout=240)
+    image, repo, last = None, strip_prefix(model), None
+    for repo in chain("edit", model):
+        try:
+            image = await asyncio.to_thread(client.image_to_image, source, prompt, model=repo)
+            break
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            logger.warning("Hugging Face edit with %s failed: %s", repo, str(exc)[:200])
+            if account_problem(exc):
+                break
+    return image, repo, last
+
+
+def _png(image) -> bytes:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def still_file_url(*, user_id: Optional[str], prompt: str, model: str = "") -> Optional[str]:
+    """Draw one picture and store it. None when there is no account or no image came back.
+
+    Used by Avatar faces and Interactive scenes. It does not write a chat message.
+    """
+    secret = token(user_id)
+    if not secret or not (prompt or "").strip():
+        return None
+    image, _repo, last = await _draw_pil(
+        secret=secret, model=model or (PREFIX + defaults("image")[0]),
+        prompt=prompt, negative=None, aspect_ratio="1:1",
+    )
+    if image is None:
+        logger.warning("Hugging Face still failed: %s", _reason(last or RuntimeError("no model"))[:200])
+        return None
+    from ..files import save_generated_media_as_asset
+
+    asset = save_generated_media_as_asset(user_id or "", _png(image), "image/png", "image")
+    return asset["url"]
+
+
+async def edit_picture(*, user_id: Optional[str], model: str, image_url: str,
+                       prompt: str) -> Dict[str, Any]:
+    """Redraw ``image_url`` from the instruction. Does not write a chat message.
+
+    A brush mask is not applied: the reply says so, and the whole picture is redrawn.
+    When no edit model accepts the picture, a new picture is drawn from the instruction.
+    """
+    instruction, had_mask = clean_edit_instruction(prompt)
+    secret = token(user_id)
+    if not secret:
+        return {"ok": False, "url": "", "text": NOT_LINKED}
+    from ..files import _upload_root, save_generated_media_as_asset
+    from ..multimodal import _load_image_bytes
+
+    try:
+        raw, _mime = await _load_image_bytes(image_url, _upload_root())
+    except Exception as exc:  # noqa: BLE001 — missing file is a message, not a crash
+        return {"ok": False, "url": "", "text": f"Could not open that picture ({exc})."}
+    image, repo, last = await _edit_pil(secret=secret, model=model, prompt=instruction, image_bytes=raw)
+    redrawn = False
+    if image is None and (last is None or not account_problem(last)):
+        image, repo, last = await _draw_pil(
+            secret=secret, model=model, prompt=instruction, negative=None, aspect_ratio="1:1",
+        )
+        redrawn = image is not None
+    if image is None:
+        return {
+            "ok": False, "url": "",
+            "text": f"Hugging Face couldn't edit that picture: {_reason(last or RuntimeError('no model'))}.",
+        }
+    asset = save_generated_media_as_asset(user_id or "", _png(image), "image/png", "image")
+    if had_mask:
+        text = "The brush needs a computer with a GPU, so the whole picture was redrawn from your instruction."
+    elif redrawn:
+        text = "Redrawn from your instruction."
+    else:
+        text = "Here you go."
+    return {"ok": True, "url": asset["url"], "text": text, "model": f"{PREFIX}{repo}"}
+
+
 # ── images and video, as a chat turn ─────────────────────────────────────────
 
 _SIZES = {"1:1": (1024, 1024), "16:9": (1344, 768), "9:16": (768, 1344), "4:3": (1152, 896),
@@ -332,30 +488,14 @@ def _finish(cid: str, user_id: Optional[str], text: str, media: Optional[Dict[st
 
 async def generate_image_turn(*, cid: str, user_id: Optional[str], model: str, prompt: str,
                               negative: Optional[str] = None, aspect_ratio: str = "1:1") -> Dict[str, Any]:
-    from huggingface_hub import InferenceClient
     from ..files import save_generated_media_as_asset
 
     secret = token(user_id)
     if not secret:
         return _finish(cid, user_id, NOT_LINKED, None)
-    width, height = _SIZES.get(aspect_ratio or "1:1", _SIZES["1:1"])
-    client = InferenceClient(provider="auto", token=secret, timeout=240)
-    image, repo, last = None, strip_prefix(model), None
-    for repo in chain("image", model):
-        try:
-            try:
-                image = await asyncio.to_thread(client.text_to_image, prompt, model=repo,
-                                                negative_prompt=negative or None, width=width, height=height)
-            except Exception as exc:  # noqa: BLE001 — some providers refuse explicit sizes
-                if account_problem(exc):
-                    raise
-                image = await asyncio.to_thread(client.text_to_image, prompt, model=repo)
-            break
-        except Exception as exc:  # noqa: BLE001
-            last = exc
-            logger.warning("Hugging Face image with %s failed: %s", repo, str(exc)[:200])
-            if account_problem(exc):
-                break
+    image, repo, last = await _draw_pil(
+        secret=secret, model=model, prompt=prompt, negative=negative, aspect_ratio=aspect_ratio,
+    )
     if image is None:
         return _finish(cid, user_id, f"Hugging Face couldn't make that image: {_reason(last or RuntimeError('no model'))}.", None)
     buf = io.BytesIO()
@@ -364,6 +504,17 @@ async def generate_image_turn(*, cid: str, user_id: Optional[str], model: str, p
     media = {"images": [asset["url"]], "final_prompt": prompt, "model": f"{PREFIX}{repo}",
              "provider": ID, "width": image.width, "height": image.height}
     return _finish(cid, user_id, "Here you go.", media)
+
+
+async def edit_image_turn(*, cid: str, user_id: Optional[str], model: str, image_url: str,
+                          prompt: str) -> Dict[str, Any]:
+    """Chat-mode edit: same redraw as the Edit tab, stored on the conversation."""
+    drawn = await edit_picture(user_id=user_id, model=model, image_url=image_url, prompt=prompt)
+    media = None
+    if drawn.get("url"):
+        media = {"images": [drawn["url"]], "model": drawn.get("model") or "", "provider": ID,
+                 "final_prompt": prompt}
+    return _finish(cid, user_id, drawn.get("text") or "Here you go.", media)
 
 
 async def generate_video_turn(*, cid: str, user_id: Optional[str], model: str, prompt: str,

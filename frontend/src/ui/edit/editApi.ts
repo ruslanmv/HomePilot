@@ -249,7 +249,7 @@ export function extractImages(raw: Record<string, unknown>): string[] {
   const out: string[] = []
 
   const add = (u: unknown) => {
-    if (typeof u === 'string' && (u.startsWith('http://') || u.startsWith('https://'))) {
+    if (typeof u === 'string' && (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('/'))) {
       out.push(u)
     }
   }

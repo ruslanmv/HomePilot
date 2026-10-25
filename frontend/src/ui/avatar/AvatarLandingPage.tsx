@@ -23,6 +23,7 @@ import {
   EyeOff,
 } from 'lucide-react'
 import type { GalleryItem } from './galleryTypes'
+import { HostedTabNote } from '../lib/HostedTabNote'
 import { SCENARIO_TAG_META } from './galleryTypes'
 import { resolveFileUrl } from '../resolveFileUrl'
 
@@ -138,6 +139,7 @@ export function AvatarLandingPage({
               <div className="text-[10px] text-white/35 leading-tight">
                 {rootCharacters.length > 0 ? `${rootCharacters.length} character${rootCharacters.length !== 1 ? 's' : ''}` : 'Gallery'}
               </div>
+              <HostedTabNote tabId="avatar" />
             </div>
           </div>
         </div>

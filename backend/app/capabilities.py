@@ -169,6 +169,16 @@ async def get_capabilities():
         installed_models=upscale_model_ids,
     )
 
+    # Masked edit, outpaint, and background replace are ComfyUI workflows. Reporting
+    # them available when ComfyUI is not configured made those buttons look ready
+    # on the Space, then fail. A linked Hugging Face account does not run them.
+    from .config import COMFY_BASE_URL as _comfy_url
+    comfy_ok = bool((_comfy_url or "").strip())
+    comfy_reason = None if comfy_ok else (
+        "ComfyUI is not running here. Connect Hugging Face for new images and video. "
+        "Masked edits, outpaint, and background replace need ComfyUI on a computer with a GPU."
+    )
+
     # Background remove - requires rembg or ComfyUI-rembg custom node
     rembg_ok, rembg_reason = _check_rembg()
     capabilities["background_remove"] = CapabilityStatus(
@@ -179,9 +189,10 @@ async def get_capabilities():
     )
 
     capabilities["background_replace"] = CapabilityStatus(
-        available=True,  # ComfyUI handles this
+        available=comfy_ok,
+        reason=comfy_reason,
         endpoint="/v1/background",
-        model="SD Inpainting",
+        model="SD Inpainting" if comfy_ok else None,
     )
 
     capabilities["background_blur"] = CapabilityStatus(
@@ -193,16 +204,18 @@ async def get_capabilities():
 
     # Outpaint capability
     capabilities["outpaint"] = CapabilityStatus(
-        available=True,  # ComfyUI handles this
+        available=comfy_ok,
+        reason=comfy_reason,
         endpoint="/v1/outpaint",
-        model="SD Outpainting",
+        model="SD Outpainting" if comfy_ok else None,
     )
 
     # Inpaint capability
     capabilities["inpaint"] = CapabilityStatus(
-        available=True,  # ComfyUI handles this
+        available=comfy_ok,
+        reason=comfy_reason,
         endpoint="/v1/edit",
-        model="SD Inpainting",
+        model="SD Inpainting" if comfy_ok else None,
     )
 
     return CapabilitiesResponse(capabilities=capabilities)

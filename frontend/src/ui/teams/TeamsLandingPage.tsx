@@ -22,6 +22,7 @@ import {
   Wifi,
 } from 'lucide-react'
 import type { MeetingRoom, PersonaSummary } from './types'
+import { HostedTabNote } from '../lib/HostedTabNote'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -103,6 +104,7 @@ export function TeamsLandingPage({
             <div className="text-xs text-white/35 leading-tight mt-0.5">
               {rooms.length > 0 ? `${rooms.length} session${rooms.length !== 1 ? 's' : ''}` : 'Meeting Rooms'}
             </div>
+            <HostedTabNote tabId="teams" />
           </div>
         </div>
 

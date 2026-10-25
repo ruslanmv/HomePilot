@@ -19,7 +19,7 @@ CATALOG: List[Dict[str, Any]] = [
     {
         "id": "huggingface",
         "name": "Hugging Face",
-        "description": "Chat, vision, image and video models on your Hugging Face account.",
+        "description": "Chat, vision, images, video, and instruction edits on your Hugging Face account.",
         "auth": "token",
         "token_url": "https://huggingface.co/settings/tokens/new?tokenType=fineGrained",
         "token_hint": "A token with the “Make calls to Inference Providers” permission.",

@@ -45,15 +45,24 @@ def _cloud_url() -> str:
 
 @router.get("/v1/edition")
 def edition() -> Dict[str, Any]:
-    """Which HomePilot edition is this — and can it act as a GPU provider?"""
+    """Which HomePilot edition is this — and can it act as a GPU provider?
+
+    ``tabs`` is the sidebar. On the web edition a linked Hugging Face account
+    turns on the rows with ``needs_hugging_face``; rows with ``available`` false
+    need a computer with a GPU and stay off on the Space.
+    """
+    from .hosted_tabs import tab_status
+
     ed = _edition()
+    web = ed == "web"
     return {
         "edition": ed,
-        "is_web": ed == "web",
+        "is_web": web,
         "is_local": ed == "local",
         # Only a local install can expose its own GPU as a provider node.
         "can_provide_gpu": ed == "local",
         "cloud_url": _cloud_url(),
+        "tabs": tab_status(web=web),
     }
 
 

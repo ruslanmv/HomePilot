@@ -1401,6 +1401,12 @@ async def orchestrate(
         print(f"[EDIT] Cleaned prompt: '{clean_prompt[:100]}...'")
         print(f"[EDIT] Workflow: {workflow_name}")
         print(f"[EDIT] Mode: {flags.mode}, Steps: {flags.steps}, CFG: {flags.cfg}, Denoise: {flags.denoise}")
+        from .connectors import huggingface as _hf_edit
+        if _hf_edit.hosted_media():
+            return await _hf_edit.edit_image_turn(
+                cid=cid, user_id=user_id, model=img_model or "",
+                image_url=image_url, prompt=text_in,
+            )
         if flags.loras:
             lora_desc = [lr["id"] + "@" + f"{lr.get('weight', 0.8):.2f}" for lr in flags.loras]
             print(f"[EDIT] LoRAs: {lora_desc}")
@@ -1572,6 +1578,13 @@ async def orchestrate(
             from .connectors import huggingface as _hf
             _hf_image = _hf.route_image(img_model)
             if _hf_image:
+                # A reference picture is an edit, not a brand-new image.
+                if img_reference:
+                    return await _hf.edit_image_turn(
+                        cid=cid, user_id=user_id, model=_hf_image,
+                        image_url=img_reference,
+                        prompt=refined.get("prompt") or text_in,
+                    )
                 return await _hf.generate_image_turn(
                     cid=cid, user_id=user_id, model=_hf_image,
                     prompt=refined.get("prompt") or text_in,

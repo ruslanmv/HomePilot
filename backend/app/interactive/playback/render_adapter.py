@@ -152,6 +152,11 @@ async def render_scene_async(
         workflow, media_type,
         extra={"session_id": session_id},
     )
+    hosted_id = await _hosted_still(
+        scene_prompt=scene_prompt, session_id=session_id, user_id=user_id,
+    )
+    if hosted_id:
+        return hosted_id
     try:
         result = await asyncio.wait_for(
             _run_workflow_off_thread(workflow, variables),
@@ -614,6 +619,32 @@ def _first_urls(candidate: Any) -> List[str]:
         if isinstance(item, str) and item.strip():
             out.append(item.strip())
     return out
+
+
+async def _hosted_still(*, scene_prompt: str, session_id: str, user_id: str) -> Optional[str]:
+    """Draw the scene with the linked account when this machine has no ComfyUI.
+
+    The player already shows a still for the length of the scene, which is what
+    a Space can do. Video workflows stay on a computer with a GPU.
+    """
+    try:
+        from ...connectors import huggingface as hf
+        if not hf.hosted_media():
+            return None
+        url = await hf.still_file_url(user_id=user_id or None, prompt=scene_prompt)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("playback_hosted_still_failed: %s", str(exc)[:200])
+        return None
+    if not url:
+        return None
+    try:
+        return _register(
+            storage_key=url, kind="image",
+            session_id=session_id, scene_prompt=scene_prompt, user_id=user_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("playback_hosted_still_register_failed: %s", str(exc)[:200])
+        return None
 
 
 def _register(

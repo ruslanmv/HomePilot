@@ -13,16 +13,26 @@
  */
 import { resolveBackendUrl } from './backendUrl'
 
+export interface HostedTab {
+  id: string
+  label: string
+  unlocked_by: string
+  available: boolean
+  needs_hugging_face: boolean
+  works: string
+}
+
 export interface EditionInfo {
   edition: 'web' | 'local'
   is_web: boolean
   is_local: boolean
   can_provide_gpu: boolean
   cloud_url: string
+  tabs: HostedTab[]
 }
 
 const FALLBACK: EditionInfo = {
-  edition: 'web', is_web: true, is_local: false, can_provide_gpu: false, cloud_url: '',
+  edition: 'web', is_web: true, is_local: false, can_provide_gpu: false, cloud_url: '', tabs: [],
 }
 
 let cache: EditionInfo | null = null
@@ -36,12 +46,16 @@ export async function getEdition(): Promise<EditionInfo> {
       const res = await fetch(`${resolveBackendUrl()}/v1/edition`, { credentials: 'include' })
       if (res.ok) {
         const d = await res.json()
+        const tabs: HostedTab[] = Array.isArray(d.tabs)
+          ? d.tabs.filter((row: HostedTab) => row && typeof row.id === 'string' && typeof row.works === 'string')
+          : []
         cache = {
           edition: d.edition === 'local' ? 'local' : 'web',
           is_web: !!d.is_web,
           is_local: !!d.is_local,
           can_provide_gpu: !!d.can_provide_gpu,
           cloud_url: d.cloud_url || '',
+          tabs,
         }
         return cache
       }

@@ -9,7 +9,8 @@ import { isOllaBridgeChatRoute } from './components/ollabridge/chatRoute'
 import { isAccountsUxEnabled } from './account/featureFlags'
 import { GENERATED_CATALOGS } from '../generated/modelCatalog'
 import { ModelAdvisorCard } from './components/ModelAdvisorCard'
-import HfModelPicker, { HF_TYPES, type HfModelType } from './connectors/HfModelPicker'
+import HfModelPicker from './connectors/HfModelPicker'
+import { huggingFaceListType, isComfyOnlyType, modelsProviderFor } from './lib/modelsProvider'
 import { setAdvisorEnabled, useAdvisorEnabled, type AdvisorKind, type CurrentModels } from './modelAdvisor'
 
 /** The Model Type choices, in order, with the icon and label shown for each. */
@@ -112,6 +113,7 @@ export type ModelsParams = {
 
   // Defaults from Enterprise Settings
   providerChat?: string
+  providerMultimodal?: string
   providerImages?: string
   providerVideo?: string
 
@@ -467,33 +469,25 @@ export default function ModelsView(props: ModelsParams) {
     // Keep OllaBridge selected across Model Type tabs — it spans all types and
     // its content is type-filtered, so don't reset it to a local provider.
     if (providerRef.current === 'ollabridge') return
-    // When modelType changes, update provider + baseUrl defaults
-    if (modelType === 'chat') {
-      // Switch to a chat provider (prefer the one from settings, or default to ollama)
-      const newProvider = chatProviderDefault()
-      setProvider(newProvider)
+    // Chat that was pointed at an OllaBridge gateway stays there.
+    if (modelType === 'chat' && isOllaBridgeChatRoute(props.providerChat, props.baseUrlChat)) {
+      setProvider('ollabridge')
       setBaseUrl(props.baseUrlChat || '')
-    } else if (modelType === 'multimodal') {
-      // Multimodal models are served via Ollama (vision-capable models)
-      setProvider('ollama')
-      setBaseUrl(props.baseUrlChat || '')
-    } else if (modelType === 'image') {
-      // Switch to comfyui for images
-      setProvider('comfyui')
-      setBaseUrl(props.baseUrlImages || '')
-    } else if (modelType === 'addons') {
-      // Switch to comfyui for addons (extensions)
-      setProvider('comfyui')
-      setBaseUrl(props.baseUrlImages || '')
-    } else if (modelType === 'lora') {
-      // LoRA tab — uses own registry, no provider needed
-      setProvider('comfyui')
-      setBaseUrl(props.baseUrlImages || '')
-    } else {
-      // Switch to comfyui for videos
-      setProvider('comfyui')
-      setBaseUrl(props.baseUrlVideo || '')
+      return
     }
+    // Follow Settings. On the Space those are Hugging Face for chat, vision,
+    // images, and video, so linking an account opens that list instead of the
+    // ComfyUI installer. Upscale, LoRA, and add-ons stay on ComfyUI.
+    const next = modelsProviderFor(modelType, {
+      providerChat: props.providerChat,
+      providerMultimodal: props.providerMultimodal,
+      providerImages: props.providerImages,
+      providerVideo: props.providerVideo,
+    })
+    setProvider(next)
+    if (modelType === 'chat' || modelType === 'multimodal') setBaseUrl(props.baseUrlChat || '')
+    else if (modelType === 'video') setBaseUrl(props.baseUrlVideo || '')
+    else setBaseUrl(props.baseUrlImages || '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelType])
 
@@ -1909,6 +1903,12 @@ export default function ModelsView(props: ModelsParams) {
               synced from the user's linked HomePilot / GPU nodes (relay), shown
               for whichever Model Type tab is active. When selected it replaces
               the local catalog for this tab. */}
+          {isComfyOnlyType(modelType) && props.providerImages === 'huggingface' && (
+            <p className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[13px] leading-relaxed text-white/70">
+              Upscale, LoRA, and add-ons install into ComfyUI on a computer with a GPU. A linked Hugging Face account does not run them.
+              Chat, vision, images, and video on that account are the other model types.
+            </p>
+          )}
           {ollaBridgeChat ? (
             /* Chat / Multimodal: two independent connections — OllaBridge Local
                (your own gateway) and OllaBridge Cloud (your account's machines). */
@@ -1918,8 +1918,15 @@ export default function ModelsView(props: ModelsParams) {
               backendApiKey={authKey}
               role={modelType === 'multimodal' ? 'vision' : 'chat'}
             />
-          ) : provider === 'huggingface' && (HF_TYPES as string[]).includes(modelType) ? (
-            <HfModelPicker backendUrl={backendUrl} type={modelType as HfModelType} />
+          ) : provider === 'huggingface' && huggingFaceListType(modelType) ? (
+            <>
+              {modelType === 'edit' && (
+                <p className="text-[13px] leading-relaxed text-white/55">
+                  A linked account edits by drawing a new image from your instruction. Masked inpaint stays on ComfyUI.
+                </p>
+              )}
+              <HfModelPicker backendUrl={backendUrl} type={huggingFaceListType(modelType)!} />
+            </>
           ) : provider === 'ollabridge' && !isAccountsUxEnabled() ? (
             <OllaBridgeModels filterType={modelType} />
           ) : (

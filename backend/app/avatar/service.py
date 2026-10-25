@@ -11,7 +11,8 @@ The backend never imports torch or any ML library.
 Fallback chain for studio_random:
   1. Avatar-service (StyleGAN) — real inference if STYLEGAN_ENABLED + weights loaded
   2. ComfyUI creative mode — photorealistic diffusion-based face generation
-  3. Built-in placeholder — procedural Pillow faces (last resort)
+  3. Hugging Face — a linked account (or the Space token) draws the face
+  4. Built-in placeholder — procedural Pillow faces (last resort)
 """
 
 from __future__ import annotations
@@ -116,6 +117,9 @@ async def generate(req: AvatarGenerateRequest) -> AvatarGenerateResponse:
                 warnings=[],
             )
         except ComfyUIUnavailable as exc:
+            hosted = await _faces_from_hugging_face(req)
+            if hosted is not None:
+                return hosted
             raise FeatureUnavailable(str(exc)) from exc
 
     raise FeatureUnavailable(f"Unsupported mode: {req.mode}")
@@ -245,6 +249,10 @@ async def _fallback_comfyui_or_placeholder(
         except (ComfyUIUnavailable, Exception) as comfy_exc:
             _log.warning("[AvatarGen] ComfyUI creative mode failed: %s", comfy_exc)
 
+    hosted = await _faces_from_hugging_face(req)
+    if hosted is not None:
+        return hosted
+
     # ── Last resort: placeholder ──
     _log.warning(
         "[AvatarGen] Step 4: All AI generators unavailable. Using placeholder. "
@@ -261,6 +269,41 @@ async def _fallback_comfyui_or_placeholder(
         warnings=["No AI generator available. Using placeholder faces. "
                    "Start ComfyUI or the avatar-service for real AI faces."],
     )
+
+async def _faces_from_hugging_face(req: AvatarGenerateRequest) -> AvatarGenerateResponse | None:
+    """Draw a face on the linked account when ComfyUI and StyleGAN are absent."""
+    from ..connectors import huggingface as hf
+
+    if not (hf.is_web() or hf.token()):
+        return None
+    prompt = (req.prompt or "").strip() or (
+        "Solo portrait photograph of one person, front-facing, looking at the camera, "
+        "photorealistic, natural skin, soft studio light"
+    )
+    # One or two faces. A full grid would spend the account's credits before the person picks.
+    count = max(1, min(int(req.count or 1), 2))
+    results: List[AvatarResult] = []
+    for _ in range(count):
+        try:
+            url = await hf.still_file_url(user_id=None, prompt=prompt)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("[AvatarGen] Hugging Face face failed: %s", exc)
+            url = None
+        if not url:
+            break
+        results.append(AvatarResult(url=url, metadata={"provider": "huggingface"}))
+    if not results:
+        return None
+    _log.info("[AvatarGen] Drew %d face(s) with Hugging Face", len(results))
+    return AvatarGenerateResponse(
+        mode=req.mode,
+        results=results,
+        warnings=[
+            "Drawn with the linked Hugging Face account. "
+            "Outfits and identity lock need a computer with a GPU."
+        ],
+    )
+
 
 async def _generate_quickface(req: AvatarGenerateRequest) -> AvatarGenerateResponse:
     """studio_quickface: avatar-service /quickface → placeholder fallback."""
@@ -290,7 +333,10 @@ async def _generate_quickface(req: AvatarGenerateRequest) -> AvatarGenerateRespo
         return AvatarGenerateResponse(mode=req.mode, results=results, warnings=warnings)
 
     except Exception as exc:
-        _log.warning("[AvatarGen] QuickFace: avatar-service failed (%s), using placeholder", exc)
+        _log.warning("[AvatarGen] QuickFace: avatar-service failed (%s), trying Hugging Face", exc)
+        hosted = await _faces_from_hugging_face(req)
+        if hosted is not None:
+            return hosted
         results = generate_placeholder_faces(count=req.count, seed=req.seed, truncation=req.truncation)
         return AvatarGenerateResponse(
             mode=req.mode,

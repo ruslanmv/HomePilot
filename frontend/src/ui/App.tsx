@@ -7352,6 +7352,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
             providerChat={settingsDraft.providerChat}
+            providerMultimodal={settingsDraft.providerMultimodal}
             providerImages={settingsDraft.providerImages}
             providerVideo={settingsDraft.providerVideo}
             baseUrlChat={settingsDraft.baseUrlChat}
