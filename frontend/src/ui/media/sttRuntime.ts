@@ -463,9 +463,12 @@ export function ensureSttRuntimeResolved(
   if (!options.force && state.status === 'ready') return Promise.resolve(state);
   if (inFlight) return inFlight;
 
-  const preference = getSttPreferences().chat;
+  // The preference is read once the server has answered, not before: the capability can
+  // change what an undecided person gets (the web edition recommends its own model), and a
+  // preference read first decided the first turn with a stale default — the composer started
+  // the browser recognizer, then switched engines with that turn already lost.
   inFlight = Promise.all([getSttCapability({ force: options.force }), readRouting()])
-    .then(([capability, routing]) => decide(capability, preference, routing))
+    .then(([capability, routing]) => decide(capability, getSttPreferences().chat, routing))
     .finally(() => { inFlight = null; });
   return inFlight;
 }

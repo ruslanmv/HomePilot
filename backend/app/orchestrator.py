@@ -907,14 +907,16 @@ async def orchestrate(
 
     # --- Animate ---
     if (m == "animate") or (image_url and ANIM_RE.search(text_in)):
-        # A video model picked from Hugging Face in Models (``hf:<repo>``): the user's
-        # account makes the video — from the image when there is one, else from the text.
-        if (vid_model or "").startswith("hf:"):
-            from .connectors import huggingface as _hf
+        # A video model picked from Hugging Face in Models (``hf:<repo>``), or any video on the
+        # web edition without ComfyUI: Hugging Face makes it — from the image when there is
+        # one, else from the text.
+        from .connectors import huggingface as _hf
+        _hf_video = _hf.route_video(vid_model)
+        if _hf_video:
             from .config import UPLOAD_DIR as _upload_dir
             from pathlib import Path
             return await _hf.generate_video_turn(
-                cid=cid, user_id=user_id, model=vid_model,
+                cid=cid, user_id=user_id, model=_hf_video,
                 prompt=_clean_for_imagine(text_in) if not image_url else URL_RE.sub("", text_in).strip(),
                 image_url=image_url, upload_path=Path(_upload_dir),
             )
@@ -1564,12 +1566,14 @@ async def orchestrate(
             # at SDXL resolutions (1024x1024). We use get_model_settings() to
             # automatically select the correct dimensions based on model architecture.
 
-            # An image model picked from Hugging Face in Models (``hf:<repo>``): the user's
-            # account makes the image, with the same refined prompt, instead of ComfyUI.
-            if (img_model or "").startswith("hf:"):
-                from .connectors import huggingface as _hf
+            # An image model picked from Hugging Face in Models (``hf:<repo>``), or any image on
+            # the web edition without ComfyUI: Hugging Face makes it, with the same refined
+            # prompt, instead of failing with "set up ComfyUI".
+            from .connectors import huggingface as _hf
+            _hf_image = _hf.route_image(img_model)
+            if _hf_image:
                 return await _hf.generate_image_turn(
-                    cid=cid, user_id=user_id, model=img_model,
+                    cid=cid, user_id=user_id, model=_hf_image,
                     prompt=refined.get("prompt") or text_in,
                     negative=refined.get("negative_prompt"),
                     aspect_ratio=img_aspect_ratio or refined.get("aspect_ratio", "1:1"),

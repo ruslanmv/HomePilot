@@ -151,8 +151,17 @@ async def voice_stt_status() -> Dict[str, Any]:
     browser's own recognizer. Never a 404 and never a 500: collapsing "not
     installed" into an error is what makes a client retry forever instead of
     falling back.
+
+    ``recommended_engine`` is what a person who has not chosen should get. Only the hosted
+    web edition recommends one — this server's model, when it can transcribe: it works in
+    every browser and inside the huggingface.co frame, where the browser recognizer depends
+    on a remote service from a cross-origin frame. A local install recommends nothing and
+    keeps the browser default (a saved choice always wins on the client).
     """
-    return stt_capability()
+    info = stt_capability()
+    from ..config import HOMEPILOT_EDITION
+    info["recommended_engine"] = "homepilot" if HOMEPILOT_EDITION == "web" and info.get("available") else None
+    return info
 
 
 async def _transcribe_bytes(audio: bytes, fmt: str) -> Dict[str, Any]:

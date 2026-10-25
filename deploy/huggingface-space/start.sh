@@ -234,4 +234,10 @@ export EXPERT_LOCAL_FAST_MODEL=${EXPERT_LOCAL_FAST_MODEL:-$OLLAMA_MODEL}
 # package, which this image does not ship — so there are none to offer. Off unless overridden.
 export EXPERT_TOOLS_ENABLED=${EXPERT_TOOLS_ENABLED:-0}
 
+# Speech-to-text sized for CPU Basic (2 vCPU). Measured on a 2-thread CPU: whisper "base" with
+# int8 transcribes a 4 s turn in ~1.3 s with the same text, against ~6.5 s for the default
+# "small". Voice turns and meetings both use it; an explicit WHISPER_MODEL still wins.
+export WHISPER_MODEL=${WHISPER_MODEL:-base}
+export WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
+
 exec python3 /app/hf_wrapper.py

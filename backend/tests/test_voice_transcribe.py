@@ -47,6 +47,30 @@ def _use(monkeypatch, provider):
     return provider
 
 
+class TestRecommendedEngine:
+    """The hosted web edition recommends its own model to anyone who has not chosen: the browser
+    recognizer depends on a remote service from inside the huggingface.co frame, while this
+    server's model works in every browser. A local install recommends nothing."""
+
+    def test_web_edition_recommends_this_server(self, client, monkeypatch):
+        import sys
+        monkeypatch.setattr(sys.modules["app.config"], "HOMEPILOT_EDITION", "web")
+        _use(monkeypatch, _StubProvider(name="whisper-local"))
+        assert client.get("/v1/voice/stt/status").json()["recommended_engine"] == "homepilot"
+
+    def test_not_when_nothing_can_transcribe(self, client, monkeypatch):
+        import sys
+        monkeypatch.setattr(sys.modules["app.config"], "HOMEPILOT_EDITION", "web")
+        _use(monkeypatch, _StubProvider(available=False))
+        assert client.get("/v1/voice/stt/status").json()["recommended_engine"] is None
+
+    def test_local_install_recommends_nothing(self, client, monkeypatch):
+        import sys
+        monkeypatch.setattr(sys.modules["app.config"], "HOMEPILOT_EDITION", "local")
+        _use(monkeypatch, _StubProvider(name="whisper-local"))
+        assert client.get("/v1/voice/stt/status").json()["recommended_engine"] is None
+
+
 class TestStatus:
     def test_reports_availability_without_ever_erroring(self, client):
         # A status route that 404s or 500s collapses "not installed" into

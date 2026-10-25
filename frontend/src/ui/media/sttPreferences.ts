@@ -69,6 +69,31 @@ export const DEFAULT_STT_PREFERENCES: SttPreferences = {
 
 const VALID: readonly SttEnginePreference[] = ['web-speech', 'homepilot', 'auto'];
 
+/**
+ * The server's recommendation for a person who has not chosen (``recommended_engine`` from
+ * `GET /v1/voice/stt/status`). Only the hosted web edition sends one: there the server's own
+ * model is verified, works in every browser and inside the huggingface.co frame, and records
+ * the selected microphone — while the browser recognizer depends on a Google service from
+ * inside a cross-origin frame. A saved choice always wins over it; a local install sends none,
+ * so the browser default above stands there.
+ */
+let recommendedDefault: SttEnginePreference | null = null;
+
+function defaultPreferences(): SttPreferences {
+  return { chat: recommendedDefault ?? DEFAULT_STT_PREFERENCES.chat };
+}
+
+/** Adopt the server's recommendation as the default, and tell every surface when it changes
+ *  what an undecided person gets. */
+export function setRecommendedSttDefault(preference: SttEnginePreference | null): void {
+  const next = preference && VALID.includes(preference) ? preference : null;
+  if (next === recommendedDefault) return;
+  recommendedDefault = next;
+  if (!hasStoredSttPreferences() && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(STT_PREFERENCES_EVENT, { detail: defaultPreferences() }));
+  }
+}
+
 function safeStorage(): Storage | null {
   try {
     return typeof window !== 'undefined' ? window.localStorage : null;
@@ -83,18 +108,18 @@ function sanitize(raw: unknown): SttPreferences {
   return {
     chat: VALID.includes(chat as SttEnginePreference)
       ? chat as SttEnginePreference
-      : DEFAULT_STT_PREFERENCES.chat,
+      : defaultPreferences().chat,
   };
 }
 
 export function getSttPreferences(): SttPreferences {
   const storage = safeStorage();
-  if (!storage) return { ...DEFAULT_STT_PREFERENCES };
+  if (!storage) return defaultPreferences();
   try {
     const saved = storage.getItem(STT_PREFERENCES_STORAGE_KEY);
-    return saved ? sanitize(JSON.parse(saved)) : { ...DEFAULT_STT_PREFERENCES };
+    return saved ? sanitize(JSON.parse(saved)) : defaultPreferences();
   } catch {
-    return { ...DEFAULT_STT_PREFERENCES };
+    return defaultPreferences();
   }
 }
 

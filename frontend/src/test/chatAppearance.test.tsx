@@ -11,6 +11,7 @@ import {
   CHAT_APPEARANCE_EVENT,
   CHAT_APPEARANCE_STORAGE_KEY,
   DEFAULT_CHAT_APPEARANCE,
+  assistantAnimates,
   assistantAvatarSlot,
   messageGapClass,
   readChatAppearance,
@@ -26,7 +27,7 @@ afterEach(() => {
 
 describe('preference', () => {
   it('defaults to thumbnails at the start of message groups, normal spacing', () => {
-    expect(DEFAULT_CHAT_APPEARANCE).toEqual({ thumbnails: 'grouped', compact: false, faceZoom: false })
+    expect(DEFAULT_CHAT_APPEARANCE).toEqual({ thumbnails: 'grouped', compact: false, faceZoom: false, assistantAnimation: true })
     expect(readChatAppearance()).toEqual(DEFAULT_CHAT_APPEARANCE)
   })
 
@@ -43,7 +44,7 @@ describe('preference', () => {
     writeChatAppearance({ thumbnails: 'hidden' })
     writeChatAppearance({ compact: true })
     window.removeEventListener(CHAT_APPEARANCE_EVENT, seen)
-    expect(readChatAppearance()).toEqual({ thumbnails: 'hidden', compact: true, faceZoom: false })
+    expect(readChatAppearance()).toEqual({ thumbnails: 'hidden', compact: true, faceZoom: false, assistantAnimation: true })
     expect(seen).toHaveBeenCalledTimes(2)
   })
 })
@@ -144,7 +145,7 @@ describe('Zoom pictures to the face', () => {
     expect(readChatAppearance().faceZoom).toBe(false)
     // A preference saved before the switch existed keeps the original picture too.
     localStorage.setItem(CHAT_APPEARANCE_STORAGE_KEY, JSON.stringify({ thumbnails: 'always', compact: true }))
-    expect(readChatAppearance()).toEqual({ thumbnails: 'always', compact: true, faceZoom: false })
+    expect(readChatAppearance()).toEqual({ thumbnails: 'always', compact: true, faceZoom: false, assistantAnimation: true })
   })
 
   it('is a switch in Settings → Chat → Appearance, saved and announced at once', () => {
@@ -173,5 +174,32 @@ describe("the chat's own settings popover", () => {
     expect(readChatAppearance().thumbnails).toBe('hidden')
     fireEvent.click(screen.getByRole('switch', { name: 'Compact spacing' }))
     expect(readChatAppearance().compact).toBe(true)
+  })
+})
+
+describe('Animate HomePilot', () => {
+  it('is on by default, and a preference saved before the switch existed keeps it on', () => {
+    expect(readChatAppearance().assistantAnimation).toBe(true)
+    localStorage.setItem(CHAT_APPEARANCE_STORAGE_KEY, JSON.stringify({ thumbnails: 'hidden' }))
+    expect(readChatAppearance().assistantAnimation).toBe(true)
+  })
+
+  it('is a switch in Settings → Chat → Appearance that turns HomePilot\'s animations off', () => {
+    const announced = vi.fn()
+    window.addEventListener(CHAT_APPEARANCE_EVENT, announced)
+    render(<ChatAppearanceSettings previewName="HomePilot" />)
+    const toggle = screen.getByRole('switch', { name: 'Animate HomePilot' })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(readChatAppearance().assistantAnimation).toBe(false)
+    expect(JSON.parse(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY) || '{}').assistantAnimation).toBe(false)
+    expect(announced).toHaveBeenCalled()
+    window.removeEventListener(CHAT_APPEARANCE_EVENT, announced)
+  })
+
+  it('off means still, whatever the Motion setting says', () => {
+    writeChatAppearance({ assistantAnimation: false })
+    expect(assistantAnimates()).toBe(false)
   })
 })
