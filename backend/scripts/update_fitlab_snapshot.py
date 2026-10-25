@@ -29,6 +29,9 @@ SOURCES = {
     "registry.json": ("registry-latest", "master"),
     "media_registry.json": ("registry-latest", "master"),
     "gpu_catalog.json": ("master",),
+    # The inference lane (hosted models HomePilot can run). Optional: until FitLab publishes it,
+    # the bundled copy stays as it is rather than failing the refresh.
+    "inference_registry.json": ("registry-latest", "master"),
 }
 LLM_CATEGORIES = {"text-generation", "image-text-to-text"}
 LLM_FIELDS = ("id", "hf_id", "category", "capabilities", "params_b", "active_params_b", "license",
@@ -113,9 +116,15 @@ def main(argv: list[str] | None = None) -> int:
     gpus = trim_gpus(_get("gpu_catalog.json", args.from_dir))
     if not reg["models"] or not media.get("models") or not gpus["gpus"]:
         raise SystemExit("refusing to write an empty snapshot")
-    changed = [name for name, doc in (("fitlab_registry.snapshot.json", reg),
-                                      ("fitlab_media.snapshot.json", media),
-                                      ("fitlab_gpus.json", gpus)) if _write(OUT / name, doc)]
+    outputs = [("fitlab_registry.snapshot.json", reg), ("fitlab_media.snapshot.json", media),
+               ("fitlab_gpus.json", gpus)]
+    try:
+        inference = _get("inference_registry.json", args.from_dir)
+        if inference.get("kinds"):
+            outputs.append(("fitlab_inference.snapshot.json", inference))
+    except Exception as exc:  # noqa: BLE001 — optional feed
+        print(f"inference lane not published yet ({exc}); keeping the bundled copy")
+    changed = [name for name, doc in outputs if _write(OUT / name, doc)]
     print(f"registry {reg['generated_at']}: {len(reg['models'])} installable chat/vision models · "
           f"media {media['generated_at']}: {len(media['models'])} models · {len(gpus['gpus'])} GPU profiles")
     print("changed: " + (", ".join(changed) if changed else "nothing"))
