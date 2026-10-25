@@ -9,6 +9,11 @@
  *   faceZoom    small round pictures (chat header, replies, Conversation Hub,
  *               Voice) use the backend's crop around the face. Off by default:
  *               the original picture is shown, as it was saved.
+ *   assistantAnimation
+ *               HomePilot's own animations: its face, the first conversation's
+ *               lines playing in and the typing dots. On by default; off keeps it
+ *               still. The app-wide Motion setting and the OS "reduce motion"
+ *               switch turn them off as well (assistantAnimates).
  *
  * Only the avatar beside chat messages follows `thumbnails`: the project's
  * picture in the chat header, on its card, in the Conversation Hub and in
@@ -18,13 +23,14 @@
  * `hp:chat-appearance-change` event so an open chat updates at once.
  */
 import { useEffect, useState } from 'react'
+import { motionAllowed, useMotionPrefs } from './motion/prefs'
 
 export type PersonaThumbnails = 'always' | 'grouped' | 'hidden'
-export type ChatAppearance = { thumbnails: PersonaThumbnails; compact: boolean; faceZoom: boolean }
+export type ChatAppearance = { thumbnails: PersonaThumbnails; compact: boolean; faceZoom: boolean; assistantAnimation: boolean }
 
 export const CHAT_APPEARANCE_STORAGE_KEY = 'homepilot_chat_appearance'
 export const CHAT_APPEARANCE_EVENT = 'hp:chat-appearance-change'
-export const DEFAULT_CHAT_APPEARANCE: ChatAppearance = { thumbnails: 'grouped', compact: false, faceZoom: false }
+export const DEFAULT_CHAT_APPEARANCE: ChatAppearance = { thumbnails: 'grouped', compact: false, faceZoom: false, assistantAnimation: true }
 
 const THUMBNAILS: readonly PersonaThumbnails[] = ['always', 'grouped', 'hidden']
 
@@ -43,6 +49,8 @@ export function readChatAppearance(): ChatAppearance {
       thumbnails: THUMBNAILS.includes(parsed.thumbnails) ? parsed.thumbnails : DEFAULT_CHAT_APPEARANCE.thumbnails,
       compact: typeof parsed.compact === 'boolean' ? parsed.compact : DEFAULT_CHAT_APPEARANCE.compact,
       faceZoom: typeof parsed.faceZoom === 'boolean' ? parsed.faceZoom : DEFAULT_CHAT_APPEARANCE.faceZoom,
+      assistantAnimation: typeof parsed.assistantAnimation === 'boolean'
+        ? parsed.assistantAnimation : DEFAULT_CHAT_APPEARANCE.assistantAnimation,
     }
   } catch {
     return { ...DEFAULT_CHAT_APPEARANCE }
@@ -76,6 +84,18 @@ export function useChatAppearance(): ChatAppearance {
     }
   }, [])
   return prefs
+}
+
+/** Whether HomePilot's own animations run: its switch here, the Motion level and the OS. */
+export function assistantAnimates(appearance: ChatAppearance = readChatAppearance()): boolean {
+  return appearance.assistantAnimation && motionAllowed()
+}
+
+/** {@link assistantAnimates}, kept up to date when any of the three changes. */
+export function useAssistantAnimates(): boolean {
+  const appearance = useChatAppearance()
+  const motion = useMotionPrefs()
+  return appearance.assistantAnimation && motionAllowed(motion)
 }
 
 /**
