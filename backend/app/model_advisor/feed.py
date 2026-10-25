@@ -31,10 +31,13 @@ import httpx
 from .. import config
 
 DATA_DIR = Path(__file__).parent / "data"
-SNAPSHOTS = {"llm": DATA_DIR / "fitlab_registry.snapshot.json", "media": DATA_DIR / "fitlab_media.snapshot.json"}
+SNAPSHOTS = {"llm": DATA_DIR / "fitlab_registry.snapshot.json", "media": DATA_DIR / "fitlab_media.snapshot.json",
+             "inference": DATA_DIR / "fitlab_inference.snapshot.json"}
 
 _RAW = "https://raw.githubusercontent.com/ruslanmv/fitlab/{ref}/data/{name}"
-_NAMES = {"llm": "registry.json", "media": "media_registry.json"}
+_NAMES = {"llm": "registry.json", "media": "media_registry.json",
+          # hosted models HomePilot can run (Inference Providers), ranked by popularity
+          "inference": "inference_registry.json"}
 MAX_BYTES = 12 * 1024 * 1024
 TIMEOUT_S = 8.0
 
@@ -59,6 +62,11 @@ def urls(kind: str) -> List[str]:
     out: List[str] = []
     if kind == "llm":
         custom = os.getenv("FITLAB_REGISTRY_URL", "").strip()
+    elif kind == "inference":
+        custom = os.getenv("FITLAB_INFERENCE_URL", "").strip()
+        reg = os.getenv("FITLAB_REGISTRY_URL", "").strip()
+        if not custom and reg.endswith("/registry.json"):
+            custom = reg[: -len("registry.json")] + "inference_registry.json"
     else:
         custom = os.getenv("FITLAB_MEDIA_URL", "").strip()
         reg = os.getenv("FITLAB_REGISTRY_URL", "").strip()
@@ -77,6 +85,10 @@ def valid(kind: str, doc: Any) -> bool:
     """Only the shape this module reads — enough to never crash on a bad document."""
     if not isinstance(doc, dict) or not str(doc.get("schema_version", "")).startswith("1"):
         return False
+    if kind == "inference":
+        kinds = doc.get("kinds")
+        return isinstance(kinds, dict) and bool(kinds) and isinstance(doc.get("generated_at"), str) and all(
+            isinstance(k, dict) and isinstance(k.get("lists"), dict) for k in kinds.values())
     models = doc.get("models")
     if not isinstance(models, dict) or not models:
         return False
