@@ -149,42 +149,119 @@
       box-shadow: 0 24px 80px rgba(0,0,0,.5);
     }
 
-    /* ── HomePilot promotional strip ─────────────────
-       Clearly branded marketing copy, never a service-status alert. */
+    /* ── HomePilot promotional carousel ────────────────
+       A subtle, provider-neutral marketing banner matching the site theme. */
     .usage-promo { margin-top: 20px; }
     .usage-promo-inner {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 24px; padding: 18px 24px; border-radius: 14px;
-      background: linear-gradient(110deg, rgba(6,182,212,.12), rgba(59,130,246,.07) 58%, rgba(139,92,246,.09)), var(--bg-card);
-      border: 1px solid rgba(6,182,212,.26);
+      position: relative; isolation: isolate; overflow: hidden;
+      display: grid; grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center; gap: clamp(24px, 4vw, 60px);
+      min-height: 165px; padding: 19px 27px 16px;
+      border: 1px solid rgba(6,182,212,.22); border-radius: 16px;
+      background: linear-gradient(110deg, rgba(6,182,212,.09), rgba(59,130,246,.045) 58%, rgba(139,92,246,.08)), var(--bg-card);
+      box-shadow: 0 16px 45px rgba(0,0,0,.16), inset 0 1px rgba(255,255,255,.04);
+    }
+    .usage-promo-inner::before {
+      content: ''; position: absolute; z-index: -1; pointer-events: none;
+      right: -90px; top: -165px; width: 390px; height: 390px;
+      background: radial-gradient(circle, rgba(59,130,246,.15), transparent 70%);
+    }
+    .usage-promo-inner::after {
+      content: ''; position: absolute; inset: 0 0 auto; height: 1px;
+      background: linear-gradient(90deg, rgba(6,182,212,.45), rgba(139,92,246,.22), transparent);
+      pointer-events: none;
     }
     .usage-promo-copy { min-width: 0; }
+    .usage-promo-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 6px; }
+    .usage-promo-symbol { display: inline-flex; color: #67e8f9; }
+    .usage-promo-symbol svg { width: 14px; height: 14px; }
     .usage-promo-label {
-      display: block; margin-bottom: 5px; color: #67e8f9;
-      font-size: 11px; font-weight: 700; letter-spacing: .1em;
-      line-height: 1.4; text-transform: uppercase;
+      color: #67e8f9; font-size: 11px; font-weight: 750;
+      letter-spacing: .10em; line-height: 1.4; text-transform: uppercase;
+    }
+    .usage-promo-meta-separator { height: 12px; width: 1px; background: rgba(255,255,255,.18); }
+    .usage-promo-open { color: #a1a1aa; font-size: 11px; font-weight: 600; }
+    .usage-promo-slides { display: grid; }
+    .usage-promo-slide {
+      grid-area: 1 / 1; min-width: 0; opacity: 0; visibility: hidden;
+      transform: translateY(7px);
+      transition: opacity .45s ease, transform .45s ease, visibility .45s;
+    }
+    .usage-promo-slide.is-active {
+      opacity: 1; visibility: visible; transform: translateY(0);
+      transition: opacity .45s ease, transform .45s ease, visibility 0s;
     }
     .usage-promo-title {
-      color: var(--text); font-size: 17px;
-      font-weight: 750; line-height: 1.4;
+      color: #fafafa; font-size: clamp(16px, 1.7vw, 19px);
+      font-weight: 750; line-height: 1.36; letter-spacing: -.018em;
     }
     .usage-promo-detail {
-      color: #a1a1aa; font-size: 13px;
-      line-height: 1.55; margin-top: 4px;
+      max-width: 690px; margin-top: 5px; color: #a1a1aa;
+      font-size: 13px; line-height: 1.5;
+    }
+    .usage-promo-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+    .usage-promo-pagination { display: none; align-items: center; gap: 1px; }
+    .usage-promo.is-enhanced .usage-promo-pagination { display: inline-flex; }
+    .usage-promo-dot {
+      display: grid; place-items: center; width: 25px; height: 22px;
+      padding: 0; border: 0; border-radius: 6px; background: transparent;
+      cursor: pointer;
+    }
+    .usage-promo-dot::before {
+      content: ''; display: block; width: 5px; height: 5px;
+      background: #596273; border-radius: 999px; transition: width .3s ease, background .3s ease;
+    }
+    .usage-promo-dot[aria-pressed="true"]::before {
+      width: 20px; background: linear-gradient(90deg, #06b6d4, #8b5cf6);
+    }
+    .usage-promo-dot:hover::before { background: #93c5fd; }
+    .usage-promo-dot:focus-visible { outline: 2px solid #67e8f9; outline-offset: 1px; }
+    .usage-promo-count { display: none; color: #71717a; font-size: 10px; font-variant-numeric: tabular-nums; }
+    .usage-promo.is-enhanced .usage-promo-count { display: inline; }
+    .usage-promo-aside { display: flex; flex-direction: column; align-items: flex-end; gap: 13px; }
+    .usage-promo-chip {
+      display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px;
+      border: 1px solid rgba(103,232,249,.14); border-radius: 999px;
+      background: rgba(6,182,212,.05); color: #a5dce8;
+      font-size: 11px; font-weight: 600; white-space: nowrap;
+    }
+    .usage-promo-chip::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: #22d3ee; box-shadow: 0 0 0 3px rgba(34,211,238,.12);
     }
     .usage-promo-action {
       display: inline-flex; align-items: center; justify-content: center;
-      flex-shrink: 0; min-height: 42px; padding: 10px 18px;
-      border-radius: 9px; background: var(--gradient); color: #fff;
+      gap: 10px; flex-shrink: 0; min-height: 43px; padding: 10px 18px;
+      border-radius: 10px; background: var(--gradient); color: #fff;
       font-size: 13px; font-weight: 700; white-space: nowrap;
-      transition: opacity .2s, transform .2s;
+      box-shadow: 0 4px 18px rgba(59,130,246,.16);
+      transition: opacity .2s, transform .2s, box-shadow .2s;
     }
-    .usage-promo-action:hover { color: #fff; opacity: .92; transform: translateY(-1px); }
+    .usage-promo-action svg { width: 15px; height: 15px; transition: transform .2s; }
+    .usage-promo-action:hover { color: #fff; opacity: .94; transform: translateY(-1px); box-shadow: 0 6px 24px rgba(59,130,246,.26); }
+    .usage-promo-action:hover svg { transform: translateX(2px); }
     .usage-promo-action:focus-visible { outline: 2px solid #67e8f9; outline-offset: 3px; }
+    .usage-promo-sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0;
+      margin: -1px; overflow: hidden; clip: rect(0,0,0,0);
+      white-space: nowrap; border: 0;
+    }
+    @media (max-width: 760px) {
+      .usage-promo-inner { gap: 20px; padding: 18px 20px; }
+      .usage-promo-chip { display: none; }
+    }
     @media (max-width: 640px) {
       .usage-promo { margin-top: 12px; }
-      .usage-promo-inner { flex-direction: column; align-items: flex-start; gap: 13px; padding: 16px; }
-      .usage-promo-title { font-size: 16px; }
+      .usage-promo-inner { grid-template-columns: 1fr; min-height: 0; gap: 13px; padding: 17px; }
+      .usage-promo-title { font-size: 17px; }
+      .usage-promo-aside { align-items: stretch; }
+      .usage-promo-action { width: 100%; }
+      .usage-promo-foot { margin-top: 9px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .usage-promo-slide, .usage-promo-slide.is-active,
+      .usage-promo-action, .usage-promo-action svg,
+      .usage-promo-dot::before { transition: none; transform: none; }
     }
 
     /* ── Capabilities ─────────────────────────────── */
@@ -328,14 +405,70 @@
   <main id="main">
 
   <!-- ── Clearly labeled HomePilot promotion ───────── -->
-  <aside class="container usage-promo" aria-label="HomePilot promotion">
+  <aside class="container usage-promo" data-usage-promo aria-label="Explore HomePilot">
     <div class="usage-promo-inner">
       <div class="usage-promo-copy">
-        <span class="usage-promo-label">HomePilot · Free &amp; Open Source</span>
-        <p class="usage-promo-title">AI usage limit reached? Your creativity doesn't have to stop.</p>
-        <p class="usage-promo-detail">Keep creating with HomePilot &mdash; private AI running on your computer, without subscriptions or cloud message caps for local models.</p>
+        <div class="usage-promo-meta">
+          <span class="usage-promo-symbol" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3l1.7 6.3L20 11l-6.3 1.7L12 19l-1.7-6.3L4 11l6.3-1.7L12 3z"/><path d="M19 18v4M17 20h4"/>
+            </svg>
+          </span>
+          <span class="usage-promo-label">Explore HomePilot</span>
+          <span class="usage-promo-meta-separator" aria-hidden="true"></span>
+          <span class="usage-promo-open">Free &amp; open source</span>
+        </div>
+        <div class="usage-promo-slides" aria-label="Reasons to try HomePilot">
+        <div class="usage-promo-slide is-active" data-promo-slide aria-hidden="false">
+          <p class="usage-promo-title">AI usage limit reached? Keep your momentum.</p>
+          <p class="usage-promo-detail">Explore private AI on your own computer — without hosted chat quotas for locally run models.</p>
+        </div>
+        <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+          <p class="usage-promo-title">Still waiting for your daily reset?</p>
+          <p class="usage-promo-detail">Make the most of your own hardware with HomePilot&#39;s local AI conversations and creative tools.</p>
+        </div>
+        <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+          <p class="usage-promo-title">Weekly quota used up? Your ideas aren't.</p>
+          <p class="usage-promo-detail">Work with local AI models when you&#39;re ready, instead of planning around a cloud usage window.</p>
+        </div>
+        <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+          <p class="usage-promo-title">Out of AI credits? Explore local AI.</p>
+          <p class="usage-promo-detail">HomePilot is free and open source, with local models that don&#39;t require per-message credits.</p>
+        </div>
+        <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+          <p class="usage-promo-title">Image generation limit reached?</p>
+          <p class="usage-promo-detail">Try HomePilot&#39;s image creation tools and keep the creative workflow on your own machine.</p>
+        </div>
+        <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+          <p class="usage-promo-title">Too many requests? Take AI into your own hands.</p>
+          <p class="usage-promo-detail">Run supported models locally and create on your schedule, subject to your hardware&#39;s capabilities.</p>
+        </div>
+        <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+          <p class="usage-promo-title">Premium AI usage exhausted? Make AI your own.</p>
+          <p class="usage-promo-detail">Bring chat, creative tools and AI characters together in one open-source workspace.</p>
+        </div>
+        </div>
+        <div class="usage-promo-foot">
+          <div class="usage-promo-pagination" role="group" aria-label="Choose a promotional message">
+          <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 1: Usage limits" aria-pressed="true"></button>
+          <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 2: Daily resets" aria-pressed="false"></button>
+          <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 3: Weekly quotas" aria-pressed="false"></button>
+          <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 4: Credits" aria-pressed="false"></button>
+          <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 5: Image creation" aria-pressed="false"></button>
+          <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 6: Rate limits" aria-pressed="false"></button>
+          <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 7: Premium limits" aria-pressed="false"></button>
+          </div>
+          <span class="usage-promo-count" aria-hidden="true"><span data-promo-current>01</span> / 07</span>
+        </div>
+        <span class="usage-promo-sr-only" data-promo-announcement aria-live="polite" aria-atomic="true"></span>
       </div>
-      <a class="usage-promo-action" href="getting-started.html" aria-label="Get started with HomePilot for free">Get Started Free &rarr;</a>
+      <div class="usage-promo-aside">
+        <span class="usage-promo-chip">Local model support</span>
+        <a class="usage-promo-action" href="getting-started.html">
+          Get Started Free
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+        </a>
+      </div>
     </div>
   </aside>
 
@@ -482,5 +615,63 @@
       </ul>
     </div>
   </footer>
+  <!-- ── Lightweight HomePilot message rotation ───── -->
+  <script>
+    (() => {
+      const promo = document.querySelector('[data-usage-promo]');
+      if (!promo) return;
+      const slides = Array.from(promo.querySelectorAll('[data-promo-slide]'));
+      const controls = Array.from(promo.querySelectorAll('[data-promo-control]'));
+      if (slides.length < 2 || slides.length !== controls.length) return;
+
+      const counter = promo.querySelector('[data-promo-current]');
+      const announcement = promo.querySelector('[data-promo-announcement]');
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+      let current = 0;
+      let timer = null;
+
+      function show(index, manual = false) {
+        if (index === current) return;
+        current = index;
+        slides.forEach((slide, i) => {
+          const active = i === index;
+          slide.classList.toggle('is-active', active);
+          slide.setAttribute('aria-hidden', String(!active));
+          controls[i].setAttribute('aria-pressed', String(active));
+        });
+        counter.textContent = String(index + 1).padStart(2, '0');
+        // Announce deliberate user changes, not passive auto-rotation.
+        if (manual) announcement.textContent = slides[index].querySelector('.usage-promo-title').textContent;
+      }
+
+      function stop() {
+        if (timer !== null) window.clearInterval(timer);
+        timer = null;
+      }
+      function start() {
+        stop();
+        // Pause for hovering, keyboard focus, hidden tabs and reduced-motion users.
+        if (reducedMotion.matches || document.hidden ||
+            promo.matches(':hover') || promo.matches(':focus-within')) return;
+        timer = window.setInterval(() => show((current + 1) % slides.length), 7000);
+      }
+
+      promo.classList.add('is-enhanced');
+      controls.forEach((button, i) => button.addEventListener('click', () => {
+        show(i, true);
+        start();
+      }));
+      promo.addEventListener('mouseenter', stop);
+      promo.addEventListener('mouseleave', start);
+      promo.addEventListener('focusin', stop);
+      promo.addEventListener('focusout', event => {
+        if (!promo.contains(event.relatedTarget)) window.requestAnimationFrame(start);
+      });
+      document.addEventListener('visibilitychange', start);
+      if (typeof reducedMotion.addEventListener === 'function')
+        reducedMotion.addEventListener('change', start);
+      start();
+    })();
+  </script>
 </body>
 </html>
