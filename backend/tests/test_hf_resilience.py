@@ -92,6 +92,10 @@ def test_chat_falls_back_to_ollama_when_out_of_credits(client, web, mock_outboun
     data = _chat(client, _user(client))
     assert "mock-ollama" in data["text"]
     assert tried == ["meta-llama/Llama-3.1-8B-Instruct"]   # credits: the next model is not tried
+    # The reply says the local model wrote it, and why — not passed off as Hugging Face.
+    by = data["answered_by"]
+    assert by["provider"] == "ollama" and by["fell_back"] is True
+    assert by["reason"] == "Hugging Face credits ran out"
 
 
 def test_chat_tries_the_next_model_when_one_is_down(client, web, mock_outbound, monkeypatch):
@@ -108,6 +112,8 @@ def test_chat_tries_the_next_model_when_one_is_down(client, web, mock_outbound, 
     data = _chat(client, _user(client), provider_model="some-org/retired-model")
     assert tried[0] == "some-org/retired-model" and len(tried) == 2
     assert data["text"] == f"answer from {tried[1]}"
+    # The badge names the model of the chain that actually answered.
+    assert data["answered_by"] == {"provider": "huggingface", "model": tried[1], "fell_back": False, "reason": None}
 
 
 def test_chat_without_any_token_answers_with_ollama(client, web, mock_outbound, monkeypatch):
@@ -115,6 +121,8 @@ def test_chat_without_any_token_answers_with_ollama(client, web, mock_outbound, 
     monkeypatch.delenv("HF_TOKEN", raising=False)
     data = _chat(client, _user(client))
     assert "mock-ollama" in data["text"]
+    assert data["answered_by"]["fell_back"] is True
+    assert data["answered_by"]["reason"] == "Hugging Face is not connected"
 
 
 # ── images ───────────────────────────────────────────────────────────────────

@@ -1,5 +1,10 @@
 name: Sync HomePilot to Hugging Face Spaces
 
+# This ships master to https://huggingface.co/spaces/ruslanmv/HomePilot.
+# The Oracle production site (https://homepilot.ruslanmv.com) is not updated
+# here. It deploys the GHCR image published for the same commit — see
+# .github/workflows/oracle.yml — and both expose the commit at GET /version.
+
 on:
   push:
     branches: [main, master]

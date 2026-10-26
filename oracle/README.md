@@ -102,6 +102,36 @@ and publishes it as:
 ghcr.io/<repository-owner>/homepilot-oracle:<commit-sha>
 ```
 
+It deploys that image to the Oracle VM on its own. A master push starts it when
+either of these changes:
+
+1. **The app.** The same paths `.github/workflows/container.yml` publishes, and
+   the same commit
+   [Sync HomePilot to Hugging Face Spaces](../.github/workflows/sync-hf-spaces.yml)
+   ships to `ruslanmv/HomePilot`. This run waits until
+   `ghcr.io/<owner>/homepilot:<7-char-sha>` exists, then wraps **that tag**.
+   It does not deploy on a failed publish, and a late run for an older commit
+   does not replace a newer image. A second run that follows the GHCR publish
+   (from a push) does not deploy again.
+2. **Only the wrapper** (`oracle/`, `notifications/`, or this workflow). There
+   is no new app image, so the deploy wraps `:latest`, which is the commit the
+   Space is already serving.
+
+A manual **Run workflow** of the container publish, or a GitHub release, has
+no Oracle push waiting on it. Those deploys start when that publish succeeds.
+
+After the container starts, the workflow polls `https://<domain>/version`
+until `sha` is the commit it just deployed. That is the same check the Space
+workflow uses. The Hugging Face Space reports it at
+`https://ruslanmv-homepilot.hf.space/version`.
+
+The wrapper also copies Expert, the bundled persona samples, and
+`scripts/download.py` into the image. The Space Dockerfile has always shipped
+those; the GHCR app image did not, so chat on the VM could not serve the same
+`/v1/expert/*` path the Space uses. `container/Dockerfile` now copies them
+too, and the wrapper still copies them so a deploy of an older base image
+gets this commit's copies.
+
 Configure the `oracle-production` GitHub environment (Settings → Environments →
 `oracle-production`). Non-sensitive values are **environment variables**;
 credentials are **environment secrets**:
@@ -136,9 +166,10 @@ so the manual steps in sections 2–3 above are optional. On each run it:
    `/opt/homepilot`);
 2. runs `install.sh` on first deploy if Docker is absent (also creates swap and
    opens the host firewall);
-3. creates `.env` from `.env.example` the first time, seeding it from
-   `HOMEPILOT_DOMAIN` / `ACME_EMAIL` / `HOMEPILOT_API_KEY` — an existing `.env`
-   is never overwritten, so operator edits survive;
+3. rewrites `.env` from CI on every run (`HOMEPILOT_DOMAIN`, `ACME_EMAIL`,
+   `HOMEPILOT_API_KEY`, the image tag, and `HOMEPILOT_BUILD_SHA`). Hand edits
+   on the box are overwritten; change the `oracle-production` environment
+   instead;
 4. points `HOMEPILOT_IMAGE` at the freshly built tag and runs `deploy.sh` via
    `sudo` (so it works before the new `docker` group membership takes effect).
 
@@ -150,8 +181,9 @@ certificate for an IP address, only for a real domain.
 Make the GHCR package public, or authenticate Docker on the instance with a
 read-only GitHub Packages token before deployment.
 
-The workflow runs automatically after these deployment files are changed on
-`master`, and it can also be started manually.
+The workflow also runs when the GHCR app image is published, so production
+stays on the same commit as the Hugging Face Space. It can be started manually
+with **Run workflow**.
 
 ## Troubleshooting the build
 

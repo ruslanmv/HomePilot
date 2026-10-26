@@ -1,12 +1,39 @@
 name: Oracle Cloud (Always Free) Web Deployment
 
+# Production (homepilot.ruslanmv.com) is a wrapper around the GHCR app image.
+# Rebuilding it only when oracle/ changed left the VM on an old image while
+# the Hugging Face Space and ghcr.io/<owner>/homepilot:latest moved ahead.
+#
+# App commits: this workflow starts with the GHCR publish and waits until
+# ghcr.io/<owner>/homepilot:<7-char-sha> exists, then deploys that exact image.
+# The same paths are listed on container.yml. A manual container publish or a
+# release has no matching push, so workflow_run deploys those.
+# Wrapper-only commits (oracle/, notifications/) deploy immediately and wrap
+# :latest, which is the app commit the Space is already serving.
 on:
+  workflow_run:
+    workflows: ["📦 Publish Container (GHCR)"]
+    types: [completed]
+    branches: [master, main]
   push:
     branches: [master]
     paths:
       - "oracle/**"
       - "notifications/**"
       - ".github/workflows/oracle.yml"
+      # Same inputs as container.yml. An app push must start this workflow
+      # so production deploys that commit; resolve_deploy.py waits for the
+      # image instead of racing the publish.
+      - "container/**"
+      - "backend/**"
+      - "frontend/**"
+      - "packages/**"
+      - "expert/**"
+      - "community/**"
+      - "scripts/download.py"
+      - "tsconfig.base.json"
+      - ".dockerignore"
+      - ".github/workflows/container.yml"
   workflow_dispatch:
     inputs:
       deploy:
@@ -17,6 +44,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   packages: write
 
 concurrency:
@@ -27,12 +55,42 @@ env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/homepilot-oracle
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+      sha: ${{ steps.decide.outputs.sha }}
+      base_image: ${{ steps.decide.outputs.base_image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 300
+
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_EVENT: ${{ github.event.workflow_run.event }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: python3 oracle/resolve_deploy.py
+
   build:
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     outputs:
       image_ref: ${{ steps.image.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: docker/setup-qemu-action@v3
 
@@ -44,8 +102,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - id: built
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - id: image
-        run: echo "ref=${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        run: echo "ref=${IMAGE}:${{ needs.prepare.outputs.sha }}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
         with:
@@ -57,20 +118,28 @@ jobs:
           #   - VM.Standard.E2.1.Micro (AMD x86_64, 1 GB)               -> linux/amd64
           platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:${{ needs.prepare.outputs.sha }}
             ${{ env.IMAGE }}:latest
           build-args: |
-            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/homepilot:latest
+            BASE_IMAGE=${{ needs.prepare.outputs.base_image }}
+            HOMEPILOT_BUILD_SHA=${{ needs.prepare.outputs.sha }}
+            HOMEPILOT_BUILT_AT=${{ steps.built.outputs.at }}
+            HOMEPILOT_BUILD_REF=${{ github.event.workflow_run.head_branch || github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   deploy:
-    if: github.event_name == 'push' || inputs.deploy
-    needs: build
+    needs: [prepare, build]
+    if: >-
+      needs.prepare.outputs.skip != 'true' &&
+      needs.build.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || inputs.deploy)
     runs-on: ubuntu-latest
     environment: oracle-production
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # Fail early with an actionable message instead of appleboy/ssh-action's
       # cryptic "missing server host" when config is absent. Each value is read
@@ -120,13 +189,14 @@ jobs:
           overwrite: true
 
       # Idempotent bootstrap + deploy. Works on a bare instance: creates
-      # /opt/homepilot, installs Docker/swap/firewall on first run, seeds
-      # .env from CI config the first time (preserved on later runs), then
-      # updates the image tag and (re)starts the stack.
+      # /opt/homepilot, installs Docker/swap/firewall on first run, rewrites
+      # .env from CI config (CI is the source of truth), then points
+      # HOMEPILOT_IMAGE at the image just built and (re)starts the stack.
       - name: Bootstrap and deploy
         uses: appleboy/ssh-action@v1.2.0
         env:
           IMAGE_REF: ${{ needs.build.outputs.image_ref }}
+          HOMEPILOT_BUILD_SHA: ${{ needs.prepare.outputs.sha }}
           HOMEPILOT_DOMAIN: ${{ vars.HOMEPILOT_DOMAIN || secrets.HOMEPILOT_DOMAIN }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL || secrets.ACME_EMAIL }}
           API_KEY: ${{ secrets.HOMEPILOT_API_KEY || secrets.API_KEY }}
@@ -147,7 +217,7 @@ jobs:
           username: ${{ vars.ORACLE_USER || secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
           port: ${{ vars.ORACLE_SSH_PORT || secrets.ORACLE_SSH_PORT || 22 }}
-          envs: IMAGE_REF,HOMEPILOT_DOMAIN,ACME_EMAIL,API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY,OLLABRIDGE_CLOUD_URL,OLLABRIDGE_CLOUD_TOKEN,HOMEPILOT_MIRROR_BFF_ENABLED,HOMEPILOT_BFF_SESSION_ENABLED,HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED
+          envs: IMAGE_REF,HOMEPILOT_BUILD_SHA,HOMEPILOT_DOMAIN,ACME_EMAIL,API_KEY,OPENAI_API_KEY,ANTHROPIC_API_KEY,OLLABRIDGE_CLOUD_URL,OLLABRIDGE_CLOUD_TOKEN,HOMEPILOT_MIRROR_BFF_ENABLED,HOMEPILOT_BFF_SESSION_ENABLED,HOMEPILOT_ACCOUNT_PROVIDERS_ENABLED
           script_stop: true
           script: |
             set -Eeuo pipefail
@@ -181,6 +251,7 @@ jobs:
               echo "HOMEPILOT_DOMAIN=${HOMEPILOT_DOMAIN}"
               echo "ACME_EMAIL=${ACME_EMAIL}"
               echo "HOMEPILOT_IMAGE=${IMAGE_REF}"
+              echo "HOMEPILOT_BUILD_SHA=${HOMEPILOT_BUILD_SHA}"
               echo "HOMEPILOT_BIND_ADDRESS=127.0.0.1"
               echo "API_KEY=${API_KEY}"
               echo "HOMEPILOT_EDITION=web"
@@ -218,3 +289,12 @@ jobs:
             # Run via sudo so it works before the docker-group membership added
             # by install.sh takes effect in a new login session.
             sudo bash deploy.sh
+
+      # deploy.sh only pulls and starts the container. Wait until the public
+      # site reports this commit, the same check the Space workflow uses.
+      - name: Verify production serves this commit
+        timeout-minutes: 15
+        env:
+          PRODUCTION_URL: https://${{ vars.HOMEPILOT_DOMAIN || secrets.HOMEPILOT_DOMAIN }}
+          EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
+        run: python3 oracle/verify_production.py

@@ -504,6 +504,7 @@ export default function SettingsPanel({
   onSave,
   onClose,
   chatPreview,
+  initialSection,
 }: {
   value: SettingsModelV2;
   onChangeDraft: (next: SettingsModelV2) => void;
@@ -511,6 +512,8 @@ export default function SettingsPanel({
   onClose: () => void;
   /** The open persona's name and picture, for the Chat → Appearance preview. */
   chatPreview?: { name: string; avatarUrls: Array<string | null | undefined> } | null;
+  /** The tab to open on, e.g. "connectors" from a reply's "Connect" link. */
+  initialSection?: string;
 }) {
   const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
   const [loadingProviders, setLoadingProviders] = useState(false);
@@ -540,7 +543,9 @@ export default function SettingsPanel({
   const [showProfileSettings, setShowProfileSettings] = useState(false);
 
   // ── Enterprise modal shell state ───────────────────────────────────────
-  const [activeSection, setActiveSection] = useState<SectionId>("connection");
+  const [activeSection, setActiveSection] = useState<SectionId>(
+    () => (initialSection && SECTIONS.some((sec) => sec.id === initialSection) ? initialSection : "connection") as SectionId,
+  );
 
   // Sidebar sections, adjusted for the Account & Computers flag (Batch 3):
   //  - flag OFF: hide "account" → today's list, unchanged.

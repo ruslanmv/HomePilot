@@ -23,6 +23,11 @@ CATALOG: List[Dict[str, Any]] = [
         "auth": "token",
         "token_url": "https://huggingface.co/settings/tokens/new?tokenType=fineGrained",
         "token_hint": "A token with the “Make calls to Inference Providers” permission.",
+        "grants": [
+            "See your Hugging Face username and avatar",
+            "Run chat, vision, image and video models with Inference Providers",
+        ],
+        "billing": "Usage is billed to your Hugging Face account (free monthly credits, or Pro).",
         "featured": True,
     },
 ]

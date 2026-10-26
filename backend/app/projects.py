@@ -349,6 +349,32 @@ def delete_project(project_id: str) -> bool:
 
     return True
 
+
+MAX_TASKS = 100
+
+
+def clean_tasks(raw: list) -> list:
+    """A project's task list as stored: ``{id, text, done}`` rows, text trimmed, empty rows
+    dropped, at most MAX_TASKS. The chat sees the open ones (``open_tasks_hint``)."""
+    out = []
+    for t in raw[:MAX_TASKS]:
+        if not isinstance(t, dict):
+            continue
+        text = str(t.get("text") or "").strip()[:300]
+        if not text:
+            continue
+        out.append({"id": str(t.get("id") or uuid.uuid4().hex[:12])[:40], "text": text, "done": bool(t.get("done"))})
+    return out
+
+
+def open_tasks_hint(project_data: dict) -> str:
+    """The project's open tasks, for the system prompt; empty when there are none."""
+    open_ = [t["text"] for t in (project_data.get("tasks") or []) if isinstance(t, dict) and not t.get("done") and t.get("text")]
+    if not open_:
+        return ""
+    return "\n\nOPEN PROJECT TASKS:\n" + "\n".join(f"- {t}" for t in open_[:20])
+
+
 def update_project(project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Update a project's details."""
     db = _load_projects_db()
@@ -365,6 +391,8 @@ def update_project(project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, 
         project["description"] = data["description"]
     if "instructions" in data:
         project["instructions"] = data["instructions"]
+    if "tasks" in data and isinstance(data["tasks"], list):
+        project["tasks"] = clean_tasks(data["tasks"])
     if "is_public" in data:
         project["is_public"] = data["is_public"]
     if "project_type" in data:
@@ -1064,7 +1092,7 @@ When the user asks you to perform an action that matches your capabilities, DO I
         system_instruction = f"""You are HomePilot, acting as a specialized assistant for the project: "{name}".
 
 CONTEXT & INSTRUCTIONS:
-{instructions}{agentic_hint}{persona_hint}
+{instructions}{agentic_hint}{persona_hint}{open_tasks_hint(project_data)}
 
 ATTACHED FILES:
 {files_info if files_info else "No files attached yet."}{doc_count_info}
