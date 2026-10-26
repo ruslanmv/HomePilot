@@ -178,6 +178,9 @@
       font-weight: 800; line-height: 1.18; letter-spacing: -.035em;
       max-width: 1080px;
     }
+    .usage-promo-accent {
+      color: #60a5fa;
+    }
     .usage-promo-detail {
       color: #9396a5; font-size: clamp(.98rem, 1.55vw, 1.13rem);
       line-height: 1.6; max-width: 1030px; margin-top: 15px;
@@ -411,31 +414,31 @@
       <aside class="usage-promo" data-usage-promo aria-label="HomePilot local AI messages">
         <div class="usage-promo-slides" aria-label="Reasons to explore local AI">
           <div class="usage-promo-slide is-active" data-promo-slide aria-hidden="false">
-            <p class="usage-promo-title">AI usage limit reached? Keep your momentum.</p>
+            <p class="usage-promo-title">AI usage limit reached? <span class="usage-promo-accent">Keep your momentum.</span></p>
             <p class="usage-promo-detail">Explore private AI on your own computer — without hosted chat quotas for locally run models.</p>
             </div>
           <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
-            <p class="usage-promo-title">Still waiting for your daily reset?</p>
+            <p class="usage-promo-title">Still waiting for <span class="usage-promo-accent">your daily reset?</span></p>
             <p class="usage-promo-detail">Make the most of your own hardware with HomePilot&#39;s local AI conversations and creative tools.</p>
             </div>
           <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
-            <p class="usage-promo-title">Weekly quota used up? Your ideas aren't.</p>
+            <p class="usage-promo-title">Weekly quota used up? <span class="usage-promo-accent">Your ideas aren't.</span></p>
             <p class="usage-promo-detail">Work with local AI models when you&#39;re ready, instead of planning around a cloud usage window.</p>
             </div>
           <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
-            <p class="usage-promo-title">Out of AI credits? Explore local AI.</p>
+            <p class="usage-promo-title">Out of AI credits? <span class="usage-promo-accent">Explore local AI.</span></p>
             <p class="usage-promo-detail">HomePilot is free and open source, with local models that don&#39;t require per-message credits.</p>
             </div>
           <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
-            <p class="usage-promo-title">Image generation limit reached?</p>
+            <p class="usage-promo-title">Image generation <span class="usage-promo-accent">limit reached?</span></p>
             <p class="usage-promo-detail">Try HomePilot&#39;s image creation tools and keep the creative workflow on your own machine.</p>
             </div>
           <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
-            <p class="usage-promo-title">Too many requests? Take AI into your own hands.</p>
+            <p class="usage-promo-title">Too many requests? <span class="usage-promo-accent">Take AI into your own hands.</span></p>
             <p class="usage-promo-detail">Run supported models locally and create on your schedule, subject to your hardware&#39;s capabilities.</p>
             </div>
           <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
-            <p class="usage-promo-title">Premium AI usage exhausted? Make AI your own.</p>
+            <p class="usage-promo-title">Premium AI usage exhausted? <span class="usage-promo-accent">Make AI your own.</span></p>
             <p class="usage-promo-detail">Bring chat, creative tools and AI characters together in one open-source workspace.</p>
             </div>
         </div>
@@ -597,7 +600,7 @@
         // Pause for hovering, keyboard focus, hidden tabs and reduced-motion users.
         if (reducedMotion.matches || document.hidden ||
             promo.matches(':hover') || promo.matches(':focus-within')) return;
-        timer = window.setInterval(() => show((current + 1) % slides.length), 7000);
+        timer = window.setInterval(() => show((current + 1) % slides.length), 4000);
       }
 
       promo.classList.add('is-enhanced');
