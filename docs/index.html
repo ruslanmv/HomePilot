@@ -154,12 +154,13 @@
        No promotional card, outline, background fill or extra CTA. */
     .usage-promo {
       position: relative;
-      margin: 0 0 80px;
+      margin: 0 0 48px;
       padding: 2px 0 0;
       min-width: 0;
       background: transparent;
       border: 0;
       box-shadow: none;
+      text-align: center;
     }
     .usage-promo-slides { display: grid; }
     .usage-promo-slide {
@@ -177,17 +178,23 @@
       font-size: clamp(1.9rem, 4.1vw, 2.85rem);
       font-weight: 800; line-height: 1.18; letter-spacing: -.035em;
       max-width: 1080px;
+      margin-left: auto; margin-right: auto;
+    }
+    .capabilities .usage-promo-title {
+      margin-bottom: 0;
+      font-size: clamp(1.9rem, 4.1vw, 2.85rem);
     }
     .usage-promo-accent {
       color: #60a5fa;
     }
     .usage-promo-detail {
       color: #9396a5; font-size: clamp(.98rem, 1.55vw, 1.13rem);
-      line-height: 1.6; max-width: 1030px; margin-top: 15px;
+      line-height: 1.6; max-width: 1030px; margin: 15px auto 0;
     }
     .usage-promo-controls {
       display: flex; align-items: center; gap: 11px;
       min-height: 29px; margin-top: 18px;
+      justify-content: center;
     }
     .usage-promo-pagination { display: none; align-items: center; gap: 3px; }
     .usage-promo.is-enhanced .usage-promo-pagination { display: inline-flex; }
@@ -217,11 +224,11 @@
       white-space: nowrap; border: 0;
     }
     @media (max-width: 768px) {
-      .usage-promo { margin-bottom: 64px; }
+      .usage-promo { margin-bottom: 38px; }
       .usage-promo-title { font-size: clamp(1.75rem, 5vw, 2.4rem); }
     }
     @media (max-width: 480px) {
-      .usage-promo { margin-bottom: 50px; }
+      .usage-promo { margin-bottom: 32px; }
       .usage-promo-title { font-size: 1.75rem; }
       .usage-promo-detail { font-size: .96rem; margin-top: 12px; }
       .usage-promo-controls { margin-top: 15px; }
@@ -414,6 +421,10 @@
       <aside class="usage-promo" data-usage-promo aria-label="HomePilot local AI messages">
         <div class="usage-promo-slides" aria-label="Reasons to explore local AI">
           <div class="usage-promo-slide is-active" data-promo-slide aria-hidden="false">
+            <h2 id="cap-heading" class="usage-promo-title">Everything you need, <span class="gradient-text">one platform</span></h2>
+            <p class="usage-promo-detail">Chat, create images, make videos, and explore AI characters — all in your own private workspace.</p>
+          </div>
+          <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
             <p class="usage-promo-title">AI usage limit reached? <span class="usage-promo-accent">Keep your momentum.</span></p>
             <p class="usage-promo-detail">Explore private AI on your own computer — without hosted chat quotas for locally run models.</p>
             </div>
@@ -444,20 +455,19 @@
         </div>
         <div class="usage-promo-controls">
           <div class="usage-promo-pagination" role="group" aria-label="Choose a message">
-            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 1: Usage limits" aria-pressed="true"></button>
-            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 2: Daily resets" aria-pressed="false"></button>
-            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 3: Weekly quotas" aria-pressed="false"></button>
-            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 4: Credits" aria-pressed="false"></button>
-            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 5: Image creation" aria-pressed="false"></button>
-            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 6: Rate limits" aria-pressed="false"></button>
-            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 7: Premium limits" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 1: All-in-one HomePilot" aria-pressed="true"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 2: Usage limits" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 3: Daily resets" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 4: Weekly quotas" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 5: Credits" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 6: Image creation" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 7: Rate limits" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 8: Premium limits" aria-pressed="false"></button>
           </div>
-          <span class="usage-promo-count" aria-hidden="true"><span data-promo-current>01</span> / 07</span>
+          <span class="usage-promo-count" aria-hidden="true"><span data-promo-current>01</span> / 08</span>
         </div>
         <span class="usage-promo-sr-only" data-promo-announcement aria-live="polite" aria-atomic="true"></span>
       </aside>
-
-      <h2 id="cap-heading">Everything you need, <span class="gradient-text">one platform</span></h2>
 
       <div class="cap-grid" role="list">
         <article class="cap-card" role="listitem">
