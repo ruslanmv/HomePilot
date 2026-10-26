@@ -17,6 +17,14 @@ on:
       - "tsconfig.base.json"
       - ".dockerignore"
       - ".github/workflows/container.yml"
+      # The Space ships these and the Oracle deploy follows this image.
+      # Leaving them out published a new Space while GHCR (and therefore
+      # homepilot.ruslanmv.com) stayed on the previous commit.
+      # Keep this list in sync with APP_IMAGE_PREFIXES / APP_IMAGE_FILES
+      # in oracle/resolve_deploy.py.
+      - "expert/**"
+      - "community/**"
+      - "scripts/download.py"
   release:
     types: [published]
   workflow_dispatch:
@@ -97,6 +105,8 @@ jobs:
           # (OFF); set these as repository variables to enable the OllaBridge
           # account UX / BFF session for every deployment that uses this image.
           build-args: |
+            HOMEPILOT_BUILD_SHA=${{ github.sha }}
+            HOMEPILOT_BUILD_REF=${{ github.ref_name }}
             VITE_ACCOUNTS_UX=${{ vars.VITE_ACCOUNTS_UX }}
             VITE_BFF_SESSION=${{ vars.VITE_BFF_SESSION }}
             VITE_OLLABRIDGE_CLOUD_URL=${{ vars.VITE_OLLABRIDGE_CLOUD_URL }}

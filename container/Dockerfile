@@ -203,6 +203,15 @@ COPY --from=comfy-builder --chown=user:user /opt/ComfyUI   /opt/ComfyUI
 # Copy backend source
 COPY backend/app ./app
 
+# The Hugging Face Space bundles these next to the package. Without them the
+# hosted image has no Expert chat (/v1/expert/*), no bundled persona samples,
+# and no model installer script. Paths match what app/main.py, community.py,
+# and download_script.py probe inside a packaged image.
+COPY expert/backend/app/expert ./expert
+COPY community/sample ./community/sample
+COPY scripts/download.py ./scripts/download.py
+RUN chown -R user:user ./expert ./community ./scripts
+
 # Copy built frontend
 COPY --from=frontend-builder /build/dist ./static
 
@@ -211,6 +220,14 @@ COPY container/nginx.conf /etc/nginx/nginx.conf
 COPY container/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY container/entrypoint.sh /home/user/app/entrypoint.sh
 RUN chmod +x /home/user/app/entrypoint.sh
+
+# GET /version reads build-info.json next to the package (/home/user/app), the
+# same file the Hugging Face Space ships. container.yml passes the commit; it
+# changes every build, so this sits after everything worth caching.
+ARG HOMEPILOT_BUILD_SHA=unknown
+ARG HOMEPILOT_BUILD_REF=master
+RUN HOMEPILOT_BUILD_SHA="${HOMEPILOT_BUILD_SHA}" HOMEPILOT_BUILD_REF="${HOMEPILOT_BUILD_REF}" python3 -c 'import datetime,json,os; from pathlib import Path; Path("/home/user/app/build-info.json").write_text(json.dumps({"sha":os.environ["HOMEPILOT_BUILD_SHA"],"built_at":datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),"ref":os.environ["HOMEPILOT_BUILD_REF"]}))' \
+    && chown user:user /home/user/app/build-info.json
 
 # Switch to non-root user
 USER user

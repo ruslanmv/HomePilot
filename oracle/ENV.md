@@ -23,14 +23,15 @@ Backend runtime flags
 Frontend build-time flags (VITE_*)
   GitHub → Repository variables
     → container.yml passes them as docker build-args
-      → container/Dockerfile bakes them via `npm run build` into homepilot:latest
-        → the Oracle image FROM homepilot:latest inherits the built frontend
+      → container/Dockerfile bakes them via `npm run build` into homepilot:<sha>
+        → the Oracle image FROM that tag inherits the built frontend
 ```
 
 Key consequence: **backend flags take effect on the next Oracle deploy; `VITE_*`
-flags take effect only after `container.yml` rebuilds and republishes
-`homepilot:latest`** (the Oracle image extends that base and does not rebuild the
-frontend).
+flags take effect only after `container.yml` rebuilds and republishes the app
+image.** Publishing that image is what starts the Oracle deploy, so a frontend
+flag and the matching VM roll out on the same commit. The Oracle image extends
+that base and does not rebuild the frontend.
 
 `.env` is rewritten from CI on **every** deploy, so CI/GitHub is the source of
 truth — hand edits on the box are overwritten. Only variables listed in the
@@ -107,7 +108,8 @@ literals are fixed by the workflow.
 | --- | --- | --- |
 | `HOMEPILOT_DOMAIN` | `${HOMEPILOT_DOMAIN}` | required |
 | `ACME_EMAIL` | `${ACME_EMAIL}` | required |
-| `HOMEPILOT_IMAGE` | `${IMAGE_REF}` | GHCR tag built this run |
+| `HOMEPILOT_IMAGE` | `${IMAGE_REF}` | GHCR tag built this run (`homepilot-oracle:<full sha>`) |
+| `HOMEPILOT_BUILD_SHA` | commit of the app image | `GET /version` reports this; it is the Space's commit when both pipelines ran for the same push |
 | `HOMEPILOT_BIND_ADDRESS` | `127.0.0.1` | behind the reverse proxy |
 | `API_KEY` | `${API_KEY}` | required |
 | `HOMEPILOT_EDITION` | `web` | fixed |
