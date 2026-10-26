@@ -149,6 +149,44 @@
       box-shadow: 0 24px 80px rgba(0,0,0,.5);
     }
 
+    /* ── HomePilot promotional strip ─────────────────
+       Clearly branded marketing copy, never a service-status alert. */
+    .usage-promo { margin-top: 20px; }
+    .usage-promo-inner {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 24px; padding: 18px 24px; border-radius: 14px;
+      background: linear-gradient(110deg, rgba(6,182,212,.12), rgba(59,130,246,.07) 58%, rgba(139,92,246,.09)), var(--bg-card);
+      border: 1px solid rgba(6,182,212,.26);
+    }
+    .usage-promo-copy { min-width: 0; }
+    .usage-promo-label {
+      display: block; margin-bottom: 5px; color: #67e8f9;
+      font-size: 11px; font-weight: 700; letter-spacing: .1em;
+      line-height: 1.4; text-transform: uppercase;
+    }
+    .usage-promo-title {
+      color: var(--text); font-size: 17px;
+      font-weight: 750; line-height: 1.4;
+    }
+    .usage-promo-detail {
+      color: #a1a1aa; font-size: 13px;
+      line-height: 1.55; margin-top: 4px;
+    }
+    .usage-promo-action {
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0; min-height: 42px; padding: 10px 18px;
+      border-radius: 9px; background: var(--gradient); color: #fff;
+      font-size: 13px; font-weight: 700; white-space: nowrap;
+      transition: opacity .2s, transform .2s;
+    }
+    .usage-promo-action:hover { color: #fff; opacity: .92; transform: translateY(-1px); }
+    .usage-promo-action:focus-visible { outline: 2px solid #67e8f9; outline-offset: 3px; }
+    @media (max-width: 640px) {
+      .usage-promo { margin-top: 12px; }
+      .usage-promo-inner { flex-direction: column; align-items: flex-start; gap: 13px; padding: 16px; }
+      .usage-promo-title { font-size: 16px; }
+    }
+
     /* ── Capabilities ─────────────────────────────── */
     .capabilities { padding: 88px 0; }
     .capabilities h2 {
@@ -288,6 +326,18 @@
   </nav>
 
   <main id="main">
+
+  <!-- ── Clearly labeled HomePilot promotion ───────── -->
+  <aside class="container usage-promo" aria-label="HomePilot promotion">
+    <div class="usage-promo-inner">
+      <div class="usage-promo-copy">
+        <span class="usage-promo-label">HomePilot · Free &amp; Open Source</span>
+        <p class="usage-promo-title">AI usage limit reached? Your creativity doesn't have to stop.</p>
+        <p class="usage-promo-detail">Keep creating with HomePilot &mdash; private AI running on your computer, without subscriptions or cloud message caps for local models.</p>
+      </div>
+      <a class="usage-promo-action" href="getting-started.html" aria-label="Get started with HomePilot for free">Get Started Free &rarr;</a>
+    </div>
+  </aside>
 
   <!-- ── Hero ─────────────────────────────────────── -->
   <section class="hero" aria-labelledby="hero-heading">
