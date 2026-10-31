@@ -29,6 +29,21 @@
     if (!url) return "";
     if (url.startsWith("http")) return url;
     if (!GALLERY_API) return url;
+
+    // R2 registries store object keys, but the production Worker deliberately
+    // exposes stable /v, /c and /p routes instead of raw R2 object paths.
+    // Translate those keys only in Worker mode. Native Worker URLs (/v/...)
+    // and direct R2 mode continue to work without changes.
+    if (GALLERY_MODE === "worker") {
+      var key = url.replace(/^\/+/, "");
+      var preview = key.match(/^previews\/([a-z0-9_-]+)\/([a-z0-9._-]+)\/preview\.(?:webp|png|jpe?g)$/i);
+      if (preview) return GALLERY_API + "/v/" + preview[1] + "/" + preview[2];
+      var card = key.match(/^previews\/([a-z0-9_-]+)\/([a-z0-9._-]+)\/card\.json$/i);
+      if (card) return GALLERY_API + "/c/" + card[1] + "/" + card[2];
+      var pkg = key.match(/^packages\/([a-z0-9_-]+)\/([a-z0-9._-]+)\/persona\.hpersona$/i);
+      if (pkg) return GALLERY_API + "/p/" + pkg[1] + "/" + pkg[2];
+    }
+
     if (url.startsWith("/")) return GALLERY_API + url;
     return GALLERY_API + "/" + url;
   }
