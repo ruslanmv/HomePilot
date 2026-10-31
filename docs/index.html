@@ -149,6 +149,95 @@
       box-shadow: 0 24px 80px rgba(0,0,0,.5);
     }
 
+    /* ── Borderless rotating HomePilot message ────────
+       Native dark page background; sits just above the capabilities title.
+       No promotional card, outline, background fill or extra CTA. */
+    .usage-promo {
+      position: relative;
+      margin: 0 0 48px;
+      padding: 2px 0 0;
+      min-width: 0;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      text-align: center;
+    }
+    .usage-promo-slides { display: grid; }
+    .usage-promo-slide {
+      grid-area: 1 / 1;
+      min-width: 0; opacity: 0; visibility: hidden;
+      transform: translateY(7px);
+      transition: opacity .45s ease, transform .45s ease, visibility .45s;
+    }
+    .usage-promo-slide.is-active {
+      opacity: 1; visibility: visible; transform: translateY(0);
+      transition: opacity .45s ease, transform .45s ease, visibility 0s;
+    }
+    .usage-promo-title {
+      color: #f4f4f5;
+      font-size: clamp(1.9rem, 4.1vw, 2.85rem);
+      font-weight: 800; line-height: 1.18; letter-spacing: -.035em;
+      max-width: 1080px;
+      margin-left: auto; margin-right: auto;
+    }
+    .capabilities .usage-promo-title {
+      margin-bottom: 0;
+      font-size: clamp(1.9rem, 4.1vw, 2.85rem);
+    }
+    .usage-promo-accent {
+      color: #60a5fa;
+    }
+    .usage-promo-detail {
+      color: #9396a5; font-size: clamp(.98rem, 1.55vw, 1.13rem);
+      line-height: 1.6; max-width: 1030px; margin: 15px auto 0;
+    }
+    .usage-promo-controls {
+      display: flex; align-items: center; gap: 11px;
+      min-height: 29px; margin-top: 18px;
+      justify-content: center;
+    }
+    .usage-promo-pagination { display: none; align-items: center; gap: 3px; }
+    .usage-promo.is-enhanced .usage-promo-pagination { display: inline-flex; }
+    .usage-promo-dot {
+      display: grid; place-items: center; width: 28px; height: 27px;
+      padding: 0; border: 0; border-radius: 7px;
+      background: transparent; cursor: pointer;
+    }
+    .usage-promo-dot::before {
+      content: ''; display: block; width: 6px; height: 6px;
+      background: #525b6d; border-radius: 999px;
+      transition: width .3s ease, background .3s ease;
+    }
+    .usage-promo-dot[aria-pressed="true"]::before {
+      width: 24px; background: var(--gradient);
+    }
+    .usage-promo-dot:hover::before { background: #93c5fd; }
+    .usage-promo-dot:focus-visible { outline: 2px solid #67e8f9; outline-offset: 1px; }
+    .usage-promo-count {
+      display: none; color: #71717a; font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .usage-promo.is-enhanced .usage-promo-count { display: inline; }
+    .usage-promo-sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0;
+      margin: -1px; overflow: hidden; clip: rect(0,0,0,0);
+      white-space: nowrap; border: 0;
+    }
+    @media (max-width: 768px) {
+      .usage-promo { margin-bottom: 38px; }
+      .capabilities .usage-promo-title { font-size: clamp(1.75rem, 5vw, 2.4rem); }
+    }
+    @media (max-width: 480px) {
+      .usage-promo { margin-bottom: 32px; }
+      .capabilities .usage-promo-title { font-size: 1.75rem; }
+      .usage-promo-detail { font-size: .96rem; margin-top: 12px; }
+      .usage-promo-controls { margin-top: 15px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .usage-promo-slide, .usage-promo-slide.is-active,
+      .usage-promo-dot::before { transition: none; transform: none; }
+    }
+
     /* ── Capabilities ─────────────────────────────── */
     .capabilities { padding: 88px 0; }
     .capabilities h2 {
@@ -328,7 +417,57 @@
   <!-- ── Capabilities ─────────────────────────────── -->
   <section id="capabilities" class="capabilities" aria-labelledby="cap-heading">
     <div class="container">
-      <h2 id="cap-heading">Everything you need, <span class="gradient-text">one platform</span></h2>
+      <!-- Borderless animated message, visually integrated into the black page -->
+      <aside class="usage-promo" data-usage-promo aria-label="HomePilot local AI messages">
+        <div class="usage-promo-slides" aria-label="Reasons to explore local AI">
+          <div class="usage-promo-slide is-active" data-promo-slide aria-hidden="false">
+            <h2 id="cap-heading" class="usage-promo-title">Everything you need, <span class="gradient-text">one platform</span></h2>
+            <p class="usage-promo-detail">Chat, create images, make videos, and explore AI characters — all in your own private workspace.</p>
+          </div>
+          <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+            <p class="usage-promo-title">AI usage limit reached? <span class="usage-promo-accent">Keep your momentum.</span></p>
+            <p class="usage-promo-detail">Explore private AI on your own computer — without hosted chat quotas for locally run models.</p>
+            </div>
+          <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+            <p class="usage-promo-title">Still waiting for <span class="usage-promo-accent">your daily reset?</span></p>
+            <p class="usage-promo-detail">Make the most of your own hardware with HomePilot&#39;s local AI conversations and creative tools.</p>
+            </div>
+          <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+            <p class="usage-promo-title">Weekly quota used up? <span class="usage-promo-accent">Your ideas aren't.</span></p>
+            <p class="usage-promo-detail">Work with local AI models when you&#39;re ready, instead of planning around a cloud usage window.</p>
+            </div>
+          <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+            <p class="usage-promo-title">Out of AI credits? <span class="usage-promo-accent">Explore local AI.</span></p>
+            <p class="usage-promo-detail">HomePilot is free and open source, with local models that don&#39;t require per-message credits.</p>
+            </div>
+          <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+            <p class="usage-promo-title">Image generation <span class="usage-promo-accent">limit reached?</span></p>
+            <p class="usage-promo-detail">Try HomePilot&#39;s image creation tools and keep the creative workflow on your own machine.</p>
+            </div>
+          <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+            <p class="usage-promo-title">Too many requests? <span class="usage-promo-accent">Take AI into your own hands.</span></p>
+            <p class="usage-promo-detail">Run supported models locally and create on your schedule, subject to your hardware&#39;s capabilities.</p>
+            </div>
+          <div class="usage-promo-slide" data-promo-slide aria-hidden="true">
+            <p class="usage-promo-title">Premium AI usage exhausted? <span class="usage-promo-accent">Make AI your own.</span></p>
+            <p class="usage-promo-detail">Bring chat, creative tools and AI characters together in one open-source workspace.</p>
+            </div>
+        </div>
+        <div class="usage-promo-controls">
+          <div class="usage-promo-pagination" role="group" aria-label="Choose a message">
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 1: All-in-one HomePilot" aria-pressed="true"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 2: Usage limits" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 3: Daily resets" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 4: Weekly quotas" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 5: Credits" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 6: Image creation" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 7: Rate limits" aria-pressed="false"></button>
+            <button class="usage-promo-dot" data-promo-control type="button" aria-label="Show message 8: Premium limits" aria-pressed="false"></button>
+          </div>
+          <span class="usage-promo-count" aria-hidden="true"><span data-promo-current>01</span> / 08</span>
+        </div>
+        <span class="usage-promo-sr-only" data-promo-announcement aria-live="polite" aria-atomic="true"></span>
+      </aside>
 
       <div class="cap-grid" role="list">
         <article class="cap-card" role="listitem">
@@ -361,6 +500,7 @@
           <h3>100% Private</h3>
           <p>Everything runs on your computer. Your conversations, creations, and data never leave your machine.</p>
         </article>
+
       </div>
     </div>
   </section>
@@ -432,5 +572,63 @@
       </ul>
     </div>
   </footer>
+  <!-- ── Lightweight HomePilot message rotation ───── -->
+  <script>
+    (() => {
+      const promo = document.querySelector('[data-usage-promo]');
+      if (!promo) return;
+      const slides = Array.from(promo.querySelectorAll('[data-promo-slide]'));
+      const controls = Array.from(promo.querySelectorAll('[data-promo-control]'));
+      if (slides.length < 2 || slides.length !== controls.length) return;
+
+      const counter = promo.querySelector('[data-promo-current]');
+      const announcement = promo.querySelector('[data-promo-announcement]');
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+      let current = 0;
+      let timer = null;
+
+      function show(index, manual = false) {
+        if (index === current) return;
+        current = index;
+        slides.forEach((slide, i) => {
+          const active = i === index;
+          slide.classList.toggle('is-active', active);
+          slide.setAttribute('aria-hidden', String(!active));
+          controls[i].setAttribute('aria-pressed', String(active));
+        });
+        counter.textContent = String(index + 1).padStart(2, '0');
+        // Announce deliberate user changes, not passive auto-rotation.
+        if (manual) announcement.textContent = slides[index].querySelector('.usage-promo-title').textContent;
+      }
+
+      function stop() {
+        if (timer !== null) window.clearInterval(timer);
+        timer = null;
+      }
+      function start() {
+        stop();
+        // Pause for hovering, keyboard focus, hidden tabs and reduced-motion users.
+        if (reducedMotion.matches || document.hidden ||
+            promo.matches(':hover') || promo.matches(':focus-within')) return;
+        timer = window.setInterval(() => show((current + 1) % slides.length), 4000);
+      }
+
+      promo.classList.add('is-enhanced');
+      controls.forEach((button, i) => button.addEventListener('click', () => {
+        show(i, true);
+        start();
+      }));
+      promo.addEventListener('mouseenter', stop);
+      promo.addEventListener('mouseleave', start);
+      promo.addEventListener('focusin', stop);
+      promo.addEventListener('focusout', event => {
+        if (!promo.contains(event.relatedTarget)) window.requestAnimationFrame(start);
+      });
+      document.addEventListener('visibilitychange', start);
+      if (typeof reducedMotion.addEventListener === 'function')
+        reducedMotion.addEventListener('change', start);
+      start();
+    })();
+  </script>
 </body>
 </html>
