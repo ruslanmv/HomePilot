@@ -76,7 +76,7 @@ FRONTEND_DIR = Path(os.environ.get("FRONTEND_DIR", "/app/frontend"))
 FRONTEND_INDEX = FRONTEND_DIR / "index.html"
 
 CHATA_PERSONAS_DIR = Path("/app/chata-personas")
-PERSONAS_DATA_DIR = Path("/tmp/homepilot/data/personas")
+PERSONAS_DATA_DIR = Path(os.environ.get("HOMEPILOT_DATA_ROOT", "/tmp/homepilot")) / "data" / "personas"
 
 # Mount Vite's built assets (JS, CSS, images).
 if FRONTEND_DIR.exists():
@@ -106,13 +106,13 @@ def setup_status():
         pass
 
     # Check personas
-    personas_imported = Path("/tmp/homepilot/data/.personas_imported").exists()
+    personas_imported = (Path(os.environ.get("HOMEPILOT_DATA_ROOT", "/tmp/homepilot")) / "data" / ".personas_imported").exists()
     persona_count = 0
     if PERSONAS_DATA_DIR.exists():
         persona_count = len([d for d in PERSONAS_DATA_DIR.iterdir() if d.is_dir()])
 
     # Check DB
-    db_path = Path(os.environ.get("SQLITE_PATH", "/tmp/homepilot/data/homepilot.db"))
+    db_path = Path(os.environ.get("SQLITE_PATH", os.path.join(os.environ.get("HOMEPILOT_DATA_ROOT", "/tmp/homepilot"), "data", "homepilot.db")))
     db_ready = db_path.exists()
 
     return {

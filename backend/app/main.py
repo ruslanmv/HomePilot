@@ -223,6 +223,9 @@ app.include_router(compute_admin_router)
 # existing non-streaming /chat is unchanged.
 from .compute.stream_routes import router as compute_stream_router  # noqa: E402
 app.include_router(compute_stream_router)
+# HomePilot One: per-user routing strategy/spending and the ecosystem handshake.
+from .compute.one_routes import router as homepilot_one_router  # noqa: E402
+app.include_router(homepilot_one_router)
 
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)

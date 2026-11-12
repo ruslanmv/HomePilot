@@ -112,6 +112,56 @@ def _capability_ok(model_id: str, target: str, modality: str) -> bool:
     return True
 
 
+def _current_strategy() -> str:
+    try:
+        from app.connectors.context import current_user_id
+        from . import routing
+        return routing.effective_prefs(current_user_id()).strategy
+    except Exception:
+        return "legacy"
+
+
+def _strategy_targets(modality: str, route: Optional[ModelRoute]) -> Optional[list[str]]:
+    """Targets implied by the user's HomePilot One strategy, or ``None``.
+
+    Chat and vision go to ``provider:<alias>`` — OllaBridge then walks the
+    tiers (Hugging Face → free → authorised paid → my PC) under the policy
+    HomePilot signs. HomePilot's own executor (``local``: the direct Hugging
+    Face connector, then the local model) stays behind it as the emergency
+    path for when the gateway cannot be reached.
+
+    ``private_local`` is a hard privacy rule, applied before anything else:
+    no hosted target and no fallback tail. On the hosted edition that leaves
+    the gateway, which is told to use only the user's own machines; on a local
+    install it leaves this machine.
+    """
+    from . import routing
+    strategy = _current_strategy()
+    if strategy == "legacy":
+        return None
+    web = routing.is_web()
+
+    if strategy == "private_local":
+        if route is not None:
+            own = [
+                t for t in [route.primary_target, *route.fallback_targets]
+                if t.startswith(("device:", "ollabridge")) or (t == "local" and not web)
+            ]
+            if own:
+                return _dedupe(own)
+        if modality in routing.CHAT_MODALITIES:
+            return [f"provider:{routing.hosted_alias(modality)}"] if web else ["local"]
+        return ["ollabridge_cloud"] if web else ["local"]
+
+    if strategy == "pinned" or route is not None:
+        return None  # an explicit per-model route is the user's own override
+    if modality not in routing.CHAT_MODALITIES:
+        return None  # generation jobs keep their existing routing
+
+    gateway = f"provider:{routing.hosted_alias(modality)}"
+    return [gateway, "local"]
+
+
 def resolve_targets(
     modality: str,
     model_id: Optional[str] = None,
@@ -124,6 +174,14 @@ def resolve_targets(
     route: Optional[ModelRoute] = (
         registry.get_route(model_id, modality) if model_id else None
     )
+
+    # HomePilot One: the signed-in user's routing strategy. ``None`` means the
+    # strategy is ``legacy``/``pinned`` (or does not cover this modality) and
+    # the pre-existing resolution below applies unchanged.
+    planned = _strategy_targets(modality, route)
+    if planned is not None:
+        return planned
+
     if route is not None:
         targets = _order_by_strategy(
             route.normalized_strategy(), route.primary_target, list(route.fallback_targets)
