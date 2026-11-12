@@ -232,6 +232,9 @@ def _db() -> sqlite3.Connection:
         "code TEXT PRIMARY KEY, user_id TEXT NOT NULL, conversation_id TEXT, kind TEXT NOT NULL, "
         "payload TEXT NOT NULL, summary TEXT NOT NULL, status TEXT NOT NULL, "
         "created_at REAL NOT NULL, resolved_at REAL, result TEXT)")
+    cols = {r["name"] for r in con.execute("PRAGMA table_info(coding_approvals)")}
+    if "project_id" not in cols:
+        con.execute("ALTER TABLE coding_approvals ADD COLUMN project_id TEXT")
     return con
 
 
@@ -273,7 +276,7 @@ def _new_code(con: sqlite3.Connection) -> str:
 
 
 def request_approval(user_id: str, kind: str, payload: Dict[str, Any], summary: str,
-                     conversation_id: str = "") -> Dict[str, Any]:
+                     conversation_id: str = "", project_id: Optional[str] = None) -> Dict[str, Any]:
     """Record a change that waits for the user. Nothing is executed here."""
     if read_only(user_id):
         raise GitPilotError("read_only", "GitPilot is set to read-only in Settings → Connectors, "
@@ -283,8 +286,9 @@ def request_approval(user_id: str, kind: str, payload: Dict[str, Any], summary: 
         code = _new_code(con)
         con.execute(
             "INSERT INTO coding_approvals(code, user_id, conversation_id, kind, payload, summary, "
-            "status, created_at) VALUES(?,?,?,?,?,?,?,?)",
-            (code, user_id, conversation_id, kind, json.dumps(payload), summary, "pending", time.time()))
+            "status, created_at, project_id) VALUES(?,?,?,?,?,?,?,?,?)",
+            (code, user_id, conversation_id, kind, json.dumps(payload), summary, "pending", time.time(),
+             project_id or None))
         con.commit()
     finally:
         con.close()
@@ -416,7 +420,8 @@ def _files_changed(p: Dict[str, Any]) -> int:
                 if isinstance(f, dict) and f.get("action") in ("CREATE", "MODIFY", "DELETE")})
 
 
-def ask_to_apply(user_id: Optional[str], plan_id: str, conversation_id: str = "") -> Dict[str, Any]:
+def ask_to_apply(user_id: Optional[str], plan_id: str, conversation_id: str = "",
+                 project_id: Optional[str] = None) -> Dict[str, Any]:
     uid = user_id or current_user_id()
     stored = get_plan(uid, (plan_id or "").strip())
     if not stored:
@@ -425,11 +430,12 @@ def ask_to_apply(user_id: Optional[str], plan_id: str, conversation_id: str = ""
     summary = (f"Apply plan {stored['id']} to {stored['repo']}: {len(p.get('steps') or [])} steps, "
                f"{_files_changed(p)} files, on a new branch"
                + (f" from {stored['branch']}" if stored.get("branch") else "") + ".")
-    return request_approval(uid, "apply", {"plan_id": stored["id"]}, summary, conversation_id)
+    return request_approval(uid, "apply", {"plan_id": stored["id"]}, summary, conversation_id, project_id)
 
 
 def ask_to_open_pr(user_id: Optional[str], repo: str, head: str, title: str, body: str = "",
-                   base: str = "", conversation_id: str = "") -> Dict[str, Any]:
+                   base: str = "", conversation_id: str = "",
+                   project_id: Optional[str] = None) -> Dict[str, Any]:
     uid = user_id or current_user_id()
     owner, name = _split_repo(repo)
     head_branch = _branch(head)
@@ -440,7 +446,7 @@ def ask_to_open_pr(user_id: Optional[str], repo: str, head: str, title: str, bod
                "body": (body or "")[:20000], "base": _branch(base) or ""}
     summary = (f"Open a pull request on {owner}/{name} from {head_branch}"
                + (f" into {payload['base']}" if payload["base"] else "") + f': "{title}".')
-    return request_approval(uid, "open_pr", payload, summary, conversation_id)
+    return request_approval(uid, "open_pr", payload, summary, conversation_id, project_id)
 
 
 def approval_prompt(approval: Dict[str, Any]) -> str:
@@ -450,16 +456,32 @@ def approval_prompt(approval: Dict[str, Any]) -> str:
             f"The request expires in {APPROVAL_TTL_S // 60} minutes.")
 
 
-async def resolve(user_id: Optional[str], code: str, approve: bool) -> Dict[str, Any]:
+async def resolve(user_id: Optional[str], code: str, approve: bool,
+                  project_id: Optional[str] = None) -> Dict[str, Any]:
     """The user's decision on a pending change. Runs it when approved."""
     uid = user_id or current_user_id()
     claimed = _claim(uid, code, "running" if approve else "denied")
     if claimed is None:
         raise GitPilotError("not_found", "There is no pending request with that code. "
                                          "It may have expired or already been decided.")
+    origin_project = claimed.get("project_id")
+    if origin_project:
+        from .. import project_access
+        project_access.log(origin_project, uid, f"approval.{'approved' if approve else 'denied'}",
+                           {"code": claimed["code"], "kind": claimed["kind"], "summary": claimed["summary"]})
     if not approve:
         return {"code": claimed["code"], "status": "denied", "text": "Cancelled. Nothing was changed."}
     try:
+        # Disabled means disabled: if the project the request came from has
+        # since turned GitPilot off, or the user lost access to it, an earlier
+        # approval code no longer runs.
+        if origin_project:
+            from .. import project_access, project_capabilities
+            if not project_access.can(origin_project, uid, "viewer") or \
+                    not project_capabilities.is_enabled(origin_project, "connector", ID):
+                raise GitPilotError("connector_disabled",
+                                    "GitPilot is turned off for the project this request came from, "
+                                    "so nothing was changed.")
         if read_only(uid):
             raise GitPilotError("read_only", "GitPilot is set to read-only, so nothing was changed.")
         endpoint, token, _ = _link(uid)
@@ -541,7 +563,7 @@ def has_tool(name: str, user_id: Optional[str] = None) -> bool:
 
 
 async def run_tool(name: str, args: Dict[str, Any], *, user_id: Optional[str],
-                   conversation_id: str = "") -> Tuple[str, Dict[str, Any]]:
+                   conversation_id: str = "", project_id: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     """Run one ``code.*`` tool. Returns ``(text, meta)``; ``meta["terminal"]``
     means the text must be shown to the user as is (an approval request)."""
     uid = user_id or current_user_id()
@@ -559,12 +581,12 @@ async def run_tool(name: str, args: Dict[str, Any], *, user_id: Optional[str],
                                  args.get("branch"), conversation_id)
             return render_plan(planned), {"plan_id": planned["plan_id"], "repo": planned["repo"]}
         if name == "code.apply":
-            approval = ask_to_apply(uid, str(args.get("plan_id") or ""), conversation_id)
+            approval = ask_to_apply(uid, str(args.get("plan_id") or ""), conversation_id, project_id)
             return approval_prompt(approval), {"terminal": True, "approval": approval["code"]}
         if name == "code.open_pr":
             approval = ask_to_open_pr(uid, str(args.get("repo") or ""), str(args.get("head") or ""),
                                       str(args.get("title") or ""), str(args.get("body") or ""),
-                                      str(args.get("base") or ""), conversation_id)
+                                      str(args.get("base") or ""), conversation_id, project_id)
             return approval_prompt(approval), {"terminal": True, "approval": approval["code"]}
     except GitPilotError as exc:
         return f"GitPilot: {exc}", {"error_code": exc.code, "terminal": exc.code in ("read_only", "not_linked")}

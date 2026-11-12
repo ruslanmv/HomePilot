@@ -38,6 +38,8 @@ import { PersonaImportModal, PersonaExportButton } from './PersonaImportExport';
 import { CommunityGallery } from './CommunityGallery';
 import { ToolsTab } from './tools';
 import { McpServersTab } from './mcp';
+import ProjectPermissions from './components/projects/ProjectPermissions';
+import { authFetch } from './lib/authFetch';
 
 // --- Components ---
 
@@ -326,7 +328,7 @@ const ProjectWizard = ({
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['x-api-key'] = apiKey
-      const res = await fetch(`${backendUrl}/v1/agentic/register/tool`, {
+      const res = await authFetch(`${backendUrl}/v1/agentic/register/tool`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -357,7 +359,7 @@ const ProjectWizard = ({
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['x-api-key'] = apiKey
-      const res = await fetch(`${backendUrl}/v1/agentic/register/agent`, {
+      const res = await authFetch(`${backendUrl}/v1/agentic/register/agent`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -387,7 +389,7 @@ const ProjectWizard = ({
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['x-api-key'] = apiKey
-      const res = await fetch(`${backendUrl}/v1/agentic/register/gateway`, {
+      const res = await authFetch(`${backendUrl}/v1/agentic/register/gateway`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -416,7 +418,7 @@ const ProjectWizard = ({
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['x-api-key'] = apiKey
-      const res = await fetch(`${backendUrl}/v1/agentic/sync`, {
+      const res = await authFetch(`${backendUrl}/v1/agentic/sync`, {
         method: 'POST',
         headers,
       })
@@ -497,7 +499,7 @@ const ProjectWizard = ({
           if (tok) headers['authorization'] = `Bearer ${tok}`
         } catch { /* ignore */ }
 
-        const res = await fetch(`${backendUrl}/v1/agentic/capabilities`, { headers, credentials: 'include' })
+        const res = await authFetch(`${backendUrl}/v1/agentic/capabilities`, { headers, credentials: 'include' })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
 
@@ -1415,7 +1417,7 @@ const EditProjectModal = ({ project, onClose, onSave, backendUrl, apiKey }: {
         headers['x-api-key'] = apiKey;
       }
 
-      const response = await fetch(`${backendUrl}/projects/${project.id}`, {
+      const response = await authFetch(`${backendUrl}/projects/${project.id}`, {
         method: 'PUT',
         headers,
         body: JSON.stringify({
@@ -1451,7 +1453,7 @@ const EditProjectModal = ({ project, onClose, onSave, backendUrl, apiKey }: {
         headers['x-api-key'] = apiKey;
       }
 
-      const response = await fetch(`${backendUrl}/projects/${project.id}/documents/${encodeURIComponent(documentName)}`, {
+      const response = await authFetch(`${backendUrl}/projects/${project.id}/documents/${encodeURIComponent(documentName)}`, {
         method: 'DELETE',
         headers
       });
@@ -1552,6 +1554,11 @@ const EditProjectModal = ({ project, onClose, onSave, backendUrl, apiKey }: {
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="space-y-2 border-t border-white/10 pt-6">
+            <h3 className="text-base font-semibold text-white">Permissions</h3>
+            <ProjectPermissions backendUrl={backendUrl} projectId={project.id} />
           </div>
         </div>
 
@@ -1749,7 +1756,7 @@ export default function ProjectsView({
         headers['x-api-key'] = apiKey;
       }
 
-      const response = await fetch(`${backendUrl}/projects/${projectId}`, {
+      const response = await authFetch(`${backendUrl}/projects/${projectId}`, {
         method: 'DELETE',
         headers
       });
@@ -1772,7 +1779,7 @@ export default function ProjectsView({
         headers['x-api-key'] = apiKey;
       }
 
-      const response = await fetch(`${backendUrl}/projects/${projectId}`, { headers });
+      const response = await authFetch(`${backendUrl}/projects/${projectId}`, { headers });
       if (response.ok) {
         const result = await response.json();
         setEditingProject(result.project);
@@ -1810,7 +1817,7 @@ export default function ProjectsView({
         headers['x-api-key'] = apiKey;
       }
 
-      const response = await fetch(`${backendUrl}/projects/from-example/${exampleId}`, {
+      const response = await authFetch(`${backendUrl}/projects/from-example/${exampleId}`, {
         method: 'POST',
         headers
       });
@@ -1839,7 +1846,7 @@ export default function ProjectsView({
         const formData = new FormData();
         formData.append('file', file);
 
-        const response = await fetch(`${backendUrl}/projects/${projectId}/upload`, {
+        const response = await authFetch(`${backendUrl}/projects/${projectId}/upload`, {
           method: 'POST',
           headers,
           body: formData
@@ -1873,7 +1880,7 @@ export default function ProjectsView({
         files: files.map((f: any) => ({ name: f.name, size: f.size }))
       };
 
-      const response = await fetch(`${backendUrl}/projects`, {
+      const response = await authFetch(`${backendUrl}/projects`, {
         method: 'POST',
         headers,
         credentials: 'include',
@@ -1910,7 +1917,7 @@ export default function ProjectsView({
         if (tok) headers['authorization'] = `Bearer ${tok}`
       } catch { /* ignore */ }
 
-      const response = await fetch(`${backendUrl}/projects`, { headers, credentials: 'include' });
+      const response = await authFetch(`${backendUrl}/projects`, { headers, credentials: 'include' });
       if (response.ok) {
         const result = await response.json();
         setProjects(result.projects || []);
@@ -1933,7 +1940,7 @@ export default function ProjectsView({
           headers['x-api-key'] = apiKey;
         }
 
-        const response = await fetch(`${backendUrl}/projects/examples`, { headers });
+        const response = await authFetch(`${backendUrl}/projects/examples`, { headers });
         if (response.ok) {
           const result = await response.json();
           setExampleProjects(result.examples || []);
