@@ -184,10 +184,21 @@ class HostedGatewayProvider(ComputeProvider):
         if r.status_code != 200:
             raise _error_from(r.status_code, data)
         provenance = data.get("ollabridge") or _header_provenance(r.headers)
-        if provenance:
-            self._served(provenance, kind)
-            data["answered_by"] = answered_by(provenance)
-            data.setdefault("model", provenance.get("model"))
+        if not provenance:
+            # A gateway that predates the policy contract answers without
+            # provenance. Say what is actually known — it came through
+            # OllaBridge, on this model — and do not invent a tier or a price.
+            provenance = {
+                "provider": "ollabridge", "provider_kind": "ollabridge",
+                "model": data.get("model"), "tier": None, "billing": None,
+                "execution": "hosted", "credential": "operator",
+                "cost": {"estimated_usd": None, "actual_usd": None, "known": False},
+                "usage": data.get("usage") if isinstance(data.get("usage"), dict) else None,
+                "policy_enforced": False,
+            }
+        self._served(provenance, kind)
+        data["answered_by"] = answered_by(provenance)
+        data.setdefault("model", provenance.get("model"))
         return data
 
     async def chat_stream(self, *, model, messages, modality: str = "chat", **extra):
