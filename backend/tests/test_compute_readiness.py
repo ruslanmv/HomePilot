@@ -30,6 +30,10 @@ def test_fully_configured_reports_ready(monkeypatch):
     monkeypatch.setenv("HOMEPILOT_CLOUD_TOKEN_KEY", "k2")
     monkeypatch.setattr("app.config.API_KEY", "secret", raising=False)
     monkeypatch.setattr("app.config.OLLABRIDGE_CLOUD_URL", "https://app.ollabridge.com", raising=False)
+    # HomePilot One: a fully configured deployment also has durable storage
+    # and a signed routing policy.
+    monkeypatch.setenv("HOMEPILOT_STORAGE_DURABLE", "true")
+    monkeypatch.setenv("HOMEPILOT_POLICY_SECRET", "shared")
 
     r = readiness.production_readiness()
     assert r["production_ready"] is True
@@ -44,6 +48,10 @@ def test_non_canonical_cloud_url_is_advisory_only(monkeypatch):
     monkeypatch.setenv("HOMEPILOT_CLOUD_TOKEN_KEY", "k2")
     monkeypatch.setattr("app.config.API_KEY", "secret", raising=False)
     monkeypatch.setattr("app.config.OLLABRIDGE_CLOUD_URL", "https://ruslanmv-ollabridge.hf.space", raising=False)
+    # HomePilot One: a fully configured deployment also has durable storage
+    # and a signed routing policy.
+    monkeypatch.setenv("HOMEPILOT_STORAGE_DURABLE", "true")
+    monkeypatch.setenv("HOMEPILOT_POLICY_SECRET", "shared")
 
     r = readiness.production_readiness()
     # Still "ready" (advisory), but a warning nudges toward the canonical URL.
@@ -54,3 +62,17 @@ def test_non_canonical_cloud_url_is_advisory_only(monkeypatch):
 def test_readiness_endpoint(client):
     body = client.get("/compute/readiness").json()
     assert "production_ready" in body and "checks" in body and "warnings" in body
+
+
+def test_ephemeral_storage_blocks_production_readiness(monkeypatch):
+    from app.compute import readiness
+    monkeypatch.setattr(readiness, "_crypto_available", lambda: True)
+    monkeypatch.setenv("HOMEPILOT_COMPUTE_SECRET_KEY", "k1")
+    monkeypatch.setenv("HOMEPILOT_CLOUD_TOKEN_KEY", "k2")
+    monkeypatch.setenv("HOMEPILOT_POLICY_SECRET", "shared")
+    monkeypatch.setattr("app.config.API_KEY", "secret", raising=False)
+    monkeypatch.setenv("HOMEPILOT_STORAGE_DURABLE", "false")
+
+    r = readiness.production_readiness()
+    assert r["production_ready"] is False and r["checks"]["durable_storage"] is False
+    assert any("erased" in w for w in r["warnings"])

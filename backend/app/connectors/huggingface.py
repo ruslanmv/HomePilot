@@ -83,6 +83,11 @@ def shared_token() -> str:
     """The Space's own token, for visitors without a linked account. Web edition only."""
     if not is_web():
         return ""
+    # ``HOMEPILOT_OPERATOR_INFERENCE=false``: the Space's token is never spent
+    # on behalf of a visitor who has not linked an account of their own.
+    from ..compute import routing
+    if not routing.operator_inference_allowed():
+        return ""
     return (os.getenv("HOMEPILOT_HF_TOKEN") or os.getenv("HF_TOKEN") or "").strip()
 
 
@@ -117,6 +122,10 @@ _CACHE_S = 1800
 
 class NotLinked(RuntimeError):
     pass
+
+
+class AllowanceSpent(RuntimeError):
+    """The tracked Hugging Face included allowance is used up (reads as a 402)."""
 
 
 def token(user_id: Optional[str] = None) -> str:
@@ -247,8 +256,20 @@ async def chat(messages: List[Dict[str, Any]], *, model: Optional[str], temperat
     """Chat through the router: the chosen model, then the next default when it is down.
     Raises when Hugging Face cannot answer at all — ``llm.chat`` then uses Ollama."""
     from ..llm import chat_openai_compat
+    from ..compute import routing
 
     secret = require_token()
+    # This direct path is HomePilot's emergency executor for when OllaBridge
+    # cannot be reached. It follows the same spending rule the gateway
+    # enforces: once the tracked included allowance is used up, Hugging Face
+    # is billable and needs the user's paid authorisation.
+    user_id = current_user_id()
+    credential = "caller" if store.secret(user_id, ID) else "operator"
+    included = routing._env_float("HOMEPILOT_HF_INCLUDED_USD")
+    if included is not None and not routing.effective_prefs(user_id).allow_paid:
+        if routing.hf_included_spent(user_id, credential) >= included:
+            raise AllowanceSpent("402 Hugging Face included allowance is used up and paid "
+                                 "inference is not authorised")
     last: Optional[BaseException] = None
     for repo in chain("chat", model or ""):
         try:
@@ -258,6 +279,16 @@ async def chat(messages: List[Dict[str, Any]], *, model: Optional[str], temperat
             )
             if isinstance(out, dict):
                 out.setdefault("model", repo)   # which model of the chain answered
+                usage = out.get("usage") if isinstance(out.get("usage"), dict) else {}
+                routing.record_usage(user_id, {
+                    "provider": "huggingface-direct", "provider_kind": "huggingface",
+                    "model": repo, "tier": "huggingface", "billing": "included",
+                    "credential": credential, "execution": "hosted",
+                    # The direct path has no price table: the cost is unknown,
+                    # and is recorded as unknown rather than as zero.
+                    "cost": {"estimated_usd": None, "actual_usd": None, "known": False},
+                    "usage": usage,
+                })
             return out
         except Exception as exc:  # noqa: BLE001
             last = exc
