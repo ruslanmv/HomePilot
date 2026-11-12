@@ -59,8 +59,11 @@ export function ProjectLanding({
   avatar,
   composer,
   extra,
+  workday,
 }: {
   project: WorkspaceProject
+  /** The DayPilot workday card, when the project uses DayPilot (renders nothing otherwise). */
+  workday?: React.ReactNode
   /** The project's own picture (personas), shown in place of the folder. */
   avatar?: React.ReactNode
   /** The chat composer, centred under the title while the conversation is empty. */
@@ -88,6 +91,7 @@ export function ProjectLanding({
         <div className="mt-7 w-full">{composer}</div>
 
         <ProjectToolsRow className="mt-4" />
+        {workday ? <div className="mt-5 w-full max-w-md">{workday}</div> : null}
         {extra ? <div className="mt-5 w-full max-w-2xl">{extra}</div> : null}
       </div>
     </div>

@@ -286,6 +286,23 @@ def capabilities_document() -> dict[str, Any]:
         "response_fields": ["x_directives", "x_homepilot"],
         "endpoints": {"identity": "/v1/integrations/daypilot/identity"},
         "notes": "Propose-only: HomePilot never performs external writes; DayPilot validates and approves.",
+        # Additive (reciprocal discovery): what this HomePilot offers, and the
+        # DayPilot connector contract it can consume. Existing keys are unchanged.
+        "homepilot_features": {
+            "personas": True,
+            "persona_chat": True,
+            "propose_mode": True,
+            "projects": True,
+            "project_permissions": True,
+            "daypilot_connector": {
+                "contract": "daypilot.homepilot",
+                "contract_version": "1",
+                "reads": ["today_plan", "focus", "daily_standup", "tasks", "projects",
+                          "calendar", "approvals", "notifications"],
+                "proposes": True,
+                "pairing": "device+pkce",
+            },
+        },
     }
 
 

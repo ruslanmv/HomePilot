@@ -17,12 +17,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Check, ExternalLink, KeyRound, Loader2, Search, ShieldCheck, X } from 'lucide-react'
 import { resolveBackendUrl } from '../lib/backendUrl'
 import { OPEN_MODELS_EVENT } from '../components/ChatSettingsPopover'
+import DayPilotConnect from './DayPilotConnect'
 
 type Connector = {
   id: string
   name: string
   description: string
-  auth: 'token'
+  auth: 'token' | 'pairing'
   oauth?: boolean
   token_url?: string
   token_hint?: string
@@ -143,6 +144,12 @@ function Logo({ id, size = 40 }: { id: string; size?: number }) {
     return (
       <div aria-hidden style={{ width: size, height: size, fontSize: size * 0.55 }}
         className="flex shrink-0 items-center justify-center rounded-xl bg-[#FFD21E]">🤗</div>
+    )
+  }
+  if (id === 'daypilot') {
+    return (
+      <div aria-hidden style={{ width: size, height: size, fontSize: size * 0.5 }}
+        className="flex shrink-0 items-center justify-center rounded-xl bg-[#2F6FED] text-white">☀</div>
     )
   }
   if (id === 'gitpilot') {
@@ -520,7 +527,27 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
               <Logo id={current.id} size={56} />
             </div>
 
-            {sheet.step === 'done' ? (
+            {current.auth === 'pairing' && sheet.step !== 'done' ? (
+              <DayPilotConnect
+                base={base}
+                defaultEndpoint={current.endpoint_value}
+                placeholder={current.endpoint_placeholder}
+                onConnected={() => { void load().then(() => setSheet({ id: current.id, step: 'done' })) }}
+              />
+            ) : sheet.step === 'done' && current.id !== 'huggingface' ? (
+              <div className="text-center">
+                <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-emerald-400/15 text-emerald-300">
+                  <Check size={22} aria-hidden />
+                </div>
+                <h3 id="connect-title" className="text-[19px] font-semibold text-white">You're connected</h3>
+                <p className="mt-1.5 text-[14px] text-white/55">
+                  {current.account ? <>Connected as <b className="text-white/80">{current.account}</b>. </> : null}
+                  Turn it on in a project's Permissions to use it there.
+                </p>
+                <button type="button" onClick={closeSheet}
+                  className="mt-5 flex min-h-[48px] w-full items-center justify-center rounded-full bg-white text-[15px] font-semibold text-black">Done</button>
+              </div>
+            ) : sheet.step === 'done' ? (
               <div className="text-center">
                 <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-emerald-400/15 text-emerald-300">
                   <Check size={22} aria-hidden />

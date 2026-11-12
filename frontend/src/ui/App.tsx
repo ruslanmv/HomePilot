@@ -77,6 +77,7 @@ import { CompactingIndicator, PastedChips, isLongPaste, withPastes } from './com
 // Account & Computers header pill (Batch 4) — ADDITIVE; renders null when the
 // Account & Computers flag is off, so the header is unchanged by default.
 import { ComputerStatusPill } from './account/ComputerStatusPill'
+import DayPilotCard from './components/projects/DayPilotCard'
 // Remote-LLM chat routing (Batch 5) — resolves the cloud-relay target when a
 // remote computer is selected; null (local path unchanged) otherwise.
 // Batch 6 adds useSelectedOfflineNode — a pinned-but-offline computer, used to
@@ -7589,6 +7590,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           <div className="flex-1 min-h-0 overflow-y-auto">
             <ProjectLanding
               project={currentProject}
+              workday={<DayPilotCard backendUrl={settingsDraft.backendUrl} projectId={currentProject.id} />}
               avatar={projectThumbUrl ? (
                 <AvatarImage urls={[projectFaceUrl, projectThumbUrl]} className="h-full w-full rounded-2xl object-cover" />
               ) : undefined}
