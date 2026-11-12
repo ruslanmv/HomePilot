@@ -480,3 +480,135 @@ def test_operator_token_is_not_used_when_operator_inference_is_off(one, monkeypa
     assert hf.shared_token() == "hf_space_token"
     monkeypatch.setenv("HOMEPILOT_OPERATOR_INFERENCE", "false")
     assert hf.shared_token() == ""
+
+
+# ── Tests E/F: vision and generation through the gateway ─────────────
+
+
+async def test_vision_goes_through_the_gateway_with_the_real_image(one, tmp_path, monkeypatch):
+    from app.connectors import huggingface as hf
+
+    monkeypatch.setattr(hf, "current_user_id", lambda: one["user"])
+    import app.multimodal as multimodal
+    picture = tmp_path / "cat.png"
+    picture.write_bytes(b"\x89PNG\r\n\x1a\n-real-bytes-")
+
+    async def load(url, upload_path):
+        return picture.read_bytes(), "image/png"
+
+    monkeypatch.setattr(multimodal, "_load_image_bytes", load)
+    one["gateway"].handler = lambda r: _ok(_prov(model="google/gemma-3-27b-it"), text="A cat.")
+
+    result = await hf.analyze_image(str(picture), tmp_path, user_prompt="What is this?")
+    assert result["ok"] is True and result["analysis_text"] == "A cat."
+    request = one["gateway"].requests[-1]
+    body = json.loads(request.content)
+    assert body["model"] == "homepilot-vision"
+    sent = body["messages"][0]["content"][1]["image_url"]["url"]
+    assert base64.b64decode(sent.split(",", 1)[1]) == picture.read_bytes()
+    assert _claims(request)["require"] == ["vision"]
+
+
+async def test_private_mode_vision_never_uses_the_direct_hosted_path(one, tmp_path, monkeypatch):
+    from app.compute import routing
+    from app.connectors import huggingface as hf
+    import app.multimodal as multimodal
+
+    monkeypatch.setattr(hf, "current_user_id", lambda: one["user"])
+    monkeypatch.setenv("HF_TOKEN", "hf_space_token")
+
+    async def direct(*a, **k):
+        raise AssertionError("the direct hosted vision path must not run in private mode")
+
+    monkeypatch.setattr(multimodal, "analyze_image_openai_compat", direct)
+    routing.save_prefs("alice", {"strategy": "private_local"})
+    one["gateway"].handler = lambda r: httpx.Response(503, json={"detail": {
+        "error": "device_offline", "message": "no paired computer online", "attempts": []}})
+    async def load(url, upload_path):
+        return b"\x89PNG", "image/png"
+
+    monkeypatch.setattr(multimodal, "_load_image_bytes", load)
+    result = await hf.analyze_image("/files/cat.png", tmp_path)
+    assert result["ok"] is False and "device_offline" in result["error"]
+
+
+def _job_gateway(state, *, fail_code=None, content=b"\x89PNG-generated-bytes"):
+    """A scripted job API: create → running → succeeded → artifact download."""
+    polls = {"n": 0}
+
+    def handler(request):
+        path = request.url.path
+        if request.method == "POST" and path == "/v1/images/generations":
+            state["job_request"] = request
+            return httpx.Response(200, json={"id": "job_1", "status": "queued"})
+        if path == "/v1/jobs/job_1":
+            polls["n"] += 1
+            if polls["n"] < 2:
+                return httpx.Response(200, json={"id": "job_1", "status": "running"})
+            if fail_code:
+                return httpx.Response(200, json={"id": "job_1", "status": "failed",
+                                                 "error": {"code": fail_code, "message": "no"}})
+            return httpx.Response(200, json={"id": "job_1", "status": "succeeded", "output": {
+                "artifacts": [{"url": "/media/cache/abc.png?token=job_1",
+                               "content_type": "image/png", "width": 1024, "height": 1024}],
+                "provenance": _prov(provider="huggingface", model="black-forest-labs/FLUX.1-schnell",
+                                    cost={"estimated_usd": None, "actual_usd": None, "known": False}),
+            }})
+        if path == "/media/cache/abc.png":
+            state["downloaded"] = True
+            return httpx.Response(200, content=content, headers={"content-type": "image/png"})
+        return httpx.Response(404, json={"detail": "not found"})
+
+    return handler
+
+
+async def test_a_generated_image_is_copied_into_homepilot_storage_with_provenance(one, monkeypatch):
+    from app import files
+    from app.compute import media_gateway, routing
+    from app.connectors import huggingface as hf
+
+    monkeypatch.setenv("HOMEPILOT_MEDIA_VIA_GATEWAY", "true")
+    monkeypatch.setattr(hf, "current_user_id", lambda: one["user"])
+    monkeypatch.setattr(media_gateway, "default_transport",
+                        httpx.MockTransport(_job_gateway(one)))
+    saved = {}
+
+    def fake_save(user_id, data, mime, kind, project_id="", conversation_id=""):
+        saved.update(user_id=user_id, data=data, mime=mime, conversation_id=conversation_id)
+        return {"asset_id": "asset_1", "url": "/files/asset_1", "mime": mime, "rel_path": "x"}
+
+    monkeypatch.setattr(files, "save_generated_media_as_asset", fake_save)
+    finished = {}
+    monkeypatch.setattr(hf, "_finish", lambda cid, uid, text, media: finished.update(
+        text=text, media=media) or {"conversation_id": cid, "text": text, "media": media})
+
+    out = await hf.generate_image_turn(cid="conv-1", user_id="alice", model="hf:black-forest-labs/FLUX.1-schnell",
+                                       prompt="a red fox")
+    media = out["media"]
+    # The conversation references HomePilot's own asset, not the gateway's temporary URL.
+    assert media["images"] == ["/files/asset_1"] and "media/cache" not in json.dumps(media)
+    assert saved["data"] == b"\x89PNG-generated-bytes" and saved["conversation_id"] == "conv-1"
+    assert saved["user_id"] == "alice"
+    assert media["served_by"]["provider"] == "huggingface" and media["execution"] == "hosted"
+    assert media["model"] == "black-forest-labs/FLUX.1-schnell" and media["generated_at"]
+    assert one["job_request"].headers["idempotency-key"]
+    assert _claims(one["job_request"])["sub"] == "alice"
+    # Unknown cost is recorded as unknown, not as zero.
+    row = routing.usage_summary("alice")["this_month"][0]
+    assert row["unknown_cost_requests"] == 1
+
+
+async def test_private_mode_generation_refuses_instead_of_using_hosted(one, monkeypatch):
+    from app.compute import media_gateway, routing
+    from app.connectors import huggingface as hf
+
+    monkeypatch.setattr(hf, "current_user_id", lambda: one["user"])
+    monkeypatch.setenv("HF_TOKEN", "hf_space_token")
+    routing.save_prefs("alice", {"strategy": "private_local"})
+    monkeypatch.setattr(media_gateway, "default_transport",
+                        httpx.MockTransport(_job_gateway(one, fail_code="device_offline")))
+    monkeypatch.setattr(hf, "_finish", lambda cid, uid, text, media:
+                        {"conversation_id": cid, "text": text, "media": media})
+    out = await hf.generate_image_turn(cid="c", user_id="alice", model="hf:x/y", prompt="p")
+    assert out["media"] is None and "Nothing was sent to a hosted provider" in out["text"]
+    assert _claims(one["job_request"])["strategy"] == "private_local"

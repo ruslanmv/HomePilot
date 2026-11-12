@@ -301,12 +301,20 @@ async def chat(messages: List[Dict[str, Any]], *, model: Optional[str], temperat
 async def analyze_image(image_url: str, upload_path, **kwargs: Any) -> Dict[str, Any]:
     from ..multimodal import analyze_image_openai_compat
 
-    t = token()
-    if not t:
-        return {"ok": False, "error": NOT_LINKED, "analysis_text": ""}
     kwargs.pop("api_key", None)
     kwargs.pop("base_url", None)
     chosen = kwargs.pop("model", None) or ""
+
+    # HomePilot One: vision goes through OllaBridge's provider selection first
+    # (only models verified for image input). The direct call below remains
+    # the emergency path — and is never used under private_local.
+    via_gateway = await _vision_via_gateway(image_url, upload_path, chosen, kwargs)
+    if via_gateway is not None:
+        return via_gateway
+
+    t = token()
+    if not t:
+        return {"ok": False, "error": NOT_LINKED, "analysis_text": ""}
     result: Dict[str, Any] = {"ok": False, "error": "No Hugging Face vision model answered.", "analysis_text": ""}
     for repo in chain("multimodal", chosen):
         result = await analyze_image_openai_compat(image_url, upload_path, base_url=ROUTER, api_key=t, model=repo, **kwargs)
@@ -314,6 +322,108 @@ async def analyze_image(image_url: str, upload_path, **kwargs: Any) -> Dict[str,
             return result
         logger.warning("Hugging Face vision with %s failed: %s", repo, str(result.get("error"))[:200])
     return result
+
+
+async def _vision_via_gateway(image_url: str, upload_path, chosen: str,
+                              kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Ask the gateway to analyse the image. ``None`` means "use the direct path"."""
+    import base64
+
+    from ..compute import media_gateway, routing
+    from ..compute.providers.hosted import GatewayError
+
+    user_id = current_user_id()
+    strategy = routing.effective_prefs(user_id).strategy
+    if strategy not in routing.GATEWAY_STRATEGIES:
+        return None
+    private = not media_gateway.hosted_direct_allowed(user_id)
+    try:
+        from ..compute import providers as compute_providers
+        from ..multimodal import _load_image_bytes
+
+        # The gateway target only — not the whole route plan: its local tail is
+        # a text executor and must not be asked to "analyse" an image.
+        built = compute_providers.build_target(f"provider:{routing.hosted_alias('multimodal')}")
+        if built is None:
+            if private:
+                return {"ok": False, "error": "Private mode: the gateway is not available.",
+                        "analysis_text": ""}
+            return None
+
+        raw, mime = await _load_image_bytes(image_url, upload_path)
+        data_url = f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+        prompt = kwargs.get("user_prompt") or kwargs.get("prompt") or "Describe this image in detail."
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": str(prompt)},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ]}]
+        out = await built.provider.chat(
+            model=chosen or "", messages=messages, modality="multimodal",
+            temperature=float(kwargs.get("temperature") or 0.3),
+            max_tokens=int(kwargs.get("max_tokens") or 800))
+        routing.take_provenance()
+    except (GatewayError, routing.PrivacyRestricted) as exc:
+        if private:
+            return {"ok": False, "error": str(exc), "analysis_text": ""}
+        logger.warning("Vision through the gateway failed (%s); using the direct path", exc)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        if private:
+            return {"ok": False, "error": str(exc)[:200], "analysis_text": ""}
+        logger.warning("Vision through the gateway failed: %s", str(exc)[:200])
+        return None
+    served = (out.get("answered_by") if isinstance(out, dict) else None) or {}
+    text = ((out.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    if not text.strip():
+        return None
+    return {"ok": True, "analysis_text": text, "model": served.get("model"),
+            "provider": served.get("provider"), "answered_by": served}
+
+
+async def _media_via_gateway(*, task: str, user_id: Optional[str], cid: str, model: str,
+                             body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Run a generation job through the gateway and persist the result.
+
+    Returns the finished chat turn, or ``None`` to continue on the direct path.
+    Under ``private_local`` it always returns a turn: a refusal, never a
+    hosted fallback."""
+    from ..compute import media_gateway
+    from ..compute.providers.hosted import GatewayError
+
+    uid = user_id or current_user_id()
+    if not media_gateway.should_use_gateway(uid):
+        return None
+    private = not media_gateway.hosted_direct_allowed(uid)
+    try:
+        done = await media_gateway.run(uid, task, {"model": model, **body}, conversation_id=cid)
+    except GatewayError as exc:
+        if private:
+            return _finish(cid, user_id, _PRIVATE_REFUSAL.get(exc.code, f"Private mode: {exc}"), None)
+        logger.warning("Gateway %s job failed (%s); using the direct path", task, exc.code)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        if private:
+            return _finish(cid, user_id, f"Private mode: the job could not run ({str(exc)[:160]}).", None)
+        logger.warning("Gateway %s job failed: %s", task, str(exc)[:200])
+        return None
+    provenance = done["provenance"]
+    extra = media_gateway.media_provenance(provenance)
+    shown_model = provenance.get("model") or strip_prefix(model)
+    if task == "video":
+        media = {"video_url": done["asset"]["url"], "final_prompt": body.get("prompt"),
+                 "model": shown_model, **extra}
+        return _finish(cid, user_id, "Here's your video.", media)
+    media = {"images": [done["asset"]["url"]], "final_prompt": body.get("prompt"),
+             "model": shown_model, **done.get("artifact", {}), **extra}
+    return _finish(cid, user_id, "Here you go.", media)
+
+
+_PRIVATE_REFUSAL = {
+    "device_offline": "Private mode is on and none of your paired computers is online, so nothing "
+                      "was generated. Nothing was sent to a hosted provider.",
+    "missing_credentials": "Private mode is on, but no OllaBridge account is linked, so there is "
+                           "no computer of yours to run this on.",
+}
 
 
 # ── routing: when images and video go to Hugging Face ────────────────────────
@@ -363,13 +473,19 @@ def _finish(cid: str, user_id: Optional[str], text: str, media: Optional[Dict[st
 
 async def generate_image_turn(*, cid: str, user_id: Optional[str], model: str, prompt: str,
                               negative: Optional[str] = None, aspect_ratio: str = "1:1") -> Dict[str, Any]:
+    width, height = _SIZES.get(aspect_ratio or "1:1", _SIZES["1:1"])
+    routed = await _media_via_gateway(
+        task="image", user_id=user_id, cid=cid, model=strip_prefix(model),
+        body={"prompt": prompt, "negative_prompt": negative or None, "width": width, "height": height})
+    if routed is not None:
+        return routed
+
     from huggingface_hub import InferenceClient
     from ..files import save_generated_media_as_asset
 
     secret = token(user_id)
     if not secret:
         return _finish(cid, user_id, NOT_LINKED, None)
-    width, height = _SIZES.get(aspect_ratio or "1:1", _SIZES["1:1"])
     client = InferenceClient(provider="auto", token=secret, timeout=240)
     image, repo, last = None, strip_prefix(model), None
     for repo in chain("image", model):
@@ -393,12 +509,27 @@ async def generate_image_turn(*, cid: str, user_id: Optional[str], model: str, p
     image.save(buf, format="PNG")
     asset = save_generated_media_as_asset(user_id or "", buf.getvalue(), "image/png", "image", conversation_id=cid)
     media = {"images": [asset["url"]], "final_prompt": prompt, "model": f"{PREFIX}{repo}",
-             "provider": ID, "width": image.width, "height": image.height}
+             "provider": ID, "width": image.width, "height": image.height,
+             "execution": "hosted", "generated_at": time.time()}
     return _finish(cid, user_id, "Here you go.", media)
 
 
 async def generate_video_turn(*, cid: str, user_id: Optional[str], model: str, prompt: str,
                               image_url: str = "", upload_path=None) -> Dict[str, Any]:
+    if not (image_url and upload_path is not None):
+        # Text-to-video goes through the gateway job API. Image-to-video keeps
+        # the direct path: its source frame is not uploaded to the gateway.
+        routed = await _media_via_gateway(
+            task="video", user_id=user_id, cid=cid, model=strip_prefix(model), body={"prompt": prompt})
+        if routed is not None:
+            return routed
+    else:
+        from ..compute import media_gateway
+        if not media_gateway.hosted_direct_allowed(user_id or current_user_id()):
+            return _finish(cid, user_id, "Private mode is on: animating an image is not available "
+                           "on your own computers through this route yet, and nothing was sent "
+                           "to a hosted provider.", None)
+
     from huggingface_hub import InferenceClient
     from ..files import save_generated_media_as_asset
 
@@ -427,5 +558,6 @@ async def generate_video_turn(*, cid: str, user_id: Optional[str], model: str, p
     if video is None:
         return _finish(cid, user_id, f"Hugging Face couldn't make that video: {_reason(last or RuntimeError('no model'))}.", None)
     asset = save_generated_media_as_asset(user_id or "", video, "video/mp4", "video", conversation_id=cid)
-    media = {"video_url": asset["url"], "final_prompt": prompt, "model": f"{PREFIX}{repo}", "provider": ID}
+    media = {"video_url": asset["url"], "final_prompt": prompt, "model": f"{PREFIX}{repo}", "provider": ID,
+             "execution": "hosted", "generated_at": time.time()}
     return _finish(cid, user_id, "Here's your video.", media)
