@@ -34,6 +34,7 @@ def test_fully_configured_reports_ready(monkeypatch):
     # and a signed routing policy.
     monkeypatch.setenv("HOMEPILOT_STORAGE_DURABLE", "true")
     monkeypatch.setenv("HOMEPILOT_POLICY_SECRET", "shared")
+    monkeypatch.setenv("HOMEPILOT_CONNECTOR_SECRET_KEYS", "k3")
 
     r = readiness.production_readiness()
     assert r["production_ready"] is True
@@ -52,6 +53,7 @@ def test_non_canonical_cloud_url_is_advisory_only(monkeypatch):
     # and a signed routing policy.
     monkeypatch.setenv("HOMEPILOT_STORAGE_DURABLE", "true")
     monkeypatch.setenv("HOMEPILOT_POLICY_SECRET", "shared")
+    monkeypatch.setenv("HOMEPILOT_CONNECTOR_SECRET_KEYS", "k3")
 
     r = readiness.production_readiness()
     # Still "ready" (advisory), but a warning nudges toward the canonical URL.
@@ -70,6 +72,7 @@ def test_ephemeral_storage_blocks_production_readiness(monkeypatch):
     monkeypatch.setenv("HOMEPILOT_COMPUTE_SECRET_KEY", "k1")
     monkeypatch.setenv("HOMEPILOT_CLOUD_TOKEN_KEY", "k2")
     monkeypatch.setenv("HOMEPILOT_POLICY_SECRET", "shared")
+    monkeypatch.setenv("HOMEPILOT_CONNECTOR_SECRET_KEYS", "k3")
     monkeypatch.setattr("app.config.API_KEY", "secret", raising=False)
     monkeypatch.setenv("HOMEPILOT_STORAGE_DURABLE", "false")
 
