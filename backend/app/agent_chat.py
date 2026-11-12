@@ -141,19 +141,40 @@ def _extract_json_obj(s: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _build_tool_catalog() -> str:
-    """Build the tool catalog section of the system prompt from the registry."""
+def _build_tool_catalog(project_id: Optional[str] = None) -> str:
+    """Build the tool catalog section of the system prompt from the registry.
+
+    Inside a project only the tools that project allows are listed. This is
+    for the model's benefit; the actual enforcement is in ``_tool_refusal``,
+    which runs before every tool call."""
+    from . import project_capabilities as _caps
     lines = ["Tool catalog:"]
     for name, desc in TOOL_REGISTRY.items():
-        lines.append(f"- {desc}")
-    # Coding tools (GitPilot connector) — listed only for a user who linked it.
+        if _caps.tool_allowed(project_id, name):
+            lines.append(f"- {desc}")
+    # Coding tools (GitPilot connector) — listed only for a user who linked it,
+    # and inside a project only when the project turned GitPilot on.
     try:
         from .connectors import gitpilot as _gitpilot
-        for desc in _gitpilot.tool_catalog():
-            lines.append(f"- {desc}")
+        if _caps.tool_allowed(project_id, "code.plan"):
+            for desc in _gitpilot.tool_catalog():
+                lines.append(f"- {desc}")
     except Exception:
         pass
     return "\n".join(lines)
+
+
+def _tool_refusal(tool: str, project_id: Optional[str], user_id: Optional[str]) -> Optional[str]:
+    """Why ``tool`` may not run here, or ``None``. Checked on every call, so a
+    model cannot reach a disabled tool by naming it."""
+    from . import project_access as _pa
+    from . import project_capabilities as _caps
+    if project_id and not _caps.tool_allowed(project_id, tool):
+        _pa.log(project_id, user_id, "tool.denied", {"tool": tool})
+        connector = _caps.connector_for_tool(tool)
+        what = f"the {connector} connector" if connector else f"the tool {tool}"
+        return f"{what[0].upper()}{what[1:]} is turned off for this project. The project owner can turn it on in the project's settings."
+    return None
 
 
 def _build_agent_system_prompt(
@@ -163,6 +184,7 @@ def _build_agent_system_prompt(
     user_context: str = "",
     session_context: str = "",
     persona_context: str = "",
+    project_id: Optional[str] = None,
 ) -> str:
     """
     System prompt instructing the LLM to use a minimal JSON protocol.
@@ -191,7 +213,7 @@ def _build_agent_system_prompt(
         '{ "type": "final", "text": "..." }\n',
         "2) Tool call (one at a time):\n"
         '{ "type": "tool_call", "tool": "<tool_name>", "args": { ... } }\n',
-        _build_tool_catalog(),
+        _build_tool_catalog(project_id),
         "\nRules:\n"
         "- Only call a tool if it is necessary to answer correctly.\n"
         "- If no image_url is available for vision.analyze, return a final answer asking the user to upload an image.\n"
@@ -1152,7 +1174,7 @@ async def agent_chat(
         if decision is not None and _gitpilot.is_linked(user_id):
             approve, code = decision
             try:
-                outcome = await _gitpilot.resolve(user_id, code, approve)
+                outcome = await _gitpilot.resolve(user_id, code, approve, project_id=project_id)
                 reply = outcome["text"]
             except _gitpilot.GitPilotError as exc:
                 outcome, reply = {"status": "failed", "error": exc.code}, f"GitPilot: {exc}"
@@ -1303,6 +1325,7 @@ async def agent_chat(
             user_context=user_ctx,
             session_context=session_ctx,
             persona_context=persona_ctx,
+            project_id=project_id,
         )}
     ]
 
@@ -1417,13 +1440,24 @@ async def agent_chat(
         if not isinstance(args, dict):
             args = {}
 
+        # Project permissions: a disabled tool never runs, whatever the model asked.
+        refusal = _tool_refusal(tool, project_id, user_id)
+        if refusal:
+            add_message(cid, "assistant", refusal, media=None, project_id=project_id)
+            return {"conversation_id": cid, "text": refusal, "media": None,
+                    "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked,
+                              "denied_tool": tool}}
+        if project_id:
+            from . import project_access as _pa
+            _pa.log(project_id, user_id, "tool.invoked", {"tool": tool})
+
         # Coding tools come from the GitPilot connector, per user.
         from .connectors import gitpilot as _gitpilot
         if tool.startswith("code.") and _gitpilot.has_tool(tool, user_id):
             tool_calls_used += 1
             tools_invoked.append(tool)
             code_text, code_meta = await _gitpilot.run_tool(
-                tool, args, user_id=user_id, conversation_id=cid)
+                tool, args, user_id=user_id, conversation_id=cid, project_id=project_id)
             if code_meta.get("terminal"):
                 # An approval request (or a refusal) goes to the user word for
                 # word — the model does not get to paraphrase or answer it.

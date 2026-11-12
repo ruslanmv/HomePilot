@@ -18,6 +18,12 @@ from PIL import Image
 RED, BLUE, GREEN, WHITE = (220, 30, 30), (30, 60, 220), (30, 180, 60), (240, 240, 240)
 
 
+
+@pytest.fixture()
+def client(signed_in_client):
+    """These tests create and use projects, which belong to a signed-in user."""
+    return signed_in_client
+
 def quadrants(path: Path, size=(800, 1200)) -> Path:
     """Top-left red, top-right blue, bottom-left green, bottom-right white."""
     w, h = size
@@ -259,6 +265,10 @@ def stored(client, monkeypatch, tmp_path):
                                         "persona_appearance": pap}}))
     monkeypatch.setattr(projects, "PROJECTS_FILE", store)
     monkeypatch.setattr(main, "UPLOAD_PATH", tmp_path)
+    # The project belongs to the signed-in test user, as one they created would.
+    from app import project_access
+    me = client.get("/v1/auth/me").json()
+    project_access.record_owner("p1", (me.get("user") or me)["id"])
     return {"root": tmp_path, "pap": pap, "look_a": look_a, "look_b": look_b, "auto": auto}
 
 

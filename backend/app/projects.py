@@ -231,8 +231,13 @@ def _save_projects_db(data: Dict[str, Any]) -> None:
     """Save projects metadata to disk."""
     # Ensure directory exists
     _ensure_upload_dir()
-    with open(PROJECTS_FILE, "w", encoding="utf-8") as f:
+    # Write-then-rename: a crash mid-write never leaves a truncated file.
+    tmp = PROJECTS_FILE.with_name(PROJECTS_FILE.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, PROJECTS_FILE)
 
 def get_project_by_id(project_id: str) -> Optional[Dict[str, Any]]:
     """Retrieve a specific project by ID."""
@@ -252,6 +257,7 @@ def create_new_project(data: Dict[str, Any]) -> Dict[str, Any]:
         "files": data.get("files", []),
         "is_public": data.get("is_public", False),
         "project_type": data.get("project_type", "chat"),
+        "template_id": data.get("template_id") or None,
         "created_at": time.time(),
         "updated_at": time.time()
     }
@@ -280,13 +286,42 @@ def create_new_project(data: Dict[str, Any]) -> Dict[str, Any]:
         new_project["is_default_assistant"] = True
         new_project["owner_user_id"] = str(data.get("owner_user_id") or "")
 
+    # Ownership is recorded in the ACL tables (project_access.py), which are
+    # the only thing access decisions read.
+    from . import project_access
+    owner = str(data.get("owner_user_id") or "") or _creator_user_id()
+    if not owner:
+        raise PermissionError("Sign in to create a project.")
+    visibility = "public" if new_project.get("is_public") else "private"
+
     db[project_id] = new_project
     _save_projects_db(db)
+    project_access.record_owner(project_id, owner, visibility=visibility)
     return new_project
 
-def list_all_projects() -> List[Dict[str, Any]]:
-    """List all available projects, including examples."""
+
+def _creator_user_id() -> str:
+    """The signed-in user creating a project (single-user installs: their account)."""
+    try:
+        from .connectors.context import current_user_id
+        uid = current_user_id()
+        if uid:
+            return uid
+    except Exception:
+        pass
+    from .project_access import resolve_user_id
+    return resolve_user_id("")
+
+def list_all_projects(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Projects ``user_id`` may see, newest first.
+
+    ``user_id=None`` lists every project — for internal maintenance code only,
+    never for a response to a user."""
     db = _load_projects_db()
+    if user_id is not None:
+        from .project_access import visible_project_ids
+        allowed = set(visible_project_ids(user_id, list(db.keys())))
+        db = {k: v for k, v in db.items() if k in allowed}
     # Return as list, sorted by updated_at desc
     projects = list(db.values())
     projects.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
@@ -312,7 +347,7 @@ def get_example_projects() -> List[Dict[str, Any]]:
         examples.append(example)
     return examples
 
-def create_project_from_example(example_id: str) -> Optional[Dict[str, Any]]:
+def create_project_from_example(example_id: str, owner_user_id: str = "") -> Optional[Dict[str, Any]]:
     """Create a user project from an example template."""
     if example_id not in EXAMPLE_PROJECTS:
         return None
@@ -323,7 +358,9 @@ def create_project_from_example(example_id: str) -> Optional[Dict[str, Any]]:
         "description": example["description"],
         "instructions": example["instructions"],
         "files": [],
-        "is_public": False
+        "is_public": False,
+        "owner_user_id": owner_user_id,
+        "template_id": example_id,
     }
 
     return create_new_project(project_data)
@@ -338,6 +375,9 @@ def delete_project(project_id: str) -> bool:
     # Delete from database
     del db[project_id]
     _save_projects_db(db)
+    from . import project_access, project_capabilities
+    project_access.forget(project_id)
+    project_capabilities.forget(project_id)
 
     # Delete knowledge base if RAG enabled
     if RAG_ENABLED:
