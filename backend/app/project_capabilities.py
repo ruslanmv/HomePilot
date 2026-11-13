@@ -10,9 +10,11 @@ Kinds
 ``tool``       A built-in HomePilot agent tool (``vision.analyze``, ``web.search`` …).
                **Enabled unless the project turns it off**, so existing projects
                keep working exactly as before.
-``connector``  An external service acting on the user's behalf (``gitpilot`` …).
-               **Off until the project's owner turns it on.** A connector can
-               change things outside HomePilot, so it is opt-in per project.
+``connector``  An external service acting on the user's behalf (``gitpilot``,
+               ``daypilot`` …). **Off until the project's owner turns it on.**
+``feature``    A finer switch inside a connector (``daypilot.calendar`` …).
+               **Off until turned on**, and only effective while its connector
+               is on. A feature marked ``coming_soon`` cannot be turned on.
 
 Outside any project (a plain agent chat), connector tools follow the user's
 own connector link, as before.
@@ -31,10 +33,45 @@ import sqlite3
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
-KINDS = ("tool", "connector")
+KINDS = ("tool", "connector", "feature")
 
 #: Which connector each external tool family needs.
-TOOL_CONNECTOR = {"code.": "gitpilot"}
+TOOL_CONNECTOR = {"code.": "gitpilot", "workday.": "daypilot"}
+
+#: Per-connector feature switches: feature -> label, description, and the tools it gates.
+CONNECTOR_FEATURES: Dict[str, List[Dict[str, Any]]] = {
+    "daypilot": [
+        {"ref": "plan", "name": "Today's plan", "description": "Focus block, next block, standup draft.",
+         "tools": ["workday.today"]},
+        {"ref": "tasks", "name": "Tasks and project updates", "description": "Open tasks and operational projects.",
+         "tools": ["workday.tasks"]},
+        {"ref": "calendar", "name": "Calendar", "description": "Today's and upcoming events, and conflicts.",
+         "tools": ["workday.calendar"]},
+        {"ref": "proposals", "name": "Propose actions for approval",
+         "description": "Ask DayPilot to prepare changes. You approve each one in DayPilot.",
+         "tools": ["workday.propose"]},
+        {"ref": "wellness", "name": "Personal wellness sharing",
+         "description": "Not available yet: DayPilot keeps wellness data in your browser only.",
+         "tools": [], "coming_soon": True},
+    ],
+}
+
+
+def feature_for_tool(tool: str) -> Optional[str]:
+    """``workday.calendar`` → ``daypilot.calendar``; ``None`` for un-gated tools."""
+    for connector, features in CONNECTOR_FEATURES.items():
+        for f in features:
+            if tool in f["tools"]:
+                return f"{connector}.{f['ref']}"
+    return None
+
+
+def feature_enabled(project_id: Optional[str], feature: str) -> bool:
+    """A connector feature is on only when its switch *and* its connector are on."""
+    if not project_id:
+        return True
+    connector = feature.split(".", 1)[0]
+    return is_enabled(project_id, "connector", connector) and is_enabled(project_id, "feature", feature)
 
 
 def _conn() -> sqlite3.Connection:
@@ -79,13 +116,16 @@ def is_enabled(project_id: Optional[str], kind: str, ref: str) -> bool:
     saved = _saved(project_id).get((kind, ref))
     if saved is not None:
         return saved
-    return kind == "tool"          # built-ins on by default, connectors off
+    return kind == "tool"          # built-ins on by default; connectors and features off
 
 
 def tool_allowed(project_id: Optional[str], tool: str) -> bool:
     """May ``tool`` run in this project right now?"""
     if not project_id:
         return True
+    feature = feature_for_tool(tool)
+    if feature:
+        return feature_enabled(project_id, feature)
     connector = connector_for_tool(tool)
     if connector:
         return is_enabled(project_id, "connector", connector)
@@ -106,7 +146,13 @@ def describe(project_id: str, user_id: str) -> Dict[str, Any]:
              for t in _builtin_tools()]
     connectors = [{"kind": "connector", "ref": c["id"], "name": c["name"],
                    "description": c["description"], "enabled": saved.get(("connector", c["id"]), False),
-                   "linked": c["id"] in linked}
+                   "linked": c["id"] in linked,
+                   "features": [{"kind": "feature", "ref": f"{c['id']}.{f['ref']}", "name": f["name"],
+                                 "description": f["description"],
+                                 "enabled": (not f.get("coming_soon"))
+                                 and saved.get(("feature", f"{c['id']}.{f['ref']}"), False),
+                                 "coming_soon": bool(f.get("coming_soon"))}
+                                for f in CONNECTOR_FEATURES.get(c["id"], [])]}
                   for c in _connectors()]
     return {"project_id": project_id, "tools": tools, "connectors": connectors}
 
@@ -115,12 +161,16 @@ def update(project_id: str, changes: Dict[str, Dict[str, bool]], *, by: str) -> 
     """``{"tools": {"web.search": False}, "connectors": {"gitpilot": True}}``.
     Unknown names are rejected rather than stored."""
     from . import project_access
-    known = {"tool": set(_builtin_tools()), "connector": {c["id"] for c in _connectors()}}
+    known = {"tool": set(_builtin_tools()), "connector": {c["id"] for c in _connectors()},
+             "feature": {f"{cid}.{f['ref']}" for cid, fs in CONNECTOR_FEATURES.items() for f in fs}}
+    soon = {f"{cid}.{f['ref']}" for cid, fs in CONNECTOR_FEATURES.items() for f in fs if f.get("coming_soon")}
     rows = []
-    for section, kind in (("tools", "tool"), ("connectors", "connector")):
+    for section, kind in (("tools", "tool"), ("connectors", "connector"), ("features", "feature")):
         for ref, enabled in (changes.get(section) or {}).items():
             if ref not in known[kind]:
                 raise ValueError(f"unknown {kind} '{ref}'")
+            if kind == "feature" and ref in soon and enabled:
+                raise ValueError(f"'{ref}' is not available yet")
             rows.append((kind, ref, bool(enabled)))
     con = _conn()
     try:

@@ -50,6 +50,7 @@ class MemberIn(BaseModel):
 class CapabilitiesIn(BaseModel):
     tools: Dict[str, bool] = Field(default_factory=dict)
     connectors: Dict[str, bool] = Field(default_factory=dict)
+    features: Dict[str, bool] = Field(default_factory=dict)
 
 
 class WorkspaceIn(BaseModel):

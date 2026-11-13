@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Lock, Globe, Users, Loader2 } from 'lucide-react'
 import { authFetch } from '../../lib/authFetch'
 
-type Capability = { kind: 'tool' | 'connector'; ref: string; enabled: boolean; name?: string; description?: string; linked?: boolean }
+type Capability = { kind: 'tool' | 'connector' | 'feature'; ref: string; enabled: boolean; name?: string; description?: string; linked?: boolean; coming_soon?: boolean; features?: Capability[] }
 type CapState = { can_edit: boolean; tools: Capability[]; connectors: Capability[] }
 type Sharing = { role: string | null; is_owner: boolean; visibility: 'private' | 'workspace' | 'public' }
 
@@ -69,7 +69,7 @@ export default function ProjectPermissions({ backendUrl, projectId }: { backendU
 
   useEffect(() => { void load() }, [load])
 
-  async function setCapability(section: 'tools' | 'connectors', ref: string, enabled: boolean) {
+  async function setCapability(section: 'tools' | 'connectors' | 'features', ref: string, enabled: boolean) {
     setBusy(true)
     setError('')
     try {
@@ -158,6 +158,25 @@ export default function ProjectPermissions({ backendUrl, projectId }: { backendU
               </div>
               <Toggle on={c.enabled} disabled={!canEdit || busy} label={`${c.name || c.ref} in this project`}
                 onChange={(v) => { void setCapability('connectors', c.ref, v) }} />
+            </div>
+          ))}
+          {caps.connectors.filter((c) => c.enabled && c.features && c.features.length > 0).map((c) => (
+            <div key={`${c.ref}-features`} className="rounded-xl border border-white/10">
+              <div className="px-3 pt-2.5 text-xs font-medium text-white/60">What {c.name || c.ref} may do here</div>
+              <div className="divide-y divide-white/5">
+                {(c.features || []).map((f) => (
+                  <div key={f.ref} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                    <span className="min-w-0">
+                      <span className="block text-sm text-white/85">
+                        {f.name}{f.coming_soon ? <span className="ml-2 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] text-white/60">Coming later</span> : null}
+                      </span>
+                      <span className="block text-xs text-white/45">{f.description}</span>
+                    </span>
+                    <Toggle on={f.enabled} disabled={!canEdit || busy || !!f.coming_soon} label={f.name || f.ref}
+                      onChange={(v) => { void setCapability('features', f.ref, v) }} />
+                  </div>
+                ))}
+              </div>
             </div>
           ))}
         </div>

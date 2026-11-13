@@ -35,6 +35,11 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
+### 🧭 HomePilot One — Routing, Projects and Connectors (in review)
+Hugging Face first routing through OllaBridge Cloud with spending protection, private projects with owner-controlled tool and connector permissions, encrypted per-user connector credentials, and native connectors for **GitPilot** (plan → approve → apply code changes) and **DayPilot** (your workday on the project start screen; changes go to DayPilot's Approval Center). Status: [HOMEPILOT_ONE_STATUS.md](docs/HOMEPILOT_ONE_STATUS.md) · [Architecture](docs/HOMEPILOT_ONE_ARCHITECTURE.md) · [Setup](docs/HOMEPILOT_ONE_SETUP.md) · [Project security](docs/PROJECT_SECURITY.md) · [GitPilot](docs/CODING_WITH_GITPILOT.md) · [DayPilot](docs/DAYPILOT_CONNECTOR.md)
+
+<p align="center"><img src="docs/assets/homepilot-one/09-project-start.png" width="49%" alt="Project with DayPilot workday card"> <img src="docs/assets/homepilot-one/07-my-ai.png" width="49%" alt="My AI: compute sources and routing"></p>
+
 ### 💬 Conversation Hub — Every Persona Has a Face
 Open a persona and its Conversation Hub leads with the persona's own picture, name, age and memories. **Continue Conversation** reopens the latest chat in one tap, voice and text sit side by side, and memories and history are one click away. The same picture follows you into the chat header and into Voice, where a soft ring reacts to your voice. See [Conversation Hub](#conversation-hub).
 
