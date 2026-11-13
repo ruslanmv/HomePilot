@@ -145,3 +145,10 @@ rollback, template ownership, capability defaults and enforcement against a
 model-issued tool call, approvals after a project turns GitPilot off,
 credentials never lent through a shared project, and secret encryption,
 legacy re-encryption, rotation and lost keys.
+
+## What it looks like
+
+![Project permissions](assets/homepilot-one/08-project-permissions.png)
+
+Visibility, connected services (off until turned on; each person uses their own
+linked account) and assistant tools, set per project by its owner.

@@ -126,6 +126,17 @@ access immediately, disconnect in HomePilot or revoke in DayPilot, or set
   revoking in DayPilot, a proposal (deduplicated on repeat, `email.send`
   refused), approval in DayPilot's Approval Center creating the task, and
   HomePilot reading it back.
-* Not covered: a browser walk-through of the two UIs together, and DayPilot
+* A browser walk-through of both UIs together (Playwright, real services):
+  Connect in HomePilot → code shown → consent in DayPilot → connected →
+  project switches → workday card. Screenshots below.
+* Not covered: DayPilot
   behind a public URL (the default outbound guard allows private addresses;
   set `HOMEPILOT_COMPUTE_BLOCK_PRIVATE` on a public HomePilot).
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Connectors](assets/homepilot-one/01-connectors.png) Settings → Connectors | ![Consent](assets/homepilot-one/03-daypilot-consent.png) Consent in DayPilot: workspace and scopes |
+| ![Project permissions](assets/homepilot-one/08-project-permissions.png) Per-project switches (owner only) | ![Workday card](assets/homepilot-one/09-project-start.png) Workday card on the project start screen |
+| ![Connected](assets/homepilot-one/05-homepilot-connected.png) Connected in HomePilot | ![Connections](assets/homepilot-one/10-daypilot-connections.png) Manage or revoke in DayPilot |
