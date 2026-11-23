@@ -146,6 +146,13 @@ def _build_tool_catalog() -> str:
     lines = ["Tool catalog:"]
     for name, desc in TOOL_REGISTRY.items():
         lines.append(f"- {desc}")
+    # Coding tools (GitPilot connector) — listed only for a user who linked it.
+    try:
+        from .connectors import gitpilot as _gitpilot
+        for desc in _gitpilot.tool_catalog():
+            lines.append(f"- {desc}")
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
@@ -1136,6 +1143,25 @@ async def agent_chat(
     if text_in:
         add_message(cid, "user", text_in, media=_user_media, project_id=project_id)
 
+    # Coding approvals (GitPilot connector): "approve K7QW2M" / "deny K7QW2M".
+    # Handled here, deterministically, before any model sees the message — the
+    # decision on a code change is the user's and is never left to an LLM.
+    if text_in:
+        from .connectors import gitpilot as _gitpilot
+        decision = _gitpilot.parse_decision(text_in)
+        if decision is not None and _gitpilot.is_linked(user_id):
+            approve, code = decision
+            try:
+                outcome = await _gitpilot.resolve(user_id, code, approve)
+                reply = outcome["text"]
+            except _gitpilot.GitPilotError as exc:
+                outcome, reply = {"status": "failed", "error": exc.code}, f"GitPilot: {exc}"
+            add_message(cid, "assistant", reply, media=None, project_id=project_id)
+            return {"conversation_id": cid, "text": reply, "media": None,
+                    "agent": {"tool_calls_used": 0, "tools_invoked": [],
+                              "approval_resolved": {"code": code, **{k: outcome.get(k) for k in
+                                                    ("status", "kind", "branch", "url", "error")}}}}
+
     # Deterministic persona photo shortcut: detect photo requests and return
     # the matching image immediately without an LLM call.  Handles both default
     # photo requests ("show me your photo") and outfit-specific requests
@@ -1390,6 +1416,26 @@ async def agent_chat(
         args = parsed.get("args") or {}
         if not isinstance(args, dict):
             args = {}
+
+        # Coding tools come from the GitPilot connector, per user.
+        from .connectors import gitpilot as _gitpilot
+        if tool.startswith("code.") and _gitpilot.has_tool(tool, user_id):
+            tool_calls_used += 1
+            tools_invoked.append(tool)
+            code_text, code_meta = await _gitpilot.run_tool(
+                tool, args, user_id=user_id, conversation_id=cid)
+            if code_meta.get("terminal"):
+                # An approval request (or a refusal) goes to the user word for
+                # word — the model does not get to paraphrase or answer it.
+                add_message(cid, "assistant", code_text, media=None, project_id=project_id)
+                return {"conversation_id": cid, "text": code_text, "media": None,
+                        "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked,
+                                  "approval": code_meta.get("approval")}}
+            add_message(cid, "tool", f"[{_gitpilot.TOOL_LABELS.get(tool, tool)}]\n{code_text}",
+                        media=None, project_id=project_id)
+            messages.append({"role": "assistant", "content": json.dumps({"type": "tool_call", "tool": tool, "args": args})})
+            messages.append({"role": "user", "content": f"Tool result ({tool}):\n{code_text}"})
+            continue
 
         # Validate tool exists in registry
         if tool not in TOOL_REGISTRY:

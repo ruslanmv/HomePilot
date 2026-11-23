@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from . import CATALOG, catalog_entry, huggingface, oauth, store
+from . import CATALOG, catalog_entry, gitpilot, huggingface, oauth, store
 from .context import current_user_id
 
 router = APIRouter(prefix="/v1/connectors", tags=["connectors"])
@@ -46,7 +46,106 @@ def _public(entry: Dict[str, Any], row: Optional[Dict[str, Any]]) -> Dict[str, A
         "via": meta.get("via", "token") if row else "",
         "connected_at": (row or {}).get("connected_at"),
     }
+    if entry["id"] == gitpilot.ID:
+        out["endpoint_value"] = meta.get("endpoint", "") if row else gitpilot.default_endpoint()
+        out["read_only"] = bool(meta.get("read_only")) if row else False
+        out["version"] = meta.get("version", "") if row else ""
     return out
+
+
+# ── GitPilot (coding) ────────────────────────────────────────────────────────
+# Declared before the generic ``/{connector_id}`` routes so they match first.
+
+class GitPilotLinkIn(BaseModel):
+    endpoint: str = Field("", max_length=512)
+    token: str = Field("", max_length=4096)
+
+
+class GitPilotSettingsIn(BaseModel):
+    read_only: bool
+
+
+class GitPilotPlanIn(BaseModel):
+    repo: str = Field(..., max_length=220)
+    request: str = Field(..., min_length=1, max_length=8000)
+    branch: Optional[str] = Field(None, max_length=200)
+
+
+def _gitpilot_http(exc: "gitpilot.GitPilotError") -> HTTPException:
+    status = {"not_linked": 409, "not_found": 404, "bad_request": 400, "read_only": 403,
+              "privacy_restricted": 403, "auth_failed": 401, "forbidden": 403,
+              "rate_limited": 429, "timeout": 504, "unreachable": 502}.get(exc.code, 502)
+    return HTTPException(status_code=status, detail={"error": exc.code, "message": str(exc)})
+
+
+@router.post("/gitpilot")
+async def gitpilot_link(body: GitPilotLinkIn, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    try:
+        info = await gitpilot.verify(body.endpoint, body.token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    store.save(user_id, gitpilot.ID, info["secret"], account=info["account"],
+               meta={"endpoint": info["endpoint"], "avatar": info["avatar"],
+                     "version": info.get("version") or "", "read_only": False})
+    return {"ok": True, "id": gitpilot.ID, "connected": True, "account": info["account"]}
+
+
+@router.get("/gitpilot/status")
+async def gitpilot_status(user_id: str = Depends(_user)) -> Dict[str, Any]:
+    return {"ok": True, **(await gitpilot.status(user_id))}
+
+
+@router.put("/gitpilot/settings")
+def gitpilot_settings(body: GitPilotSettingsIn, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    row = next((r for r in store.linked(user_id) if r["id"] == gitpilot.ID), None)
+    secret = store.secret(user_id, gitpilot.ID)
+    if not row or not secret:
+        raise HTTPException(status_code=409, detail="GitPilot is not connected")
+    store.save(user_id, gitpilot.ID, secret, account=row["account"],
+               meta={**row["meta"], "read_only": bool(body.read_only)})
+    return {"ok": True, "read_only": bool(body.read_only)}
+
+
+@router.get("/gitpilot/repos")
+async def gitpilot_repos(q: str = Query("", max_length=100), user_id: str = Depends(_user)) -> Dict[str, Any]:
+    try:
+        return {"ok": True, "repos": await gitpilot.repos(user_id, q)}
+    except gitpilot.GitPilotError as exc:
+        raise _gitpilot_http(exc) from exc
+
+
+@router.post("/gitpilot/plan")
+async def gitpilot_plan(body: GitPilotPlanIn, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    """Read-only: returns a plan and its id. Nothing is written."""
+    try:
+        return {"ok": True, **(await gitpilot.plan(user_id, body.repo, body.request, body.branch))}
+    except gitpilot.GitPilotError as exc:
+        raise _gitpilot_http(exc) from exc
+
+
+@router.post("/gitpilot/plans/{plan_id}/apply")
+def gitpilot_ask_apply(plan_id: str, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    """Create the approval request for a plan. It still has to be approved."""
+    try:
+        return {"ok": True, "approval": gitpilot.ask_to_apply(user_id, plan_id)}
+    except gitpilot.GitPilotError as exc:
+        raise _gitpilot_http(exc) from exc
+
+
+@router.get("/gitpilot/approvals")
+def gitpilot_approvals(user_id: str = Depends(_user)) -> Dict[str, Any]:
+    return {"ok": True, "pending": gitpilot.pending_approvals(user_id)}
+
+
+@router.post("/gitpilot/approvals/{code}/{decision}")
+async def gitpilot_decide(code: str, decision: str, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    """The signed-in user's own decision on one of their pending changes."""
+    if decision not in ("approve", "deny"):
+        raise HTTPException(status_code=404, detail="Unknown decision")
+    try:
+        return {"ok": True, **(await gitpilot.resolve(user_id, code, decision == "approve"))}
+    except gitpilot.GitPilotError as exc:
+        raise _gitpilot_http(exc) from exc
 
 
 @router.post("/{connector_id}")

@@ -87,10 +87,34 @@ def production_readiness() -> dict[str, Any]:
             f"production URL {_CANONICAL_CLOUD_URL} unless self-hosting Cloud."
         )
 
+    # Durable storage: HomePilot is the source of truth for user data, so a
+    # data root that is erased on restart is a blocking finding.
+    storage: dict[str, Any] = {}
+    try:
+        from app import durable_storage
+        storage = durable_storage.describe()
+        checks["durable_storage"] = bool(storage.get("durable"))
+        if not storage.get("durable"):
+            warnings.append(storage.get("warning") or "User data is on temporary storage.")
+            blocking = False
+    except Exception:
+        checks["durable_storage"] = False
+
+    # Policy signing: without the shared secret, per-user provider credentials
+    # are not forwarded to the gateway and paid authorisation is not honoured.
+    checks["routing_policy_signed"] = _has("HOMEPILOT_POLICY_SECRET")
+    if not checks["routing_policy_signed"]:
+        warnings.append(
+            "Set HOMEPILOT_POLICY_SECRET (the same value on OllaBridge Cloud) so "
+            "routing policies are signed; until then users' own Hugging Face "
+            "tokens are not forwarded to the gateway and paid fallback cannot be authorised."
+        )
+
     return {
         "production_ready": blocking,
         "checks": checks,
         "warnings": warnings,
+        "storage": storage,
         # The compute registry is single-tenant today: all linked users share one
         # registry. Surfaced so operators plan multi-tenant deployments accordingly.
         "multi_tenant_registry": False,

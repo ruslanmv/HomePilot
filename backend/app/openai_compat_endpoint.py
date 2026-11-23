@@ -528,6 +528,7 @@ async def openai_chat_completions(
     x_tool_mode: Optional[str] = Header(default=None, alias="X-HomePilot-Tool-Mode"),
     x_session_id: Optional[str] = Header(default=None, alias="X-HomePilot-Session-ID"),
     x_bridge_version: Optional[str] = Header(default=None, alias="X-HomePilot-Bridge-Version"),
+    x_ollabridge_hop: Optional[str] = Header(default=None, alias="X-OllaBridge-Hop"),
 ) -> Any:
     """OpenAI-compatible chat completions endpoint.
 
@@ -547,6 +548,18 @@ async def openai_chat_completions(
 
     if req.stream:
         raise HTTPException(501, "Streaming is not yet supported for persona endpoints")
+
+    # Loop guard: OllaBridge stamps the requests it forwards here. Remember
+    # the hop count for this request so any inference HomePilot starts for it
+    # either carries hop+1 to the gateway or, at the limit, stays on
+    # HomePilot's own executor — it can never bounce back and forth.
+    from .compute import routing as _routing
+    _routing.set_inbound_hop(x_ollabridge_hop)
+    if _routing.current_hop() >= _routing.MAX_HOPS:
+        raise HTTPException(508, detail={
+            "error": "routing_loop_detected",
+            "message": "This request has passed through the gateway too many times.",
+        })
 
     t0 = time.time()
     model_type, model_id = _parse_model(req.model)
