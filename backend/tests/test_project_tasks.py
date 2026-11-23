@@ -1,8 +1,16 @@
 """Project Chat → Tasks: a checklist stored on the project; the assistant sees the open ones."""
 from __future__ import annotations
 
+import pytest
+
 import sys
 
+
+
+@pytest.fixture()
+def client(signed_in_client):
+    """These tests create and use projects, which belong to a signed-in user."""
+    return signed_in_client
 
 def test_tasks_are_cleaned_and_open_ones_reach_the_prompt():
     projects = sys.modules.get("app.projects") or __import__("app.projects", fromlist=["x"])

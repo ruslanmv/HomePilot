@@ -100,6 +100,19 @@ def production_readiness() -> dict[str, Any]:
     except Exception:
         checks["durable_storage"] = False
 
+    # Connector secrets: encrypted either way; the key should come from a
+    # secret store, not sit beside the database it protects.
+    try:
+        from app.connectors import store as _cstore
+        checks["connector_keys_from_env"] = _cstore.key_source() == "env"
+        if not checks["connector_keys_from_env"]:
+            warnings.append(
+                "Set HOMEPILOT_CONNECTOR_SECRET_KEYS (Fernet keys, newest first) from a secret "
+                "store. Until then connector tokens are encrypted with a key kept beside the database."
+            )
+    except Exception:
+        checks["connector_keys_from_env"] = False
+
     # Policy signing: without the shared secret, per-user provider credentials
     # are not forwarded to the gateway and paid authorisation is not honoured.
     checks["routing_policy_signed"] = _has("HOMEPILOT_POLICY_SECRET")

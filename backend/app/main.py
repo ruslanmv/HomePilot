@@ -480,6 +480,13 @@ from .connectors.routes import router as connectors_router  # noqa: E402
 from .connectors.context import bind_request as _bind_connector_request  # noqa: E402
 app.include_router(connectors_router)
 app.middleware("http")(_bind_connector_request)
+# Project access control (project_access.py): every /projects/{id}/…,
+# /v1/inventory/{id}/… route, ?project_id= and JSON-body project_id.
+from .project_access import ProjectGuard as _ProjectGuard  # noqa: E402
+app.add_middleware(_ProjectGuard)
+# Project sharing, capabilities and activity (project_routes.py).
+from .project_routes import router as _project_routes_router  # noqa: E402
+app.include_router(_project_routes_router)
 
 # The first conversation: each account's own assistant (/v1/onboarding/*).
 from .onboarding import router as onboarding_router  # noqa: E402
@@ -3940,6 +3947,8 @@ async def create_project(data: ProjectCreateIn) -> JSONResponse:
                 print(f"[PERSONA] Auto-commit avatar skipped: {commit_err}")
 
         return JSONResponse(status_code=201, content={"ok": True, "project": result})
+    except PermissionError as e:
+        return JSONResponse(status_code=401, content=_safe_err(str(e), code="unauthorized"))
     except Exception as e:
         print(f"ERROR creating project: {e}")
         traceback.print_exc()
@@ -3956,8 +3965,12 @@ async def list_projects(user: Optional[Dict[str, Any]] = Depends(get_current_use
             if count_users() == 1:
                 user = get_or_create_default_user()  # single-user install, same as conversations
         uid = (user or {}).get("id") or ""
-        result = [p for p in projects.list_all_projects()
+        # Only projects this user owns, is a member of, or that are public —
+        # and another account's default assistant never, even if made public.
+        result = [p for p in projects.list_all_projects(uid)
                   if not p.get("is_default_assistant") or p.get("owner_user_id") == uid]
+        from . import project_access as _pa
+        result = [{**p, "access": {"role": _pa.role_for(p["id"], uid)}} for p in result]
         return JSONResponse(status_code=200, content={"ok": True, "projects": result})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list projects: {e}"))
@@ -3972,10 +3985,14 @@ async def get_example_projects() -> JSONResponse:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to get examples: {e}"))
 
 @app.post("/projects/from-example/{example_id}", dependencies=[Depends(require_api_key)])
-async def create_from_example(example_id: str) -> JSONResponse:
+async def create_from_example(example_id: str, user: Optional[Dict[str, Any]] = Depends(get_current_user)) -> JSONResponse:
     """Create a new project from an example template."""
     try:
-        result = projects.create_project_from_example(example_id)
+        from . import project_access as _pa
+        owner = (user or {}).get("id") or _pa.resolve_user_id("")
+        if not owner:
+            return JSONResponse(status_code=401, content=_safe_err("Sign in first", code="unauthorized"))
+        result = projects.create_project_from_example(example_id, owner_user_id=owner)
         if result:
             return JSONResponse(status_code=201, content={"ok": True, "project": result})
         else:

@@ -90,6 +90,23 @@ def client(app):
     return TestClient(app)
 
 
+@pytest.fixture()
+def signed_in_client(app):
+    """A client signed in as its own fresh account (session cookie).
+
+    Projects are private to their owner. The session-scoped test database
+    holds many accounts once any test registers one, so a test that creates
+    and then reads a project must say who it is — exactly as the browser
+    does — instead of relying on single-user fallback."""
+    import uuid
+    c = TestClient(app)
+    r = c.post("/v1/auth/register", json={"username": f"t_{uuid.uuid4().hex[:10]}",
+                                          "password": "a-long-test-password"})
+    assert r.status_code == 200, r.text
+    c.cookies.set("homepilot_session", r.json()["token"])
+    return c
+
+
 # -------------------- No ambient vector store --------------------
 #
 # `retrieval._client()` falls back to the real Chroma client when a caller passes none, so a
