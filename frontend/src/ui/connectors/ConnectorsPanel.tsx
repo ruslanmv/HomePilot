@@ -17,12 +17,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Check, ExternalLink, KeyRound, Loader2, Search, ShieldCheck, X } from 'lucide-react'
 import { resolveBackendUrl } from '../lib/backendUrl'
 import { OPEN_MODELS_EVENT } from '../components/ChatSettingsPopover'
+import DayPilotConnect from './DayPilotConnect'
 
 type Connector = {
   id: string
   name: string
   description: string
-  auth: 'token'
+  auth: 'token' | 'pairing'
   oauth?: boolean
   token_url?: string
   token_hint?: string
@@ -36,12 +37,100 @@ type Connector = {
   avatar?: string
   via?: string
   connected_at?: number | null
+  /** Connectors that run on the user's own server (GitPilot) also need its address. */
+  endpoint?: boolean
+  endpoint_label?: string
+  endpoint_placeholder?: string
+  endpoint_value?: string
+  token_optional?: boolean
+  token_provider?: string
+  token_placeholder?: string
+  disconnect_note?: string
+  read_only?: boolean
+}
+
+type PendingApproval = { code: string; kind: string; summary: string; created_at: number }
+
+/**
+ * Code changes waiting for the user (GitPilot). The agent can ask for a change;
+ * only the person can approve it — here, or by replying "approve CODE" in chat.
+ */
+function CodingApprovals({ base, readOnly }: { base: string; readOnly: boolean }) {
+  const [pending, setPending] = useState<PendingApproval[]>([])
+  const [ro, setRo] = useState(readOnly)
+  const [working, setWorking] = useState('')
+  const [note, setNote] = useState('')
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch(`${base}/v1/connectors/gitpilot/approvals`, { headers: authHeaders(), credentials: 'include' })
+      if (res.ok) setPending((await res.json()).pending || [])
+    } catch { /* shown as "nothing waiting" */ }
+  }, [base])
+
+  useEffect(() => { void refresh() }, [refresh])
+
+  async function decide(code: string, decision: 'approve' | 'deny') {
+    setWorking(code)
+    setNote('')
+    try {
+      const res = await fetch(`${base}/v1/connectors/gitpilot/approvals/${code}/${decision}`, {
+        method: 'POST', credentials: 'include', headers: authHeaders(),
+      })
+      const body = await res.json().catch(() => ({}))
+      setNote(res.ok ? String(body.text || 'Done.') : String(body?.detail?.message || `Could not ${decision} (HTTP ${res.status}).`))
+    } finally {
+      setWorking('')
+      await refresh()
+    }
+  }
+
+  async function toggleReadOnly(next: boolean) {
+    setRo(next)
+    await fetch(`${base}/v1/connectors/gitpilot/settings`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ read_only: next }),
+    }).catch(() => setRo(!next))
+  }
+
+  return (
+    <div className="space-y-2.5 rounded-xl bg-black/20 px-3.5 py-3 text-[13px]">
+      <label className="flex items-center gap-2 text-white/80">
+        <input type="checkbox" checked={ro} onChange={(e) => { void toggleReadOnly(e.target.checked) }} />
+        Read-only: plan changes, never make them
+      </label>
+      <div className="text-white/45">Waiting for your approval</div>
+      {pending.length === 0 ? <div className="text-white/60">Nothing is waiting.</div> : null}
+      {pending.map((p) => (
+        <div key={p.code} className="rounded-lg border border-white/10 p-2.5">
+          <div className="text-white/85">{p.summary}</div>
+          <div className="mt-2 flex items-center gap-2">
+            <button type="button" disabled={!!working} onClick={() => { void decide(p.code, 'approve') }}
+              className="min-h-[36px] rounded-full bg-white px-3.5 text-[13px] font-semibold text-black disabled:opacity-40">
+              {working === p.code ? 'Working…' : 'Approve'}
+            </button>
+            <button type="button" disabled={!!working} onClick={() => { void decide(p.code, 'deny') }}
+              className="min-h-[36px] rounded-full border border-white/15 px-3.5 text-[13px] text-white/80 disabled:opacity-40">
+              Deny
+            </button>
+            <span className="text-white/35">{p.code}</span>
+          </div>
+        </div>
+      ))}
+      {note ? <p className="whitespace-pre-wrap break-words text-white/70">{note}</p> : null}
+    </div>
+  )
 }
 
 /** Where a connect sheet is: reading the consent, waiting on the provider's window, done. */
 type Step = 'consent' | 'waiting' | 'token' | 'done'
 
 const POLL_MS = 2000
+/** The server keeps a pending sign-in for ten minutes (oauth.STATE_TTL_S); make a new one before. */
+const PREPARED_TTL_MS = 8 * 60 * 1000
+const POPUP_W = 520
+const POPUP_H = 720
 const WAIT_LIMIT_MS = 10 * 60 * 1000
 
 function authHeaders(): Record<string, string> {
@@ -55,6 +144,18 @@ function Logo({ id, size = 40 }: { id: string; size?: number }) {
     return (
       <div aria-hidden style={{ width: size, height: size, fontSize: size * 0.55 }}
         className="flex shrink-0 items-center justify-center rounded-xl bg-[#FFD21E]">🤗</div>
+    )
+  }
+  if (id === 'daypilot') {
+    return (
+      <div aria-hidden style={{ width: size, height: size, fontSize: size * 0.5 }}
+        className="flex shrink-0 items-center justify-center rounded-xl bg-[#2F6FED] text-white">☀</div>
+    )
+  }
+  if (id === 'gitpilot') {
+    return (
+      <div aria-hidden style={{ width: size, height: size, fontSize: size * 0.36 }}
+        className="flex shrink-0 items-center justify-center rounded-xl bg-[#D95C3D] font-mono font-bold text-white">{'</>'}</div>
     )
   }
   return <div aria-hidden style={{ width: size, height: size }} className="shrink-0 rounded-xl bg-white/10" />
@@ -79,9 +180,16 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
   const [manage, setManage] = useState<string | null>(null)       // connected row expanded
   const [confirmUnlink, setConfirmUnlink] = useState(false)
   const [token, setToken] = useState('')
+  const [endpoint, setEndpoint] = useState('')
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
   const [signInUrl, setSignInUrl] = useState('')                  // for "Reopen window"
+  const [blocked, setBlocked] = useState(false)                  // the browser refused the window
+  // The one-use sign-in URL, made as soon as the consent sheet shows, so "Continue" opens it
+  // directly inside the click — the same call as "Open the sign-in window". Opening an empty
+  // window first and pointing it at Hugging Face once the server answered left that window
+  // blank in the Space, which runs HomePilot inside an iframe.
+  const [prepared, setPrepared] = useState<{ id: string; url: string; at: number } | null>(null)
   const popup = useRef<Window | null>(null)
   const waitStarted = useRef(0)
 
@@ -113,6 +221,7 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
     setFormError('')
     setToken('')
     setSignInUrl('')
+    setBlocked(false)
     setSheet({ id: c.id, step: c.oauth ? 'consent' : 'token' })
   }
 
@@ -169,38 +278,65 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
     }
   }, [waiting, sheet?.id, base, load]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  async function startSignIn(id: string): Promise<string> {
+    const res = await fetch(`${base}/v1/connectors/${id}/oauth/start`, {
+      method: 'POST', credentials: 'include', headers: authHeaders(),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok || !body.url) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`)
+    return String(body.url)
+  }
+
+  // Have the sign-in URL ready while the person reads the consent sheet.
+  const consentFor = sheet?.step === 'consent' && current?.oauth ? sheet.id : ''
+  useEffect(() => {
+    if (!consentFor) return
+    if (prepared && prepared.id === consentFor && Date.now() - prepared.at < PREPARED_TTL_MS) return
+    let alive = true
+    startSignIn(consentFor)
+      .then((url) => { if (alive) setPrepared({ id: consentFor, url, at: Date.now() }) })
+      .catch(() => { /* "Continue" asks again and shows the error */ })
+    return () => { alive = false }
+  }, [consentFor]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Open the provider's page in a centred window; null when the browser blocked it. */
+  function openSignInWindow(id: string, url: string): Window | null {
+    const left = Math.max(0, (window.screenX || 0) + ((window.outerWidth || POPUP_W) - POPUP_W) / 2)
+    const top = Math.max(0, (window.screenY || 0) + ((window.outerHeight || POPUP_H) - POPUP_H) / 2)
+    try {
+      return window.open(url, `homepilot-connect-${id}`, `popup=yes,width=${POPUP_W},height=${POPUP_H},left=${left},top=${top}`)
+    } catch {
+      return null
+    }
+  }
+
   async function continueWithProvider(c: Connector) {
     setFormError('')
-    // Open the window now, inside the click, so popup blockers allow it; point it at the
-    // provider once the server has made the one-use sign-in URL.
-    const w = 520, h = 720
-    const left = Math.max(0, (window.screenX || 0) + ((window.outerWidth || w) - w) / 2)
-    const top = Math.max(0, (window.screenY || 0) + ((window.outerHeight || h) - h) / 2)
-    let win: Window | null = null
-    try { win = window.open('', `homepilot-connect-${c.id}`, `popup=yes,width=${w},height=${h},left=${left},top=${top}`) } catch { win = null }
-    setBusy(true)
-    try {
-      const res = await fetch(`${base}/v1/connectors/${c.id}/oauth/start`, {
-        method: 'POST', credentials: 'include', headers: authHeaders(),
-      })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok || !body.url) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`)
-      setSignInUrl(body.url)
-      if (win && !win.closed) win.location.href = body.url
-      popup.current = win
-      waitStarted.current = Date.now()
-      setSheet({ id: c.id, step: 'waiting' })
-    } catch (e) {
-      try { win?.close() } catch { /* already gone */ }
-      setFormError(e instanceof Error ? e.message : 'Could not start the sign-in.')
-    } finally {
-      setBusy(false)
+    let url = prepared && prepared.id === c.id && Date.now() - prepared.at < PREPARED_TTL_MS ? prepared.url : ''
+    setPrepared(null)   // one use: a later "Continue" gets a fresh sign-in
+    if (!url) {
+      // Not ready yet (slow network): ask now; the click still counts for a few seconds.
+      setBusy(true)
+      try {
+        url = await startSignIn(c.id)
+      } catch (e) {
+        setFormError(e instanceof Error ? e.message : 'Could not start the sign-in.')
+        return
+      } finally {
+        setBusy(false)
+      }
     }
+    setSignInUrl(url)
+    popup.current = openSignInWindow(c.id, url)
+    setBlocked(!popup.current)
+    waitStarted.current = Date.now()
+    setSheet({ id: c.id, step: 'waiting' })
   }
 
   function reopen() {
     if (!signInUrl || !current) return
-    try { popup.current = window.open(signInUrl, `homepilot-connect-${current.id}`, 'popup=yes,width=520,height=720') } catch { /* link below */ }
+    popup.current = openSignInWindow(current.id, signInUrl)
+    setBlocked(!popup.current)
   }
 
   async function linkWithToken(c: Connector) {
@@ -211,7 +347,7 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ token: token.trim() }),
+        body: JSON.stringify(c.endpoint ? { endpoint: endpoint.trim(), token: token.trim() } : { token: token.trim() }),
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(typeof body?.detail === 'string' ? body.detail : `HTTP ${res.status}`)
@@ -313,12 +449,14 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
                     <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 rounded-xl bg-black/20 px-3.5 py-3 text-[13px]">
                       <dt className="text-white/45">Account</dt><dd className="truncate text-white/85">{c.account || '—'}</dd>
                       <dt className="text-white/45">Linked with</dt><dd className="text-white/85">{c.via === 'oauth' ? `Sign in with ${c.name}` : 'Access token'}</dd>
+                      {c.endpoint && c.endpoint_value ? <><dt className="text-white/45">Address</dt><dd className="truncate text-white/85">{c.endpoint_value}</dd></> : null}
                       {c.connected_at ? <><dt className="text-white/45">Since</dt><dd className="text-white/85">{since(c.connected_at)}</dd></> : null}
                     </dl>
+                    {c.id === 'gitpilot' ? <CodingApprovals base={base} readOnly={!!c.read_only} /> : null}
                     {confirmUnlink ? (
                       <div className="rounded-xl border border-red-400/20 bg-red-400/[0.06] p-3.5">
                         <p className="text-[13px] leading-relaxed text-red-100/90">
-                          Disconnect {c.name}? HomePilot forgets the key on this server, and chats go back to the built-in model.
+                          Disconnect {c.name}? {c.disconnect_note || 'HomePilot forgets the key on this server, and chats go back to the built-in model.'}
                         </p>
                         <div className="mt-3 flex gap-2">
                           <button type="button" disabled={busy} onClick={() => { void unlink(c) }}
@@ -389,7 +527,27 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
               <Logo id={current.id} size={56} />
             </div>
 
-            {sheet.step === 'done' ? (
+            {current.auth === 'pairing' && sheet.step !== 'done' ? (
+              <DayPilotConnect
+                base={base}
+                defaultEndpoint={current.endpoint_value}
+                placeholder={current.endpoint_placeholder}
+                onConnected={() => { void load().then(() => setSheet({ id: current.id, step: 'done' })) }}
+              />
+            ) : sheet.step === 'done' && current.id !== 'huggingface' ? (
+              <div className="text-center">
+                <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-emerald-400/15 text-emerald-300">
+                  <Check size={22} aria-hidden />
+                </div>
+                <h3 id="connect-title" className="text-[19px] font-semibold text-white">You're connected</h3>
+                <p className="mt-1.5 text-[14px] text-white/55">
+                  {current.account ? <>Connected as <b className="text-white/80">{current.account}</b>. </> : null}
+                  Turn it on in a project's Permissions to use it there.
+                </p>
+                <button type="button" onClick={closeSheet}
+                  className="mt-5 flex min-h-[48px] w-full items-center justify-center rounded-full bg-white text-[15px] font-semibold text-black">Done</button>
+              </div>
+            ) : sheet.step === 'done' ? (
               <div className="text-center">
                 <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-emerald-400/15 text-emerald-300">
                   <Check size={22} aria-hidden />
@@ -408,9 +566,12 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
               </div>
             ) : sheet.step === 'waiting' ? (
               <div className="text-center" aria-live="polite">
-                <h3 id="connect-title" className="text-[19px] font-semibold text-white">Finish in the {current.name} window</h3>
+                <h3 id="connect-title" className="text-[19px] font-semibold text-white">
+                  {blocked ? 'Your browser blocked the window' : `Finish in the ${current.name} window`}
+                </h3>
                 <p className="mt-1.5 text-[14px] leading-relaxed text-white/55">
-                  Review the request and click <b className="text-white/80">Authorize</b>. This page updates on its own.
+                  {blocked ? <>Open it below, then click <b className="text-white/80">Authorize</b>.</> : <>Review the request and click <b className="text-white/80">Authorize</b>.</>}
+                  {' '}This page updates on its own.
                 </p>
                 <div className="mt-5 flex items-center justify-center gap-2 text-[13px] text-white/45">
                   <Loader2 size={15} className="animate-spin" aria-hidden /> Waiting for {current.name}…
@@ -418,8 +579,10 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
                 <div className="mt-5 flex flex-col gap-2">
                   {signInUrl ? (
                     <a href={signInUrl} target="_blank" rel="noopener" onClick={(e) => { e.preventDefault(); reopen() }}
-                      className="flex min-h-[44px] items-center justify-center gap-1.5 rounded-full border border-white/10 text-[14px] font-medium text-white/80 hover:bg-white/[0.06]">
-                      Didn't see it? Open the sign-in window <ExternalLink size={13} aria-hidden />
+                      className={`flex min-h-[44px] items-center justify-center gap-1.5 rounded-full text-[14px] font-medium ${
+                        blocked ? 'bg-[#FFD21E] font-semibold text-black hover:brightness-95' : 'border border-white/10 text-white/80 hover:bg-white/[0.06]'
+                      }`}>
+                      {blocked ? `Open ${current.name} sign-in` : "Didn't see it? Open the sign-in window"} <ExternalLink size={13} aria-hidden />
                     </a>
                   ) : null}
                   <button type="button" onClick={() => { setFormError(''); setSheet({ id: current.id, step: 'consent' }) }}
@@ -466,7 +629,7 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
                     <span>
                       {current.token_url ? (
                         <a href={current.token_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-300 hover:underline">
-                          Create a token on {current.name} <ExternalLink size={12} aria-hidden />
+                          Create a token on {current.token_provider || current.name} <ExternalLink size={12} aria-hidden />
                         </a>
                       ) : 'Create a token'}
                     </span>
@@ -476,20 +639,35 @@ export default function ConnectorsPanel({ backendUrl }: { backendUrl?: string })
                   <li className="flex gap-2.5"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-semibold">3</span>
                     <span>Paste it here.</span></li>
                 </ol>
+                {current.endpoint ? (
+                  <label className="mt-4 block text-[13px] text-white/60">
+                    {current.endpoint_label || 'Address'}
+                    <input
+                      type="url"
+                      inputMode="url"
+                      value={endpoint}
+                      onChange={(e) => setEndpoint(e.target.value)}
+                      placeholder={current.endpoint_value || current.endpoint_placeholder || 'http://localhost:8000'}
+                      aria-label={current.endpoint_label || 'Address'}
+                      autoComplete="off"
+                      className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3.5 py-3 text-[16px] text-white outline-none focus:border-white/30"
+                    />
+                  </label>
+                ) : null}
                 <input
                   type="password"
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
-                  placeholder="hf_…"
-                  aria-label={`${current.name} access token`}
+                  placeholder={current.token_placeholder || 'hf_…'}
+                  aria-label={`${current.token_provider || current.name} access token`}
                   autoComplete="off"
-                  autoFocus
+                  autoFocus={!current.endpoint}
                   className="mt-4 w-full rounded-xl border border-white/10 bg-black/30 px-3.5 py-3 text-[16px] text-white outline-none focus:border-white/30"
                 />
                 {formError ? (
                   <p role="alert" className="mt-2 flex items-center gap-1.5 text-[13px] text-red-300"><X size={13} aria-hidden /> {formError}</p>
                 ) : null}
-                <button type="submit" disabled={busy || token.trim().length < 8}
+                <button type="submit" disabled={busy || (token.trim().length < 8 && !(current.token_optional && token.trim().length === 0))}
                   className="mt-4 flex min-h-[48px] w-full items-center justify-center gap-2 rounded-full bg-white text-[15px] font-semibold text-black disabled:opacity-40">
                   {busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Connect
                 </button>

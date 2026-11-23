@@ -10,7 +10,8 @@
 #   - Model pull retries up to 3 times, falls through a chain of lightweight
 #     free-tier-friendly models, and is NEVER fatal: the app still boots so
 #     the admin UI can show the setup wizard even when Ollama is offline.
-#   - All paths under /tmp (HF Spaces only grants write access there).
+#   - User data lives on the durable data root when one is mounted (/data or
+#     DATA_DIR); only scratch files (the Ollama model cache) stay under /tmp.
 # =============================================================================
 
 # NOTE: no `set -e` at the top. We want the boot to continue even if the
@@ -24,15 +25,56 @@ echo "  │    Private AI · Persistent Personas   │"
 echo "  └──────────────────────────────────────┘"
 echo ""
 
-# ── Writable directories (HF only allows /tmp) ──────────
-mkdir -p /tmp/ollama/models /tmp/homepilot/data /tmp/homepilot/uploads /tmp/homepilot/outputs
+# ── Durable data root ────────────────────────────────────
+# HomePilot is the source of truth for conversations, personas, projects,
+# memories and generated media, so they must not live on the container's
+# scratch disk. Resolution order:
+#   1. DATA_DIR                 — explicit (any mounted volume)
+#   2. /data                    — a Hugging Face persistent-storage volume
+#   3. /tmp/homepilot           — EPHEMERAL: erased on every restart/rebuild
+# Attaching persistent storage to the Space is a paid Hugging Face add-on and
+# is a deliberate operator action; nothing here provisions it.
+if [ -n "${DATA_DIR:-}" ]; then
+    HP_DATA_ROOT="${DATA_DIR%/}"
+elif [ -d /data ] && [ -w /data ]; then
+    HP_DATA_ROOT="/data/homepilot"
+else
+    HP_DATA_ROOT="/tmp/homepilot"
+fi
+export HOMEPILOT_DATA_ROOT="$HP_DATA_ROOT"
+mkdir -p /tmp/ollama/models "$HP_DATA_ROOT/data" "$HP_DATA_ROOT/uploads" "$HP_DATA_ROOT/outputs" "$HP_DATA_ROOT/backups"
+if [ "$HP_DATA_ROOT" = "/tmp/homepilot" ]; then
+    export HOMEPILOT_STORAGE_DURABLE=false
+    echo "  ⚠️  STORAGE IS EPHEMERAL: data in /tmp/homepilot is erased when this Space restarts."
+    echo "      Attach persistent storage (mounts /data) or set DATA_DIR to keep user data."
+else
+    export HOMEPILOT_STORAGE_DURABLE=true
+    echo "  💾 Durable storage: $HP_DATA_ROOT"
+    # One-time, non-destructive migration: if this container already wrote data
+    # to the old scratch location and the durable root has no database yet,
+    # copy it across. Existing durable data is never overwritten.
+    if [ ! -f "$HP_DATA_ROOT/data/homepilot.db" ] && [ -f /tmp/homepilot/data/homepilot.db ]; then
+        echo "  📦 Migrating existing data from /tmp/homepilot to $HP_DATA_ROOT ..."
+        cp -a /tmp/homepilot/data/. "$HP_DATA_ROOT/data/" 2>/dev/null || true
+        cp -a /tmp/homepilot/uploads/. "$HP_DATA_ROOT/uploads/" 2>/dev/null || true
+        cp -a /tmp/homepilot/outputs/. "$HP_DATA_ROOT/outputs/" 2>/dev/null || true
+    fi
+fi
 export OLLAMA_MODELS=/tmp/ollama/models
 export HOME=/tmp
+# Daily snapshot of the database and media onto the durable root (kept: 7).
+# Background and best-effort: a failed backup never blocks boot.
+if [ "$HOMEPILOT_STORAGE_DURABLE" = "true" ]; then
+    ( cd /app && SQLITE_PATH="$HP_DATA_ROOT/data/homepilot.db" UPLOAD_DIR="$HP_DATA_ROOT/uploads" \
+      OUTPUT_DIR="$HP_DATA_ROOT/outputs" \
+      python3 -m app.durable_storage backup --if-older-than 24 --keep 7 \
+      >> "$HP_DATA_ROOT/data/backup.log" 2>&1 || true ) &
+fi
 
 # ── Environment ──────────────────────────────────────────
-export SQLITE_PATH=/tmp/homepilot/data/homepilot.db
-export UPLOAD_DIR=/tmp/homepilot/uploads
-export OUTPUT_DIR=/tmp/homepilot/outputs
+export SQLITE_PATH="$HP_DATA_ROOT/data/homepilot.db"
+export UPLOAD_DIR="$HP_DATA_ROOT/uploads"
+export OUTPUT_DIR="$HP_DATA_ROOT/outputs"
 export DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-ollama}
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
 # Primary model.  On HF Spaces (SPACE_ID is always set) default to the
@@ -158,7 +200,7 @@ fi
 
 # ── 3. Auto-import Chata personas ────────────────────────
 echo "[3/4] Importing Chata personas..."
-MARKER="/tmp/homepilot/data/.personas_imported"
+MARKER="$HP_DATA_ROOT/data/.personas_imported"
 CHATA_PERSONAS_DIR="${CHATA_PERSONAS_DIR:-/app/chata-personas}"
 if [ -f "$MARKER" ]; then
     echo "       ✓ Already imported ($(cat "$MARKER"))"
@@ -170,7 +212,7 @@ else
     EXTRA_ARGS=""
     if [ -d "/app/custom-personas" ]; then EXTRA_ARGS="$EXTRA_ARGS /app/custom-personas"; fi
     if [ -d "/app/shared-personas" ]; then EXTRA_ARGS="$EXTRA_ARGS /app/shared-personas"; fi
-    if python3 /app/auto_import_personas.py "$CHATA_PERSONAS_DIR" /tmp/homepilot/data $EXTRA_ARGS; then
+    if python3 /app/auto_import_personas.py "$CHATA_PERSONAS_DIR" "$HP_DATA_ROOT/data" $EXTRA_ARGS; then
         echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER"
         echo "       ✓ Personas imported"
     else
@@ -210,13 +252,13 @@ if [ "${ENABLE_PROJECT_BOOTSTRAP:-true}" = "true" ] \
             python3 /app/chata_project_bootstrap.py \
                 --personas-dir "${CHATA_PERSONAS_DIR:-/app/chata-personas}" \
                 --api-base http://127.0.0.1:7860 \
-                --marker /tmp/homepilot/data/.projects_bootstrapped \
+                --marker "$HP_DATA_ROOT/data/.projects_bootstrapped" \
                 $([ "$attempt" -gt 1 ] && echo "--force") \
                 && break
             echo "[chata-bootstrap] retry in 30s..."
             sleep 30
         done
-    ) 2>&1 | tee -a /tmp/homepilot/data/bootstrap.log &
+    ) 2>&1 | tee -a "$HP_DATA_ROOT/data/bootstrap.log" &
 fi
 
 # Point the interactive planner at whatever model actually resolved above

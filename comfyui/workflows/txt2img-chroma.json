@@ -1,0 +1,97 @@
+{
+  "_meta": {
+    "title": "Chroma1-HD Text to Image",
+    "description": "Chroma1-HD (Apache 2.0, built on Flux.1 schnell, trained without content restrictions). Spicy mode's new image base.",
+    "optimal_settings": {
+      "resolution": "1024x1024 (Flux-class sizes)",
+      "steps": "26",
+      "cfg": "4.0 (Chroma uses a real negative prompt, unlike Flux)",
+      "sampler": "euler / beta"
+    },
+    "requirements": [
+      "unet/Chroma1-HD.safetensors",
+      "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "vae/ae.safetensors"
+    ],
+    "vram_note": "weight_dtype fp8_e4m3fn halves the 17.8 GB bf16 weights at load so a 12-16 GB card fits."
+  },
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "Chroma1-HD.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
+    }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "chroma"
+    }
+  },
+  "3": {
+    "class_type": "T5TokenizerOptions",
+    "inputs": {
+      "clip": ["2", 0],
+      "min_padding": 0,
+      "min_length": 3
+    }
+  },
+  "4": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}",
+      "clip": ["3", 0]
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{negative_prompt}}",
+      "clip": ["3", 0]
+    }
+  },
+  "7": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "batch_size": 1
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 1.0,
+      "model": ["1", 0],
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "latent_image": ["7", 0]
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["4", 0]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "chroma",
+      "images": ["9", 0]
+    }
+  }
+}

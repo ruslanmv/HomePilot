@@ -104,8 +104,20 @@ class LocalComputeProvider(ComputeProvider):
             meta={"provider": "local", "workflow": workflow},
         )
 
+    @staticmethod
+    def _privacy_check(extra: dict) -> None:
+        """Under ``private_local`` the local executor may not call a hosted API."""
+        from . import routing
+        try:
+            from app.connectors.context import current_user_id
+            user_id = current_user_id()
+        except Exception:
+            user_id = ""
+        routing.assert_private_ok(user_id, extra.get("provider"), extra.get("base_url"))
+
     async def chat(self, *, model, messages, **extra) -> dict:
         from app import llm
+        self._privacy_check(extra)
         kwargs: dict[str, Any] = {"model": model}
         for key in ("provider", "temperature", "max_tokens", "base_url"):
             if extra.get(key) is not None:
@@ -114,6 +126,7 @@ class LocalComputeProvider(ComputeProvider):
 
     async def chat_stream(self, *, model, messages, **extra):
         from app import llm
+        self._privacy_check(extra)
         kwargs: dict[str, Any] = {"model": model}
         for key in ("provider", "temperature", "max_tokens", "base_url"):
             if extra.get(key) is not None:

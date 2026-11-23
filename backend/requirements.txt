@@ -16,8 +16,17 @@ Pillow>=10.0.0
 PyYAML>=6.0
 bcrypt>=4.0.0
 psutil>=5.9.0
+# Connector secrets are encrypted at rest with Fernet (app/connectors/store.py, compute/secrets.py).
+# It used to arrive only as a transitive dependency, so a clean install left every connector
+# (GitPilot, DayPilot, Hugging Face sign-in) and their tests failing on import.
+cryptography>=42
 langgraph>=0.2.0
 langchain-core>=0.3.0
+# langgraph pulls langsmith unpinned, and langsmith installs a pytest plugin that pytest loads
+# before collecting anything. From langsmith 0.15 its schemas no longer build under the pydantic
+# pinned above (NameError: FeedbackConfigSchema), so every backend CI job died at startup with
+# zero tests run. 0.14.x imports cleanly; lift this cap together with the pydantic pin.
+langsmith<0.15
 # Meeting transcription is built in. Pin the native inference runtime so the
 # backend and packaged HomePilot container do not silently lose local speech.
 faster-whisper==1.2.1

@@ -1,30 +1,32 @@
 /**
  * ComputeSettingsTabs — segmented navigation for the Compute section.
  *
- * Splits the feature into the three concerns the design separates — inventory
- * (Resources), connections (Sources), and policy (Routing) — instead of one
- * long scroll. "Connect source" on the Resources tab deep-links to Sources.
+ * "My AI" is the simple view: everything the user can reach and how HomePilot
+ * chooses between it. The other three tabs are the advanced controls —
+ * inventory (Resources), connections (Sources), and per-model policy (Routing). "Connect source" on the Resources tab deep-links to Sources.
  */
 import React, { useState } from "react";
-import { Cpu, Server, SlidersHorizontal } from "lucide-react";
+import { Cpu, Server, SlidersHorizontal, Sparkles } from "lucide-react";
+import EcosystemPanel from "./EcosystemPanel";
 import ComputeResourcesPanel from "./ComputeResourcesPanel";
 import ComputeSourcesSettings from "./ComputeSourcesSettings";
 import RoutingPolicyEditor from "./RoutingPolicyEditor";
 
-type Tab = "resources" | "sources" | "routing";
+type Tab = "ecosystem" | "resources" | "sources" | "routing";
 
 const TABS: { id: Tab; label: string; Icon: typeof Cpu }[] = [
+  { id: "ecosystem", label: "My AI", Icon: Sparkles },
   { id: "resources", label: "Resources", Icon: Cpu },
   { id: "sources", label: "Sources", Icon: Server },
   { id: "routing", label: "Routing", Icon: SlidersHorizontal },
 ];
 
 export default function ComputeSettingsTabs() {
-  const [tab, setTab] = useState<Tab>("resources");
+  const [tab, setTab] = useState<Tab>("ecosystem");
 
   return (
     <div className="space-y-4">
-      <div className="inline-flex rounded-xl border border-white/10 bg-black/30 p-1">
+      <div className="inline-flex max-w-full flex-wrap rounded-xl border border-white/10 bg-black/30 p-1">
         {TABS.map(({ id, label, Icon }) => (
           <button
             key={id}
@@ -38,6 +40,7 @@ export default function ComputeSettingsTabs() {
         ))}
       </div>
 
+      {tab === "ecosystem" && <EcosystemPanel />}
       {tab === "resources" && <ComputeResourcesPanel onConnectSource={() => setTab("sources")} />}
       {tab === "sources" && <ComputeSourcesSettings />}
       {tab === "routing" && <RoutingPolicyEditor />}

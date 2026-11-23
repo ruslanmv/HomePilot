@@ -51,6 +51,9 @@ const KEEP = [
     'expert_hint',
     'protected',
     'nsfw',
+    // Spicy local models: general-purpose models that can also follow adult prompts. Unlike
+    // `nsfw` they are not hidden when Spicy mode is off; the flag only lets Spicy mode use them.
+    'adult_capable',
     'size_gb',
     'resolution',
     'frames',
@@ -116,6 +119,8 @@ export type GeneratedCatalogEntry = {
     expert_hint?: string;
     protected?: boolean;
     nsfw?: boolean;
+    /** General-purpose, also able to follow adult prompts; Spicy mode may use it. Never hides it. */
+    adult_capable?: boolean;
     size_gb?: number;
     resolution?: string;
     frames?: number;
