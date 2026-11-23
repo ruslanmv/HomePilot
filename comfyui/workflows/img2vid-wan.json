@@ -1,15 +1,20 @@
 {
   "_meta": {
-    "title": "Wan 2.2 Image to Video",
-    "description": "Image-to-video using Wan 2.2 5B. Strong motion quality.",
+    "title": "Wan 2.2 5B Image to Video",
+    "description": "Image-to-video with Wan 2.2 TI2V 5B, the lighter Spicy video model for 12-16 GB cards. The uploaded image is the first frame.",
     "optimal_settings": {
-      "resolution": "832x480 or 480x832",
-      "frames": "81 (recommended)",
+      "resolution": "1280x704 or 704x1280 (multiples of 32)",
+      "frames": "81 or 121 (4n+1)",
       "cfg": "5.0",
       "steps": "30",
-      "fps": "16"
+      "fps": "24"
     },
-    "requirements": ["Wan 2.2 5B pack files"]
+    "requirements": [
+      "diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+      "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "vae/wan2.2_vae.safetensors"
+    ],
+    "fixed": "The earlier version loaded files the catalog pack never installs (a GGUF T5 and wan_2.2_vae.safetensors) through DualCLIPLoader, and sampled an empty latent, so the uploaded image was ignored. It now loads exactly the pack's three files and starts from the image via Wan22ImageToVideoLatent."
   },
   "1": {
     "class_type": "LoadImage",
@@ -25,85 +30,76 @@
     }
   },
   "3": {
-    "class_type": "DualCLIPLoader",
+    "class_type": "ModelSamplingSD3",
     "inputs": {
-      "clip_name1": "umt5_xxl_encoder_q4_k_m.gguf",
-      "clip_name2": "open_clip_vit_h_14_text_encoder.safetensors",
-      "type": "wan"
+      "model": ["2", 0],
+      "shift": 8.0
     }
   },
   "4": {
-    "class_type": "VAELoader",
+    "class_type": "CLIPLoader",
     "inputs": {
-      "vae_name": "wan_2.2_vae.safetensors"
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan"
     }
   },
   "5": {
-    "class_type": "CLIPTextEncode",
+    "class_type": "VAELoader",
     "inputs": {
-      "text": "{{prompt}}, cinematic motion, high quality, smooth movement",
-      "clip": ["3", 0]
+      "vae_name": "wan2.2_vae.safetensors"
     }
   },
   "6": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "blurry, low quality, distorted, static, watermark",
-      "clip": ["3", 0]
+      "text": "{{prompt}}",
+      "clip": ["4", 0]
     }
   },
   "7": {
-    "class_type": "ImageScale",
+    "class_type": "CLIPTextEncode",
     "inputs": {
-      "image": ["1", 0],
-      "upscale_method": "lanczos",
-      "width": "{{width}}",
-      "height": "{{height}}",
-      "crop": "center"
+      "text": "{{negative_prompt}}",
+      "clip": ["4", 0]
     }
   },
   "8": {
-    "class_type": "VAEEncode",
+    "class_type": "Wan22ImageToVideoLatent",
     "inputs": {
-      "pixels": ["7", 0],
-      "vae": ["4", 0]
-    }
-  },
-  "9": {
-    "class_type": "EmptyLatentVideo",
-    "inputs": {
+      "vae": ["5", 0],
       "width": "{{width}}",
       "height": "{{height}}",
       "length": "{{frames}}",
-      "batch_size": 1
+      "batch_size": 1,
+      "start_image": ["1", 0]
     }
   },
-  "10": {
+  "9": {
     "class_type": "KSampler",
     "inputs": {
       "seed": "{{seed}}",
       "steps": "{{steps}}",
       "cfg": "{{cfg}}",
-      "sampler_name": "euler",
-      "scheduler": "normal",
-      "denoise": "{{denoise}}",
-      "model": ["2", 0],
-      "positive": ["5", 0],
-      "negative": ["6", 0],
-      "latent_image": ["9", 0]
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": ["3", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["8", 0]
+    }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["9", 0],
+      "vae": ["5", 0]
     }
   },
   "11": {
-    "class_type": "VAEDecode",
-    "inputs": {
-      "samples": ["10", 0],
-      "vae": ["4", 0]
-    }
-  },
-  "12": {
     "class_type": "SaveAnimatedWEBP",
     "inputs": {
-      "images": ["11", 0],
+      "images": ["10", 0],
       "fps": "{{fps}}",
       "lossless": false,
       "quality": 85,

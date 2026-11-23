@@ -1,0 +1,128 @@
+{
+  "_meta": {
+    "title": "Qwen-Image-Edit 2511 (instruction edit, no mask)",
+    "description": "Edits the uploaded image from words alone. Apache 2.0, quantised Q4_K_M to fit a 16 GB card, with the 4-step Lightning LoRA (so steps 4, CFG 1). Spicy mode's default editor.",
+    "optimal_settings": {
+      "resolution": "about 1 megapixel (the input is scaled to it)",
+      "steps": "4 (Lightning)",
+      "cfg": "1.0 (Lightning)"
+    },
+    "requirements": [
+      "ComfyUI-GGUF (UnetLoaderGGUF)",
+      "unet/qwen-image-edit-2511-Q4_K_M.gguf",
+      "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "vae/qwen_image_vae.safetensors",
+      "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+    ]
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": ["1", 0],
+      "upscale_method": "lanczos",
+      "megapixels": 1.0,
+      "resolution_steps": 1
+    }
+  },
+  "3": {
+    "class_type": "UnetLoaderGGUF",
+    "inputs": {
+      "unet_name": "qwen-image-edit-2511-Q4_K_M.gguf"
+    }
+  },
+  "4": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": ["3", 0],
+      "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "5": {
+    "class_type": "ModelSamplingAuraFlow",
+    "inputs": {
+      "model": ["4", 0],
+      "shift": 3.1
+    }
+  },
+  "6": {
+    "class_type": "CFGNorm",
+    "inputs": {
+      "model": ["5", 0],
+      "strength": 1.0
+    }
+  },
+  "7": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image"
+    }
+  },
+  "8": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    }
+  },
+  "9": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": ["7", 0],
+      "prompt": "{{prompt}}",
+      "vae": ["8", 0],
+      "image1": ["2", 0]
+    }
+  },
+  "10": {
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "inputs": {
+      "clip": ["7", 0],
+      "prompt": "",
+      "vae": ["8", 0],
+      "image1": ["2", 0]
+    }
+  },
+  "11": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["2", 0],
+      "vae": ["8", 0]
+    }
+  },
+  "12": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": ["6", 0],
+      "positive": ["9", 0],
+      "negative": ["10", 0],
+      "latent_image": ["11", 0]
+    }
+  },
+  "13": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["12", 0],
+      "vae": ["8", 0]
+    }
+  },
+  "14": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "homepilot_edit_qwen",
+      "images": ["13", 0]
+    }
+  }
+}

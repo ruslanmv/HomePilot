@@ -293,6 +293,7 @@ async def warm_image_model_on_startup() -> None:
         "pony_xl": "txt2img-pony-xl",
         "noobai_xl": "txt2img",
         "noobai_xl_vpred": "txt2img",
+        "chroma": "txt2img-chroma",
     }.get(arch, "txt2img-sd15-uncensored")
 
     # Use the same dimension/steps/CFG defaults as the real image

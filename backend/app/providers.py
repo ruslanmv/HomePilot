@@ -238,6 +238,9 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
             "hunyuanvideo_t2v_720p_gguf_q4_k_m_pack": models_path / "unet" / "hunyuanvideo-q4_k_m.gguf",
             # Wan 2.2 pack (check primary diffusion model)
             "wan2.2_5b_fp16_pack": models_path / "diffusion_models" / "wan2.2_ti2v_5B_fp16.safetensors",
+            # Wan 2.2 14B I2V pack: scripts/download.py fetches the files in catalog order, so the
+            # last one (the low-noise LoRA) present means the two 14B experts finished too.
+            "wan2.2_i2v_14b_fp8_pack": models_path / "loras" / "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
             # Mochi FP8 pack (check primary diffusion model)
             "mochi_preview_fp8_pack": models_path / "diffusion_models" / "mochi_preview_fp8_scaled.safetensors",
             # CogVideoX snapshot (check diffusers directory exists)
@@ -253,6 +256,9 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
             # Optional helpers / adapters
             "sam_vit_h_4b8939.pth": models_path / "sams" / "sam_vit_h_4b8939.pth",
             "u2net.onnx": models_path / "rembg" / "u2net.onnx",
+            # Qwen-Image-Edit 2511 (GGUF pack): Spicy mode's default editor. Checked on the pack's
+            # last file (the Lightning LoRA) so a half-finished download is not reported ready.
+            "qwen-image-edit-2511-Q4_K_M.gguf": models_path / "loras" / "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
         }
     elif model_type == "enhance":
         checks = {

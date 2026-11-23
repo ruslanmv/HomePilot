@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "HomePilot Model Catalog - Curated models for all providers",
   "version": "1.0.0",
-  "last_updated": "2026-01-28",
+  "last_updated": "2026-11-23",
   "_comment": "🧪 EXPERIMENTAL: Add Civitai models using scripts/download.py --add-civitai --version-id <ID> --type <image|video>",
   "_experimental_example": {
     "civitai_model_template": {
@@ -634,6 +634,41 @@
           "install_path": "unet/"
         },
         {
+          "id": "Chroma1-HD.safetensors",
+          "label": "Chroma1-HD",
+          "recommended_nsfw": true,
+          "nsfw": false,
+          "adult_capable": true,
+          "description": "Apache 2.0 text-to-image model rebuilt from Flux.1 schnell (8.9B) and trained without content restrictions. Realistic and stylised. Runs on 12-16 GB by loading the weights as FP8. Uses real negative prompts (CFG ~4).",
+          "size_gb": 23.3,
+          "resolution": "1024x1024",
+          "architecture": "chroma",
+          "install_path": "unet/",
+          "vram_required_gb": 12,
+          "license": "apache-2.0",
+          "install": {
+            "type": "hf_files",
+            "hint": "Workflow txt2img-chroma loads Chroma1-HD with T5-XXL (FP8) and the Flux VAE (ae.safetensors).",
+            "files": [
+              {
+                "repo_id": "lodestones/Chroma1-HD",
+                "filename": "Chroma1-HD.safetensors",
+                "dest": "unet/Chroma1-HD.safetensors"
+              },
+              {
+                "repo_id": "comfyanonymous/flux_text_encoders",
+                "filename": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+                "dest": "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Lumina_Image_2.0_Repackaged",
+                "filename": "split_files/vae/ae.safetensors",
+                "dest": "vae/ae.safetensors"
+              }
+            ]
+          }
+        },
+        {
           "id": "ponyDiffusionV6XL.safetensors",
           "label": "Pony Diffusion v6 XL",
           "nsfw": true,
@@ -641,7 +676,8 @@
           "size_gb": 6.46,
           "resolution": "1024x1024",
           "download_url": "https://civitai.com/api/download/models/290640",
-          "install_path": "checkpoints/"
+          "install_path": "checkpoints/",
+          "recommended_nsfw": true
         },
         {
           "id": "sd15.safetensors",
@@ -876,7 +912,8 @@
             "quality_tags": "very awa, masterpiece, best quality, amazing quality",
             "negative_recommendation": "worst quality, bad quality, low quality, normal quality, text, signature, jpeg artifacts, bad anatomy, watermark",
             "tip": "Same prompting as EPS version. Requires v-pred scheduler config. Better color vibrancy."
-          }
+          },
+          "recommended_nsfw": true
         },
         {
           "id": "meinamix_meinaV12Final.safetensors",
@@ -983,6 +1020,7 @@
           "label": "HunyuanVideo T2V 720p GGUF Q4_K_M Pack",
           "recommended": true,
           "nsfw": false,
+          "adult_capable": true,
           "description": "GGUF UNet + required encoders + VAE. Optimized for RTX 4080 (16GB). Requires ComfyUI-GGUF nodes.",
           "size_gb": 9.5,
           "resolution": "720p",
@@ -1022,13 +1060,15 @@
                 "dest": "vae/hunyuan_video_vae_bf16.safetensors"
               }
             ]
-          }
+          },
+          "recommended_nsfw": true
         },
         {
           "id": "wan2.2_5b_fp16_pack",
           "label": "Wan 2.2 5B FP16 Pack",
           "recommended": true,
           "nsfw": false,
+          "adult_capable": true,
           "description": "Official Comfy-Org repack. Strong motion + modern open video. Good for RTX 4080.",
           "size_gb": 21.5,
           "resolution": "varies",
@@ -1056,6 +1096,62 @@
                 "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
                 "filename": "split_files/vae/wan2.2_vae.safetensors",
                 "dest": "vae/wan2.2_vae.safetensors"
+              }
+            ]
+          },
+          "recommended_nsfw": true
+        },
+        {
+          "id": "wan2.2_i2v_14b_fp8_pack",
+          "label": "Wan 2.2 14B Image-to-Video FP8 Pack (4-step)",
+          "recommended": false,
+          "recommended_nsfw": true,
+          "nsfw": false,
+          "adult_capable": true,
+          "description": "Best open image-to-video quality: Wan 2.2's two 14B experts (high noise, then low noise) in FP8, with the lightx2v 4-step LoRAs. Animates the uploaded image. 16-24 GB VRAM and ~64 GB system RAM.",
+          "size_gb": 38.0,
+          "resolution": "832x480 to 1280x720",
+          "frames": 81,
+          "install_path": "diffusion_models/",
+          "vram_required_gb": 16,
+          "license": "apache-2.0",
+          "requires_addons": [],
+          "recommends_addons": [
+            "ComfyUI-VideoHelperSuite"
+          ],
+          "install": {
+            "type": "hf_files",
+            "hint": "Workflow img2vid-wan22-14b: high-noise expert for the first 2 steps, low-noise expert for the last 2.",
+            "files": [
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+                "dest": "diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+                "dest": "diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "dest": "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/vae/wan_2.1_vae.safetensors",
+                "dest": "vae/wan_2.1_vae.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+                "dest": "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+                "dest": "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
               }
             ]
           }
@@ -1176,6 +1272,52 @@
           "size_gb": 0.17,
           "download_url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
           "install_path": "rembg/"
+        },
+        {
+          "id": "qwen-image-edit-2511-Q4_K_M.gguf",
+          "label": "Qwen-Image-Edit 2511 (Q4_K_M, 4-step Lightning)",
+          "recommended": false,
+          "recommended_nsfw": true,
+          "nsfw": false,
+          "adult_capable": true,
+          "description": "Apache 2.0 instruction editor: describe the change in words, no mask needed. Quantised to fit a 16 GB card, with the 4-step Lightning LoRA. Requires ComfyUI-GGUF.",
+          "size_gb": 23.3,
+          "resolution": "~1 megapixel",
+          "install_path": "unet/",
+          "vram_required_gb": 16,
+          "license": "apache-2.0",
+          "requires_addons": [
+            "ComfyUI-GGUF"
+          ],
+          "install": {
+            "type": "hf_files",
+            "requires_custom_nodes": [
+              "ComfyUI-GGUF"
+            ],
+            "hint": "Workflow edit-qwen: UnetLoaderGGUF + Qwen2.5-VL text encoder + Qwen-Image VAE + Lightning 4-step LoRA.",
+            "files": [
+              {
+                "repo_id": "unsloth/Qwen-Image-Edit-2511-GGUF",
+                "filename": "qwen-image-edit-2511-Q4_K_M.gguf",
+                "dest": "unet/qwen-image-edit-2511-Q4_K_M.gguf"
+              },
+              {
+                "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
+                "filename": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                "dest": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
+                "filename": "split_files/vae/qwen_image_vae.safetensors",
+                "dest": "vae/qwen_image_vae.safetensors"
+              },
+              {
+                "repo_id": "lightx2v/Qwen-Image-Edit-2511-Lightning",
+                "filename": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+                "dest": "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+              }
+            ]
+          }
         }
       ],
       "enhance": [
@@ -1787,5 +1929,27 @@
         "Respect local laws and platform ToS"
       ]
     }
+  },
+  "spicy_defaults": {
+    "_comment": "Local models Spicy (adult) mode uses, best first, per capability. The first one installed wins when the request names no model (image, video) or has no picker (edit). Every id must exist in providers with nsfw: true (adult-oriented, hidden outside Spicy mode) or adult_capable: true (general-purpose, shown everywhere, also able to follow adult prompts); tests/test_spicy_local_models.py enforces it. See docs/SPICY_LOCAL_MODELS.md.",
+    "chat": [
+      "huihui_ai/qwen3-abliterated:8b",
+      "dolphin3"
+    ],
+    "multimodal": [
+      "huihui_ai/qwen3-vl-abliterated:8b-instruct"
+    ],
+    "image": [
+      "ponyDiffusionV6XL.safetensors",
+      "noobaiXL_vPred10.safetensors",
+      "Chroma1-HD.safetensors"
+    ],
+    "edit": [
+      "qwen-image-edit-2511-Q4_K_M.gguf"
+    ],
+    "video": [
+      "wan2.2_i2v_14b_fp8_pack",
+      "wan2.2_5b_fp16_pack"
+    ]
   }
 }

@@ -17,7 +17,7 @@ from typing import Dict, Literal, TypedDict, Union
 # TYPES
 # =============================================================================
 
-Architecture = Literal["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev"]
+Architecture = Literal["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev", "chroma"]
 PresetName = Literal["low", "med", "high", "ultra"]
 AspectRatio = Literal["1:1", "2:3", "4:3", "3:4", "16:9", "9:16", "1:2"]
 
@@ -54,6 +54,9 @@ MODEL_ARCHITECTURES: Dict[str, Architecture] = {
     # --- Flux Models (Native 1024+, Special Steps / CFG behavior) ---
     "flux1-schnell.safetensors": "flux_schnell",  # 4-step turbo model
     "flux1-dev.safetensors": "flux_dev",          # High quality model
+
+    # --- Chroma (Flux.1-schnell derivative, Apache 2.0; real CFG and negative prompts) ---
+    "Chroma1-HD.safetensors": "chroma",
 
     # --- SD 1.5 Models (Native 512x512) ---
     "dreamshaper_8.safetensors": "sd15",
@@ -221,6 +224,15 @@ PRESETS: Dict[Architecture, Dict[PresetName, StepCfg]] = {
         "high":  {"steps": 40, "cfg": 4.0},
         "ultra": {"steps": 50, "cfg": 4.5},
     },
+
+    # Chroma1-HD: a Flux.1-schnell derivative retrained as a full model, so unlike Flux it uses a
+    # real CFG (around 4) and a negative prompt. Its model card recommends ~26 steps.
+    "chroma": {
+        "low":   {"steps": 18, "cfg": 4.0},
+        "med":   {"steps": 26, "cfg": 4.0},
+        "high":  {"steps": 34, "cfg": 4.5},
+        "ultra": {"steps": 45, "cfg": 4.5},
+    },
 }
 
 # =============================================================================
@@ -267,7 +279,7 @@ def get_resolution_table(arch: Architecture, preset: str = "med") -> Dict[Aspect
         return PONY_XL_RESOLUTIONS
     if arch in ("noobai_xl", "noobai_xl_vpred"):
         return NOOBAI_XL_RESOLUTIONS
-    if arch in ("sdxl", "flux_schnell", "flux_dev"):
+    if arch in ("sdxl", "flux_schnell", "flux_dev", "chroma"):
         return SDXL_RESOLUTIONS
     # SD1.5: use higher 768-based table for ultra preset
     if preset == "ultra":
@@ -302,6 +314,10 @@ def detect_architecture_from_filename(model_filename: str) -> Architecture:
         Best guess architecture based on naming patterns
     """
     lower = model_filename.lower()
+
+    # Chroma (Flux-derived; checked first because some Chroma builds also say "flux")
+    if "chroma" in lower:
+        return "chroma"
 
     # Flux detection
     if "flux" in lower:

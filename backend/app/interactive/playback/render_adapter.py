@@ -210,12 +210,15 @@ _IMAGE_WORKFLOW_BY_ARCH: Dict[str, str] = {
     "noobai_xl":       "txt2img",
     "noobai_xl_vpred": "txt2img",
     "pony_xl":         "txt2img-pony-xl",
+    "chroma":          "txt2img-chroma",
 }
 
 # Substring in the video model filename → img2vid workflow.
 # Same dispatch Animate uses (orchestrator lines ~995-1015).
 _VIDEO_WORKFLOW_BY_MODEL: List[tuple[str, str]] = [
     ("ltx",      "img2vid-ltx"),
+    # Wan 2.2 14B (two experts) before the generic "wan": it needs its own workflow.
+    ("wan2.2_i2v_14b", "img2vid-wan22-14b"),
     ("wan",      "img2vid-wan"),
     ("mochi",    "img2vid-mochi"),
     ("hunyuan",  "img2vid-hunyuan"),
