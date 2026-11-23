@@ -25,6 +25,12 @@ import pytest
 # T1: Basic Chat — health
 # ===================================================================
 
+
+@pytest.fixture()
+def client(signed_in_client):
+    """These tests create and use projects, which belong to a signed-in user."""
+    return signed_in_client
+
 class TestTopology1BasicChat:
     """T1: Direct LLM chat works and returns expected structure."""
 

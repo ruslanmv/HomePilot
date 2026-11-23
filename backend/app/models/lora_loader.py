@@ -32,6 +32,7 @@ ARCH_LABELS: Dict[str, str] = {
     "noobai_xl_vpred": "NoobAI XL V-Pred",
     "flux_schnell": "Flux Schnell",
     "flux_dev": "Flux Dev",
+    "chroma": "Chroma",
 }
 
 # Friendly labels for LoRA base

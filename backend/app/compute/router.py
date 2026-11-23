@@ -61,6 +61,7 @@ class ComputeRouter:
             report["attempts"] = failures + [{"target": target, "ok": True}]
             if failures:
                 report["reason"] = failures[0].get("reason")
+            _attach_provenance(report)
 
         for target in targets:
             # Heartbeat-aware: don't dial a device the registry knows is offline —
@@ -85,12 +86,15 @@ class ComputeRouter:
                 return self._annotate(result, built)
             except Exception as exc:  # pre-output: safe to advance
                 last_exc = exc
-                self._cache.record(built.health_key, False)
+                if _trips_breaker(exc):
+                    self._cache.record(built.health_key, False)
                 failures.append({"target": target, "ok": False, "reason": str(exc)[:140]})
                 continue
 
-        # Final safety net: a local runtime, even if the breaker skipped it above.
-        if not tried_local:
+        # Final safety net: a local runtime, even if the breaker skipped it above
+        # — but only where the plan allows local at all (``private_local`` on
+        # the hosted edition does not: falling back would leak the request).
+        if not tried_local and "local" in targets:
             local = LocalComputeProvider()
             try:
                 result = await call(local, {})
@@ -139,6 +143,8 @@ class ComputeRouter:
                     *extra.items(), *textra.items(),
                 ) if v is not None
             }
+            if isinstance(p, providers.HostedGatewayProvider):
+                kwargs["modality"] = modality
             return await p.chat(model=model or "", messages=messages, **kwargs)
 
         return await self._dispatch(modality, model, call, report=report)
@@ -161,6 +167,7 @@ class ComputeRouter:
             report["attempts"] = failures + [{"target": target, "ok": True}]
             if failures:
                 report["reason"] = failures[0].get("reason")
+            _attach_provenance(report)
 
         async def _try(provider, extra, target, health_key):
             first = True
@@ -199,11 +206,12 @@ class ComputeRouter:
                     self._cache.record(built.health_key, False)
                     raise  # mid-stream — never restart
                 last_exc = exc
-                self._cache.record(built.health_key, False)
+                if _trips_breaker(exc):
+                    self._cache.record(built.health_key, False)
                 failures.append({"target": target, "ok": False, "reason": str(exc)[:140]})
                 continue
 
-        if not tried_local:
+        if not tried_local and "local" in targets:
             local = LocalComputeProvider()
             emitted = False
             try:
@@ -246,6 +254,8 @@ class ComputeRouter:
                     *extra.items(), *textra.items(),
                 ) if v is not None
             }
+            if isinstance(p, providers.HostedGatewayProvider):
+                kwargs["modality"] = modality
             return p.chat_stream(model=model or "", messages=messages, **kwargs)
 
         async for delta in self._dispatch_stream(modality, model, make_stream, report=report):
@@ -271,6 +281,26 @@ class ComputeRouter:
         async def call(p: Any, textra: dict) -> GeneratedMedia:
             return await p.generate_video(model=model, **{**kwargs, **textra})
         return await self._dispatch(modality, model, call)
+
+
+def _trips_breaker(exc: Exception) -> bool:
+    """Should this failure open the target's circuit breaker?
+
+    A structured refusal from the gateway (this user's budget, privacy mode,
+    credentials or quota) describes one user's request, not the gateway's
+    health — it must not block every other user for the breaker's TTL."""
+    from .providers.hosted import GatewayError
+    if isinstance(exc, GatewayError):
+        return exc.code in ("provider_unavailable", "gateway_error") and exc.status >= 500
+    return True
+
+
+def _attach_provenance(report: dict) -> None:
+    """Copy who actually answered (from the gateway) into the route report."""
+    from . import routing
+    provenance = routing.take_provenance()
+    if provenance:
+        report["provenance"] = provenance
 
 
 async def route_chat(
@@ -361,7 +391,7 @@ def describe_target(target: Optional[str], device_id: Optional[str] = None) -> s
         src = registry.get_source(sid)
         return src.name if src and src.name else f"Source {sid}"
     if target.startswith("provider:"):
-        return f"Provider {target.split(':', 1)[1]}"
+        return "OllaBridge Cloud"
     return target
 
 
@@ -371,10 +401,18 @@ def build_diagnostics(report: dict) -> Optional[dict]:
     target = report.get("target")
     if not target:
         return None
-    return {
+    out = {
         "target": target,
         "device_id": report.get("device_id"),
         "label": describe_target(target, report.get("device_id")),
         "fell_back": bool(report.get("fell_back")),
         "reason": report.get("reason"),
     }
+    provenance = report.get("provenance")
+    if provenance:
+        # Which provider the gateway actually used, on which tier, and why it
+        # was not the first choice — the user-facing "served by" line.
+        from .providers.hosted import answered_by
+        out["served_by"] = answered_by(provenance)
+        out["fell_back"] = out["fell_back"] or bool(provenance.get("fell_back"))
+    return out

@@ -14,6 +14,10 @@ export interface AnsweredBy {
   model: string;
   fell_back?: boolean;
   reason?: string | null;
+  /** Set when OllaBridge chose the provider: which tier, and how it is billed. */
+  via?: string;
+  tier?: string | null;
+  billing?: string | null;
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -23,6 +27,15 @@ const PROVIDER_LABEL: Record<string, string> = {
   claude: "Anthropic",
   watsonx: "watsonx",
   openai_compat: "local server",
+  // Providers OllaBridge may pick on HomePilot's behalf (HomePilot One).
+  groq: "Groq",
+  gemini: "Gemini",
+  openrouter: "OpenRouter",
+  deepseek: "DeepSeek",
+  anthropic: "Anthropic",
+  my_computer: "my computer",
+  "local-ollama": "OllaBridge local model",
+  ollabridge: "OllaBridge Cloud",
 };
 
 /** "meta-llama/Llama-3.1-8B-Instruct" → "Llama-3.1-8B-Instruct"; Ollama tags stay as they are. */

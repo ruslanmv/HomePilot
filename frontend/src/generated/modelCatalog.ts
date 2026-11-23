@@ -10,7 +10,7 @@
 // test is what stops the two lists separating again, which is what happened to the hand-written
 // copy this file replaced.
 //
-// Catalog version: "1.0.0"   Entries: 133
+// Catalog version: "1.0.0"   Entries: 136
 
 export type GeneratedCatalogEntry = {
     id: string;
@@ -22,6 +22,8 @@ export type GeneratedCatalogEntry = {
     expert_hint?: string;
     protected?: boolean;
     nsfw?: boolean;
+    /** General-purpose, also able to follow adult prompts; Spicy mode may use it. Never hides it. */
+    adult_capable?: boolean;
     size_gb?: number;
     resolution?: string;
     frames?: number;
@@ -520,9 +522,41 @@ export const GENERATED_CATALOGS: Record<string, Record<string, GeneratedCatalogE
                 "resolution": "1024x1024"
             },
             {
+                "id": "Chroma1-HD.safetensors",
+                "label": "Chroma1-HD",
+                "description": "Apache 2.0 text-to-image model rebuilt from Flux.1 schnell (8.9B) and trained without content restrictions. Realistic and stylised. Runs on 12-16 GB by loading the weights as FP8. Uses real negative prompts (CFG ~4).",
+                "recommended_nsfw": true,
+                "nsfw": false,
+                "adult_capable": true,
+                "size_gb": 23.3,
+                "resolution": "1024x1024",
+                "install": {
+                    "type": "hf_files",
+                    "hint": "Workflow txt2img-chroma loads Chroma1-HD with T5-XXL (FP8) and the Flux VAE (ae.safetensors).",
+                    "files": [
+                        {
+                            "repo_id": "lodestones/Chroma1-HD",
+                            "filename": "Chroma1-HD.safetensors",
+                            "dest": "unet/Chroma1-HD.safetensors"
+                        },
+                        {
+                            "repo_id": "comfyanonymous/flux_text_encoders",
+                            "filename": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+                            "dest": "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors"
+                        },
+                        {
+                            "repo_id": "Comfy-Org/Lumina_Image_2.0_Repackaged",
+                            "filename": "split_files/vae/ae.safetensors",
+                            "dest": "vae/ae.safetensors"
+                        }
+                    ]
+                }
+            },
+            {
                 "id": "ponyDiffusionV6XL.safetensors",
                 "label": "Pony Diffusion v6 XL",
                 "description": "SDXL-based model fine-tuned for anime/illustration. Uncensored, supports NSFW content.",
+                "recommended_nsfw": true,
                 "nsfw": true,
                 "size_gb": 6.46,
                 "resolution": "1024x1024"
@@ -677,6 +711,7 @@ export const GENERATED_CATALOGS: Record<string, Record<string, GeneratedCatalogE
                 "id": "noobaiXL_vPred10.safetensors",
                 "label": "NoobAI-XL (V-Pred v1.0)",
                 "description": "V-Prediction variant of NoobAI-XL. Better color accuracy and quality than EPS version but requires v-pred compatible UI (ComfyUI, Forge, reForge). NOT compatible with standard A1111.",
+                "recommended_nsfw": true,
                 "nsfw": true,
                 "size_gb": 7.11,
                 "resolution": "1024x1024",
@@ -757,7 +792,9 @@ export const GENERATED_CATALOGS: Record<string, Record<string, GeneratedCatalogE
                 "label": "HunyuanVideo T2V 720p GGUF Q4_K_M Pack",
                 "description": "GGUF UNet + required encoders + VAE. Optimized for RTX 4080 (16GB). Requires ComfyUI-GGUF nodes.",
                 "recommended": true,
+                "recommended_nsfw": true,
                 "nsfw": false,
+                "adult_capable": true,
                 "size_gb": 9.5,
                 "resolution": "720p",
                 "frames": 80,
@@ -796,7 +833,9 @@ export const GENERATED_CATALOGS: Record<string, Record<string, GeneratedCatalogE
                 "label": "Wan 2.2 5B FP16 Pack",
                 "description": "Official Comfy-Org repack. Strong motion + modern open video. Good for RTX 4080.",
                 "recommended": true,
+                "recommended_nsfw": true,
                 "nsfw": false,
+                "adult_capable": true,
                 "size_gb": 21.5,
                 "resolution": "varies",
                 "frames": 80,
@@ -818,6 +857,54 @@ export const GENERATED_CATALOGS: Record<string, Record<string, GeneratedCatalogE
                             "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
                             "filename": "split_files/vae/wan2.2_vae.safetensors",
                             "dest": "vae/wan2.2_vae.safetensors"
+                        }
+                    ]
+                }
+            },
+            {
+                "id": "wan2.2_i2v_14b_fp8_pack",
+                "label": "Wan 2.2 14B Image-to-Video FP8 Pack (4-step)",
+                "description": "Best open image-to-video quality: Wan 2.2's two 14B experts (high noise, then low noise) in FP8, with the lightx2v 4-step LoRAs. Animates the uploaded image. 16-24 GB VRAM and ~64 GB system RAM.",
+                "recommended": false,
+                "recommended_nsfw": true,
+                "nsfw": false,
+                "adult_capable": true,
+                "size_gb": 38,
+                "resolution": "832x480 to 1280x720",
+                "frames": 81,
+                "install": {
+                    "type": "hf_files",
+                    "hint": "Workflow img2vid-wan22-14b: high-noise expert for the first 2 steps, low-noise expert for the last 2.",
+                    "files": [
+                        {
+                            "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                            "filename": "split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+                            "dest": "diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+                        },
+                        {
+                            "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                            "filename": "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+                            "dest": "diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+                        },
+                        {
+                            "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                            "filename": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                            "dest": "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+                        },
+                        {
+                            "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                            "filename": "split_files/vae/wan_2.1_vae.safetensors",
+                            "dest": "vae/wan_2.1_vae.safetensors"
+                        },
+                        {
+                            "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                            "filename": "split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+                            "dest": "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
+                        },
+                        {
+                            "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                            "filename": "split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+                            "dest": "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
                         }
                     ]
                 }
@@ -916,6 +1003,46 @@ export const GENERATED_CATALOGS: Record<string, Record<string, GeneratedCatalogE
                 "recommended": false,
                 "nsfw": false,
                 "size_gb": 0.17
+            },
+            {
+                "id": "qwen-image-edit-2511-Q4_K_M.gguf",
+                "label": "Qwen-Image-Edit 2511 (Q4_K_M, 4-step Lightning)",
+                "description": "Apache 2.0 instruction editor: describe the change in words, no mask needed. Quantised to fit a 16 GB card, with the 4-step Lightning LoRA. Requires ComfyUI-GGUF.",
+                "recommended": false,
+                "recommended_nsfw": true,
+                "nsfw": false,
+                "adult_capable": true,
+                "size_gb": 23.3,
+                "resolution": "~1 megapixel",
+                "install": {
+                    "type": "hf_files",
+                    "requires_custom_nodes": [
+                        "ComfyUI-GGUF"
+                    ],
+                    "hint": "Workflow edit-qwen: UnetLoaderGGUF + Qwen2.5-VL text encoder + Qwen-Image VAE + Lightning 4-step LoRA.",
+                    "files": [
+                        {
+                            "repo_id": "unsloth/Qwen-Image-Edit-2511-GGUF",
+                            "filename": "qwen-image-edit-2511-Q4_K_M.gguf",
+                            "dest": "unet/qwen-image-edit-2511-Q4_K_M.gguf"
+                        },
+                        {
+                            "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
+                            "filename": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                            "dest": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+                        },
+                        {
+                            "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
+                            "filename": "split_files/vae/qwen_image_vae.safetensors",
+                            "dest": "vae/qwen_image_vae.safetensors"
+                        },
+                        {
+                            "repo_id": "lightx2v/Qwen-Image-Edit-2511-Lightning",
+                            "filename": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+                            "dest": "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+                        }
+                    ]
+                }
             }
         ],
         "enhance": [

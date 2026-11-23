@@ -19,6 +19,7 @@ from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLL
 from .defaults import DEFAULT_NEGATIVE_PROMPT, enhance_negative_prompt
 from .model_config import get_model_settings, get_architecture, MODEL_ARCHITECTURES
 from . import video_presets
+from . import spicy_defaults as _spicy
 from .tracing import log_event
 
 # Import specialized handlers
@@ -862,6 +863,13 @@ async def orchestrate(
     cid = conversation_id or str(uuid.uuid4())
     text_in = (user_text or "").strip()
 
+    # Spicy mode's local defaults (spicy_defaults.py). Before this, Spicy mode changed only the
+    # prompts: with no image or video model chosen, an explicit request fell through to the
+    # general defaults (DreamShaper, SVD), which cannot follow it. Only gaps are filled — a model
+    # the person picked is kept — and only with a model that is installed on this machine.
+    img_model = _spicy.resolve("image", img_model, nsfw_mode)
+    vid_model = _spicy.resolve("video", vid_model, nsfw_mode)
+
     # Claim the conversation for the caller **before the first message is written**.
     #
     # `add_message` infers an owner when none is passed, and its last resort is the *default*
@@ -1033,6 +1041,7 @@ async def orchestrate(
                     "sdxl": "txt2img",
                     "flux_schnell": "txt2img-flux-schnell",
                     "flux_dev": "txt2img-flux-dev",
+                    "chroma": "txt2img-chroma",
                 }
                 img_workflow_name = workflow_map.get(architecture, "txt2img")
                 if "pony" in model_filename.lower():
@@ -1090,6 +1099,11 @@ async def orchestrate(
                 elif "svd" in vid_model_lower:
                     detected_model_type = "svd"
                     video_workflow_name = "img2vid"
+                elif "wan" in vid_model_lower and "14b" in vid_model_lower:
+                    # Wan 2.2 14B image-to-video: two experts and a 4-step LoRA, so a workflow
+                    # of its own. Presets still come from the "wan" family (frames, size, fps).
+                    detected_model_type = "wan"
+                    video_workflow_name = "img2vid-wan22-14b"
                 elif "wan" in vid_model_lower:
                     detected_model_type = "wan"
                     video_workflow_name = "img2vid-wan"
@@ -1396,6 +1410,23 @@ async def orchestrate(
         # Determine which workflow to use based on flags
         workflow_name = determine_workflow(flags, clean_prompt)
 
+        # Qwen-Image-Edit (spicy_defaults.use_qwen_edit): edits from words, no mask. It is
+        # Spicy mode's editor when installed, because the alternative — img2img on the image
+        # checkpoint — repaints the whole picture and loses the person's face and pose. A masked
+        # edit keeps the inpaint workflows, which honour the mask. Its workflow has fixed
+        # Lightning settings (4 steps, CFG 1) and no checkpoint for LoRAs to attach to.
+        if _spicy.is_qwen_edit(img_model) and not flags.mask_url and not flags.ckpt_name:
+            _use_qwen = True
+        else:
+            _use_qwen = _spicy.use_qwen_edit(
+                has_mask=bool(flags.mask_url),
+                named_model=flags.ckpt_name,
+                nsfw_mode=nsfw_mode,
+            )
+        if _use_qwen:
+            workflow_name = "edit-qwen"
+            workflow_vars.pop("_loras", None)
+
         print(f"[EDIT] === EDIT REQUEST ===")
         print(f"[EDIT] Original instruction: '{text_in[:100]}...'")
         print(f"[EDIT] Cleaned prompt: '{clean_prompt[:100]}...'")
@@ -1675,6 +1706,7 @@ async def orchestrate(
                 "sdxl": "txt2img",
                 "flux_schnell": "txt2img-flux-schnell",
                 "flux_dev": "txt2img-flux-dev",
+                "chroma": "txt2img-chroma",
             }
             workflow_name = workflow_map.get(architecture, "txt2img")
 

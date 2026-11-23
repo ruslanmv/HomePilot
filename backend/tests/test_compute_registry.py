@@ -182,5 +182,11 @@ def test_build_target_local_and_openai(compute_db):
     b3 = providers.build_target("device:colab")
     assert b3 and b3.extra["routing"]["device_id"] == "colab"
 
+    # A hosted alias routes through OllaBridge's provider selection.
+    hosted = providers.build_target("provider:free-best")
+    assert hosted and hosted.provider.name == "hosted_gateway" and hosted.remote is True
+    assert hosted.provider.alias == "free-best"
+
     # Unknown / disabled → None (router skips it).
-    assert providers.build_target("provider:free-best") is None
+    assert providers.build_target("nonsense:x") is None
+    assert providers.build_target("source:does-not-exist") is None

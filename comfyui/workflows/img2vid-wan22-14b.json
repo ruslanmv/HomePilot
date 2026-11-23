@@ -1,0 +1,166 @@
+{
+  "_meta": {
+    "title": "Wan 2.2 14B Image to Video (two experts, 4 steps)",
+    "description": "Animates the uploaded image with Wan 2.2's 14B experts: the high-noise expert lays out motion in steps 0-2, the low-noise expert adds detail in steps 2-4. FP8 weights plus the lightx2v 4-step LoRAs, so CFG is 1. Spicy mode's default video model.",
+    "optimal_settings": {
+      "resolution": "832x480 / 480x832 (fast) up to 1280x720",
+      "frames": "81 (4n+1)",
+      "fps": "16",
+      "steps": "4 (lightx2v), split 2 + 2",
+      "cfg": "1.0"
+    },
+    "requirements": [
+      "diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+      "diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+      "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "vae/wan_2.1_vae.safetensors",
+      "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
+    ],
+    "note": "The 14B experts use the Wan 2.1 VAE (16 channels), not the 5B model's wan2.2_vae."
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "3": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "4": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": ["2", 0],
+      "lora_name": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "5": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "model": ["3", 0],
+      "lora_name": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+      "strength_model": 1.0
+    }
+  },
+  "6": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": {
+      "model": ["4", 0],
+      "shift": 5.0
+    }
+  },
+  "7": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": {
+      "model": ["5", 0],
+      "shift": 5.0
+    }
+  },
+  "8": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan"
+    }
+  },
+  "9": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}",
+      "clip": ["8", 0]
+    }
+  },
+  "11": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{negative_prompt}}",
+      "clip": ["8", 0]
+    }
+  },
+  "12": {
+    "class_type": "WanImageToVideo",
+    "inputs": {
+      "positive": ["10", 0],
+      "negative": ["11", 0],
+      "vae": ["9", 0],
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "length": "{{frames}}",
+      "batch_size": 1,
+      "start_image": ["1", 0]
+    }
+  },
+  "13": {
+    "class_type": "KSamplerAdvanced",
+    "inputs": {
+      "model": ["6", 0],
+      "add_noise": "enable",
+      "noise_seed": "{{seed}}",
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": ["12", 0],
+      "negative": ["12", 1],
+      "latent_image": ["12", 2],
+      "start_at_step": 0,
+      "end_at_step": 2,
+      "return_with_leftover_noise": "enable"
+    }
+  },
+  "14": {
+    "class_type": "KSamplerAdvanced",
+    "inputs": {
+      "model": ["7", 0],
+      "add_noise": "disable",
+      "noise_seed": "{{seed}}",
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": ["12", 0],
+      "negative": ["12", 1],
+      "latent_image": ["13", 0],
+      "start_at_step": 2,
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable"
+    }
+  },
+  "15": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["14", 0],
+      "vae": ["9", 0]
+    }
+  },
+  "16": {
+    "class_type": "SaveAnimatedWEBP",
+    "inputs": {
+      "images": ["15", 0],
+      "fps": "{{fps}}",
+      "lossless": false,
+      "quality": 85,
+      "method": "default",
+      "filename_prefix": "wan22_14b_video"
+    }
+  }
+}

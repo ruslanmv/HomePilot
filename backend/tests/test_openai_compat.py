@@ -247,6 +247,11 @@ class TestOllaBridgeToggle:
 class TestSharedApiPublishing:
     """Per-persona publish toggle and stable external model IDs."""
 
+    @pytest.fixture()
+    def client(self, signed_in_client):
+        """Publishing a persona needs a project, which belongs to a signed-in user."""
+        return signed_in_client
+
     def _create_persona(self, client):
         """Create a persona project and return the project data."""
         resp = client.post("/projects", json={
