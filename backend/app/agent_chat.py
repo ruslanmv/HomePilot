@@ -161,6 +161,15 @@ def _build_tool_catalog(project_id: Optional[str] = None) -> str:
                 lines.append(f"- {desc}")
     except Exception:
         pass
+    # Workday tools (DayPilot connector) — each one only when its feature is on.
+    try:
+        from .connectors import daypilot as _daypilot
+        if _daypilot.is_linked():
+            for name, (_feature, _sections, desc) in _daypilot.TOOLS.items():
+                if _caps.tool_allowed(project_id, name):
+                    lines.append(f"- {desc}")
+    except Exception:
+        pass
     return "\n".join(lines)
 
 
@@ -172,7 +181,9 @@ def _tool_refusal(tool: str, project_id: Optional[str], user_id: Optional[str]) 
     if project_id and not _caps.tool_allowed(project_id, tool):
         _pa.log(project_id, user_id, "tool.denied", {"tool": tool})
         connector = _caps.connector_for_tool(tool)
-        what = f"the {connector} connector" if connector else f"the tool {tool}"
+        feature = _caps.feature_for_tool(tool)
+        what = (f"the {connector} feature '{feature.split('.', 1)[1]}'" if feature
+                else f"the {connector} connector" if connector else f"the tool {tool}")
         return f"{what[0].upper()}{what[1:]} is turned off for this project. The project owner can turn it on in the project's settings."
     return None
 
@@ -1450,6 +1461,24 @@ async def agent_chat(
         if project_id:
             from . import project_access as _pa
             _pa.log(project_id, user_id, "tool.invoked", {"tool": tool})
+
+        # Workday tools come from the DayPilot connector — the caller's own link.
+        from .connectors import daypilot as _daypilot
+        if tool.startswith("workday.") and _daypilot.has_tool(tool, user_id):
+            tool_calls_used += 1
+            tools_invoked.append(tool)
+            wd_text, wd_meta = await _daypilot.run_tool(
+                tool, args, user_id=user_id, conversation_id=cid, project_id=project_id)
+            if wd_meta.get("terminal"):
+                add_message(cid, "assistant", wd_text, media=None, project_id=project_id)
+                return {"conversation_id": cid, "text": wd_text, "media": None,
+                        "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked,
+                                  "daypilot": {k: wd_meta.get(k) for k in ("proposal_id", "error_code")}}}
+            add_message(cid, "tool", f"[{_daypilot.TOOL_LABELS.get(tool, tool)}]\n{wd_text}",
+                        media=None, project_id=project_id)
+            messages.append({"role": "assistant", "content": json.dumps({"type": "tool_call", "tool": tool, "args": args})})
+            messages.append({"role": "user", "content": f"Tool result ({tool}):\n{wd_text}"})
+            continue
 
         # Coding tools come from the GitPilot connector, per user.
         from .connectors import gitpilot as _gitpilot

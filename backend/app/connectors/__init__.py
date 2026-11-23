@@ -12,6 +12,9 @@ Connectors so far:
   * ``gitpilot`` — coding: GitPilot plans a change, applies it on a branch and opens a pull
     request. Agent chats get ``code.*`` tools; every change waits for the user's approval.
 
+  * ``daypilot`` — the user's workday (plan, tasks, calendar, approvals), read-only, plus
+    action proposals that DayPilot governs. Connected by pairing: approve in DayPilot.
+
 Only connectors that work are listed. A new one is a module here plus an entry in CATALOG.
 """
 from __future__ import annotations
@@ -56,6 +59,24 @@ CATALOG: List[Dict[str, Any]] = [
             "Write changes to a new branch and open a pull request — only after you approve each one",
         ],
         "billing": "GitPilot runs on your own installation and uses the AI provider configured there.",
+        "featured": False,
+    },
+    {
+        "id": "daypilot",
+        "name": "DayPilot",
+        "description": "Your plan, tasks, calendar and approvals — and proposals DayPilot approves.",
+        "auth": "pairing",
+        "endpoint": True,
+        "endpoint_label": "DayPilot address",
+        "endpoint_placeholder": "http://localhost:8080",
+        "grants": [
+            "Read the workday you choose to share: plan, tasks, projects, calendar, approvals",
+            "Ask DayPilot to prepare changes — you approve each one in DayPilot",
+            "Never send email, change your calendar or approve anything by itself",
+        ],
+        "billing": "You choose the workspace and permissions in DayPilot, and can revoke them there at any time.",
+        "disconnect_note": "HomePilot revokes its access in DayPilot and forgets the connection. Nothing in "
+                           "DayPilot is changed or deleted.",
         "featured": False,
     },
 ]

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from . import CATALOG, catalog_entry, gitpilot, huggingface, oauth, store
+from . import CATALOG, catalog_entry, daypilot, gitpilot, huggingface, oauth, store
 from .context import current_user_id
 
 router = APIRouter(prefix="/v1/connectors", tags=["connectors"])
@@ -46,11 +46,99 @@ def _public(entry: Dict[str, Any], row: Optional[Dict[str, Any]]) -> Dict[str, A
         "via": meta.get("via", "token") if row else "",
         "connected_at": (row or {}).get("connected_at"),
     }
+    if entry["id"] == daypilot.ID:
+        out["endpoint_value"] = meta.get("endpoint", "") if row else daypilot.default_endpoint()
+        out["workspace"] = meta.get("workspace") if row else None
+        out["scopes"] = meta.get("scopes", []) if row else []
     if entry["id"] == gitpilot.ID:
         out["endpoint_value"] = meta.get("endpoint", "") if row else gitpilot.default_endpoint()
         out["read_only"] = bool(meta.get("read_only")) if row else False
         out["version"] = meta.get("version", "") if row else ""
     return out
+
+
+# ── DayPilot (workday) ───────────────────────────────────────────────────────
+# The browser talks only to these routes; HomePilot's server talks to DayPilot.
+
+class DayPilotPairIn(BaseModel):
+    endpoint: str = Field("", max_length=512)
+
+
+def _daypilot_http(exc: "daypilot.DayPilotError") -> HTTPException:
+    status = {"not_linked": 409, "not_found": 404, "bad_request": 400, "forbidden": 403,
+              "insufficient_scope": 403, "privacy_restricted": 403, "not_authorized": 401,
+              "invalid_token": 401, "membership_revoked": 403, "offline": 503,
+              "loop_detected": 508}.get(exc.code, 502)
+    return HTTPException(status_code=status, detail={"error": exc.code, "message": str(exc)})
+
+
+@router.post("/daypilot/pairing")
+async def daypilot_pair_start(body: DayPilotPairIn, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    """Start connecting: returns the code the user confirms in DayPilot."""
+    try:
+        return {"ok": True, **(await daypilot.start_pairing(user_id, body.endpoint))}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/daypilot/pairing")
+async def daypilot_pair_poll(user_id: str = Depends(_user)) -> Dict[str, Any]:
+    """Polled by the connect sheet until the user approves in DayPilot."""
+    try:
+        return {"ok": True, **(await daypilot.poll_pairing(user_id))}
+    except daypilot.DayPilotError as exc:
+        raise _daypilot_http(exc) from exc
+
+
+@router.get("/daypilot/status")
+async def daypilot_status(user_id: str = Depends(_user)) -> Dict[str, Any]:
+    return {"ok": True, **(await daypilot.status(user_id))}
+
+
+@router.get("/daypilot/context")
+async def daypilot_context(project_id: str = Query("", max_length=64),
+                           user_id: str = Depends(_user)) -> Dict[str, Any]:
+    """The workday card. Inside a project, only the sections that project allows
+    are fetched; each other section reports ``not_enabled``. Uses the *caller's*
+    own DayPilot connection, never the project owner's."""
+    from .. import project_access, project_capabilities as caps
+    if project_id:
+        if not project_access.can(project_id, user_id, "viewer"):
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not caps.is_enabled(project_id, "connector", daypilot.ID):
+            return {"ok": True, "state": "not_enabled", "sections": {}}
+    want = {"plan": "plan", "tasks": "tasks", "projects": "tasks", "calendar": "calendar",
+            "approvals": "proposals"}
+    allowed = [s for s, f in want.items()
+               if not project_id or caps.feature_enabled(project_id, f"daypilot.{f}")]
+    if not daypilot.is_linked(user_id):
+        return {"ok": True, "state": "not_connected", "sections": {}}
+    try:
+        data = await daypilot.context(user_id, allowed)
+    except daypilot.DayPilotError as exc:
+        state = {"offline": "offline", "invalid_token": "not_authorized", "not_authorized": "not_authorized",
+                 "membership_revoked": "not_authorized"}.get(exc.code, "needs_attention")
+        return {"ok": True, "state": state, "problem": str(exc), "sections": {}}
+    sections = dict(data.get("sections") or {})
+    for name in want:
+        if name not in allowed:
+            sections[name] = {"status": "not_enabled"}
+    views = {}
+    try:
+        endpoint = daypilot._link(user_id)[0]
+        views = {k: endpoint + v for k, v in ((await daypilot.manifest(user_id)).get("views") or {}).items()}
+    except Exception:
+        pass
+    return {"ok": True, "state": data.get("state", "connected"), "generated_at": data.get("generatedAt"),
+            "age_s": data.get("age_s"), "sections": sections, "views": views}
+
+
+@router.get("/daypilot/proposals/{proposal_id}")
+async def daypilot_proposal(proposal_id: str, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    try:
+        return {"ok": True, **(await daypilot.proposal_status(user_id, proposal_id))}
+    except daypilot.DayPilotError as exc:
+        raise _daypilot_http(exc) from exc
 
 
 # ── GitPilot (coding) ────────────────────────────────────────────────────────
@@ -194,7 +282,11 @@ async def hf_oauth_callback(code: str = "", state: str = "", error: str = "",
 
 
 @router.delete("/{connector_id}")
-def unlink(connector_id: str, user_id: str = Depends(_user)) -> Dict[str, Any]:
+async def unlink(connector_id: str, user_id: str = Depends(_user)) -> Dict[str, Any]:
+    if connector_id == daypilot.ID:
+        # Revoke the grant on DayPilot too, not just forget it here.
+        out = await daypilot.disconnect(user_id)
+        return {"ok": True, "id": connector_id, **out}
     store.remove(user_id, connector_id)
     return {"ok": True, "id": connector_id, "connected": False}
 

@@ -55,6 +55,10 @@ GitPilot's REST API:
 | approved `code.apply` | `POST /api/chat/execute` with the stored plan |
 | approved `code.open_pr` | `POST /api/repos/{owner}/{repo}/pulls` |
 
+Linking GitPilot is not enough on its own: inside a project, `code.*` tools run
+only when the project owner turns **GitPilot** on in the project's
+Permissions (off by default). See [PROJECT_SECURITY.md](PROJECT_SECURITY.md).
+
 GitPilot also publishes an MCP-style tool surface (`/mcp-server/mcp`, enabled
 with `GITPILOT_EXPOSE_MCP_SERVER=true`) intended for HomePilot's Coder
 persona. This connector does not use it yet, for two reasons found in that

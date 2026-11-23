@@ -233,7 +233,9 @@ def test_capabilities_default_built_ins_on_and_connectors_off(tenants):
     pid = _create(tenants, "alice")
     caps = c.get(f"/projects/{pid}/capabilities", headers=_h(tenants, "alice")).json()
     assert all(t["enabled"] for t in caps["tools"])
-    assert {x["ref"]: x["enabled"] for x in caps["connectors"]} == {"gitpilot": False}
+    connectors = {x["ref"]: x["enabled"] for x in caps["connectors"]}
+    assert connectors and not any(connectors.values())      # every connector starts off
+    assert {"gitpilot", "daypilot"} <= set(connectors)
     assert caps["can_edit"] is True
     r = c.put(f"/projects/{pid}/capabilities", headers=_h(tenants, "alice"),
               json={"connectors": {"not-a-connector": True}})

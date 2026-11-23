@@ -555,6 +555,11 @@ async def openai_chat_completions(
     # HomePilot's own executor — it can never bounce back and forth.
     from .compute import routing as _routing
     _routing.set_inbound_hop(x_ollabridge_hop)
+    # A turn DayPilot sends through the persona bridge must never propose back
+    # into DayPilot through the workday connector (loop guard).
+    if (x_tool_mode or "").strip().lower() in ("propose", "execute", "disabled") or x_bridge_version:
+        from .connectors import daypilot as _daypilot
+        _daypilot.mark_inbound_from_daypilot()
     if _routing.current_hop() >= _routing.MAX_HOPS:
         raise HTTPException(508, detail={
             "error": "routing_loop_detected",

@@ -39,6 +39,7 @@ import { CommunityGallery } from './CommunityGallery';
 import { ToolsTab } from './tools';
 import { McpServersTab } from './mcp';
 import ProjectPermissions from './components/projects/ProjectPermissions';
+import DayPilotCard from './components/projects/DayPilotCard';
 import { authFetch } from './lib/authFetch';
 
 // --- Components ---
@@ -1557,6 +1558,7 @@ const EditProjectModal = ({ project, onClose, onSave, backendUrl, apiKey }: {
           </div>
 
           <div className="space-y-2 border-t border-white/10 pt-6">
+            <DayPilotCard backendUrl={backendUrl} projectId={project.id} />
             <h3 className="text-base font-semibold text-white">Permissions</h3>
             <ProjectPermissions backendUrl={backendUrl} projectId={project.id} />
           </div>
