@@ -16,6 +16,10 @@ Pillow>=10.0.0
 PyYAML>=6.0
 bcrypt>=4.0.0
 psutil>=5.9.0
+# Connector secrets are encrypted at rest with Fernet (app/connectors/store.py, compute/secrets.py).
+# It used to arrive only as a transitive dependency, so a clean install left every connector
+# (GitPilot, DayPilot, Hugging Face sign-in) and their tests failing on import.
+cryptography>=42
 langgraph>=0.2.0
 langchain-core>=0.3.0
 # langgraph pulls langsmith unpinned, and langsmith installs a pytest plugin that pytest loads
