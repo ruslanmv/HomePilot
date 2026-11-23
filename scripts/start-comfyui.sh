@@ -164,9 +164,20 @@ if [[ "$CUDA_AVAILABLE" == "1" && "${COMFY_FORCE_CPU:-0}" != "1" ]]; then
       DYNAMIC_VRAM="1"
     fi
   fi
-  case "${DYNAMIC_VRAM,,}" in
-    0|off|false|no) EXTRA_ARGS+=("--disable-dynamic-vram") ;;
-  esac
+  # Only a ComfyUI with dynamic VRAM knows --disable-dynamic-vram. Older checkouts, and builds
+  # where it is gone again, have no such flag: argparse rejects it and ComfyUI exits at once
+  # ("unrecognized arguments: --disable-dynamic-vram"), so the whole of image and video
+  # generation was down while warmup waited 600 s for a server that had already quit. Such a
+  # ComfyUI always uses the estimate-based loader the flag asks for, so leaving the flag out
+  # changes nothing about how it loads models. Ask the checkout itself, not its version number.
+  if [[ "${DYNAMIC_VRAM,,}" =~ ^(0|off|false|no)$ ]]; then
+    if grep -q -- '"--disable-dynamic-vram"' "$COMFY_DIR/comfy/cli_args.py" 2>/dev/null; then
+      EXTRA_ARGS+=("--disable-dynamic-vram")
+    else
+      echo "💾 ComfyUI: this checkout has no dynamic VRAM, so models already load the classic way;"
+      echo "   --disable-dynamic-vram is not passed (this ComfyUI would refuse it)."
+    fi
+  fi
 fi
 
 cd "$COMFY_DIR"
