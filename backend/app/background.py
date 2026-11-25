@@ -196,7 +196,8 @@ def _get_u2net_model_path() -> Optional[Path]:
     try:
         # First, check if model exists in ComfyUI models directory
         from .providers import get_comfy_models_path
-        comfy_model_path = get_comfy_models_path() / "rembg" / "u2net.onnx"
+        from .model_storage import find_model_file
+        comfy_model_path = find_model_file("rembg/u2net.onnx") or (get_comfy_models_path() / "rembg" / "u2net.onnx")
         if comfy_model_path.exists() and comfy_model_path.stat().st_size > 100_000_000:
             print(f"[BACKGROUND] Using U2Net from ComfyUI models: {comfy_model_path}")
             return comfy_model_path

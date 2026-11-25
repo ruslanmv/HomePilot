@@ -108,6 +108,7 @@ from .password_reset import router as password_reset_router
 from .avatar_gallery import router as avatar_gallery_router
 from .imagine_history import router as imagine_history_router
 from .edit_gallery import router as edit_gallery_router
+from .model_storage import router as model_storage_router
 
 # Per-User Profile, Secrets & Memory (additive — multi-user aware)
 from .user_profile_store import router as user_profile_store_router
@@ -486,6 +487,8 @@ app.include_router(avatar_gallery_router)
 app.include_router(imagine_history_router)
 # Rebuild the Edit Studio gallery from stored edit sessions (/v1/edit-gallery/recover)
 app.include_router(edit_gallery_router)
+# Where ComfyUI models live: built-in models/comfy plus extra locations, e.g. an external drive (/v1/models/storage)
+app.include_router(model_storage_router)
 
 # Connectors: accounts on other services, linked in Settings → Connectors (/v1/connectors/*).
 from .connectors.routes import router as connectors_router  # noqa: E402
@@ -3160,6 +3163,18 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
 
         # Pass Civitai API key via environment variable (secure - not visible in process list)
         env = os.environ.copy()
+        # Download into the location chosen in Settings > Models > Model storage (models/comfy
+        # unless another is chosen). Hugging Face's download cache goes on the same drive, so a
+        # download never needs twice its size on the system drive.
+        try:
+            from .model_storage import download_root, builtin_root
+            _dl_root = download_root()
+            env["HOMEPILOT_MODELS_ROOT"] = str(_dl_root)
+            if _dl_root.resolve() != builtin_root().resolve() and not env.get("HF_HUB_CACHE"):
+                env["HF_HUB_CACHE"] = str(_dl_root / ".hf-cache")
+            logger.info(f"Model download target: {_dl_root}")
+        except Exception as _e:
+            logger.warning(f"model storage lookup failed, using default: {_e}")
         if req.civitai_api_key and req.provider == "civitai":
             env["CIVITAI_API_KEY"] = req.civitai_api_key
 
@@ -3284,15 +3299,22 @@ async def delete_model(req: ModelDeleteRequest) -> JSONResponse:
     models_root = get_comfy_models_path()
 
     # Determine subdirectory from catalog hint or common locations
+    # Look in every model storage location (built-in models/comfy and any extra ones).
+    try:
+        from .model_storage import comfy_model_roots
+        roots = comfy_model_roots() or [models_root]
+    except Exception:
+        roots = [models_root]
     search_dirs = []
-    if install_path_hint:
-        search_dirs.append(models_root / install_path_hint.rstrip("/"))
-    # Always search common directories as fallback
-    for subdir in ["checkpoints", "unet", "clip", "vae", "controlnet",
-                    "upscale_models", "gfpgan", "sams", "rembg", "diffusion_models"]:
-        d = models_root / subdir
-        if d not in search_dirs:
-            search_dirs.append(d)
+    for root in roots:
+        if install_path_hint:
+            search_dirs.append(root / install_path_hint.rstrip("/"))
+        # Always search common directories as fallback
+        for subdir in ["checkpoints", "unet", "clip", "vae", "controlnet",
+                        "upscale_models", "gfpgan", "sams", "rembg", "diffusion_models"]:
+            d = root / subdir
+            if d not in search_dirs:
+                search_dirs.append(d)
 
     deleted_files = []
     for directory in search_dirs:
