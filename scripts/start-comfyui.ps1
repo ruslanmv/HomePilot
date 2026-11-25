@@ -46,7 +46,7 @@ if ($StopAll) {
   if ($Venv) {
     $venvPy = (Join-Path $Venv 'Scripts\python.exe').ToLower()
     Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-      Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $venvPy -and $_.CommandLine -match 'main\.py' } |
+      Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $venvPy -and $_.CommandLine -match 'main\.py|comfyui_windows_entry\.py' } |
       ForEach-Object { Stop-Tree $_.ProcessId; $stopped += $_.ProcessId }
   }
   if ($stopped.Count) { Write-Host "  Stopped Windows ComfyUI (pid $($stopped -join ', '))." }
@@ -115,7 +115,10 @@ try { $probe.Start(); $probe.Stop() } catch {
 
 $extra = @()
 if ($env:COMFY_WIN_ARGS) { $extra = $env:COMFY_WIN_ARGS -split '\s+' | Where-Object { $_ } }
-$comfyArgs = @('main.py', '--listen', $Listen, '--port', "$Port") + $extra
+# Start through a small wrapper that fixes a Python-on-Windows asyncio bug (noisy
+# ConnectionResetError tracebacks and unclosed sockets), then runs ComfyUI's main.py unchanged.
+$Entry = Join-Path $PSScriptRoot 'comfyui_windows_entry.py'
+$comfyArgs = @("`"$Entry`"", '--listen', $Listen, '--port', "$Port") + $extra
 
 # Plain text: output is relayed to a WSL terminal, where emoji arrive garbled.
 Write-Host "ComfyUI: Windows-native ($Python) on ${Listen}:$Port"
