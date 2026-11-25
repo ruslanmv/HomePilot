@@ -255,6 +255,14 @@ elif grep -qi microsoft /proc/version 2>/dev/null && [[ "$COMFY_DIR" == /mnt/* ]
   echo "🗄️  ComfyUI: database at $DB_DIR/comfyui.db (on the Linux disk; SQLite on /mnt/c can hang under WSL)."
 fi
 
+# Extra model storage locations (Settings > Models > Model storage, e.g. an external drive).
+# models/comfy is still read as before; this only adds the extra folders.
+EXTRA_PATHS_FILE="${DATA_DIR:-$ROOT/backend/data}/comfy-extra-model-paths.yaml"
+if [[ -f "$EXTRA_PATHS_FILE" ]]; then
+  EXTRA_ARGS+=("--extra-model-paths-config" "$EXTRA_PATHS_FILE")
+  echo "📂 ComfyUI: extra model locations from $EXTRA_PATHS_FILE"
+fi
+
 cd "$COMFY_DIR"
 exec "$PYTHON" main.py \
   --listen 0.0.0.0 \

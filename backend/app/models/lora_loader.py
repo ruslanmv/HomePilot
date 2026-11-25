@@ -48,8 +48,36 @@ MIN_LORA_SIZE = 100 * 1024
 
 
 def get_lora_dir() -> Path:
-    """Return the path to the LoRA models directory."""
+    """Return the path to the built-in LoRA models directory (models/comfy/loras)."""
     return get_comfy_models_path() / "loras"
+
+
+def get_lora_dirs() -> List[Path]:
+    """The loras folder of every model storage location (app/model_storage.py), built-in first."""
+    try:
+        from ..model_storage import model_dirs
+        dirs = model_dirs("loras")
+        return dirs or [get_lora_dir()]
+    except Exception:
+        return [get_lora_dir()]
+
+
+def get_lora_install_dir() -> Path:
+    """Where a new LoRA download goes: the location chosen for new downloads."""
+    try:
+        from ..model_storage import download_root
+        return download_root() / "loras"
+    except Exception:
+        return get_lora_dir()
+
+
+def find_lora_file(filename: str) -> Optional[Path]:
+    """The LoRA file in whichever storage location has it, or None."""
+    for d in get_lora_dirs():
+        p = d / filename
+        if p.exists():
+            return p
+    return None
 
 
 def _get_registry_lookup() -> Dict[str, "LoRAEntry"]:  # noqa: F821
@@ -291,14 +319,24 @@ def scan_installed_loras() -> List[Dict]:
       - file_size_human: human-readable size string
       - gated: True if LoRA is NSFW/gated (only show when spicy mode enabled)
     """
-    lora_dir = get_lora_dir()
-    if not lora_dir.exists():
+    lora_dirs = [d for d in get_lora_dirs() if d.exists()]
+    if not lora_dirs:
         return []
 
     registry = _get_registry_lookup()
 
     results: List[Dict] = []
-    for f in sorted(lora_dir.iterdir()):
+    seen_names: set = set()
+    files = []
+    for d in lora_dirs:  # every storage location; the first copy of a filename wins
+        try:
+            files += sorted(d.iterdir())
+        except OSError:
+            continue
+    for f in files:
+        if f.name in seen_names:
+            continue
+        seen_names.add(f.name)
         if f.suffix.lower() in (".safetensors", ".pt", ".ckpt"):
             lora_id = f.stem
             entry = registry.get(lora_id)

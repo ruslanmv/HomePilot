@@ -26,6 +26,9 @@ from .lora_registry import get_lora_registry, get_lora_by_id
 from .lora_loader import (
     scan_installed_loras,
     get_lora_dir,
+    get_lora_dirs,
+    get_lora_install_dir,
+    find_lora_file,
     is_lora_compatible,
     LORA_COMPAT,
     ARCH_LABELS,
@@ -273,7 +276,13 @@ async def install_lora(lora_id: str):
     if not entry:
         return {"ok": False, "error": f"Unknown LoRA: {lora_id}"}
 
-    lora_dir = get_lora_dir()
+    existing = find_lora_file(entry.filename)
+    if existing is not None and existing.stat().st_size > 0:
+        return {"ok": True, "message": f"{entry.name} is already installed", "already_installed": True}
+
+    # New downloads go to the location chosen in Settings > Models > Model storage.
+    lora_dir = get_lora_install_dir()
+    lora_dir.mkdir(parents=True, exist_ok=True)
     dest = lora_dir / entry.filename
 
     if dest.exists() and dest.stat().st_size > 0:
@@ -361,14 +370,14 @@ async def delete_lora(lora_id: str):
 
     Only deletes files in the loras directory.
     """
-    lora_dir = get_lora_dir()
-    if not lora_dir.exists():
+    lora_dirs = [d for d in get_lora_dirs() if d.exists()]
+    if not lora_dirs:
         return {"ok": False, "error": "LoRA directory does not exist"}
 
-    # Find the file (check all supported extensions)
+    # Find the file in any storage location (check all supported extensions)
     target = None
-    for f in lora_dir.iterdir():
-        if f.stem == lora_id and f.suffix.lower() in (".safetensors", ".pt", ".ckpt"):
+    for f in (f for d in lora_dirs for f in d.iterdir()):
+        if target is None and f.stem == lora_id and f.suffix.lower() in (".safetensors", ".pt", ".ckpt"):
             target = f
             break
 

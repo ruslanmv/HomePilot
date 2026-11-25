@@ -80,7 +80,9 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 CATALOG_PATH = PROJECT_ROOT / "backend" / "app" / "model_catalog_data.json"
 
 # ComfyUI models root - consistent with download_models.sh
-COMFYUI_ROOT = PROJECT_ROOT / "models" / "comfy"
+# Where ComfyUI models are downloaded. The backend sets HOMEPILOT_MODELS_ROOT to the location
+# chosen in Settings > Models > Model storage (e.g. an external drive); default models/comfy.
+COMFYUI_ROOT = Path(os.environ["HOMEPILOT_MODELS_ROOT"]) if os.environ.get("HOMEPILOT_MODELS_ROOT") else PROJECT_ROOT / "models" / "comfy"
 
 # ComfyUI installation root (for custom_nodes)
 def get_comfyui_install_root() -> Path:

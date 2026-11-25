@@ -1138,7 +1138,11 @@ def _inject_lora_loaders(
             lora_fname = f"{lr['id']}.safetensors"
             if entry and hasattr(entry, "filename") and entry.filename:
                 lora_fname = entry.filename
-            lora_file = _lora_dir / lora_fname
+            try:
+                from .models.lora_loader import find_lora_file
+                lora_file = find_lora_file(lora_fname) or (_lora_dir / lora_fname)
+            except ImportError:
+                lora_file = _lora_dir / lora_fname
 
         # File health check: skip corrupt/truncated LoRA files
         if validate_safetensors_file and lora_file and lora_file.exists():

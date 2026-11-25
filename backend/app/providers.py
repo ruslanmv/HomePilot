@@ -157,6 +157,16 @@ def check_comfy_nodes_available(node_names: List[str], base_url: str = None) -> 
     # Check if any of the nodes exist
     return any(name in object_info for name in node_names)
 
+def _model_roots(builtin: Path) -> List[Path]:
+    """Built-in models folder plus the extra model storage locations (if any)."""
+    try:
+        from .model_storage import comfy_model_roots
+        roots = comfy_model_roots()
+        return roots if roots else [builtin]
+    except Exception:
+        return [builtin]
+
+
 def scan_installed_models(model_type: str = "image") -> List[str]:
     """
     Scan filesystem for actually installed ComfyUI models.
@@ -175,10 +185,11 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
         # found here are returned directly as catalog ID matches.
         # This ensures newly downloaded models appear immediately
         # without needing to update a hardcoded list.
-        scan_dirs = [
-            models_path / "checkpoints",
-            models_path / "unet",
-        ]
+        # Every model storage location (built-in models/comfy plus any extra ones,
+        # e.g. an external drive — app/model_storage.py).
+        scan_dirs = []
+        for _root in _model_roots(models_path):
+            scan_dirs += [_root / "checkpoints", _root / "unet"]
         extensions = {".safetensors", ".ckpt"}
 
         disk_files: set = set()
@@ -304,10 +315,18 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
         # Unknown model_type, return empty
         checks = {}
 
-    # Check which models are actually installed
+    # Check which models are actually installed — in any storage location.
+    roots = _model_roots(models_path)
     for catalog_id, model_path in checks.items():
-        if model_path.exists() and model_path.stat().st_size > 0:
-            installed.append(catalog_id)
+        try:
+            rel = model_path.relative_to(models_path)
+            candidates = [root / rel for root in roots]
+        except ValueError:
+            candidates = [model_path]
+        for candidate in candidates:
+            if candidate.exists() and (candidate.is_dir() or candidate.stat().st_size > 0):
+                installed.append(catalog_id)
+                break
 
     return installed
 
