@@ -61,7 +61,33 @@ import {
   deleteVersion,
 } from './editApi'
 import type { EditTabProps, VersionEntry } from './types'
-import { resolveFileUrl } from '../resolveFileUrl'
+import { resolveFileUrl, thumbUrl } from '../resolveFileUrl'
+import { getCurrentUserId, userScopedKey } from '../lib/userScopedStorage'
+
+// The Edit Studio gallery is saved per account (it used one global key, so
+// every account on a browser saw the same edits).
+const EDIT_LEGACY_KEY = 'homepilot_edit_items'
+
+function editItemsKey(): string {
+  const uid = getCurrentUserId()
+  return uid ? userScopedKey(EDIT_LEGACY_KEY, uid) : `${EDIT_LEGACY_KEY}:user:anon`
+}
+
+/** Read this account's saved list, adopting the old global list once. */
+function readEditItems(): string | null {
+  const key = editItemsKey()
+  let stored = localStorage.getItem(key)
+  if (!stored && getCurrentUserId()) {
+    const legacy = localStorage.getItem(EDIT_LEGACY_KEY)
+    if (legacy) {
+      localStorage.setItem(key, legacy)
+      localStorage.removeItem(EDIT_LEGACY_KEY)
+      stored = legacy
+    }
+  }
+  return stored
+}
+import { authFetch } from '../lib/authFetch'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -128,7 +154,7 @@ export function EditTab({
   // ==========================================================================
   const [galleryItems, setGalleryItems] = useState<EditItem[]>(() => {
     try {
-      const stored = localStorage.getItem('homepilot_edit_items')
+      const stored = readEditItems()
       if (stored) {
         const parsed = JSON.parse(stored)
         return Array.isArray(parsed) ? parsed : []
@@ -152,6 +178,38 @@ export function EditTab({
   const [prompt, setPrompt] = useState('')
   const [lastPrompt, setLastPrompt] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // Rebuild the gallery from the edit sessions stored on this computer (the
+  // list itself lives only in this browser).
+  const [restoringEdits, setRestoringEdits] = useState(false)
+  const [restoreEditsMessage, setRestoreEditsMessage] = useState('')
+  const handleRestoreEdits = useCallback(async () => {
+    setRestoringEdits(true)
+    setRestoreEditsMessage('')
+    try {
+      const base = (backendUrl || '').replace(/\/+$/, '')
+      const res = await authFetch(`${base}/v1/edit-gallery/recover`)
+      if (!res.ok) throw new Error(String(res.status))
+      const data = await res.json()
+      const found: EditItem[] = Array.isArray(data?.items) ? data.items : []
+      setGalleryItems((prev) => {
+        const known = new Set(prev.map((i) => i.conversationId))
+        const fresh = found.filter((i) => !known.has(i.conversationId))
+        return [...prev, ...fresh].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      })
+      const missing = Number(data?.skipped_missing || 0)
+      setRestoreEditsMessage(
+        (found.length
+          ? `Restored ${found.length} edit${found.length === 1 ? '' : 's'} from this computer.`
+          : 'No saved edits were found on this computer.')
+        + (missing ? ` ${missing} could not be restored because the image file is gone.` : ''),
+      )
+    } catch {
+      setRestoreEditsMessage('Could not reach the backend to restore edits.')
+    } finally {
+      setRestoringEdits(false)
+    }
+  }, [backendUrl])
   const [error, setError] = useState<string | null>(null)
   const [initialized, setInitialized] = useState(false)
   const [showSettings, setShowSettings] = useState(true)
@@ -193,10 +251,14 @@ export function EditTab({
   // EFFECTS
   // ==========================================================================
 
-  // Save gallery items to localStorage
+  // Save gallery items to localStorage (per account); skip unchanged writes.
+  const lastSavedGalleryJson = useRef<string | null>(null)
   useEffect(() => {
     try {
-      localStorage.setItem('homepilot_edit_items', JSON.stringify(galleryItems))
+      const json = JSON.stringify(galleryItems)
+      if (json === lastSavedGalleryJson.current) return
+      localStorage.setItem(editItemsKey(), json)
+      lastSavedGalleryJson.current = json
     } catch (error) {
       console.error('Failed to save edit items to localStorage:', error)
     }
@@ -1116,6 +1178,20 @@ export function EditTab({
             {/* Empty state */}
             {galleryItems.length === 0 && !busy ? (
               <div className="col-span-full">
+                <div className="mb-4 flex flex-col items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRestoreEdits}
+                    disabled={restoringEdits}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white/80 transition-colors disabled:opacity-60 disabled:cursor-wait"
+                  >
+                    <RotateCcw size={15} />
+                    <span>{restoringEdits ? 'Restoring…' : 'Restore edits from this computer'}</span>
+                  </button>
+                  {restoreEditsMessage && (
+                    <p className="text-xs text-white/50" role="status">{restoreEditsMessage}</p>
+                  )}
+                </div>
                 <EditDropzone onPickFile={handleUploadNew} disabled={busy} />
               </div>
             ) : null}
@@ -1136,10 +1212,11 @@ export function EditTab({
                 className="relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 hover:border-white/20 transition-colors cursor-pointer aspect-square"
               >
                 <img
-                  src={resolveFileUrl(item.url, backendUrl)}
+                  src={thumbUrl(item.url, backendUrl)}
                   alt={item.instruction}
                   className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                   loading="lazy"
+                  decoding="async"
                 />
 
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-between p-4">

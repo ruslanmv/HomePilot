@@ -33,10 +33,24 @@ function readLLMSettings(): TeamsLLMSettings {
   return { provider, model, base_url, max_concurrent }
 }
 
+// The last room list, kept for the session so reopening Teams shows it at
+// once (the page is created fresh on every visit) while it refreshes.
+let roomsCache: { backendUrl: string; rooms: MeetingRoom[] } | null = null
+
+/** Forget the cached room list (tests). */
+export function clearTeamsRoomsCache(): void {
+  roomsCache = null
+}
+
 export function useTeamsRooms({ backendUrl, apiKey }: Args) {
-  const [rooms, setRooms] = useState<MeetingRoom[]>([])
-  const [loading, setLoading] = useState(true)
+  const cached = roomsCache && roomsCache.backendUrl === backendUrl ? roomsCache.rooms : null
+  const [rooms, setRooms] = useState<MeetingRoom[]>(() => cached ?? [])
+  const [loading, setLoading] = useState(!cached)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!loading || rooms.length) roomsCache = { backendUrl, rooms }
+  }, [rooms, loading, backendUrl])
 
   const fetchRooms = useCallback(async () => {
     setLoading(true)

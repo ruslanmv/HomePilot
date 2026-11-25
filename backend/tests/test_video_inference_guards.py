@@ -100,7 +100,8 @@ def test_local_comfy_output_is_copied_without_http(
         "http://localhost:8188/view?filename=starter.png&type=output"
     )
 
-    assert filename.startswith("starter_")
+    # Named by content (one copy per distinct image), not a fresh random name.
+    assert filename.startswith("hp_") and filename.endswith(".png")
     assert (input_dir / filename).read_bytes() == b"starter image"
 
 

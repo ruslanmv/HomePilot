@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film, Check, ArrowUp, Loader2, Sparkles } from 'lucide-react'
 import { upscaleImage } from './enhance/upscaleApi'
-import { resolveFileUrl } from './resolveFileUrl'
+import { resolveFileUrl, thumbUrl } from './resolveFileUrl'
+import { authFetch } from './lib/authFetch'
 import {
   getCurrentUserId,
   registerUserScopedKey,
@@ -302,6 +303,51 @@ export default function ImagineView(props: ImagineParams) {
   const [isGenerating, setIsGenerating] = useState(false)
   const [upscalingId, setUpscalingId] = useState<string | null>(null)
 
+  // Full history from the server. The browser list above keeps only the latest
+  // 100 images, so older generations (or all of them, in a new browser) come
+  // from /v1/imagine/history, a page at a time.
+  const HISTORY_PAGE = 60
+  const [historyItems, setHistoryItems] = useState<ImagineItem[]>([])
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const historyLoadingRef = useRef(false)
+
+  const loadHistoryPage = useCallback(async (offset: number) => {
+    if (historyLoadingRef.current) return
+    historyLoadingRef.current = true
+    setHistoryLoading(true)
+    try {
+      const base = (props.backendUrl || '').replace(/\/+$/, '')
+      const res = await authFetch(`${base}/v1/imagine/history?limit=${HISTORY_PAGE}&offset=${offset}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const page: ImagineItem[] = Array.isArray(data?.items) ? data.items : []
+      setHistoryTotal(typeof data?.total === 'number' ? data.total : 0)
+      setHistoryItems((prev) => {
+        const ids = new Set(prev.map((i) => i.id))
+        return [...prev, ...page.filter((i) => !ids.has(i.id))]
+      })
+    } catch {
+      // Offline or signed out: the browser's own list still shows.
+    } finally {
+      historyLoadingRef.current = false
+      setHistoryLoading(false)
+    }
+  }, [props.backendUrl])
+
+  useEffect(() => {
+    setHistoryItems([])
+    setHistoryTotal(0)
+    loadHistoryPage(0)
+  }, [loadHistoryPage])
+
+  /** What the grid shows: this browser's items first (new and in-progress),
+   *  then server history not already among them. */
+  const shownItems = useMemo(() => {
+    const urls = new Set(items.map((i) => i.url).filter(Boolean))
+    return [...items, ...historyItems.filter((h) => !urls.has(h.url))]
+  }, [items, historyItems])
+
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedImage, setSelectedImage] = useState<ImagineItem | null>(null)
   const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
@@ -318,8 +364,8 @@ export default function ImagineView(props: ImagineParams) {
   // Track selected index for arrow navigation
   const selectedIndex = useMemo(() => {
     if (!selectedImage) return -1
-    return items.findIndex((it) => it.id === selectedImage.id)
-  }, [items, selectedImage])
+    return shownItems.findIndex((it) => it.id === selectedImage.id)
+  }, [shownItems, selectedImage])
 
   // Detect newly completed images for slideshow
   const prevItemsRef = useRef<ImagineItem[]>(items)
@@ -380,10 +426,15 @@ export default function ImagineView(props: ImagineParams) {
   // Ref for auto-scrolling to top when new images are added (Grok-style)
   const gridStartRef = useRef<HTMLDivElement>(null)
 
-  // Save items to localStorage whenever they change (user-scoped slot).
+  // Save items to localStorage whenever they change (user-scoped slot);
+  // skip the write when the list is unchanged.
+  const lastSavedItemsJson = useRef<string | null>(null)
   useEffect(() => {
     try {
-      localStorage.setItem(imagineItemsKey(), JSON.stringify(items))
+      const json = JSON.stringify(items)
+      if (json === lastSavedItemsJson.current) return
+      localStorage.setItem(imagineItemsKey(), json)
+      lastSavedItemsJson.current = json
     } catch (error) {
       console.error('Failed to save imagine items to localStorage:', error)
     }
@@ -410,6 +461,12 @@ export default function ImagineView(props: ImagineParams) {
     const processingItems = items.filter(item => item.status === 'processing')
     if (processingItems.length === 0) return
 
+    // Stops once no item is processing any more; it used to keep ticking (and
+    // re-rendering the whole grid twice a second) for as long as the page
+    // stayed open.
+    let progressInterval: ReturnType<typeof setInterval> | undefined
+    const stop = () => { if (progressInterval) clearInterval(progressInterval); progressInterval = undefined }
+
     // Check localStorage for updates and sync state
     const syncFromLocalStorage = () => {
       try {
@@ -421,6 +478,10 @@ export default function ImagineView(props: ImagineParams) {
 
         let hasUpdates = false
         setItems(prev => {
+          if (!prev.some((item) => item.status === 'processing')) {
+            stop()
+            return prev
+          }
           const updated = prev.map(item => {
             if (item.status !== 'processing') return item
 
@@ -459,14 +520,14 @@ export default function ImagineView(props: ImagineParams) {
     }
 
     // Run sync check periodically
-    const progressInterval = setInterval(() => {
+    progressInterval = setInterval(() => {
       syncFromLocalStorage()
     }, 500)
 
     // Also run immediately on mount
     syncFromLocalStorage()
 
-    return () => clearInterval(progressInterval)
+    return stop
     // Only run on mount (empty deps) - items will be stale but that's intentional
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -513,9 +574,9 @@ export default function ImagineView(props: ImagineParams) {
       if (e.key === "ArrowLeft") {
         e.preventDefault()
         const i = selectedIndex
-        if (i >= 0 && i < items.length - 1) {
+        if (i >= 0 && i < shownItems.length - 1) {
           // Items are newest-first; ArrowLeft = older
-          setSelectedImage(items[i + 1])
+          setSelectedImage(shownItems[i + 1])
         }
       }
 
@@ -524,14 +585,14 @@ export default function ImagineView(props: ImagineParams) {
         const i = selectedIndex
         if (i > 0) {
           // ArrowRight = newer
-          setSelectedImage(items[i - 1])
+          setSelectedImage(shownItems[i - 1])
         }
       }
     }
 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [selectedImage, selectedIndex, items])
+  }, [selectedImage, selectedIndex, shownItems])
 
   // PATCH D — Slideshow auto-advance (Game Mode + Auto + Fullscreen)
   useEffect(() => {
@@ -1054,6 +1115,7 @@ export default function ImagineView(props: ImagineParams) {
 
       // Remove from local state (and localStorage via useEffect)
       setItems((prev) => prev.filter((i) => i.id !== item.id))
+      setHistoryItems((prev) => prev.filter((i) => i.id !== item.id && (!item.url || i.url !== item.url)))
 
       // Close lightbox if this image was selected
       if (selectedImage?.id === item.id) {
@@ -1672,8 +1734,16 @@ export default function ImagineView(props: ImagineParams) {
           {/* Scroll anchor for auto-scroll to top (Grok-style: new images at top) */}
           <div ref={gridStartRef} className="col-span-full h-1" />
 
+          {/* Loading the server history */}
+          {shownItems.length === 0 && historyLoading ? (
+            <div className="col-span-full rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-white/50" role="status" aria-live="polite">
+              <Loader2 size={28} className="mx-auto mb-3 text-purple-400 animate-spin" />
+              <div className="text-lg font-semibold">Loading your images…</div>
+            </div>
+          ) : null}
+
           {/* Empty hint */}
-          {items.length === 0 && !isGenerating ? (
+          {shownItems.length === 0 && !isGenerating && !historyLoading ? (
             <div className="col-span-full rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
               <div className="mx-auto mb-4 size-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
                 <Sparkles size={24} className="text-purple-400/60" />
@@ -1696,7 +1766,7 @@ export default function ImagineView(props: ImagineParams) {
           ) : null}
 
           {/* Images (including processing placeholders) - rendered in order (newest first at top-left) */}
-          {items.filter((img) => !brokenIds.has(img.id)).map((img) => (
+          {shownItems.filter((img) => !brokenIds.has(img.id)).map((img) => (
             <div
               key={img.id}
               onClick={() => img.status === 'done' && setSelectedImage(img)}
@@ -1707,10 +1777,11 @@ export default function ImagineView(props: ImagineParams) {
               {/* Image content - show based on status */}
               {img.status === 'done' && img.url ? (
                 <img
-                  src={resolveFileUrl(img.url, props.backendUrl)}
+                  src={thumbUrl(img.url, props.backendUrl)}
                   alt={img.prompt}
                   className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                   loading="lazy"
+                  decoding="async"
                   onError={() => markImageBroken(img.id)}
                 />
               ) : (
@@ -1804,6 +1875,24 @@ export default function ImagineView(props: ImagineParams) {
               )}
             </div>
           ))}
+
+          {/* More history on the server */}
+          {historyItems.length < historyTotal ? (
+            <div className="col-span-full flex flex-col items-center gap-2 py-6">
+              <button
+                type="button"
+                onClick={() => loadHistoryPage(historyItems.length)}
+                disabled={historyLoading}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white/80 transition-colors disabled:opacity-60 disabled:cursor-wait"
+              >
+                {historyLoading ? <Loader2 size={16} className="animate-spin" /> : <History size={16} />}
+                <span>{historyLoading ? 'Loading…' : 'Load more images'}</span>
+              </button>
+              <div className="text-xs text-white/35">
+                Showing {historyItems.length} of {historyTotal} saved images
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 

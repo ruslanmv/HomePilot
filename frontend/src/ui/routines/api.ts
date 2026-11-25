@@ -1,3 +1,4 @@
+import { getProjects } from '../lib/projectsCache'
 import type { Routine, RoutineDraft, RoutineRun } from './types'
 
 export type RoutineCapabilities = {
@@ -67,12 +68,8 @@ export async function listRoutineTargetProjects(
   backendUrl: string,
   apiKey?: string,
 ): Promise<RoutineTargetProject[]> {
-  const response = await fetch(`${backendUrl}/projects`, {
-    credentials: 'include',
-    headers: headers(apiKey),
-  })
-  const body = await readJson(response)
-  const projects = Array.isArray(body.projects) ? body.projects : []
+  // Shared, signed-in projects list (lib/projectsCache.ts), reused across pages.
+  const projects = await getProjects(backendUrl, { apiKey })
   return projects.filter((project: RoutineTargetProject) => project?.id && !project.is_example)
 }
 

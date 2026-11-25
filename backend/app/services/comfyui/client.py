@@ -16,29 +16,80 @@ import httpx
 from .errors import ComfyUITimeout, ComfyUIUnavailable, ComfyUIWorkflowError
 
 
+def comfyui_state(base_url: str, timeout: float = 8.0) -> str:
+    """``"ok"``, ``"down"`` (nothing answers on the port) or ``"frozen"``
+    (the port is open but ComfyUI does not answer in time).
+
+    The probe used to allow 3 s in total, so a ComfyUI that was merely busy
+    (e.g. building its node list) was reported as down and every avatar
+    request failed with 503. Connecting stays fast; answering may take longer.
+    """
+    try:
+        r = httpx.get(f"{base_url}/system_stats", timeout=httpx.Timeout(timeout, connect=2.0))
+        return "ok" if r.status_code == 200 else "down"
+    except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout):
+        return "frozen"
+    except Exception:
+        return "down"
+
+
 def comfyui_healthy(base_url: str) -> bool:
     """Synchronous health probe (used at import / config time)."""
-    try:
-        r = httpx.get(f"{base_url}/system_stats", timeout=3)
-        return r.status_code == 200
-    except Exception:
-        return False
+    return comfyui_state(base_url) == "ok"
+
+
+def describe_rejection(body: Any) -> str:
+    """ComfyUI's reason for refusing a workflow (HTTP 400), in one line.
+
+    The body looks like {"error": {"message": ...}, "node_errors": {node_id:
+    {"class_type": ..., "errors": [{"message", "details"}]}}}."""
+    if not isinstance(body, dict):
+        return str(body)[:300]
+    parts: List[str] = []
+    err = body.get("error")
+    if isinstance(err, dict) and err.get("message"):
+        parts.append(str(err["message"]))
+    for node_id, node in (body.get("node_errors") or {}).items():
+        if not isinstance(node, dict):
+            continue
+        for e in node.get("errors") or []:
+            msg = e.get("message", "") if isinstance(e, dict) else str(e)
+            details = e.get("details", "") if isinstance(e, dict) else ""
+            parts.append(f"{node.get('class_type', 'node')} #{node_id}: {msg}{f' ({details})' if details else ''}")
+    return "; ".join(parts)[:600] or "ComfyUI rejected the workflow"
 
 
 async def submit_prompt(base_url: str, workflow: Dict[str, Any]) -> str:
-    """POST a workflow to ComfyUI and return the ``prompt_id``."""
+    """POST a workflow to ComfyUI and return the ``prompt_id``.
+
+    Raises ComfyUIUnavailable only when ComfyUI cannot be reached. When it is
+    running but refuses the workflow (missing model file, missing node, bad
+    input) it raises ComfyUIWorkflowError with ComfyUI's own reason; that used
+    to be reported as "unavailable", hiding the real problem."""
+    # Connect fast (an off ComfyUI is reported in seconds), but give a busy or
+    # just-started ComfyUI time to validate the workflow: with a 10 s limit the
+    # job was often queued and run anyway while the user was told ComfyUI was
+    # unavailable (and retries queued duplicates).
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0)) as client:
             r = await client.post(
                 f"{base_url}/prompt",
                 json={"prompt": workflow},
             )
-            r.raise_for_status()
-            return r.json()["prompt_id"]
     except Exception as exc:
         raise ComfyUIUnavailable(
             "Failed to submit workflow to ComfyUI"
         ) from exc
+    if r.status_code >= 400:
+        try:
+            body: Any = r.json()
+        except ValueError:
+            body = r.text
+        raise ComfyUIWorkflowError(f"ComfyUI rejected the workflow: {describe_rejection(body)}")
+    try:
+        return r.json()["prompt_id"]
+    except Exception as exc:
+        raise ComfyUIWorkflowError(f"Unexpected reply from ComfyUI: {r.text[:200]}") from exc
 
 
 async def wait_for_images(

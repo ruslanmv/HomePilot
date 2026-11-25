@@ -180,6 +180,24 @@ if [[ "$CUDA_AVAILABLE" == "1" && "${COMFY_FORCE_CPU:-0}" != "1" ]]; then
   fi
 fi
 
+# ComfyUI's SQLite database (user/comfyui.db) must not live on a Windows drive under WSL:
+# SQLite file locking over the /mnt/c bridge can block forever, and ComfyUI's main thread
+# then froze in that call, so every request (status, /prompt, images) timed out while the
+# process still looked alive. Keep it on the Linux disk instead; the existing file is
+# copied over once so nothing is lost. COMFY_DATABASE_URL overrides this.
+if [[ -n "${COMFY_DATABASE_URL:-}" ]]; then
+  EXTRA_ARGS+=("--database-url" "$COMFY_DATABASE_URL")
+elif grep -qi microsoft /proc/version 2>/dev/null && [[ "$COMFY_DIR" == /mnt/* ]] \
+    && grep -q -- '"--database-url"' "$COMFY_DIR/comfy/cli_args.py" 2>/dev/null; then
+  DB_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/homepilot/comfyui"
+  mkdir -p "$DB_DIR"
+  if [[ ! -f "$DB_DIR/comfyui.db" && -f "$COMFY_DIR/user/comfyui.db" ]]; then
+    cp "$COMFY_DIR/user/comfyui.db" "$DB_DIR/comfyui.db" 2>/dev/null || true
+  fi
+  EXTRA_ARGS+=("--database-url" "sqlite:///$DB_DIR/comfyui.db")
+  echo "🗄️  ComfyUI: database at $DB_DIR/comfyui.db (on the Linux disk; SQLite on /mnt/c can hang under WSL)."
+fi
+
 cd "$COMFY_DIR"
 exec "$PYTHON" main.py \
   --listen 0.0.0.0 \

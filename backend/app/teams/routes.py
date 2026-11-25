@@ -103,9 +103,10 @@ async def create_room(body: CreateRoomIn, _key: str = Depends(require_api_key)):
 
 
 @router.get("/rooms")
-async def list_rooms_endpoint(_key: str = Depends(require_api_key)):
-    """List all meeting rooms."""
-    return rooms.list_rooms()
+async def list_rooms_endpoint(full: bool = False, _key: str = Depends(require_api_key)):
+    """List rooms for the landing page. Transcripts are left out unless
+    ``?full=1`` (open a room with GET /rooms/{id} to read its messages)."""
+    return rooms.list_rooms(summary=not full)
 
 
 @router.get("/rooms/{room_id}")

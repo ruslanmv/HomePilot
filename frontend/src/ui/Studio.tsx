@@ -238,6 +238,8 @@ export default function StudioView(props: StudioParams) {
   const [sessions, setSessions] = useState<StorySession[]>([])
   const [creatorProjects, setCreatorProjects] = useState<CreatorProject[]>([])
   const [loadingSessions, setLoadingSessions] = useState(true)
+  // Set when the story list could not be loaded, so a failure is not shown as "No stories yet".
+  const [sessionsError, setSessionsError] = useState<string | null>(null)
 
   // Unified projects list (memoized)
   const unifiedProjects = useMemo((): UnifiedProject[] => {
@@ -300,6 +302,7 @@ export default function StudioView(props: StudioParams) {
 
   const loadSessions = async () => {
     setLoadingSessions(true)
+    setSessionsError(null)
     try {
       // Fetch both Play Story sessions and Creator Studio projects in parallel
       const [storyData, creatorData] = await Promise.allSettled([
@@ -321,6 +324,7 @@ export default function StudioView(props: StudioParams) {
       } else {
         console.error('Failed to load story sessions:', storyData.reason)
         setSessions([])
+        setSessionsError(String((storyData.reason as Error)?.message || storyData.reason || 'Unknown error'))
       }
 
       // Handle Creator Studio projects (may not exist on all backends)
@@ -332,6 +336,7 @@ export default function StudioView(props: StudioParams) {
       }
     } catch (err) {
       console.error('Failed to load story sessions:', err)
+      setSessionsError(String((err as Error)?.message || err))
     } finally {
       setLoadingSessions(false)
     }
@@ -1151,6 +1156,18 @@ export default function StudioView(props: StudioParams) {
           {loadingSessions ? (
             <div className="flex items-center justify-center h-64">
               <div className="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full" />
+            </div>
+          ) : unifiedProjects.length === 0 && sessionsError ? (
+            <div className="flex flex-col items-center justify-center h-64 text-white/60" role="alert">
+              <p className="text-lg font-semibold mb-2">Could not load your stories</p>
+              <p className="text-sm text-white/40 mb-4">{sessionsError}</p>
+              <button
+                type="button"
+                onClick={() => { void loadSessions() }}
+                className="px-4 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white/85"
+              >
+                Try again
+              </button>
             </div>
           ) : unifiedProjects.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-white/50">

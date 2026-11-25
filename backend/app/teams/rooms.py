@@ -119,6 +119,16 @@ def _write(room: Dict[str, Any]) -> None:
 # ── CRUD ──────────────────────────────────────────────────────────────────
 
 
+def _clean_ids(ids: Optional[List[str]]) -> List[str]:
+    """Trimmed, non-empty, de-duplicated participant ids (order kept)."""
+    out: List[str] = []
+    for raw in ids or []:
+        pid = str(raw or "").strip()
+        if pid and pid not in out:
+            out.append(pid)
+    return out
+
+
 def create_room(
     name: str,
     description: str = "",
@@ -134,7 +144,7 @@ def create_room(
         "name": name,
         "description": description,
         "topic": topic or description or "",
-        "participant_ids": participant_ids or [],
+        "participant_ids": _clean_ids(participant_ids),
         "turn_mode": turn_mode,
         "agenda": agenda or [],
         "messages": [],
@@ -158,8 +168,13 @@ def get_room(room_id: str) -> Optional[Dict[str, Any]]:
     return _read(room_id)
 
 
-def list_rooms() -> List[Dict[str, Any]]:
+def list_rooms(summary: bool = False) -> List[Dict[str, Any]]:
     """Return all rooms sorted by updated_at descending.
+
+    With ``summary=True`` (the landing page) each room's transcript is left
+    out: ``messages`` is an empty list and ``messages_omitted`` is True. The
+    transcripts were most of the payload (~80 % on a real install) and the
+    landing page only shows ``message_count``; opening a room fetches it whole.
 
     Each room includes computed summary fields for the landing page:
       - message_count: total messages in transcript
@@ -178,6 +193,9 @@ def list_rooms() -> List[Dict[str, Any]]:
             room["last_activity"] = (
                 msgs[-1]["timestamp"] if msgs else room.get("updated_at", 0)
             )
+            if summary:
+                room["messages"] = []
+                room["messages_omitted"] = True
             rooms.append(room)
         except Exception:
             pass
@@ -199,6 +217,9 @@ def add_participant(room_id: str, persona_id: str) -> Optional[Dict[str, Any]]:
     room = _read(room_id)
     if not room:
         return None
+    persona_id = str(persona_id or "").strip()
+    if not persona_id:
+        return room
     if persona_id not in room["participant_ids"]:
         room["participant_ids"].append(persona_id)
         room["updated_at"] = time.time()

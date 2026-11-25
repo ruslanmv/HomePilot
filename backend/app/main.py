@@ -104,6 +104,10 @@ from .user_memory import router as memory_router
 
 # Multi-User Accounts & Onboarding (additive)
 from .users import router as users_router, get_current_user
+from .password_reset import router as password_reset_router
+from .avatar_gallery import router as avatar_gallery_router
+from .imagine_history import router as imagine_history_router
+from .edit_gallery import router as edit_gallery_router
 
 # Per-User Profile, Secrets & Memory (additive — multi-user aware)
 from .user_profile_store import router as user_profile_store_router
@@ -474,6 +478,14 @@ app.include_router(hybrid_avatar_router)
 
 # Include User Auth & Onboarding routes (/v1/auth/*)
 app.include_router(users_router)
+# Local-account password reset with a one-time code delivered on the host (/v1/auth/password-reset/*)
+app.include_router(password_reset_router)
+# Avatar Studio gallery saved per account, plus rebuild from ComfyUI's avatar images (/v1/avatar-gallery*)
+app.include_router(avatar_gallery_router)
+# Full Imagine history rebuilt from the account's conversations (/v1/imagine/history)
+app.include_router(imagine_history_router)
+# Rebuild the Edit Studio gallery from stored edit sessions (/v1/edit-gallery/recover)
+app.include_router(edit_gallery_router)
 
 # Connectors: accounts on other services, linked in Settings → Connectors (/v1/connectors/*).
 from .connectors.routes import router as connectors_router  # noqa: E402
@@ -621,8 +633,11 @@ app.include_router(persona_graph_router)
 # ----------------------------
 # ComfyUI image proxy
 # ----------------------------
+from .comfy_thumbs import local_comfy_output_file as _local_comfy_output_file, thumb_file as _comfy_thumb_file  # noqa: E402
+
+
 @app.get("/comfy/view/{filename:path}")
-async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "output"):
+async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "output", thumb: int = 0):
     """Proxy ComfyUI /view requests so the frontend can load generated images.
 
     Behaviour:
@@ -639,11 +654,32 @@ async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "outp
     after a ComfyUI restart — the frontend still had stable URLs,
     but the proxy gave up before checking durable storage.
     """
+    # Fast path: ComfyUI's /view only reads its output folder, so when that
+    # file is on this computer, serve it directly. Asking ComfyUI first made
+    # every gallery image wait up to 30 s when ComfyUI was off or slow, which
+    # is why avatar thumbnails looked missing.
+    if type == "output":
+        local = _local_comfy_output_file(filename, subfolder)
+        if local is not None:
+            if thumb > 0:
+                try:
+                    from starlette.concurrency import run_in_threadpool
+                    small = await run_in_threadpool(_comfy_thumb_file, local, thumb)
+                    # A thumbnail only changes if its source does; keep it a week.
+                    return FileResponse(path=str(small), media_type="image/webp",
+                                        headers={"Cache-Control": "public, max-age=604800"})
+                except Exception:
+                    pass  # unreadable image: fall through to the full file
+            import mimetypes
+            return FileResponse(path=str(local), media_type=mimetypes.guess_type(str(local))[0] or "image/png",
+                                headers={"Cache-Control": "public, max-age=3600"})
+
     params = {"filename": filename, "type": type}
     if subfolder:
         params["subfolder"] = subfolder
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # Short connect timeout: if ComfyUI is not running, fail fast to disk.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=3.0)) as client:
             r = await client.get(f"{COMFY_BASE_URL}/view", params=params)
             r.raise_for_status()
             content_type = r.headers.get("content-type", "image/png")
@@ -1492,13 +1528,28 @@ _ensure_static_mount()
 # Error handling (prod-safe)
 # ----------------------------
 
+_ERROR_CORS_ORIGINS = CORS_ORIGINS or ["http://localhost:3000"]
+
+
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(_: Request, exc: Exception):
-    # In real deployments, log `exc` to your logger/observability stack.
-    return JSONResponse(
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # Log the traceback: without it a 500 leaves nothing in the backend log to diagnose.
+    _logging.getLogger("homepilot.errors").error(
+        "Unhandled error on %s %s", request.method, request.url.path, exc_info=exc,
+    )
+    resp = JSONResponse(
         status_code=500,
         content=_safe_err("Internal server error.", code="internal_error"),
     )
+    # Starlette runs this handler outside CORSMiddleware, so add the CORS headers
+    # here; otherwise the browser reports a misleading "blocked by CORS policy"
+    # instead of the 500 and the UI cannot read the error.
+    origin = request.headers.get("origin")
+    if origin and ("*" in _ERROR_CORS_ORIGINS or origin in _ERROR_CORS_ORIGINS):
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+        resp.headers["Vary"] = "Origin"
+    return resp
 
 
 # ----------------------------
@@ -3970,7 +4021,8 @@ async def list_projects(user: Optional[Dict[str, Any]] = Depends(get_current_use
         result = [p for p in projects.list_all_projects(uid)
                   if not p.get("is_default_assistant") or p.get("owner_user_id") == uid]
         from . import project_access as _pa
-        result = [{**p, "access": {"role": _pa.role_for(p["id"], uid)}} for p in result]
+        roles = _pa.roles_for([p["id"] for p in result], uid)  # one lookup for all, not one per project
+        result = [{**p, "access": {"role": roles.get(p["id"])}} for p in result]
         return JSONResponse(status_code=200, content={"ok": True, "projects": result})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list projects: {e}"))
