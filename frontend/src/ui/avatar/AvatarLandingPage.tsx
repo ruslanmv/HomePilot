@@ -21,10 +21,11 @@ import {
   Image as ImageIcon,
   Eye,
   EyeOff,
+  RotateCcw,
 } from 'lucide-react'
 import type { GalleryItem } from './galleryTypes'
 import { SCENARIO_TAG_META } from './galleryTypes'
-import { resolveFileUrl } from '../resolveFileUrl'
+import { resolveFileUrl, thumbUrl as sharedThumbUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -42,6 +43,10 @@ export interface AvatarLandingPageProps {
   onSendToEdit?: (url: string) => void
   onSaveAsPersonaAvatar?: (item: GalleryItem) => void
   onGenerateOutfits?: (item: GalleryItem) => void
+  /** True while the account's saved gallery is still being fetched. */
+  loading?: boolean
+  /** Rebuild the gallery from avatar images on this computer; resolves to how many were added. */
+  onRestoreFromComputer?: () => Promise<number>
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +65,13 @@ function resolveUrl(url: string, backendUrl: string): string {
   return resolveFileUrl(url, backendUrl)
 }
 
+/** Small cached thumbnail for grid cards. ComfyUI images (/comfy/view/…) are
+ *  ~500 KB each at full size; the backend makes a ~20 KB WEBP when asked for
+ *  ?thumb=. Other links are left as they are. */
+export function thumbUrl(url: string, backendUrl: string, size = 384): string {
+  return sharedThumbUrl(url, backendUrl, size)
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -75,8 +87,30 @@ export function AvatarLandingPage({
   onSendToEdit,
   onSaveAsPersonaAvatar,
   onGenerateOutfits,
+  loading = false,
+  onRestoreFromComputer,
 }: AvatarLandingPageProps) {
   const [deleteCandidate, setDeleteCandidate] = useState<GalleryItem | null>(null)
+  const [restoring, setRestoring] = useState(false)
+  const [restoreMessage, setRestoreMessage] = useState('')
+
+  async function handleRestore() {
+    if (!onRestoreFromComputer) return
+    setRestoring(true)
+    setRestoreMessage('')
+    try {
+      const added = await onRestoreFromComputer()
+      setRestoreMessage(
+        added > 0
+          ? `Restored ${added} avatar${added === 1 ? '' : 's'} from this computer.`
+          : 'No avatar images were found on this computer.',
+      )
+    } catch {
+      setRestoreMessage('Could not reach the backend to restore avatars.')
+    } finally {
+      setRestoring(false)
+    }
+  }
   // Auto-show NSFW content when Spice Mode is enabled globally
   const [showNsfw, setShowNsfw] = useState(() => {
     try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false }
@@ -186,8 +220,18 @@ export function AvatarLandingPage({
         <div className="max-w-[1400px] mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 content-start">
           <div className="col-span-full h-1" />
 
+          {/* Loading the account's saved gallery */}
+          {rootCharacters.length === 0 && loading && (
+            <div className="col-span-full" role="status" aria-live="polite">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-12 text-center text-white/50">
+                <div className="mx-auto h-10 w-10 rounded-full border-2 border-white/15 border-t-white/60 animate-spin" aria-hidden="true" />
+                <p className="mt-5 text-lg font-semibold">Loading your avatars…</p>
+              </div>
+            </div>
+          )}
+
           {/* Empty state */}
-          {rootCharacters.length === 0 && (
+          {rootCharacters.length === 0 && !loading && (
             <div className="col-span-full">
               <div className="rounded-2xl border border-white/10 bg-white/5 p-12 text-center">
                 <div className="mx-auto size-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
@@ -224,6 +268,23 @@ export function AvatarLandingPage({
                   )}
                 </div>
 
+                {onRestoreFromComputer && (
+                  <div className="mt-6">
+                    <button
+                      type="button"
+                      onClick={handleRestore}
+                      disabled={restoring}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white/80 transition-all disabled:opacity-60 disabled:cursor-wait"
+                    >
+                      <RotateCcw size={15} />
+                      <span>{restoring ? 'Restoring…' : 'Restore avatars from this computer'}</span>
+                    </button>
+                    {restoreMessage && (
+                      <p className="mt-3 text-xs text-white/50" role="status">{restoreMessage}</p>
+                    )}
+                  </div>
+                )}
+
                 <p className="mt-5 text-xs text-white/20">
                   Generated avatars are saved here automatically
                 </p>
@@ -233,7 +294,7 @@ export function AvatarLandingPage({
 
           {/* Gallery cards — one card per character (outfits live in Character Sheet) */}
           {rootCharacters.map((item) => {
-            const imgUrl = resolveUrl(item.url, backendUrl)
+            const imgUrl = thumbUrl(item.url, backendUrl)
             const oCount = outfitCounts[item.id] || 0
             const pCount = portraitCounts[item.id] || 0
             return (
@@ -242,11 +303,19 @@ export function AvatarLandingPage({
                 onClick={() => onOpenItem(item)}
                 className="relative group rounded-2xl overflow-hidden bg-white/[0.03] border border-white/[0.06] hover:border-white/15 transition-all cursor-pointer aspect-square"
               >
+                {/* Soft placeholder while the thumbnail arrives */}
+                <div className="absolute inset-0 bg-gradient-to-br from-white/[0.06] to-transparent animate-pulse" aria-hidden="true" />
                 <img
                   src={imgUrl}
                   alt={item.prompt || 'Avatar'}
-                  className={`absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105${item.nsfw && !showNsfw ? ' blur-xl scale-110' : ''}`}
+                  className={`absolute inset-0 w-full h-full object-cover opacity-0 transition-[transform,opacity] duration-700 group-hover:scale-105${item.nsfw && !showNsfw ? ' blur-xl scale-110' : ''}`}
                   loading="lazy"
+                  decoding="async"
+                  onLoad={(e) => {
+                    e.currentTarget.classList.replace('opacity-0', 'opacity-100')
+                    // Stop the placeholder's pulse once the picture is in.
+                    e.currentTarget.previousElementSibling?.classList.add('hidden')
+                  }}
                 />
 
                 {/* NSFW overlay */}

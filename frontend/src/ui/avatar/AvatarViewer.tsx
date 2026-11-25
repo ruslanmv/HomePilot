@@ -2288,7 +2288,7 @@ export function AvatarViewer({
               {outfit.error && (
                 <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-500/[0.08] border border-red-500/15 text-red-300 text-xs">
                   <AlertTriangle size={14} />
-                  <span>Oops, something went wrong. Please try again.</span>
+                  <span>{outfit.error || 'Outfit generation failed. Please try again.'}</span>
                 </div>
               )}
               </div>{/* /max-w-md */}

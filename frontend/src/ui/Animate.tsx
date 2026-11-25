@@ -1,6 +1,32 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2, Info, MoreHorizontal, Check, ArrowUp } from 'lucide-react'
-import { resolveFileUrl } from './resolveFileUrl'
+import { resolveFileUrl, thumbUrl } from './resolveFileUrl'
+import { getCurrentUserId, userScopedKey } from './lib/userScopedStorage'
+
+// The Animate gallery is saved per account (it used one global key, so every
+// account on a browser saw the same videos), newest first, capped.
+const ANIMATE_LEGACY_KEY = 'homepilot_animate_items'
+const ANIMATE_MAX_ITEMS = 200
+
+function animateItemsKey(): string {
+  const uid = getCurrentUserId()
+  return uid ? userScopedKey(ANIMATE_LEGACY_KEY, uid) : `${ANIMATE_LEGACY_KEY}:user:anon`
+}
+
+/** Read this account's saved list, adopting the old global list once. */
+function readAnimateItems(): string | null {
+  const key = animateItemsKey()
+  let stored = localStorage.getItem(key)
+  if (!stored && getCurrentUserId()) {
+    const legacy = localStorage.getItem(ANIMATE_LEGACY_KEY)
+    if (legacy) {
+      localStorage.setItem(key, legacy)
+      localStorage.removeItem(ANIMATE_LEGACY_KEY)
+      stored = legacy
+    }
+  }
+  return stored
+}
 
 // -----------------------------------------------------------------------------
 // Types
@@ -260,7 +286,7 @@ export default function AnimateView(props: AnimateParams) {
   // Load items from localStorage on mount
   const [items, setItems] = useState<AnimateItem[]>(() => {
     try {
-      const stored = localStorage.getItem('homepilot_animate_items')
+      const stored = readAnimateItems()
       if (stored) {
         const parsed = JSON.parse(stored)
         if (Array.isArray(parsed)) {
@@ -554,10 +580,15 @@ export default function AnimateView(props: AnimateParams) {
   // Ref for auto-scrolling to top when new videos are added
   const gridStartRef = useRef<HTMLDivElement>(null)
 
-  // Save items to localStorage whenever they change
+  // Save items to localStorage whenever they change (per account, newest
+  // ANIMATE_MAX_ITEMS); skip the write when the list is unchanged.
+  const lastSavedItemsJson = useRef<string | null>(null)
   useEffect(() => {
     try {
-      localStorage.setItem('homepilot_animate_items', JSON.stringify(items))
+      const json = JSON.stringify(items.slice(0, ANIMATE_MAX_ITEMS))
+      if (json === lastSavedItemsJson.current) return
+      localStorage.setItem(animateItemsKey(), json)
+      lastSavedItemsJson.current = json
     } catch (error) {
       console.error('Failed to save animate items to localStorage:', error)
     }
@@ -572,10 +603,15 @@ export default function AnimateView(props: AnimateParams) {
     // Video generation can take up to 3 minutes, so use longer threshold
     const IN_FLIGHT_THRESHOLD = 3 * 60 * 1000  // 3 minutes
 
+    // Stops once no item is processing any more; it used to keep ticking (and
+    // re-rendering the whole grid) for as long as the page stayed open.
+    let progressInterval: ReturnType<typeof setInterval> | undefined
+    const stop = () => { if (progressInterval) clearInterval(progressInterval); progressInterval = undefined }
+
     // Check localStorage for updates and sync state
     const syncFromLocalStorage = () => {
       try {
-        const stored = localStorage.getItem('homepilot_animate_items')
+        const stored = localStorage.getItem(animateItemsKey())
         if (!stored) return false
 
         const storedItems: AnimateItem[] = JSON.parse(stored)
@@ -583,6 +619,10 @@ export default function AnimateView(props: AnimateParams) {
 
         let hasUpdates = false
         setItems(prev => {
+          if (!prev.some((item) => item.status === 'processing')) {
+            stop()
+            return prev
+          }
           const updated = prev.map(item => {
             if (item.status !== 'processing') return item
 
@@ -621,14 +661,14 @@ export default function AnimateView(props: AnimateParams) {
     }
 
     // Run sync check periodically
-    const progressInterval = setInterval(() => {
+    progressInterval = setInterval(() => {
       syncFromLocalStorage()
     }, 800)  // Slower interval for video (takes longer)
 
     // Also run immediately on mount
     syncFromLocalStorage()
 
-    return () => clearInterval(progressInterval)
+    return stop
     // Only run on mount (empty deps) - items will be stale but that's intentional
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -884,12 +924,12 @@ export default function AnimateView(props: AnimateParams) {
       // This ensures the result is saved even if component unmounts between
       // API response and React's state update
       try {
-        const stored = localStorage.getItem('homepilot_animate_items')
+        const stored = localStorage.getItem(animateItemsKey())
         const currentItems: AnimateItem[] = stored ? JSON.parse(stored) : []
         const updatedItems = currentItems.map(item =>
           item.id === placeholderId ? completedItem : item
         )
-        localStorage.setItem('homepilot_animate_items', JSON.stringify(updatedItems))
+        localStorage.setItem(animateItemsKey(), JSON.stringify(updatedItems))
         console.log('[Animate] Persisted completed video to localStorage:', placeholderId)
       } catch (e) {
         console.error('[Animate] Failed to persist to localStorage:', e)
@@ -912,12 +952,12 @@ export default function AnimateView(props: AnimateParams) {
 
       // CRITICAL: Directly persist failure to localStorage
       try {
-        const stored = localStorage.getItem('homepilot_animate_items')
+        const stored = localStorage.getItem(animateItemsKey())
         const currentItems: AnimateItem[] = stored ? JSON.parse(stored) : []
         const updatedItems = currentItems.map(item =>
           item.id === placeholderId ? failedItem : item
         )
-        localStorage.setItem('homepilot_animate_items', JSON.stringify(updatedItems))
+        localStorage.setItem(animateItemsKey(), JSON.stringify(updatedItems))
       } catch (e) {
         console.error('Failed to persist to localStorage:', e)
       }
@@ -1468,15 +1508,19 @@ export default function AnimateView(props: AnimateParams) {
                     src={resolveFileUrl(item.videoUrl)}
                     alt="Generated animation"
                     className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                    loading="lazy"
+                    decoding="async"
                   />
                 ) : (
                   <video
                     src={resolveFileUrl(item.videoUrl)}
-                    poster={item.posterUrl ? resolveFileUrl(item.posterUrl) : undefined}
+                    poster={item.posterUrl ? thumbUrl(item.posterUrl) : undefined}
                     muted
                     loop
                     playsInline
-                    preload="metadata"
+                    // With a poster there is nothing to show until hover, so
+                    // don't download video data for every card up front.
+                    preload={item.posterUrl ? 'none' : 'metadata'}
                     className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                     onMouseEnter={(e) => e.currentTarget.play()}
                     onMouseLeave={(e) => {
@@ -1490,9 +1534,11 @@ export default function AnimateView(props: AnimateParams) {
                 <div className="absolute inset-0 w-full h-full">
                   {(item.posterUrl || item.sourceImageUrl) ? (
                     <img
-                      src={resolveFileUrl(item.posterUrl || item.sourceImageUrl || '')}
+                      src={thumbUrl(item.posterUrl || item.sourceImageUrl || '')}
                       alt="Generating..."
                       className="w-full h-full object-cover"
+                      loading="lazy"
+                      decoding="async"
                     />
                   ) : (
                     <div className="w-full h-full bg-gradient-to-br from-purple-900/30 to-black" />

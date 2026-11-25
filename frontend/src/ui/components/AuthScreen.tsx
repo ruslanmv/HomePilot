@@ -14,7 +14,10 @@
  *   • Sign in locally      → POST /v1/auth/login  (username OR email + password)
  *   • Create account modal → POST /v1/auth/register (local, passwordless allowed)
  *   • Use device code      → graceful device-pairing guidance (Cloud RFC 8628)
- *   • Forgot password?     → Cloud reset for federated accounts + local guidance
+ *   • Forgot password?     → local accounts: terminal command on the host (default);
+ *                            opt-in web flow with a one-time code shown on the host
+ *                            (POST /v1/auth/password-reset/request → /confirm);
+ *                            OllaBridge accounts: Cloud reset link
  *   • Terms / Privacy      → /terms and /privacy
  *
  * The design is kept self-contained: inline SVG + a scoped <style> block + a
@@ -79,6 +82,19 @@ export default function AuthScreen({
   const [obPassword, setObPassword] = useState('')
   const [obError, setObError] = useState('')
 
+  // ── Local password reset (code delivered on the HomePilot host) ──────────
+  const [fpStep, setFpStep] = useState<'request' | 'confirm'>('request')
+  const [fpIdentifier, setFpIdentifier] = useState('')
+  const [fpCode, setFpCode] = useState('')
+  const [fpPassword, setFpPassword] = useState('')
+  const [fpConfirm, setFpConfirm] = useState('')
+  const [fpShowPassword, setFpShowPassword] = useState(false)
+  const [fpError, setFpError] = useState('')
+  const [fpLoading, setFpLoading] = useState(false)
+  // Off unless the backend opts in (HOMEPILOT_PASSWORD_RESET=1): by default a
+  // local password is reset only from a terminal on the host.
+  const [fpEnabled, setFpEnabled] = useState(false)
+
   const openerRef = useRef<HTMLElement | null>(null)
 
   // Esc closes whichever overlay is open (restores focus to its opener).
@@ -118,6 +134,95 @@ export default function AuthScreen({
   function closeOlla() {
     setOllaOpen(false)
     restoreOpener()
+  }
+
+  function openForgot() {
+    rememberOpener()
+    setFpStep('request')
+    setFpIdentifier(identifier.trim())
+    setFpCode('')
+    setFpPassword('')
+    setFpConfirm('')
+    setFpError('')
+    setFpEnabled(false)
+    setInfoModal('forgot')
+    fetch(`${backendUrl}/v1/auth/password-reset/status`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setFpEnabled(Boolean(d && d.enabled === true)))
+      .catch(() => setFpEnabled(false))
+  }
+
+  async function handleResetRequest(e: React.FormEvent) {
+    e.preventDefault()
+    setFpError('')
+    if (!fpIdentifier.trim()) {
+      setFpError('Enter your username or email')
+      return
+    }
+    setFpLoading(true)
+    try {
+      const res = await fetch(`${backendUrl}/v1/auth/password-reset/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ identifier: fpIdentifier.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setFpError(data.detail || 'Could not start the reset')
+        return
+      }
+      setFpStep('confirm')
+    } catch {
+      setFpError('Could not connect to the backend')
+    } finally {
+      setFpLoading(false)
+    }
+  }
+
+  async function handleResetConfirm(e: React.FormEvent) {
+    e.preventDefault()
+    setFpError('')
+    if (!fpCode.trim()) {
+      setFpError('Enter the reset code')
+      return
+    }
+    if (fpPassword.length < 8) {
+      setFpError('Password must be at least 8 characters')
+      return
+    }
+    if (fpPassword !== fpConfirm) {
+      setFpError('Passwords do not match')
+      return
+    }
+    setFpLoading(true)
+    try {
+      const res = await fetch(`${backendUrl}/v1/auth/password-reset/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          identifier: fpIdentifier.trim(),
+          code: fpCode.trim(),
+          new_password: fpPassword,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setFpError(data.detail || 'Could not reset the password')
+        return
+      }
+      if (data.ok && data.token && data.user) {
+        setInfoModal(null)
+        onAuthenticated(data.user, data.token)
+      } else {
+        setFpError('Unexpected response from server')
+      }
+    } catch {
+      setFpError('Could not connect to the backend')
+    } finally {
+      setFpLoading(false)
+    }
   }
 
   // ── Local login ──────────────────────────────────────────────────────────
@@ -395,7 +500,7 @@ export default function AuthScreen({
                   </svg>
                   Use device code
                 </button>
-                <button type="button" className="linkbtn" onClick={() => setInfoModal('forgot')}>
+                <button type="button" className="linkbtn" onClick={openForgot}>
                   Forgot password?
                 </button>
               </div>
@@ -537,7 +642,9 @@ export default function AuthScreen({
               <p>
                 {infoModal === 'device'
                   ? 'For TVs, CLIs and headless devices, pair through OllaBridge Cloud, then Continue with OllaBridge here.'
-                  : 'Password reset depends on the account type.'}
+                  : fpEnabled
+                    ? 'For a local account, HomePilot puts a one-time code on the machine it runs on. OllaBridge accounts reset on OllaBridge Cloud.'
+                    : 'Local accounts are reset from a terminal on the HomePilot machine. OllaBridge accounts reset on OllaBridge Cloud.'}
               </p>
             </div>
             <button className="modal-close" type="button" aria-label="Close dialog" onClick={() => setInfoModal(null)}>
@@ -558,16 +665,78 @@ export default function AuthScreen({
                   <a className="create-button linkish" href={`${cloudUrl}/link`} target="_blank" rel="noopener noreferrer">Open OllaBridge pairing</a>
                 </div>
               </>
-            ) : (
+            ) : !fpEnabled ? (
               <>
                 <p className="info-body">
-                  <strong>OllaBridge accounts:</strong> reset your password on OllaBridge Cloud, then use Continue with OllaBridge.<br /><br />
-                  <strong>Local accounts:</strong> HomePilot local accounts have no self-serve reset. Ask your instance administrator to set a new password from the Security settings, or create a new local account.
+                  <strong>Local accounts:</strong> for security, a local password can only be changed by someone
+                  at the machine HomePilot runs on. Open a terminal in HomePilot&apos;s <code>backend</code> folder and run:
+                </p>
+                <pre className="info-code">python -m app.password_reset YOUR_USERNAME --set-password</pre>
+                <p className="info-body">
+                  Type the new password twice when asked, then sign in with it here. With Docker, run it inside the container:{' '}
+                  <code>docker compose exec backend python -m app.password_reset YOUR_USERNAME --set-password</code>
+                </p>
+                <p className="info-body">
+                  <strong>OllaBridge accounts:</strong> reset your password on OllaBridge Cloud, then use Continue with OllaBridge.
                 </p>
                 <div className="modal-actions">
                   <a className="create-button linkish" href={`${cloudUrl}/forgot-password`} target="_blank" rel="noopener noreferrer">Reset OllaBridge password</a>
                 </div>
               </>
+            ) : fpStep === 'request' ? (
+              <form className="reset-form" onSubmit={handleResetRequest}>
+                <div className="modal-field">
+                  <label htmlFor="fpIdentifier">Username or email</label>
+                  <input id="fpIdentifier" type="text" autoComplete="username" placeholder="Your local account" value={fpIdentifier} onChange={(e) => setFpIdentifier(e.target.value)} />
+                </div>
+                {fpError && <div className="err" role="alert">{fpError}</div>}
+                <div className="modal-actions">
+                  <button className="create-button" type="submit" disabled={fpLoading}>
+                    {fpLoading ? 'Sending…' : 'Get a reset code'}
+                  </button>
+                  <p className="modal-footnote">
+                    Signed up with OllaBridge?{' '}
+                    <a href={`${cloudUrl}/forgot-password`} target="_blank" rel="noopener noreferrer">Reset it on OllaBridge Cloud</a>.
+                  </p>
+                </div>
+              </form>
+            ) : (
+              <form className="reset-form" onSubmit={handleResetConfirm}>
+                <p className="info-body">
+                  If <strong>{fpIdentifier.trim()}</strong> is a local account, a code is now on the HomePilot machine. Find it in either place:
+                </p>
+                <ul className="info-list">
+                  <li>the terminal or log where the backend runs (<code>docker compose logs backend</code> for Docker)</li>
+                  <li>the file <code>password-reset/{fpIdentifier.trim() || 'username'}.txt</code> in the data folder, next to <code>homepilot.db</code></li>
+                </ul>
+                <div className="modal-field">
+                  <label htmlFor="fpCode">Reset code</label>
+                  <input id="fpCode" type="text" autoComplete="one-time-code" placeholder="XXXXX-XXXXX" value={fpCode} onChange={(e) => setFpCode(e.target.value)} />
+                </div>
+                <div className="modal-field">
+                  <label htmlFor="fpPassword">New password</label>
+                  <div className="modal-password-wrap">
+                    <input id="fpPassword" type={fpShowPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="At least 8 characters" value={fpPassword} onChange={(e) => setFpPassword(e.target.value)} />
+                    <button className="modal-eye" type="button" aria-label={fpShowPassword ? 'Hide new password' : 'Show new password'} onClick={() => setFpShowPassword((v) => !v)}>
+                      <EyeSvg off={fpShowPassword} small />
+                    </button>
+                  </div>
+                </div>
+                <div className="modal-field">
+                  <label htmlFor="fpConfirm">Confirm new password</label>
+                  <input id="fpConfirm" type={fpShowPassword ? 'text' : 'password'} autoComplete="new-password" placeholder="Re-enter the new password" value={fpConfirm} onChange={(e) => setFpConfirm(e.target.value)} />
+                </div>
+                {fpError && <div className="err" role="alert">{fpError}</div>}
+                <div className="modal-actions">
+                  <button className="create-button" type="submit" disabled={fpLoading}>
+                    {fpLoading ? 'Saving…' : 'Set new password'}
+                  </button>
+                  <p className="modal-footnote">
+                    The code expires in 15 minutes. Setting a new password signs this account out everywhere else.{' '}
+                    <button type="button" className="inline-link" onClick={() => { setFpStep('request'); setFpError('') }}>Request a new code</button>
+                  </p>
+                </div>
+              </form>
             )}
           </div>
         </section>
@@ -760,6 +929,16 @@ const CSS = `
 .hp-auth .info-body { margin:0; color:rgba(226,232,240,.74); font-size:14.5px; line-height:1.6; }
 .hp-auth .info-body a { color:#a78bfa; text-decoration:none; font-weight:650; }
 .hp-auth .info-body a:hover { text-decoration:underline; }
+.hp-auth .info-body code, .hp-auth .info-list code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px;
+  padding:1px 6px; border-radius:6px; background:rgba(255,255,255,.06); color:#e2e8f0; word-break:break-word; }
+.hp-auth .info-list { margin:-6px 0 0; padding-left:20px; color:rgba(226,232,240,.70); font-size:13.5px; line-height:1.6; }
+.hp-auth .info-code { margin:0; padding:12px 14px; border-radius:12px; overflow-x:auto; white-space:pre;
+  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); color:#e2e8f0;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; }
+.hp-auth .reset-form { display:grid; gap:16px; }
+.hp-auth .inline-link { border:0; background:transparent; padding:0; cursor:pointer; color:#a78bfa;
+  font-weight:700; font-size:inherit; }
+.hp-auth .inline-link:hover { text-decoration:underline; color:#fff; }
 
 /* Tablet + mobile (< 980px): fast, static, single-column login. The animated
    right panel is hidden and the starfield canvas is never initialized (same

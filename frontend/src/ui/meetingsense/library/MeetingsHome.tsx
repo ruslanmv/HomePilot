@@ -59,6 +59,11 @@ export function MeetingsHome({ status, onOpen, canRecordLive = true }: MeetingsH
     const [dialog, setDialog] = useState<null | 'import' | 'sync' | 'new'>(null);
     const [notice, setNotice] = useState<string | null>(null);
     const requestRef = useRef(0);
+    // Changes only when the filters change (not on the quiet 4 s refresh), so a
+    // late "Load more" reply for an old filter can be told apart and dropped.
+    const filterGenRef = useRef(0);
+    // How many cards are showing (read by the quiet refresh without re-creating it).
+    const shownCountRef = useRef(0);
 
     useEffect(() => { try { localStorage.setItem('hp_meetings_tab', tab); } catch { /* ignore */ } }, [tab]);
 
@@ -67,12 +72,30 @@ export function MeetingsHome({ status, onOpen, canRecordLive = true }: MeetingsH
 
     const load = useCallback(async (quiet = false) => {
         const id = ++requestRef.current;
-        if (!quiet) setLoading(true);
+        if (!quiet) {
+            filterGenRef.current += 1;
+            setLoading(true);
+        }
         try {
             const body = await libraryApi.list(params);
             if (id !== requestRef.current) return;
-            setPage(body);
-            setItems(body.items);
+            if (quiet) {
+                // Refresh the first page in place without dropping the pages
+                // the user already loaded with "Load more".
+                setItems((cur) => {
+                    if (cur.length <= body.items.length) return body.items;
+                    const fresh = new Map(body.items.map((it) => [it.library_id, it]));
+                    const known = new Set(cur.map((it) => it.library_id));
+                    const added = body.items.filter((it) => !known.has(it.library_id));
+                    return [...added, ...cur.map((it) => fresh.get(it.library_id) ?? it)];
+                });
+                setPage((prev) => (prev && prev.next_cursor && shownCountRef.current > body.items.length
+                    ? { ...body, next_cursor: prev.next_cursor }
+                    : body));
+            } else {
+                setPage(body);
+                setItems(body.items);
+            }
             setError(null);
         } catch (e) {
             if (id !== requestRef.current) return;
@@ -84,6 +107,8 @@ export function MeetingsHome({ status, onOpen, canRecordLive = true }: MeetingsH
 
     useEffect(() => { void load(); }, [load]);
 
+    shownCountRef.current = items.length;
+
     // Keep cards current while something is being transcribed or summarised.
     const working = items.some(isWorking) || tab === 'processing';
     useEffect(() => {
@@ -94,9 +119,11 @@ export function MeetingsHome({ status, onOpen, canRecordLive = true }: MeetingsH
 
     const loadMore = async () => {
         if (!page?.next_cursor) return;
+        const gen = filterGenRef.current;
         setLoadingMore(true);
         try {
             const body = await libraryApi.list({ ...params, cursor: page.next_cursor });
+            if (gen !== filterGenRef.current) return; // filters changed meanwhile
             setPage(body);
             setItems((cur) => [...cur, ...body.items]);
         } catch (e) {

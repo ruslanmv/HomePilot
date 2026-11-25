@@ -10,6 +10,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { MeetingRoom as MeetingRoomT, PersonaSummary, PlayModeStyle } from './types'
 import { useTeamsRooms } from './useTeamsRooms'
+import { getProjects } from '../lib/projectsCache'
 import { TeamsLandingPage } from './TeamsLandingPage'
 import { CreateSessionWizard } from './CreateSessionWizard'
 import { JoinMeetingWizard } from './JoinMeetingWizard'
@@ -43,6 +44,7 @@ export function TeamsView({ backendUrl, apiKey, teamsMcpAvailable, initialRoomId
   const {
     rooms,
     loading,
+    error: roomsError,
     refresh,
     createRoom,
     deleteRoom,
@@ -67,22 +69,15 @@ export function TeamsView({ backendUrl, apiKey, teamsMcpAvailable, initialRoomId
 
   // Fetch personas (projects of type 'persona')
   useEffect(() => {
-    const fetchPersonas = async () => {
-      try {
-        const headers: Record<string, string> = {}
-        if (apiKey) headers['x-api-key'] = apiKey
-        const res = await fetch(`${backendUrl}/projects`, { headers })
-        if (!res.ok) return
-        const data = await res.json()
-        const projects = Array.isArray(data) ? data : data.projects || []
-        setPersonas(
-          projects.filter((p: any) => p.project_type === 'persona'),
-        )
-      } catch {
-        // non-critical
-      }
-    }
-    fetchPersonas()
+    // Shared, signed-in projects list (lib/projectsCache.ts): reused across
+    // pages and visits instead of downloading every project each time.
+    let cancelled = false
+    getProjects(backendUrl, { apiKey })
+      .then((projects) => {
+        if (!cancelled) setPersonas(projects.filter((p: any) => p.project_type === 'persona'))
+      })
+      .catch(() => { /* non-critical */ })
+    return () => { cancelled = true }
   }, [backendUrl, apiKey])
 
   // Open a room
@@ -486,6 +481,9 @@ export function TeamsView({ backendUrl, apiKey, teamsMcpAvailable, initialRoomId
   return (
     <TeamsLandingPage
       rooms={rooms}
+      loading={loading}
+      error={roomsError}
+      onRetry={refresh}
       personas={personas}
       backendUrl={backendUrl}
       onNewSession={() => setViewMode('wizard')}

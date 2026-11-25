@@ -241,6 +241,54 @@ def role_for(project_id: str, user_id: str) -> Optional[str]:
     return next((r for r, n in _RANK.items() if n == best), None) if best else None
 
 
+def roles_for(project_ids: Iterable[str], user_id: str) -> Dict[str, Optional[str]]:
+    """``role_for`` for many projects at once: one connection, three queries.
+
+    Listing projects used to ask ``role_for`` twice per project (a connection
+    and up to three queries each), which made /projects slow for accounts with
+    many projects. The rules here are the same as ``role_for``."""
+    from . import projects
+    ids = list(dict.fromkeys(project_ids))
+    out: Dict[str, Optional[str]] = {}
+    if not ids:
+        return out
+    migrate_legacy()
+    con = _conn()
+    try:
+        acls = {r["project_id"]: r for r in con.execute("SELECT * FROM project_acl")}
+        members: Dict[str, str] = {}
+        workspaces: Dict[str, str] = {}
+        if user_id:
+            members = {r["project_id"]: r["role"] for r in con.execute(
+                "SELECT project_id, role FROM project_members WHERE user_id = ?", (user_id,))}
+            workspaces = {r["workspace_id"]: r["role"] for r in con.execute(
+                "SELECT workspace_id, role FROM workspace_members WHERE user_id = ?", (user_id,))}
+    finally:
+        con.close()
+    for pid in ids:
+        if pid in projects.EXAMPLE_PROJECTS:
+            out[pid] = "viewer"
+            continue
+        acl = acls.get(pid)
+        if acl is None:
+            out[pid] = None
+            continue
+        if user_id and acl["owner_user_id"] == user_id:
+            out[pid] = "owner"
+            continue
+        best = 0
+        if user_id:
+            if pid in members:
+                best = max(best, _RANK.get(members[pid], 0))
+            ws = acl["workspace_id"]
+            if ws and acl["visibility"] in ("workspace", "public") and ws in workspaces:
+                best = max(best, min(_RANK.get(workspaces[ws], 0), _RANK["editor"]))
+        if acl["visibility"] == "public":
+            best = max(best, _RANK["viewer"])
+        out[pid] = next((r for r, n in _RANK.items() if n == best), None) if best else None
+    return out
+
+
 def can(project_id: str, user_id: str, need: str = "viewer") -> bool:
     role = role_for(project_id, user_id)
     return bool(role) and _RANK[role] >= _RANK[need]
@@ -255,7 +303,9 @@ def require(project_id: str, user_id: str, need: str = "viewer") -> str:
 
 
 def visible_project_ids(user_id: str, candidates: Iterable[str]) -> List[str]:
-    return [pid for pid in candidates if can(pid, user_id, "viewer")]
+    ids = list(candidates)
+    roles = roles_for(ids, user_id)
+    return [pid for pid in ids if roles.get(pid) and _RANK[roles[pid]] >= _RANK["viewer"]]
 
 
 def owner_of(project_id: str) -> Optional[str]:

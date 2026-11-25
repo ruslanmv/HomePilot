@@ -8,6 +8,7 @@
  * - Speed slider
  */
 
+import { getProjects } from '../lib/projectsCache';
 import React, { useState, useEffect, useRef } from 'react';
 import { User } from 'lucide-react';
 import VoiceGrid from './VoiceGrid';
@@ -81,11 +82,10 @@ export default function VoiceSettingsPanel({
     const apiKey =
       typeof window !== 'undefined' ? localStorage.getItem('homepilot_api_key') || '' : '';
 
-    const headers: Record<string, string> = {};
-    if (apiKey) headers['x-api-key'] = apiKey;
-
-    fetch(`${backendUrl.replace(/\/+$/, '')}/projects`, { headers })
-      .then((r) => (r.ok ? r.json() : null))
+    // Shared, signed-in projects list (lib/projectsCache.ts). The plain fetch
+    // here sent no sign-in, so a signed-in account got no personas at all.
+    getProjects(backendUrl, { apiKey: apiKey || undefined })
+      .then((projects) => ({ projects }))
       .then((data) => {
         if (!data?.projects) return;
         const personaProjects = (data.projects as any[]).filter(
