@@ -32,6 +32,32 @@ export interface OutfitGenerateResult {
 // Hook
 // ---------------------------------------------------------------------------
 
+/**
+ * A sentence the Character Sheet can show when outfit generation fails,
+ * built from the backend's reply instead of a generic "Oops".
+ */
+export function describeOutfitError(status: number, bodyText: string): string {
+  let detail = ''
+  try {
+    const parsed = JSON.parse(bodyText)
+    detail = typeof parsed?.detail === 'string' ? parsed.detail : ''
+  } catch {
+    detail = (bodyText || '').trim().slice(0, 200)
+  }
+  if (status === 503) {
+    if (/disabled/i.test(detail)) {
+      return 'Avatar generation is turned off on this HomePilot (AVATAR_ENABLED=false).'
+    }
+    // The backend says which case it is: not running, running but not
+    // responding, or models missing. Show that rather than guessing.
+    if (detail) return detail
+    return "Image generation isn't available right now: ComfyUI isn't reachable. "
+      + 'Start it with `make start-comfyui` (or `make start`), then try again.'
+  }
+  if (status === 0) return 'Could not reach the HomePilot backend.'
+  return detail ? `Outfit generation failed: ${detail}` : `Outfit generation failed (HTTP ${status}).`
+}
+
 export function useOutfitGeneration(backendUrl: string, apiKey?: string) {
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<AvatarResult[]>([])
@@ -68,7 +94,7 @@ export function useOutfitGeneration(backendUrl: string, apiKey?: string) {
 
         if (!res.ok) {
           const text = await res.text().catch(() => '')
-          throw new Error(`Outfit generation failed: ${res.status} ${text}`)
+          throw new Error(describeOutfitError(res.status, text))
         }
 
         const data: OutfitGenerateResult = await res.json()
@@ -76,7 +102,9 @@ export function useOutfitGeneration(backendUrl: string, apiKey?: string) {
         setWarnings(data.warnings || [])
         return data
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Outfit generation failed'
+        const msg = e instanceof TypeError
+          ? describeOutfitError(0, '')
+          : e instanceof Error ? e.message : 'Outfit generation failed'
         setError(msg)
         throw e
       } finally {

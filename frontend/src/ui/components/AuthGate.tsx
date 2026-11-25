@@ -244,16 +244,16 @@ export default function AuthGate({ children }: AuthGateProps) {
     const savedToken = localStorage.getItem(LS_TOKEN_KEY) || ''
     const currentDisplayName = user?.display_name || user?.username || ''
 
-    // Fire-and-forget backend invalidation
-    if (savedToken) {
-      try {
-        await fetch(`${backendUrl}/v1/auth/logout`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${savedToken}` },
-          credentials: 'include',
-        })
-      } catch { /* non-fatal */ }
-    }
+    // End the session on the backend. Always call it, even with no saved
+    // token: the HttpOnly session cookie (sent via credentials) is a session
+    // too, and if it stayed alive the next load signed straight back in.
+    try {
+      await fetch(`${backendUrl}/v1/auth/logout`, {
+        method: 'POST',
+        headers: savedToken ? { 'Authorization': `Bearer ${savedToken}` } : {},
+        credentials: 'include',
+      })
+    } catch { /* non-fatal */ }
 
     // Clear stored credentials
     localStorage.removeItem(LS_TOKEN_KEY)

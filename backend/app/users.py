@@ -774,10 +774,23 @@ def exchange(body: ExchangeRequest, request: Request):
 
 
 @router.post("/logout")
-def logout(authorization: str = Header(default="")):
-    """Invalidate the current session token."""
-    token = authorization.replace("Bearer ", "").strip()
-    if token:
+def logout(
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+):
+    """Invalidate the current session: the Bearer token AND the session cookie.
+
+    /me signs a browser in from either one, so ending only the header token
+    left the cookie's session alive and the next page load signed straight
+    back in ("logout does not exit")."""
+    tokens = []
+    header_token = authorization.replace("Bearer ", "").strip()
+    if header_token:
+        tokens.append(header_token)
+    cookie_token = (homepilot_session or "").strip()
+    if cookie_token and cookie_token not in tokens:
+        tokens.append(cookie_token)
+    for token in tokens:
         # Batch 7: also drop the server-side cloud token for this user on logout.
         try:
             _u = _validate_token(token)

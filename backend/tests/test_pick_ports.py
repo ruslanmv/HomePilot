@@ -147,3 +147,35 @@ def test_cli_prints_exports_for_eval_and_notes_on_stderr(pp):
 def test_cli_rejects_bad_specs(pp):
     out = subprocess.run([sys.executable, str(SCRIPT), "lower=1"], capture_output=True, text=True, timeout=30)
     assert out.returncode == 2 and "bad port spec" in out.stderr
+
+
+def test_comfy_port_uses_its_own_busy_test():
+    """Under WSL mirrored networking a bind test reserves the port on Windows, locking a
+    Windows-native ComfyUI out; the ComfyUI port gets a separate (connect-only) test."""
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location("pick_ports_t", pathlib.Path(__file__).parents[2] / "scripts" / "pick_ports.py")
+    pp = importlib.util.module_from_spec(spec); spec.loader.exec_module(pp)
+    bind_tested = []
+
+    def busy(port):
+        bind_tested.append(port)
+        return False
+
+    exports, _ = pp.pick(
+        [("HOMEPILOT_BACKEND_PORT", 8000, "homepilot"), ("COMFY_PORT", 8188, "comfy")],
+        busy=busy, comfy_busy=lambda port: False,
+        homepilot=lambda p: False, comfy=lambda p: False, owner=lambda p: "",
+    )
+    assert exports["COMFY_PORT"] == "8188"
+    assert 8188 not in bind_tested and 8000 in bind_tested
+
+
+def test_comfy_port_busy_is_connect_only_under_wsl_mirrored(monkeypatch):
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location("pick_ports_t2", pathlib.Path(__file__).parents[2] / "scripts" / "pick_ports.py")
+    pp = importlib.util.module_from_spec(spec); spec.loader.exec_module(pp)
+    monkeypatch.setattr(pp, "wsl_mirrored", lambda: True)
+    monkeypatch.setattr(pp, "_bind_busy", lambda *a: (_ for _ in ()).throw(AssertionError("must not bind")))
+    monkeypatch.setattr(pp, "_accepts", lambda port, timeout=0.3: port == 8188)
+    assert pp.comfy_port_busy(8188) is True
+    assert pp.comfy_port_busy(8189) is False

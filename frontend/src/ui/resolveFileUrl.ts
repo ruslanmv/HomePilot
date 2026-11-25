@@ -45,3 +45,27 @@ export function resolveFileUrl(url: string, backendUrl?: string): string {
 
   return fullUrl
 }
+
+/**
+ * Small cached thumbnail for gallery grids. ComfyUI images (/comfy/view/…, or
+ * ComfyUI's own http://host:8188/view?filename=… links) are ~500 KB at full
+ * size; the backend serves a ~10 KB WEBP when asked for ?thumb=<px>.
+ * Any other link is returned as resolveFileUrl would return it.
+ */
+export function thumbUrl(url: string, backendUrl?: string, size = 384): string {
+  if (!url) return url
+  let path = url
+  // ComfyUI's own /view link → the backend's /comfy/view proxy (served from disk).
+  const m = /^https?:\/\/[^/]+\/view\?(.*)$/.exec(url)
+  if (m) {
+    const q = new URLSearchParams(m[1])
+    const name = q.get('filename')
+    if (name && (q.get('type') || 'output') === 'output') {
+      const sub = q.get('subfolder')
+      path = `/comfy/view/${encodeURIComponent(name)}${sub ? `?subfolder=${encodeURIComponent(sub)}` : ''}`
+    }
+  }
+  const full = resolveFileUrl(path, backendUrl)
+  if (!full.includes('/comfy/view/') || /[?&]thumb=/.test(full)) return full
+  return `${full}${full.includes('?') ? '&' : '?'}thumb=${size}`
+}

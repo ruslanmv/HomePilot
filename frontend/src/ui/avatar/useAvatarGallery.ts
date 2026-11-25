@@ -1,10 +1,17 @@
 /**
- * useAvatarGallery — hook for persistent avatar gallery (localStorage).
+ * useAvatarGallery — hook for persistent avatar gallery.
  *
- * Additive — no existing hooks or state are modified.
+ * The gallery is kept in localStorage for instant loads AND saved to the
+ * signed-in account on the server (/v1/avatar-gallery), so a different
+ * browser, address or cleared site data no longer loses it. When the gallery
+ * is gone everywhere, restoreFromComputer() rebuilds it from the avatar images
+ * ComfyUI left on disk.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { authFetch } from '../lib/authFetch'
+import { resolveBackendUrl } from '../lib/backendUrl'
+import { getCurrentUserId } from '../lib/userScopedStorage'
 import type { AvatarResult, AvatarMode } from './types'
 import type { GalleryItem, GalleryItemRole, OutfitScenarioTag, WizardMeta, FramingType } from './galleryTypes'
 import { GALLERY_STORAGE_KEY, GALLERY_MAX_ITEMS } from './galleryTypes'
@@ -13,18 +20,94 @@ import { GALLERY_STORAGE_KEY, GALLERY_MAX_ITEMS } from './galleryTypes'
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Set when localStorage held a gallery we could not read. While set, the hook
+ *  does not write an empty list over it, so the bytes stay recoverable. */
+let storageUnreadable = false
+
 function loadFromStorage(): GalleryItem[] {
+  storageUnreadable = false
   try {
     const stored = localStorage.getItem(GALLERY_STORAGE_KEY)
     if (stored) {
       const parsed = JSON.parse(stored)
-      if (!Array.isArray(parsed)) return []
+      if (!Array.isArray(parsed)) {
+        storageUnreadable = true
+        return []
+      }
       return migrateOrphanOutfits(parsed)
     }
   } catch {
-    // Corrupt or missing — start fresh
+    storageUnreadable = true
   }
   return []
+}
+
+/** Union of two galleries by id, newest first, capped at GALLERY_MAX_ITEMS. */
+export function mergeGalleries(a: GalleryItem[], b: GalleryItem[]): GalleryItem[] {
+  const byId = new Map<string, GalleryItem>()
+  for (const item of [...a, ...b]) {
+    if (item && typeof item.id === 'string' && typeof item.url === 'string' && !byId.has(item.id)) {
+      byId.set(item.id, item)
+    }
+  }
+  return Array.from(byId.values())
+    .sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0))
+    .slice(0, GALLERY_MAX_ITEMS)
+}
+
+function galleryEndpoint(path = ''): string {
+  return `${resolveBackendUrl()}/v1/avatar-gallery${path}`
+}
+
+// ── Server sync, shared by every hook instance for the session ──────────────
+// Avatar Studio and the Character Wizard both use this hook, and the page is
+// created fresh on every visit. Without this, each visit downloaded the whole
+// gallery (once per instance) and then uploaded it back unchanged. Now one
+// download is shared, a recent one is reused, and only real changes are saved.
+type ServerSync = {
+  key: string
+  fetchedAt: number
+  /** JSON of the gallery as the server last had it (skip identical saves). */
+  synced: string
+  inflight: Promise<GalleryItem[] | null> | null
+}
+let serverSync: ServerSync | null = null
+/** Last JSON written to localStorage (skip identical writes). */
+let lastStoredJson: string | null = null
+const SERVER_FRESH_MS = 30_000
+
+function syncKey(): string {
+  return `${resolveBackendUrl()}|${getCurrentUserId()}`
+}
+
+function syncFor(key: string): ServerSync {
+  if (!serverSync || serverSync.key !== key) {
+    serverSync = { key, fetchedAt: 0, synced: '', inflight: null }
+  }
+  return serverSync
+}
+
+/** The account's saved gallery; concurrent callers share one request. */
+function fetchServerGallery(key: string): Promise<GalleryItem[] | null> {
+  const sync = syncFor(key)
+  if (sync.inflight) return sync.inflight
+  sync.inflight = authFetch(galleryEndpoint())
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      const remote: GalleryItem[] | null = Array.isArray(data?.items) ? data.items : null
+      sync.fetchedAt = Date.now()
+      sync.synced = remote ? JSON.stringify(remote) : ''
+      return remote
+    })
+    .catch(() => null)
+    .finally(() => { sync.inflight = null })
+  return sync.inflight
+}
+
+/** Forget the shared server state (tests, sign-out). */
+export function resetAvatarGallerySync(): void {
+  serverSync = null
+  lastStoredJson = null
 }
 
 /**
@@ -70,15 +153,79 @@ function galleryId(): string {
 
 export function useAvatarGallery() {
   const [items, setItems] = useState<GalleryItem[]>(loadFromStorage)
+  const key = syncKey()
+  // Already fetched this session: no loading screen on the next visit.
+  const fetchedBefore = !!serverSync && serverSync.key === key && serverSync.fetchedAt > 0
+  /** True once the account's saved gallery has been fetched (or found unavailable). */
+  const [serverLoaded, setServerLoaded] = useState(fetchedBefore)
+  const serverLoadedRef = useRef(fetchedBefore)
+  const itemsRef = useRef(items)
+  itemsRef.current = items
 
-  // Auto-persist on change
+  // Merge the account's saved gallery with this browser's. A download from the
+  // last SERVER_FRESH_MS is reused; otherwise refresh quietly in the background.
   useEffect(() => {
-    try {
-      localStorage.setItem(GALLERY_STORAGE_KEY, JSON.stringify(items))
-    } catch {
-      // Storage full — silently fail
+    let cancelled = false
+    const sync = syncFor(key)
+    const markLoaded = () => {
+      if (cancelled) return
+      serverLoadedRef.current = true
+      setServerLoaded(true)
     }
-  }, [items])
+    if (sync.fetchedAt && Date.now() - sync.fetchedAt < SERVER_FRESH_MS && !sync.inflight) {
+      markLoaded()
+      return () => { cancelled = true }
+    }
+    fetchServerGallery(key)
+      .then((remote) => {
+        if (cancelled || !remote || !remote.length) return
+        setItems((local) => migrateOrphanOutfits(mergeGalleries(local, remote)))
+      })
+      .finally(markLoaded)
+    return () => { cancelled = true }
+  }, [key])
+
+  // Auto-persist on change: localStorage at once, the account shortly after.
+  useEffect(() => {
+    const json = JSON.stringify(items)
+    if (!(storageUnreadable && items.length === 0) && json !== lastStoredJson) {
+      try {
+        localStorage.setItem(GALLERY_STORAGE_KEY, json)
+        lastStoredJson = json
+        storageUnreadable = false
+      } catch {
+        // Storage full — the server copy below still saves it
+      }
+    }
+    // Never push before the server copy was read, or an empty first render
+    // would overwrite the account's gallery. Skip when nothing changed.
+    if (!serverLoadedRef.current) return
+    const sync = syncFor(key)
+    if (json === sync.synced) return
+    const timer = setTimeout(() => {
+      authFetch(galleryEndpoint(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      })
+        .then((r) => { if (r.ok) sync.synced = json })
+        .catch(() => { /* retried on the next change */ })
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [items, serverLoaded, key])
+
+  /** Rebuild gallery entries from the avatar images on this computer
+   *  (ComfyUI's output folder). Returns how many new avatars were added. */
+  const restoreFromComputer = useCallback(async (limit = GALLERY_MAX_ITEMS): Promise<number> => {
+    const r = await authFetch(galleryEndpoint(`/recover?limit=${limit}`))
+    if (!r.ok) throw new Error(`Restore failed (${r.status})`)
+    const data = await r.json()
+    const found: GalleryItem[] = Array.isArray(data?.items) ? data.items : []
+    const known = new Set(itemsRef.current.map((i) => i.url))
+    const fresh = found.filter((i) => !known.has(i.url))
+    if (fresh.length) setItems((prev) => mergeGalleries(prev, fresh))
+    return fresh.length
+  }, [])
 
   /** Add a single gallery item */
   const addItem = useCallback(
@@ -242,6 +389,8 @@ export function useAvatarGallery() {
 
   return {
     items,
+    serverLoaded,
+    restoreFromComputer,
     addItem,
     addBatch,
     addAnchorWithPortraits,

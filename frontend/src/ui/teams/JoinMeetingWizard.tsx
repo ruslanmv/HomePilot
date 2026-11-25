@@ -66,7 +66,9 @@ function resolveAvatarUrl(persona: PersonaSummary, backendUrl: string): string |
   const main = persona.persona_appearance?.selected_filename
   const file = thumb || main
   if (!file) return null
-  return `${backendUrl}/projects/${persona.id}/files/${file}`
+  if (file.startsWith('http')) return file
+  // Persona pictures are served from /files/<path>; /projects/<id>/files/ no longer exists.
+  return `${backendUrl}/files/${file}`
 }
 
 // ---------------------------------------------------------------------------

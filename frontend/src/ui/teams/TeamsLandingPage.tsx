@@ -35,6 +35,11 @@ export interface TeamsLandingPageProps {
   onJoinMeeting?: () => void
   onOpenRoom: (room: MeetingRoom) => void
   onDeleteRoom: (id: string) => void
+  /** True while the list of team sessions is being fetched. */
+  loading?: boolean
+  /** Set when the list could not be loaded (shown instead of the empty state). */
+  error?: string | null
+  onRetry?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +82,9 @@ export function TeamsLandingPage({
   onJoinMeeting,
   onOpenRoom,
   onDeleteRoom,
+  loading = false,
+  error = null,
+  onRetry,
 }: TeamsLandingPageProps) {
   const [deleteCandidate, setDeleteCandidate] = useState<MeetingRoom | null>(null)
 
@@ -132,8 +140,38 @@ export function TeamsLandingPage({
       <div className="flex-1 overflow-y-auto px-6 py-6 scrollbar-hide">
         <div className="max-w-[1400px] mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 content-start">
 
+          {/* Loading */}
+          {rooms.length === 0 && loading && (
+            <div className="col-span-full" role="status" aria-live="polite">
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-16 text-center text-white/50">
+                <div className="mx-auto h-12 w-12 rounded-full border-2 border-cyan-500/20 border-t-cyan-400/80 animate-spin" aria-hidden="true" />
+                <p className="mt-6 text-lg font-semibold">Loading your team sessions…</p>
+                <p className="mt-2 text-sm text-white/40">This can take a few seconds when you have many sessions.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Could not load */}
+          {rooms.length === 0 && !loading && error && (
+            <div className="col-span-full" role="alert">
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/[0.04] p-12 text-center">
+                <p className="text-lg font-semibold text-white/85">Could not load your team sessions</p>
+                <p className="mt-2 text-sm text-white/45">{error}</p>
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="mt-6 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm font-medium text-white/85"
+                  >
+                    Try again
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Empty state */}
-          {rooms.length === 0 && (
+          {rooms.length === 0 && !loading && !error && (
             <div className="col-span-full">
               <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-16 text-center">
                 <div className="mx-auto w-16 h-16 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
@@ -224,7 +262,7 @@ export function TeamsLandingPage({
                           title={p.name}
                         >
                           {avatarUrl ? (
-                            <img src={avatarUrl} alt={p.name} className="w-full h-full object-cover" />
+                            <img src={avatarUrl} alt={p.name} className="w-full h-full object-cover" loading="lazy" decoding="async" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-xs text-white/40 font-bold">
                               {p.name.charAt(0).toUpperCase()}

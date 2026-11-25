@@ -56,6 +56,8 @@ vi.mock('./useGenerateAvatars', () => ({
 vi.mock('./useAvatarGallery', () => ({
     useAvatarGallery: () => ({
         items: [],
+        serverLoaded: true,
+        restoreFromComputer: vi.fn(async () => 0),
         addItem: vi.fn(),
         addBatch: vi.fn(),
         addAnchorWithPortraits: vi.fn(),

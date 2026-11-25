@@ -137,14 +137,47 @@ _NODE_PACKAGE_HINTS: Dict[str, str] = {
 }
 
 
+# One node type's info, cached: {node_class: (fetched_at, info)}.
+_node_info_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_NODE_INFO_TTL_S = 300.0
+_NODE_INFO_FAILURE_TTL_S = 30.0
+
+
+def _fetch_node_info(node_class: str) -> Dict[str, Any]:
+    """``/object_info/<node_class>`` for a single node type.
+
+    The full ``/object_info`` makes ComfyUI build info for every node type on
+    the thread that answers all its requests; with a large input folder on a
+    slow disk that froze ComfyUI for minutes. Asking for one node is cheap.
+    A full list that is already cached is reused without a request.
+    """
+    raw = _object_info_cache.get_raw(allow_network=False) or {}
+    if node_class in raw:
+        return raw[node_class]
+    now = time.time()
+    hit = _node_info_cache.get(node_class)
+    if hit and now - hit[0] < (_NODE_INFO_TTL_S if hit[1] else _NODE_INFO_FAILURE_TTL_S):
+        return hit[1]
+    info: Dict[str, Any] = {}
+    try:
+        from urllib.parse import quote as _quote
+        r = httpx.get(f"{COMFY_BASE_URL}/object_info/{_quote(node_class)}",
+                      timeout=httpx.Timeout(10.0, connect=2.0))
+        if r.status_code == 200:
+            info = (r.json() or {}).get(node_class, {}) or {}
+    except Exception:
+        info = {}
+    _node_info_cache[node_class] = (now, info)
+    return info
+
+
 def get_available_controlnets() -> list[str]:
     """Return the list of ControlNet model names available in ComfyUI.
 
-    Queries ``/object_info`` and extracts the valid values from the
-    ``ControlNetLoader`` node's ``control_net_name`` input.
+    Reads the valid values of the ``ControlNetLoader`` node's
+    ``control_net_name`` input (one node type, not the full /object_info).
     """
-    info = _fetch_object_info()
-    cn_loader = info.get("ControlNetLoader", {})
+    cn_loader = _fetch_node_info("ControlNetLoader")
     input_spec = cn_loader.get("input", {})
     # ComfyUI nests required inputs: {"required": {"control_net_name": [["a.safetensors", "b.safetensors"]]}}
     required = input_spec.get("required", {})
@@ -477,56 +510,102 @@ def _get_local_file_path(url: str) -> Path | None:
         return None
 
 
+# ComfyUI lists its whole input folder (and checks every file) each time it builds
+# its node list, once per node type that loads images. Every job used to leave a
+# copy there under a new random name, so the folder grew without limit (1,738
+# files here) and ComfyUI froze for minutes on /object_info over the WSL bridge
+# to C:. Copies are now named by content (one file per distinct image) and old
+# ones are pruned. Only files with this prefix are ever pruned.
+_HP_INPUT_PREFIX = "hp_"
+_HP_INPUT_KEEP_SECONDS = 2 * 24 * 3600
+_HP_INPUT_MAX_FILES = 300
+
+
+def _hp_input_name(data: bytes, ext: str) -> str:
+    """Stable ComfyUI input filename for these image bytes."""
+    import hashlib
+    ext = ext.lower() if ext and len(ext) <= 6 else ".png"
+    return f"{_HP_INPUT_PREFIX}{hashlib.sha1(data).hexdigest()[:20]}{ext}"
+
+
+def _prune_comfy_input(input_dir: Path, keep: str = "") -> int:
+    """Remove HomePilot's own old input copies; returns how many were removed."""
+    import time as _time
+    try:
+        entries = []
+        for entry in os.scandir(input_dir):
+            if entry.name.startswith(_HP_INPUT_PREFIX) and entry.is_file() and entry.name != keep:
+                try:
+                    entries.append((entry.stat().st_mtime, entry.path))
+                except OSError:
+                    continue
+    except OSError:
+        return 0
+    entries.sort(reverse=True)  # newest first
+    cutoff = _time.time() - _HP_INPUT_KEEP_SECONDS
+    removed = 0
+    for i, (mtime, path) in enumerate(entries):
+        if mtime < cutoff or i >= _HP_INPUT_MAX_FILES - 1:
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+def _place_in_comfy_input(input_dir: Path, data: bytes, ext: str) -> str:
+    """Write ``data`` into ComfyUI's input folder (reusing an identical copy)."""
+    filename = _hp_input_name(data, ext)
+    dest = input_dir / filename
+    if dest.exists():
+        os.utime(dest, None)  # keep it from being pruned while in use
+    else:
+        tmp = input_dir / f".{filename}.{uuid.uuid4().hex[:6]}.tmp"
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+    _prune_comfy_input(input_dir, keep=filename)
+    return filename
+
+
 def _download_image_for_comfyui(image_url: str) -> str:
     """
-    Download an image from a URL to ComfyUI's input directory.
+    Put the image at ``image_url`` into ComfyUI's input directory.
 
-    Returns the filename (not full path) to use in the workflow.
-    ComfyUI's LoadImage node expects just the filename, as it looks
-    in its own input directory.
+    Returns the filename (not full path) to use in the workflow. ComfyUI's
+    LoadImage node expects just the filename, as it looks in its own input
+    directory. The name comes from the image's content, so the same image is
+    stored once however many jobs use it (see _HP_INPUT_PREFIX).
 
-    Special handling for local backend URLs:
-    - If URL points to localhost:8000/files/..., read directly from UPLOAD_DIR
-    - This avoids HTTP request timeout when backend requests from itself
+    Special handling for local URLs, read straight from disk:
+    - a ComfyUI output (http://comfy/view?... or /comfy/view/...)
+    - a backend file (localhost:8000/files/...), avoiding a request to itself
     """
     input_dir = _get_comfyui_input_dir()
     input_dir.mkdir(parents=True, exist_ok=True)
 
-    # Extract original filename or generate a unique one
     parsed = urlparse(image_url)
     original_filename = os.path.basename(parsed.path)
     if parsed.path == "/view":
         view_filename = (parse_qs(parsed.query).get("filename") or [""])[0]
         if view_filename:
             original_filename = os.path.basename(view_filename)
+    ext = os.path.splitext(original_filename)[1] if "." in (original_filename or "") else ".png"
 
-    # Ensure we have a valid extension
-    if not original_filename or '.' not in original_filename:
-        original_filename = f"edit_input_{uuid.uuid4().hex[:8]}.png"
-
-    # Use a unique filename to avoid conflicts
-    unique_id = uuid.uuid4().hex[:8]
-    base, ext = os.path.splitext(original_filename)
-    filename = f"{base}_{unique_id}{ext}"
-    dest_path = input_dir / filename
-
-    # A starter image produced by this local ComfyUI is already on disk. Copy
-    # it directly instead of downloading it from ComfyUI over localhost.
+    # A starter image produced by this local ComfyUI is already on disk.
     local_comfy_output = _local_comfy_view_file(image_url)
     if local_comfy_output is not None:
-        print(f"[COMFY] Copying local Comfy output from {local_comfy_output} to {dest_path}")
-        shutil.copy2(local_comfy_output, dest_path)
-        print(f"[COMFY] Local Comfy output copied successfully: {filename}")
+        filename = _place_in_comfy_input(input_dir, local_comfy_output.read_bytes(), ext)
+        print(f"[COMFY] Using local Comfy output {local_comfy_output} as input {filename}")
         return filename
 
-    # Check if this is a local backend URL - read directly from filesystem
+    # A local backend file: read it from the filesystem.
     if _is_local_backend_url(image_url):
         local_file = _get_local_file_path(image_url)
         if local_file and local_file.exists():
-            print(f"[COMFY] Copying local file from {local_file} to {dest_path}")
             try:
-                shutil.copy2(local_file, dest_path)
-                print(f"[COMFY] Local file copied successfully: {filename}")
+                filename = _place_in_comfy_input(input_dir, Path(local_file).read_bytes(), ext)
+                print(f"[COMFY] Using local file {local_file} as input {filename}")
                 return filename
             except Exception as e:
                 print(f"[COMFY] WARNING: Failed to copy local file: {e}")
@@ -534,18 +613,13 @@ def _download_image_for_comfyui(image_url: str) -> str:
         else:
             print(f"[COMFY] WARNING: Local file not found at {local_file}, trying HTTP download")
 
-    print(f"[COMFY] Downloading image from {image_url} to {dest_path}")
-
-    # Download the image via HTTP
+    print(f"[COMFY] Downloading image from {image_url} into ComfyUI input")
     timeout = httpx.Timeout(30.0, connect=10.0)
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             response = client.get(image_url)
             response.raise_for_status()
-
-            with open(dest_path, 'wb') as f:
-                f.write(response.content)
-
+        filename = _place_in_comfy_input(input_dir, response.content, ext)
         print(f"[COMFY] Image downloaded successfully: {filename}")
         return filename
     except httpx.TimeoutException as e:
@@ -598,9 +672,8 @@ def _preprocess_image_paths(variables: Dict[str, Any]) -> Dict[str, Any]:
                         # Copy to ComfyUI's input directory
                         input_dir = _get_comfyui_input_dir()
                         input_dir.mkdir(parents=True, exist_ok=True)
-                        dest_name = os.path.basename(str(local_path))
-                        dest_path = input_dir / dest_name
-                        shutil.copy2(local_path, dest_path)
+                        ext = os.path.splitext(str(local_path))[1] or ".png"
+                        dest_name = _place_in_comfy_input(input_dir, Path(local_path).read_bytes(), ext)
                         processed[key] = dest_name
                         print(f"[COMFY] Copied {key} to ComfyUI input: {dest_name}")
                     else:
@@ -755,6 +828,13 @@ def _validate_prompt_graph(prompt_graph: Dict[str, Any], *, workflow_name: str) 
 
 def _post_prompt(client: httpx.Client, prompt: Dict[str, Any]) -> str:
     url = f"{COMFY_BASE_URL.rstrip('/')}/prompt"
+    # Model files in subfolders are listed with the host OS's separator ("a\b" on a
+    # Windows-native ComfyUI); match the workflow's spelling to what this ComfyUI lists.
+    try:
+        from .comfy_utils.model_paths import align_model_paths
+        align_model_paths(prompt, COMFY_BASE_URL.rstrip('/'))
+    except Exception:
+        pass
     # Generate a unique client_id for each request to prevent ComfyUI caching
     # Without this, ComfyUI may skip execution for "duplicate" prompts
     import uuid

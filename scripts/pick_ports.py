@@ -75,6 +75,41 @@ def port_busy(port: int) -> bool:
     )
 
 
+_MIRRORED: Dict[str, bool] = {}
+
+
+def wsl_mirrored() -> bool:
+    """True under WSL 2 with ``networkingMode=mirrored`` (WSL shares Windows' ports)."""
+    if "v" not in _MIRRORED:
+        mirrored = False
+        try:
+            if "microsoft" in open("/proc/version", encoding="utf-8").read().lower():
+                try:
+                    out = subprocess.run(["wslinfo", "--networking-mode"], capture_output=True, text=True, timeout=2)
+                    mirrored = out.stdout.strip().lower() == "mirrored"
+                except (OSError, subprocess.SubprocessError):
+                    # Mirrored mode puts the host's loopback alias on lo.
+                    mirrored = "10.255.255.254" in open("/proc/net/fib_trie", encoding="utf-8").read()
+        except OSError:
+            mirrored = False
+        _MIRRORED["v"] = mirrored
+    return _MIRRORED["v"]
+
+
+def comfy_port_busy(port: int) -> bool:
+    """Busy test for the ComfyUI port.
+
+    Under WSL mirrored networking ComfyUI may run as a *Windows* process
+    (docs/design/COMFYUI_RUNTIME.md), and a bind made inside WSL reserves the port on
+    Windows until WSL restarts — even after the socket is closed. A bind test here
+    therefore locked Windows ComfyUI out of its own port ("only one usage of each
+    socket address"), with nothing listed as holding it. Only connect there: that
+    still finds a ComfyUI or any other program serving on the port, and reserves
+    nothing. Everywhere else the full test is used.
+    """
+    return _accepts(port) if wsl_mirrored() else port_busy(port)
+
+
 def http_json(url: str, timeout: float = 1.5) -> Optional[dict]:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 — loopback only
@@ -119,6 +154,7 @@ def pick(
     specs: List[Tuple[str, int, Optional[str]]],
     *,
     busy: Callable[[int], bool] = port_busy,
+    comfy_busy: Optional[Callable[[int], bool]] = None,
     homepilot: Callable[[int], bool] = is_homepilot_backend,
     comfy: Callable[[int], bool] = is_comfyui,
     owner: Callable[[int], str] = owner_of,
@@ -127,14 +163,18 @@ def pick(
     exports: Dict[str, str] = {}
     notes: List[str] = []
     taken: Dict[int, str] = {}  # port -> the HomePilot service it was given to
+    if comfy_busy is None:
+        # Tests pass `busy` alone: use it for every port. make start uses the WSL-aware test.
+        comfy_busy = comfy_port_busy if busy is port_busy else busy
     for name, preferred, kind in specs:
         port = preferred
         reused = False
+        is_busy = comfy_busy if kind == "comfy" else busy
         for _ in range(MAX_TRIES):
             if port in taken:
                 port += 1
                 continue
-            if not busy(port):
+            if not is_busy(port):
                 break
             # A busy port may be HomePilot's own: a backend from an earlier `make start`
             # (possibly already moved off its default), or a ComfyUI worth reusing.

@@ -393,6 +393,8 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
       <>
         <AvatarLandingPage
           items={gallery.items}
+          loading={!gallery.serverLoaded}
+          onRestoreFromComputer={gallery.restoreFromComputer}
           backendUrl={backendUrl}
           onNewAvatar={() => setViewMode('designer')}
           onOpenCreator={() => setViewMode('creator')}

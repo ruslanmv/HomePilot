@@ -94,6 +94,23 @@ class OutfitResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _no_modes_reason() -> str:
+    """Why no avatar mode is available, for the 503 the Character Sheet shows."""
+    try:
+        from ..services.comfyui.client import comfyui_state
+        state = comfyui_state(CFG.comfyui_url)
+    except Exception:
+        state = "down"
+    if state == "down":
+        return (f"ComfyUI is not running at {CFG.comfyui_url}. "
+                "Start it with make start-comfyui (or make start), then try again.")
+    if state == "frozen":
+        return (f"ComfyUI at {CFG.comfyui_url} is running but not responding. "
+                "Restart it (stop it, then make start-comfyui), then try again.")
+    return ("No avatar generation modes are available: the Avatar models are not installed. "
+            "Install the Avatar pack from Models, then try again.")
+
+
 @router.post("/outfits", response_model=OutfitResponse)
 async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     """
@@ -167,11 +184,7 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
             "for identity-preserving outfit variations."
         )
         if target_mode not in allowed:
-            raise HTTPException(
-                503,
-                "No avatar generation modes available. "
-                "Ensure ComfyUI is running and avatar models are installed.",
-            )
+            raise HTTPException(503, _no_modes_reason())
 
     seeds = _make_seeds(req.seed, req.count)
 

@@ -41,6 +41,11 @@ import { McpServersTab } from './mcp';
 import ProjectPermissions from './components/projects/ProjectPermissions';
 import DayPilotCard from './components/projects/DayPilotCard';
 import { authFetch } from './lib/authFetch';
+import { fetchProjects, peekProjects, setCachedProjects } from './lib/projectsCache';
+// The projects list is cached in lib/projectsCache.ts and shared with Teams,
+// Routines and Voice; reopening a page shows it at once and refreshes quietly.
+export { clearProjectsCache } from './lib/projectsCache';
+const PROJECTS_CACHE_FRESH_MS = 5_000;
 
 // --- Components ---
 
@@ -1725,7 +1730,18 @@ export default function ProjectsView({
   const [showSearch, setShowSearch] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingProject, setEditingProject] = useState<any>(null);
-  const [projects, setProjects] = useState<any[]>([]);
+  const cachedAtMount = peekProjects(backendUrl);
+  const [projects, setProjects] = useState<any[]>(() => cachedAtMount?.projects ?? []);
+  // True until the first /projects reply (or error), so a slow load with many
+  // projects is not mistaken for "No projects yet". Skipped when cached.
+  const [isLoadingProjects, setIsLoadingProjects] = useState(!cachedAtMount);
+
+  // Keep the cache in step with every local change (create, edit, delete),
+  // without resetting how old the last server copy is.
+  useEffect(() => {
+    if (isLoadingProjects) return;
+    setCachedProjects(backendUrl, projects);
+  }, [projects, isLoadingProjects, backendUrl]);
   const [exampleProjects, setExampleProjects] = useState<any[]>([]);
   const [isLoadingExamples, setIsLoadingExamples] = useState(false);
 
@@ -1910,28 +1926,23 @@ export default function ProjectsView({
 
   const loadProjects = React.useCallback(async () => {
     try {
-      const headers: Record<string, string> = {};
-      if (apiKey) {
-        headers['x-api-key'] = apiKey;
-      }
-      try {
-        const tok = window.localStorage.getItem('homepilot_auth_token') || ''
-        if (tok) headers['authorization'] = `Bearer ${tok}`
-      } catch { /* ignore */ }
-
-      const response = await authFetch(`${backendUrl}/projects`, { headers, credentials: 'include' });
-      if (response.ok) {
-        const result = await response.json();
-        setProjects(result.projects || []);
-      }
+      // Shared, signed-in request (lib/projectsCache.ts); caches the result.
+      const list = await fetchProjects(backendUrl, apiKey);
+      setProjects(list);
     } catch (error) {
       console.error('Error loading projects:', error);
+    } finally {
+      setIsLoadingProjects(false);
     }
   }, [backendUrl, apiKey]);
 
   React.useEffect(() => {
+    // Show the cached list at once (no loading screen) and refresh it quietly,
+    // unless it was fetched moments ago.
+    const cached = peekProjects(backendUrl);
+    if (cached && Date.now() - cached.fetchedAt < PROJECTS_CACHE_FRESH_MS) return;
     loadProjects();
-  }, [loadProjects]);
+  }, [loadProjects, backendUrl]);
 
   React.useEffect(() => {
     const loadExamples = async () => {
@@ -2099,7 +2110,17 @@ export default function ProjectsView({
         {activeTab === 'My Projects' && <RemoteProjects />}
         {activeTab === 'My Projects' && (
           <>
-            {projects.length === 0 ? (
+            {projects.length === 0 && isLoadingProjects ? (
+              <div
+                className="flex flex-col items-center justify-center h-64 text-white/50"
+                role="status"
+                aria-live="polite"
+              >
+                <div className="mb-4 h-10 w-10 rounded-full border-2 border-white/15 border-t-white/60 animate-spin" aria-hidden="true" />
+                <p className="text-lg font-semibold mb-2">Loading your projects…</p>
+                <p className="text-sm text-white/40">This can take a few seconds when you have many projects.</p>
+              </div>
+            ) : projects.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-64 text-white/50">
                 <FolderKanban size={48} className="mb-4 opacity-50" />
                 <p className="text-lg font-semibold mb-2">No projects yet</p>
