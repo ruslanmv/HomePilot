@@ -114,6 +114,13 @@ try { $probe.Start(); $probe.Stop() } catch {
 }
 
 $extra = @()
+# Extra model storage locations (Settings > Models > Model storage, e.g. an external drive),
+# written with Windows paths for this runtime. models\ is still read as before.
+$ExtraPaths = Join-Path $Root 'backend\data\comfy-extra-model-paths.windows.yaml'
+if (Test-Path $ExtraPaths) {
+  $extra += @('--extra-model-paths-config', "`"$ExtraPaths`"")
+  Write-Host "ComfyUI: extra model locations from $ExtraPaths"
+}
 if ($env:COMFY_WIN_ARGS) { $extra = $env:COMFY_WIN_ARGS -split '\s+' | Where-Object { $_ } }
 # Start through a small wrapper that fixes a Python-on-Windows asyncio bug (noisy
 # ConnectionResetError tracebacks and unclosed sockets), then runs ComfyUI's main.py unchanged.

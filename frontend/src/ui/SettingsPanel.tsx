@@ -1,5 +1,6 @@
 import { useBackToClose } from "./lib/useBackToClose";
 import ConnectorsPanel from "./connectors/ConnectorsPanel";
+import ModelStorageSettings from "./components/ModelStorageSettings";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Settings as SettingsIcon,
@@ -1215,6 +1216,13 @@ export default function SettingsPanel({
         icon={<Sparkles size={16} />}
       >
         <ModelAdvisorToggle />
+      </SettingsCard>
+      <SettingsCard
+        title="Model storage"
+        description="Where image, video and edit models are kept. Add a folder on another drive (for example an external disk) and choose it for new downloads — your current models stay where they are. Applies right away."
+        icon={<Boxes size={16} />}
+      >
+        <ModelStorageSettings />
       </SettingsCard>
       <SettingsCard
         title="Model Endpoints"

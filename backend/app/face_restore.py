@@ -159,7 +159,11 @@ def _find_checkpoint() -> str:
 
     models_path = get_comfy_models_path()
     for ckpt in _CHECKPOINT_FALLBACKS:
-        ckpt_path = models_path / "checkpoints" / ckpt
+        try:
+            from .model_storage import find_model_file
+            ckpt_path = find_model_file(f"checkpoints/{ckpt}") or (models_path / "checkpoints" / ckpt)
+        except Exception:
+            ckpt_path = models_path / "checkpoints" / ckpt
         if ckpt_path.exists() and ckpt_path.stat().st_size > 0:
             return ckpt
     # No checkpoint found — return default, ComfyUI will give a clear error

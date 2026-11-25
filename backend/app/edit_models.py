@@ -54,6 +54,14 @@ class ModelInfo:
     @property
     def path(self) -> Path:
         """Get the full path to this model."""
+        # Whichever model storage location has it; else where it would be in models/comfy.
+        try:
+            from .model_storage import find_model_file
+            found = find_model_file(f"{self.subdir}/{self.filename}")
+            if found is not None:
+                return found
+        except Exception:
+            pass
         models_path = get_comfy_models_path()
         return models_path / self.subdir / self.filename
 

@@ -84,7 +84,8 @@ def _check_rembg() -> tuple[bool, Optional[str]]:
 
         # Check ComfyUI models path first
         try:
-            comfy_model = get_comfy_models_path() / "rembg" / "u2net.onnx"
+            from .model_storage import find_model_file
+            comfy_model = find_model_file("rembg/u2net.onnx") or (get_comfy_models_path() / "rembg" / "u2net.onnx")
             if comfy_model.exists() and comfy_model.stat().st_size > 100_000_000:
                 return True, "Using U2Net from ComfyUI models"
         except Exception:
