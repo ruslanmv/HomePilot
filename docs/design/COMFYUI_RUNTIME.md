@@ -48,6 +48,16 @@ Then restart WSL once so mirrored networking applies (`wsl --shutdown` in Window
 
 To go back to Linux ComfyUI: delete `backend/data/comfy-windows.env`, or `COMFY_RUNTIME=linux`.
 
+### Port reservations under mirrored networking
+
+With `networkingMode=mirrored`, a port that any WSL process has *bound* is reserved on
+Windows until WSL restarts — even after the socket is closed, and no Windows tool lists it.
+`make start`'s port picker used to bind-test the ComfyUI port, which locked the Windows
+ComfyUI out of it ("only one usage of each socket address"). Under mirrored networking it now
+checks the ComfyUI port by connecting only (`scripts/pick_ports.py`, `comfy_port_busy`), and
+`start-comfyui.ps1` detects a reserved port and says to run `wsl --shutdown` instead of
+letting ComfyUI crash. Never bind-test a port that a Windows process is about to use.
+
 ## Cloud / native Linux
 
 Nothing changes: no `comfy-windows.env`, no WSL, so `auto` is always `linux`. For best

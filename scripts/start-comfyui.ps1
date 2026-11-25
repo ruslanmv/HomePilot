@@ -75,6 +75,17 @@ if ($holder = Get-PortHolder $Port) {
   exit 1
 }
 
+# Under WSL mirrored networking, a port that any WSL process has bound is reserved on Windows
+# until WSL restarts, even after that socket closes, and no Windows tool lists it. A real bind
+# test finds it; say what it is instead of letting ComfyUI die on it.
+$probe = [System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Parse($(if ($Listen -eq '0.0.0.0') { '0.0.0.0' } else { '127.0.0.1' })), $Port)
+try { $probe.Start(); $probe.Stop() } catch {
+  Write-Error ("Port $Port is reserved although nothing listens on it. Under WSL mirrored networking " +
+    "this happens when a WSL program has bound the port; it stays reserved until WSL restarts. " +
+    "Run  wsl --shutdown  in Windows and start HomePilot again, or use another port (COMFY_PORT=<port>).")
+  exit 1
+}
+
 $extra = @()
 if ($env:COMFY_WIN_ARGS) { $extra = $env:COMFY_WIN_ARGS -split '\s+' | Where-Object { $_ } }
 $comfyArgs = @('main.py', '--listen', $Listen, '--port', "$Port") + $extra
