@@ -163,6 +163,45 @@ def find_model_file(rel: str) -> Optional[Path]:
     return None
 
 
+_SAFETENSORS_CHECKS: Dict[tuple, Optional[str]] = {}
+
+
+def incomplete_model_reason(path: Path) -> Optional[str]:
+    """Why a .safetensors file is unusable (cut short / bad header), or None if it is complete.
+
+    Reads only the header (a few KB), so it is cheap even for 20+ GB models; results are cached
+    per (path, size, mtime). Other file types are not checked.
+    """
+    if path.suffix.lower() != ".safetensors":
+        return None
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    if key in _SAFETENSORS_CHECKS:
+        return _SAFETENSORS_CHECKS[key]
+    reason: Optional[str] = None
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+            n = int.from_bytes(head, "little") if len(head) == 8 else 0
+            if n <= 0 or n > 100_000_000 or 8 + n > st.st_size:
+                reason = "the file header is damaged"
+            else:
+                header = json.loads(f.read(n))
+                end = max((v["data_offsets"][1] for k, v in header.items()
+                           if k != "__metadata__" and isinstance(v, dict)), default=0)
+                needed = 8 + n + end
+                if needed > st.st_size:
+                    reason = (f"the file is incomplete ({st.st_size / 2**30:.2f} GB of "
+                              f"{needed / 2**30:.2f} GB), probably an interrupted download")
+    except Exception as e:  # unreadable JSON, I/O error…
+        reason = f"the file could not be read ({e})"
+    _SAFETENSORS_CHECKS[key] = reason
+    return reason
+
+
 def model_dirs(sub: str) -> List[Path]:
     """``<root>/<sub>`` for every location (existing or not)."""
     return [root / sub for root in comfy_model_roots()]

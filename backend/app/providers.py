@@ -198,6 +198,10 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
                 try:
                     for f in scan_dir.iterdir():
                         if f.is_file() and f.suffix in extensions and f.stat().st_size > 0:
+                            # A cut-off download is not "installed": ComfyUI cannot load it.
+                            from .model_storage import incomplete_model_reason
+                            if incomplete_model_reason(f):
+                                continue
                             disk_files.add(f.name)
                 except OSError:
                     pass

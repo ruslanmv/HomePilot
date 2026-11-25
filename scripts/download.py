@@ -500,6 +500,22 @@ def get_install_path(model_type: str, custom_path: Optional[str] = None) -> Path
     return path
 
 
+def _safetensors_complete(path: Path) -> bool:
+    """True when the safetensors header's tensors all fit inside the file."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            n = int.from_bytes(f.read(8), "little")
+            if n <= 0 or 8 + n > size:
+                return False
+            header = json.loads(f.read(n))
+        end = max((v["data_offsets"][1] for k, v in header.items()
+                   if k != "__metadata__" and isinstance(v, dict)), default=0)
+        return 8 + n + end <= size
+    except Exception:
+        return False
+
+
 def download_file(
     url: str,
     dest: Path,
@@ -549,6 +565,18 @@ def download_file(
 
         mode = "ab" if start_pos > 0 else "wb"
 
+        # Not enough room for the rest of the file: stop now rather than leave a cut-off model.
+        remaining = total_size - start_pos
+        if remaining > 0:
+            free = shutil.disk_usage(temp_file.parent).free
+            if free < remaining:
+                response.close()
+                return False, (
+                    f"Not enough disk space for {dest.name}: needs {remaining / 1024**3:.1f} GB, "
+                    f"{free / 1024**3:.1f} GB free on {temp_file.parent}. Free up space or add a "
+                    f"model storage location on a bigger drive (Settings > Models > Model storage)."
+                )
+
         if show_progress and total_size > 0:
             progress = tqdm(
                 total=total_size,
@@ -568,6 +596,15 @@ def download_file(
 
         if show_progress and total_size > 0:
             progress.close()
+
+        # Only a complete file gets the real name. A short one stays as .part, so the next
+        # run resumes it instead of ComfyUI failing on it later.
+        got = temp_file.stat().st_size
+        if total_size > 0 and got != total_size:
+            return False, (f"Download of {dest.name} stopped early ({got / 1024**3:.2f} of "
+                           f"{total_size / 1024**3:.2f} GB). Run it again to resume.")
+        if dest.suffix.lower() == ".safetensors" and not _safetensors_complete(temp_file):
+            return False, f"Downloaded {dest.name} is incomplete or damaged; run it again."
 
         # Move to final location
         temp_file.replace(dest)

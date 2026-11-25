@@ -14,7 +14,7 @@ def storage(tmp_path, monkeypatch, app):
     ms = _ms()
     builtin = tmp_path / "models_comfy"
     (builtin / "checkpoints").mkdir(parents=True)
-    (builtin / "checkpoints" / "old.safetensors").write_bytes(b"x" * 10)
+    _write_safetensors(builtin / "checkpoints" / "old.safetensors", 16, 16)
     data = tmp_path / "data"
     data.mkdir()
     monkeypatch.setattr(ms, "builtin_root", lambda: builtin)
@@ -80,7 +80,7 @@ def test_installed_models_and_loras_found_in_extra_location(storage, client, mon
     ms, builtin, data, tmp = storage
     ext = tmp / "ext"
     client.put("/v1/models/storage", json={"locations": [{"path": str(ext)}], "download_target": str(ext)})
-    (ext / "checkpoints" / "new_on_external.safetensors").write_bytes(b"y" * 10)
+    _write_safetensors(ext / "checkpoints" / "new_on_external.safetensors", 16, 16)
     (ext / "loras" / "style.safetensors").write_bytes(b"z" * 10)
 
     providers = sys.modules.get("app.providers") or importlib.import_module("app.providers")
@@ -91,3 +91,28 @@ def test_installed_models_and_loras_found_in_extra_location(storage, client, mon
     lora = sys.modules.get("app.models.lora_loader") or importlib.import_module("app.models.lora_loader")
     assert lora.find_lora_file("style.safetensors") == ext / "loras" / "style.safetensors"
     assert lora.get_lora_install_dir() == ext / "loras"
+
+
+def _write_safetensors(path, data_len, actual_len):
+    import json as _json
+    header = _json.dumps({"w": {"dtype": "F32", "shape": [data_len // 4], "data_offsets": [0, data_len]}}).encode()
+    path.write_bytes(len(header).to_bytes(8, "little") + header + b"\0" * actual_len)
+
+
+def test_truncated_model_is_not_installed_and_blocks_generation(storage, monkeypatch):
+    ms, builtin, data, tmp = storage
+    (builtin / "unet").mkdir()
+    _write_safetensors(builtin / "unet" / "cut.safetensors", 4000, 1000)
+    _write_safetensors(builtin / "unet" / "good.safetensors", 4000, 4000)
+    assert "incomplete" in ms.incomplete_model_reason(builtin / "unet" / "cut.safetensors")
+    assert ms.incomplete_model_reason(builtin / "unet" / "good.safetensors") is None
+
+    providers = sys.modules.get("app.providers") or importlib.import_module("app.providers")
+    monkeypatch.setattr(providers, "get_comfy_models_path", lambda: builtin)
+    installed = providers.scan_installed_models("image")
+    assert "good.safetensors" in installed and "cut.safetensors" not in installed
+
+    comfy = sys.modules.get("app.comfy") or importlib.import_module("app.comfy")
+    with pytest.raises(RuntimeError, match="cut.safetensors.*incomplete"):
+        comfy._check_model_files({"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "cut.safetensors"}}})
+    comfy._check_model_files({"1": {"class_type": "UNETLoader", "inputs": {"unet_name": "good.safetensors"}}})

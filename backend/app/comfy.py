@@ -826,6 +826,41 @@ def _validate_prompt_graph(prompt_graph: Dict[str, Any], *, workflow_name: str) 
         )
 
 
+# Loader node input -> models subfolder, for the pre-submit file check.
+_MODEL_FILE_INPUTS = {
+    "unet_name": "unet", "ckpt_name": "checkpoints", "vae_name": "vae",
+    "clip_name": "clip", "clip_name1": "clip", "clip_name2": "clip", "lora_name": "loras",
+}
+
+
+def _check_model_files(prompt: Dict[str, Any]) -> None:
+    """Fail fast, with a clear message, when a model the workflow loads is a cut-off download.
+
+    ComfyUI would otherwise fail deep inside the loader ("incomplete metadata, file not fully
+    covered") and the user just gets no image.
+    """
+    try:
+        from .model_storage import find_model_file, incomplete_model_reason
+    except Exception:
+        return
+    for node in (prompt or {}).values():
+        inputs = node.get("inputs") if isinstance(node, dict) else None
+        if not isinstance(inputs, dict):
+            continue
+        for key, sub in _MODEL_FILE_INPUTS.items():
+            name = inputs.get(key)
+            if not isinstance(name, str) or not name.endswith(".safetensors"):
+                continue
+            rel = name.replace("\\", "/")
+            path = find_model_file(f"{sub}/{rel}")
+            reason = incomplete_model_reason(path) if path else None
+            if reason:
+                raise RuntimeError(
+                    f"Model '{name}' can't be used: {reason}. Download it again "
+                    f"(Settings > Models), or pick another model."
+                )
+
+
 def _post_prompt(client: httpx.Client, prompt: Dict[str, Any]) -> str:
     url = f"{COMFY_BASE_URL.rstrip('/')}/prompt"
     # Model files in subfolders are listed with the host OS's separator ("a\b" on a
@@ -835,6 +870,7 @@ def _post_prompt(client: httpx.Client, prompt: Dict[str, Any]) -> str:
         align_model_paths(prompt, COMFY_BASE_URL.rstrip('/'))
     except Exception:
         pass
+    _check_model_files(prompt)
     # Generate a unique client_id for each request to prevent ComfyUI caching
     # Without this, ComfyUI may skip execution for "duplicate" prompts
     import uuid
