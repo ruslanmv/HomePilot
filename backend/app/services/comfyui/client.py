@@ -70,6 +70,13 @@ async def submit_prompt(base_url: str, workflow: Dict[str, Any]) -> str:
     # just-started ComfyUI time to validate the workflow: with a 10 s limit the
     # job was often queued and run anyway while the user was told ComfyUI was
     # unavailable (and retries queued duplicates).
+    # Model files in subfolders are listed with the host OS's separator ("a\b" on a
+    # Windows-native ComfyUI); match the workflow's spelling to what this ComfyUI lists.
+    try:
+        from ...comfy_utils.model_paths import align_model_paths
+        await asyncio.to_thread(align_model_paths, workflow, base_url.rstrip("/"))
+    except Exception:
+        pass
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=5.0)) as client:
             r = await client.post(

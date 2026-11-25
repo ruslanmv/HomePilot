@@ -42,6 +42,63 @@ if [[ ! -f "$COMFY_DIR/main.py" ]]; then
   echo "❌ ComfyUI not found at $COMFY_DIR. Run: make install" >&2
   exit 1
 fi
+
+# ── Where ComfyUI runs: here (linux) or on the WSL host (windows) ──────────────
+# COMFY_RUNTIME=auto|linux|windows (default auto). Under WSL with the models on a
+# Windows drive, Linux ComfyUI reads every model through the /mnt bridge (~64 MB/s
+# measured vs ~2,200 MB/s natively), so a Windows-native ComfyUI is much faster.
+# auto picks windows only when ALL hold: this is WSL, the models resolve to /mnt/*,
+# the Windows env is installed (backend/data/comfy-windows.env), and WSL networking
+# is mirrored (so the backend reaches it on localhost). Otherwise — native Linux,
+# cloud, Docker, or anything missing — it runs here exactly as before.
+WIN_ENV_FILE="${DATA_DIR:-$ROOT/backend/data}/comfy-windows.env"
+if [[ -f "$WIN_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  set -a; . "$WIN_ENV_FILE"; set +a
+  # Written on Windows: drop a trailing CR (CRLF line endings) from the value.
+  COMFY_WIN_VENV="${COMFY_WIN_VENV:-}"; COMFY_WIN_VENV="${COMFY_WIN_VENV%$'\r'}"
+fi
+is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
+models_on_windows_drive() {
+  local p; p="$(readlink -f "$COMFY_DIR/models" 2>/dev/null || echo "$COMFY_DIR/models")"
+  [[ "$p" == /mnt/* ]]
+}
+win_env_ready() {
+  [[ -n "${COMFY_WIN_VENV:-}" ]] && command -v wslpath >/dev/null 2>&1 \
+    && [[ -f "$(wslpath -u "$COMFY_WIN_VENV" 2>/dev/null)/Scripts/python.exe" ]]
+}
+wsl_mirrored() { [[ "$(wslinfo --networking-mode 2>/dev/null)" == "mirrored" ]]; }
+
+RUNTIME="${COMFY_RUNTIME:-auto}"
+if [[ "$RUNTIME" == "auto" ]]; then
+  RUNTIME="linux"
+  if is_wsl && models_on_windows_drive && win_env_ready; then
+    if wsl_mirrored; then
+      RUNTIME="windows"
+    else
+      echo "ℹ️  ComfyUI: a Windows environment is installed, but WSL networking is not mirrored,"
+      echo "   so the backend could not reach it on localhost. Running in Linux instead."
+      echo "   Enable it: [wsl2] networkingMode=mirrored in %UserProfile%\\.wslconfig, then wsl --shutdown."
+    fi
+  fi
+fi
+
+if [[ "$RUNTIME" == "windows" ]]; then
+  is_wsl || { echo "❌ COMFY_RUNTIME=windows only works under WSL." >&2; exit 1; }
+  win_env_ready || { echo "❌ No Windows ComfyUI environment. Run: make install-comfyui-windows COMFY_WIN_VENV=<path>" >&2; exit 1; }
+  PS1_WIN="$(wslpath -w "$SCRIPT_DIR/start-comfyui.ps1")"
+  echo "🪟 ComfyUI: running natively on Windows — models are read straight from disk, not through /mnt."
+  stop_windows_comfy() {
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS1_WIN" -Stop -Port "$COMFY_PORT" >/dev/null 2>&1 || true
+  }
+  trap 'stop_windows_comfy; exit 0' INT TERM
+  COMFY_WIN_VENV="$COMFY_WIN_VENV" powershell.exe -NoProfile -ExecutionPolicy Bypass \
+    -File "$PS1_WIN" -Port "$COMFY_PORT" -Venv "$COMFY_WIN_VENV" &
+  child=$!
+  wait "$child"
+  exit $?
+fi
+
 if [[ ! -x "$PYTHON" ]]; then
   echo "❌ ComfyUI venv not found. Run: make install" >&2
   exit 1

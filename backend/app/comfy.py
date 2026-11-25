@@ -828,6 +828,13 @@ def _validate_prompt_graph(prompt_graph: Dict[str, Any], *, workflow_name: str) 
 
 def _post_prompt(client: httpx.Client, prompt: Dict[str, Any]) -> str:
     url = f"{COMFY_BASE_URL.rstrip('/')}/prompt"
+    # Model files in subfolders are listed with the host OS's separator ("a\b" on a
+    # Windows-native ComfyUI); match the workflow's spelling to what this ComfyUI lists.
+    try:
+        from .comfy_utils.model_paths import align_model_paths
+        align_model_paths(prompt, COMFY_BASE_URL.rstrip('/'))
+    except Exception:
+        pass
     # Generate a unique client_id for each request to prevent ComfyUI caching
     # Without this, ComfyUI may skip execution for "duplicate" prompts
     import uuid

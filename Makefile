@@ -126,6 +126,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 			echo "     Retry it alone:   make install-comfyui"; \
 			echo "     Skip on purpose:  make install SKIP_COMFYUI=1"; \
 		}; \
+		$(MAKE) --no-print-directory install-comfyui-windows-auto || true; \
 	fi
 	@echo ""
 	@# ── MCP Context Forge (agentic features) ──
@@ -727,7 +728,28 @@ start-expert: ## Start the isolated Expert-mode sandbox (ports 18000/13000/18188
 test-expert: ## Smoke-test Expert endpoints against the Expert-mode backend (default http://localhost:18000)
 	@bash scripts/test-expert.sh
 
-start-comfyui: ## Start ComfyUI locally (auto-detects GPU vs CPU)
+install-comfyui-windows: ## WSL only: Windows-native ComfyUI env so models on a Windows drive load at disk speed (location auto-picked; COMFY_WIN_VENV='E:\path' to choose)
+	@grep -qi microsoft /proc/version 2>/dev/null || { echo "Only for WSL. On native Linux ComfyUI already reads models directly."; exit 1; }
+	@powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$$(wslpath -w scripts/install-comfyui-windows.ps1)" $(if $(COMFY_WIN_VENV),-Venv '$(COMFY_WIN_VENV)',)
+
+# Called by `make install`. Does nothing on native Linux / cloud / Docker, nor under WSL when
+# the models are on the Linux filesystem (ComfyUI already reads them at full speed there), nor
+# with COMFY_WINDOWS=0. Under WSL with the models on a Windows drive it builds the Windows-native
+# ComfyUI env (docs/design/COMFYUI_RUNTIME.md). Never fails the install: on any problem it
+# warns and ComfyUI keeps running in Linux.
+install-comfyui-windows-auto:
+	@if [ "$(COMFY_WINDOWS)" = "0" ]; then exit 0; fi; \
+	grep -qi microsoft /proc/version 2>/dev/null || exit 0; \
+	command -v powershell.exe >/dev/null 2>&1 || exit 0; \
+	[ -f ComfyUI/main.py ] || exit 0; \
+	models="$$(readlink -f models/comfy 2>/dev/null || echo models/comfy)"; \
+	case "$$models" in /mnt/*) ;; *) exit 0;; esac; \
+	echo ""; \
+	echo "✓ WSL with models on a Windows drive: setting up Windows-native ComfyUI (models load at disk speed)..."; \
+	powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$$(wslpath -w scripts/install-comfyui-windows.ps1)" -Auto $(if $(COMFY_WIN_VENV),-Venv '$(COMFY_WIN_VENV)',) \
+		|| echo "  ⚠  Windows-native ComfyUI setup failed (non-fatal); ComfyUI stays in Linux. Retry: make install-comfyui-windows"
+
+start-comfyui: ## Start ComfyUI locally (auto-detects GPU vs CPU; Windows-native under WSL when installed)
 	@bash scripts/start-comfyui.sh
 
 # --- Testing & Development ----------------------------------------------------
