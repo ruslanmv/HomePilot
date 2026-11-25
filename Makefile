@@ -916,6 +916,9 @@ stop: ## Stop the HomePilot processes started from this folder (never other prog
 	@# Only processes started from this checkout. Other programs on HomePilot's
 	@# default ports (kubectl port-forwards, containers, other uvicorn apps) are left alone.
 	@bash scripts/stop-homepilot.sh
+	@# Under WSL: also the Windows-native ComfyUI, and a check that its port is free on Windows
+	@# (asks before restarting WSL if mirrored networking left it reserved). No-op elsewhere.
+	@bash scripts/stop-windows-comfyui.sh $(if $(filter 1 yes y,$(YES)),--yes,)
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ All HomePilot services stopped"

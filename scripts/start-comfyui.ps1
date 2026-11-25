@@ -14,18 +14,45 @@
 .PARAMETER Port      Port to serve on (default 8188).
 .PARAMETER Venv      Windows venv for ComfyUI (default: $env:COMFY_WIN_VENV).
 .PARAMETER Listen    Address to bind (default 127.0.0.1; WSL reaches it with mirrored networking).
-.PARAMETER Stop      Stop the ComfyUI this script started (reads its pid file) and exit.
+.PARAMETER Stop      Stop the ComfyUI this script started on -Port (reads its pid file) and exit.
+.PARAMETER StopAll   Stop every ComfyUI this checkout started on Windows (all pid files, and any
+                     main.py run by the HomePilot Windows venv) and exit. Used by `make stop`.
 #>
 param(
   [int]$Port = 8188,
   [string]$Venv = $env:COMFY_WIN_VENV,
   [string]$Listen = $(if ($env:COMFY_WIN_LISTEN) { $env:COMFY_WIN_LISTEN } else { '127.0.0.1' }),
-  [switch]$Stop
+  [switch]$Stop,
+  [switch]$StopAll
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $ComfyDir = Join-Path $Root 'ComfyUI'
 $PidFile = Join-Path $ComfyDir "user\comfyui-windows-$Port.pid"
+
+function Stop-Tree([int]$procId) {
+  # A venv's python.exe is a launcher for the real interpreter (a child process): end the tree.
+  & taskkill.exe /PID $procId /T /F 2>$null | Out-Null
+}
+
+if ($StopAll) {
+  $stopped = @()
+  Get-ChildItem (Join-Path $ComfyDir 'user') -Filter 'comfyui-windows-*.pid' -ErrorAction SilentlyContinue | ForEach-Object {
+    $procId = [int](Get-Content $_.FullName -Raw)
+    if (Get-Process -Id $procId -ErrorAction SilentlyContinue) { Stop-Tree $procId; $stopped += $procId }
+    Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+  }
+  # Also any ComfyUI started from this checkout with the HomePilot venv (e.g. its pid file was lost).
+  if ($Venv) {
+    $venvPy = (Join-Path $Venv 'Scripts\python.exe').ToLower()
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq $venvPy -and $_.CommandLine -match 'main\.py' } |
+      ForEach-Object { Stop-Tree $_.ProcessId; $stopped += $_.ProcessId }
+  }
+  if ($stopped.Count) { Write-Host "  Stopped Windows ComfyUI (pid $($stopped -join ', '))." }
+  else { Write-Host '  No Windows ComfyUI running.' }
+  exit 0
+}
 
 if ($Stop) {
   if (Test-Path $PidFile) {
